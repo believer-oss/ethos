@@ -1,0 +1,242 @@
+<script lang="ts">
+	import { Badge, Button, Card, Indicator, Tooltip } from 'flowbite-svelte';
+	import { ChevronDownSolid, ChevronUpSolid, CloseSolid, CodeOutline } from 'flowbite-svelte-icons';
+	import { emit } from '@tauri-apps/api/event';
+	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
+	import { stopWorkflow } from '$lib/builds';
+
+	export let selectedCommit = '';
+	export let showWorkflowLogsModal = false;
+	export let selectedWorkflow: Nullable<Workflow>;
+	export let commits: CommitWorkflowInfo[];
+
+	const setSelectedCommit = (commit: string) => {
+		selectedCommit = commit;
+	};
+
+	const stop = async (workflow: string) => {
+		try {
+			await stopWorkflow(workflow);
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const getCommitPhase = (commit: CommitWorkflowInfo): string => {
+		// if any workflow is running, return "Running"
+		if (commit.workflows.some((workflow) => workflow.status.phase === 'Running')) return 'Running';
+
+		// if any workflow has failed, return "Failed"
+		if (commit.workflows.some((workflow) => workflow.status.phase === 'Failed')) return 'Failed';
+
+		// if any workflow is pending, return "Pending"
+		if (commit.workflows.some((workflow) => workflow.status.phase === 'Pending')) return 'Pending';
+
+		// if all workflows have succeeded, return "Succeeded"
+		if (commit.workflows.every((workflow) => workflow.status.phase === 'Succeeded'))
+			return 'Succeeded';
+
+		return 'unknown';
+	};
+
+	const getWorkflowName = (workflow: Workflow): string => {
+		const annotations = workflow.metadata.annotations || {};
+		const displayName = annotations['believer.dev/display-name'];
+		if (displayName) {
+			return displayName as string;
+		}
+
+		// take everything up until the final -
+		const parts = workflow.metadata.name.split('-');
+		parts.pop();
+		return parts.join('-');
+	};
+
+	const getWorkflowTooltip = (workflow: Workflow): string => {
+		const annotations = workflow.metadata.annotations || {};
+		const desc = annotations['believer.dev/description'];
+		if (desc) {
+			return desc as string;
+		}
+		return `Build steps for ${getWorkflowName(workflow)}`;
+	};
+
+	const getWorkflowProgress = (workflow: Workflow): number => {
+		if (!workflow.status.progress) return 0;
+
+		return parseInt(workflow.status.progress?.split('/')[0], 10);
+	};
+
+	const getWorkflowProgressColor = (
+		workflow: Workflow,
+		i: number
+	):
+		| 'gray'
+		| 'green'
+		| 'none'
+		| 'red'
+		| 'yellow'
+		| 'indigo'
+		| 'purple'
+		| 'blue'
+		| 'dark'
+		| 'orange'
+		| 'teal'
+		| undefined => {
+		if (!workflow.status.progress) return 'gray';
+
+		const progress = getWorkflowProgress(workflow);
+
+		if (progress === i) {
+			if (workflow.status.phase === 'Failed') return 'red';
+			if (workflow.status.phase === 'Running') return 'blue';
+			if (workflow.status.phase === 'Pending') return 'yellow';
+			if (workflow.status.phase === 'Succeeded') return 'green';
+		}
+
+		return progress > i ? 'green' : 'gray';
+	};
+
+	const getWorkflowPhaseCount = (workflow: Workflow): number => {
+		if (!workflow.status.progress) return 0;
+
+		return parseInt(workflow.status.progress?.split('/')[1], 10);
+	};
+
+	const getBadgeColor = (phase: string): string => {
+		switch (phase) {
+			case 'Failed':
+				return 'bg-red-700 dark:bg-red-700';
+			case 'Running':
+				return 'bg-blue-600 dark:bg-blue-600';
+			case 'Pending':
+				return 'bg-primary-500 dark:bg-primary-500';
+			case 'Succeeded':
+				return 'bg-lime-600 dark:bg-lime-600';
+			default:
+				return '';
+		}
+	};
+</script>
+
+{#each commits as commit}
+	<div class="flex items-center justify-between gap-0">
+		<a
+			class="text-sm text-center w-24 text-primary-400 dark:text-primary-400 hover:underline flex-none"
+			href={commit.compareUrl}
+			target="_blank"
+			rel="noopener noreferrer">{commit.commit.substring(0, 8)}</a
+		>
+		<p
+			class="text-xs text-left w-80 text-primary-400 dark:text-primary-400 text-ellipsis whitespace-nowrap overflow-hidden flex-auto"
+		>
+			{commit.message}
+		</p>
+		<Tooltip class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+			>{commit.message}</Tooltip
+		>
+		<p class="text-xs text-center w-40 text-primary-400 dark:text-primary-400">{commit.pusher}</p>
+		<p class="text-xs text-center w-60 text-primary-400 dark:text-primary-400">
+			{new Date(commit.creationTimestamp).toLocaleString()}
+		</p>
+		<div class="w-24">
+			<Badge
+				class="text-white dark:text-white w-full {getBadgeColor(
+					getCommitPhase(commit)
+				)} {getCommitPhase(commit) === 'Running' ? 'animate-pulse' : ''}"
+				>{getCommitPhase(commit)}</Badge
+			>
+		</div>
+		<Button
+			outline
+			size="xs"
+			class="border-0"
+			on:click={() =>
+				selectedCommit === commit.commit ? setSelectedCommit('') : setSelectedCommit(commit.commit)}
+		>
+			{#if selectedCommit === commit.commit}
+				<ChevronDownSolid class="w-4 h-4 text-white" />
+			{:else}
+				<ChevronUpSolid class="w-4 h-4 text-white" />
+			{/if}
+		</Button>
+	</div>
+	{#if selectedCommit === commit.commit}
+		<div class="grid grid-cols-3 gap-2 transition">
+			{#each commit.workflows as workflow}
+				<Card
+					class="`col-span-1 row-span-1 sm:p-2 bg-secondary-700 dark:bg-space-900 flex flex-col justify-between border-gray-300 dark:border-gray-300"
+				>
+					<div class="flex justify-between items-center gap-2 pb-2">
+						<span class="text-primary-400">{getWorkflowName(workflow)}</span>
+						<Tooltip
+							class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+							placement="bottom"
+							>{getWorkflowTooltip(workflow)}
+						</Tooltip>
+						<div class="flex gap-1 pb-2">
+							{#if workflow.status.phase === 'Running' || workflow.status.phase === 'Pending'}
+								<Button
+									size="xs"
+									class="py-1 px-2 text-xs bg-red-800 dark:bg-red-800 hover:bg-red-600 dark:hover:bg-red-600"
+									on:click={async () => {
+										await stop(workflow.metadata.name);
+									}}
+								>
+									<CloseSolid class="w-4 h-4" />
+								</Button>
+								<Tooltip
+									class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+									placement="bottom"
+									>Stop build
+								</Tooltip>
+							{/if}
+							<Button
+								size="xs"
+								class="py-1 px-2 text-xs"
+								on:click={() => {
+									showWorkflowLogsModal = true;
+									selectedWorkflow = workflow;
+								}}
+							>
+								<CodeOutline class="w-4 h-4" />
+							</Button>
+							<Tooltip
+								class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+								placement="bottom"
+								>Show logs
+							</Tooltip>
+						</div>
+					</div>
+					<hr />
+					{#if workflow.status.startedAt}
+						<div class="flex items-center justify-between">
+							<span class="text-sm text-primary-400 w-18">started at:</span>
+							<span class="text-sm w-40 text-white">{workflow.status.startedAt}</span>
+						</div>
+					{/if}
+					{#if workflow.status.finishedAt}
+						<div class="flex items-center justify-between">
+							<span class="text-sm text-primary-400 w-18">finished at:</span>
+							<span class="text-sm w-40 text-white">{workflow.status.finishedAt}</span>
+						</div>
+					{/if}
+					<div class="flex items-center justify-between">
+						<span class="text-sm text-primary-400 w-18">steps:</span>
+						<div class="flex flex-wrap items-center gap-0.5 w-40">
+							<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+							{#each { length: getWorkflowPhaseCount(workflow) } as _, i}
+								<Indicator
+									color={getWorkflowProgressColor(workflow, i)}
+									class={i === getWorkflowProgress(workflow) && workflow.status.phase === 'Running'
+										? 'animate-pulse'
+										: ''}
+								/>
+							{/each}
+						</div>
+					</div>
+				</Card>
+			{/each}
+		</div>
+	{/if}
+{/each}

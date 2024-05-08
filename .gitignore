@@ -1,0 +1,20 @@
+# editor 
+.vscode
+.idea
+.run
+
+# build output
+/target
+*.exe
+.svelte-kit
+node_modules
+
+# nonce
+.nonce
+
+# test directories
+/friendshipper/src-tauri/tests/tmp
+/friendshipper/tests/tmp
+
+# eslint
+.eslintcache

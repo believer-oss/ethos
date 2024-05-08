@@ -1,0 +1,12 @@
+{
+	"extends": ["@commitlint/config-conventional"],
+	"rules": {
+		"type-enum": [
+			2,
+			"always",
+			["ci", "chore", "docs", "feat", "fix", "perf", "refactor", "revert", "style"]
+		],
+		"scope-empty": [2, "never"],
+		"scope-enum": [2, "always", ["core", "friendshipper", "birdie", "misc"]]
+	}
+}

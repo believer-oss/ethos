@@ -1,0 +1,84 @@
+{
+	"$schema": "../node_modules/@tauri-apps/cli/schema.json",
+	"build": {
+		"beforeBuildCommand": "yarn build",
+		"beforeDevCommand": "yarn dev",
+		"devPath": "http://localhost:5173",
+		"distDir": "../build"
+	},
+	"package": {
+		"productName": "Birdie",
+		"version": "1.0.7"
+	},
+	"tauri": {
+		"allowlist": {
+			"all": false,
+			"dialog": {
+				"open": true
+			},
+			"fs": {
+				"readFile": true,
+				"scope": ["*/**"]
+			},
+			"shell": {
+				"all": false,
+				"open": true
+			},
+			"notification": {
+				"all": true
+			},
+			"window": {
+				"show": true
+			},
+			"process": {
+				"relaunch": true
+			}
+		},
+		"bundle": {
+			"active": false,
+			"category": "DeveloperTool",
+			"copyright": "",
+			"deb": {
+				"depends": []
+			},
+			"externalBin": [],
+			"identifier": "com.believer.birdie",
+			"longDescription": "",
+			"macOS": {
+				"entitlements": null,
+				"exceptionDomain": "",
+				"frameworks": [],
+				"providerShortName": null,
+				"signingIdentity": null
+			},
+			"resources": [],
+			"shortDescription": "",
+			"targets": "all",
+			"windows": {
+				"certificateThumbprint": null,
+				"digestAlgorithm": "sha256",
+				"timestampUrl": ""
+			}
+		},
+		"security": {
+			"csp": null
+		},
+		"systemTray": {
+			"iconPath": "icons/32x32.png",
+			"iconAsTemplate": true
+		},
+		"updater": {
+			"active": false
+		},
+		"windows": [
+			{
+				"fullscreen": false,
+				"resizable": true,
+				"title": "Birdie",
+				"minWidth": 1100,
+				"minHeight": 640,
+				"visible": false
+			}
+		]
+	}
+}

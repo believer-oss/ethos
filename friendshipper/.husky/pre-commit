@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# This is just some hackery so husky can run pre-commits for every package
+# As we add new apps, we'll need to add them here
+echo 'Checking Core...'
+npx lint-staged --cwd core/ui
+
+echo 'Checking friendshipper...'
+npx lint-staged --cwd friendshipper
+
+echo 'Checking birdie...'
+npx lint-staged --cwd birdie
+
+echo 'Checking Rust...'
+cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check

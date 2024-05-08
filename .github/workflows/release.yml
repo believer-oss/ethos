@@ -1,0 +1,48 @@
+name: Update App Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        type: choice
+        description: 'app name (e.g. friendshipper)'
+        required: true
+        options:
+          - friendshipper
+          - birdie
+      version:
+        description: 'version tag (e.g. 1.0.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  update-app-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v3
+
+      - name: Update versions
+        run: |
+          sed -i 's/^version = .*/version = "${{ github.event.inputs.version }}"/' ${{ github.event.inputs.app }}/src-tauri/Cargo.toml
+          sed -i 's/^\t\t"version": ".*"/\t\t"version": "${{ github.event.inputs.version }}"/' ${{ github.event.inputs.app }}/src-tauri/tauri.conf.json
+          cargo generate-lockfile
+
+      - name: Update tags
+        run: |
+          git config user.name "Friendshipper GitHub Bot"
+          git config user.email "<>"
+          git checkout -b bot/${{ github.event.inputs.app }}-${{ github.event.inputs.version }}
+          git add .
+          git commit -m "automated: version ${{ github.event.inputs.version }}"
+          git push origin bot/${{ github.event.inputs.app }}-${{ github.event.inputs.version }}
+          git tag -a ${{ github.event.inputs.app }}-v${{ github.event.inputs.version }} -m "version ${{ github.event.inputs.version }}"
+          git push --tags
+
+      - name: Open PR
+        run: |
+          gh pr create -H "bot/${{ github.event.inputs.app }}-${{ github.event.inputs.version }}" -B "main" --title "automated: ${{ github.event.inputs.app }} version ${{ github.event.inputs.version }}" -b "automated: version ${{ github.event.inputs.version }}"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}

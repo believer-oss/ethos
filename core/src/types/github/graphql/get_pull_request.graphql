@@ -1,0 +1,25 @@
+query GetPullRequest($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+            __typename
+            number
+            createdAt
+            mergedAt
+            headRefName
+            state
+            mergeable
+            mergeQueueEntry {
+                __typename
+                estimatedTimeToMerge
+                state
+            }
+            author {
+                __typename
+                login
+            }
+            merged
+            permalink
+            title
+        }
+    }
+}

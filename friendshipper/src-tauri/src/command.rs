@@ -1,0 +1,937 @@
+use tracing::error;
+
+use ethos_core::storage::ArtifactList;
+use ethos_core::tauri::command::{check_client_error, restart};
+use ethos_core::tauri::error::TauriError;
+use ethos_core::tauri::State;
+use ethos_core::types::builds::SyncClientRequest;
+use ethos_core::types::config::{DynamicConfig, UnrealVerSelDiagResponse};
+use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
+use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
+use ethos_core::types::locks::VerifyLocksResponse;
+use ethos_core::types::playtests::{
+    AssignUserRequest, CreatePlaytestRequest, Playtest, UnassignUserRequest, UpdatePlaytestRequest,
+};
+use ethos_core::types::project::ProjectConfig;
+use ethos_core::types::repo::{CommitFileInfo, PushRequest, RepoStatus, Snapshot};
+use friendshipper::builds::router::GetWorkflowsResponse;
+use friendshipper::ludos;
+use friendshipper::repo::operations::{RestoreSnapshotRequest, SaveSnapshotRequest};
+
+#[tauri::command]
+pub async fn get_unrealversionselector_status(
+    state: tauri::State<'_, State>,
+) -> Result<UnrealVerSelDiagResponse, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/system/diagnostics/unrealversionselector",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+// Config
+#[tauri::command]
+pub async fn get_dynamic_config(
+    state: tauri::State<'_, State>,
+) -> Result<DynamicConfig, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/config/dynamic", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_project_config(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<ProjectConfig>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/config/projects", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+// Commits
+#[tauri::command]
+pub async fn get_builds(
+    state: tauri::State<'_, State>,
+    limit: Option<u32>,
+    project: Option<String>,
+) -> Result<ArtifactList, TauriError> {
+    let mut req = state.client.get(format!("{}/builds", state.server_url));
+
+    if let Some(limit) = limit {
+        req = req.query(&[("limit", limit)]);
+    }
+
+    if let Some(project) = project {
+        req = req.query(&[("project", project)]);
+    }
+
+    match req.send().await {
+        Ok(res) => {
+            if res.status().is_client_error() {
+                let body = res.text().await?;
+                Err(TauriError { message: body })
+            } else {
+                match res.json::<ArtifactList>().await {
+                    Ok(res) => Ok(res),
+                    Err(err) => Err(TauriError {
+                        message: err.to_string(),
+                    }),
+                }
+            }
+        }
+        Err(err) => Err(TauriError {
+            message: err.to_string(),
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn show_commit_files(
+    state: tauri::State<'_, State>,
+    commit: String,
+    stash: bool,
+) -> Result<Vec<CommitFileInfo>, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/show?commit={}&stash={}",
+            state.server_url, commit, stash
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn verify_build(
+    state: tauri::State<'_, State>,
+    commit: String,
+) -> Result<bool, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/builds/server/verify?commit={}",
+            state.server_url, commit
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn sync_client(
+    state: tauri::State<'_, State>,
+    req: SyncClientRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/builds/client/sync", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        error!("Error syncing client: {}", err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/builds/client/wipe", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        error!("Error wiping client data: {}", err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reset_longtail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/builds/longtail/reset", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        error!("Error resetting longtail: {}", err.message);
+        return Err(err);
+    }
+
+    restart(state).await?;
+
+    Ok(())
+}
+
+// Argo
+#[tauri::command]
+pub async fn get_workflows(
+    state: tauri::State<'_, State>,
+    engine: bool,
+) -> Result<GetWorkflowsResponse, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/builds/workflows?engine={}",
+            state.server_url, engine
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_workflow_node_logs(
+    state: tauri::State<'_, State>,
+    uid: String,
+    node_id: String,
+) -> Result<String, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/builds/workflows/logs?uid={}&nodeId={}",
+            state.server_url, uid, node_id
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.text().await?)
+}
+
+#[tauri::command]
+pub async fn stop_workflow(
+    state: tauri::State<'_, State>,
+    workflow: String,
+) -> Result<String, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/builds/workflows/stop?workflow={}",
+            state.server_url, workflow
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.text().await?)
+}
+
+// Ludos
+#[tauri::command]
+pub async fn ludos_get(
+    state: tauri::State<'_, State>,
+    key: String,
+) -> Result<ludos::GetResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/ludos/get", state.server_url))
+        .json(&ludos::GetPayload { key })
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn ludos_put(
+    state: tauri::State<'_, State>,
+    key: String,
+    json_data: String,
+) -> Result<ludos::PutResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/ludos/put", state.server_url))
+        .json(&ludos::PutPayload {
+            key,
+            data: json_data,
+            format: String::default(),
+        })
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn ludos_list(
+    state: tauri::State<'_, State>,
+    filter: String,
+) -> Result<ludos::ListResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/ludos/list", state.server_url))
+        .json(&ludos::ListPayload { filter })
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn ludos_delete(
+    state: tauri::State<'_, State>,
+    keys: Vec<String>,
+) -> Result<ludos::DeletePayload, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/ludos/delete", state.server_url))
+        .json(&ludos::DeletePayload { keys })
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+// Repo
+#[tauri::command]
+pub async fn get_repo_status(
+    state: tauri::State<'_, State>,
+    skip_dll_check: bool,
+) -> Result<RepoStatus, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/status?skipDllCheck={}",
+            state.server_url, skip_dll_check
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn list_snapshots(state: tauri::State<'_, State>) -> Result<Vec<Snapshot>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/snapshots", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn restore_snapshot(
+    state: tauri::State<'_, State>,
+    commit: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/snapshots/restore", state.server_url))
+        .json(&RestoreSnapshotRequest { commit })
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn save_snapshot(
+    state: tauri::State<'_, State>,
+    files: Vec<String>,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/snapshots/save", state.server_url))
+        .json(&SaveSnapshotRequest { files })
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_snapshot(
+    state: tauri::State<'_, State>,
+    commit: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .delete(format!(
+            "{}/repo/snapshots?commit={}",
+            state.server_url, commit
+        ))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn quick_submit(
+    state: tauri::State<'_, State>,
+    req: PushRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/gh/submit", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+// GitHub
+#[tauri::command]
+pub async fn get_pull_request(
+    state: tauri::State<'_, State>,
+    id: u64,
+) -> Result<serde_json::Value, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/gh/pulls/{}", state.server_url, id))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    let body = res.text().await?;
+    let json = serde_json::from_str(&body).map_err(|e| TauriError {
+        message: e.to_string(),
+    })?;
+
+    Ok(json)
+}
+
+#[tauri::command]
+pub async fn get_pull_requests(
+    state: tauri::State<'_, State>,
+    limit: i64,
+) -> Result<Vec<GetPullRequestsRepositoryPullRequestsNodes>, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/gh/pulls?limit={}",
+            state.server_url, limit
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    let body = res.text().await?;
+    let json = serde_json::from_str(&body).map_err(|e| TauriError {
+        message: e.to_string(),
+    })?;
+
+    Ok(json)
+}
+
+// Locks
+#[tauri::command]
+pub async fn verify_locks(
+    state: tauri::State<'_, State>,
+) -> Result<VerifyLocksResponse, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/locks/verify", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+// Servers
+#[tauri::command]
+pub async fn get_servers(
+    state: tauri::State<'_, State>,
+    commit: &str,
+) -> Result<Vec<GameServerResults>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/servers?commit={}", state.server_url, commit))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_server(
+    state: tauri::State<'_, State>,
+    name: &str,
+) -> Result<GameServerResults, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/servers/{}", state.server_url, name))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn launch_server(
+    state: tauri::State<'_, State>,
+    req: LaunchRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/servers", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn terminate_server(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .delete(format!("{}/servers/{}", state.server_url, name))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn download_server_logs(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/servers/{}/logs", state.server_url, name))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_logs_folder(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/servers/open-logs", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_gameserver_log_tail(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!("{}/servers/{}/logs/tail", state.server_url, name))
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_gameserver_log_tail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!("{}/servers/logs/stop", state.server_url))
+        .send()
+        .await?;
+    Ok(())
+}
+
+// Playtests
+#[tauri::command]
+pub async fn get_playtests(state: tauri::State<'_, State>) -> Result<Vec<Playtest>, TauriError> {
+    let response = state
+        .client
+        .get(format!("{}/playtests", state.server_url))
+        .send()
+        .await?;
+
+    let playtests: Vec<Playtest> = response.json().await?;
+    Ok(playtests)
+}
+
+#[tauri::command]
+pub async fn assign_user_to_group(
+    state: tauri::State<'_, State>,
+    req: AssignUserRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/playtests/assign", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unassign_user_from_playtest(
+    state: tauri::State<'_, State>,
+    req: UnassignUserRequest,
+) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!("{}/playtests/unassign", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_playtest(
+    state: tauri::State<'_, State>,
+    req: CreatePlaytestRequest,
+) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!("{}/playtests", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_playtest(
+    state: tauri::State<'_, State>,
+    playtest: String,
+    req: UpdatePlaytestRequest,
+) -> Result<(), TauriError> {
+    state
+        .client
+        .put(format!("{}/playtests/{}", state.server_url, playtest))
+        .json(&req)
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_playtest(
+    state: tauri::State<'_, State>,
+    playtest: String,
+) -> Result<(), TauriError> {
+    state
+        .client
+        .delete(format!("{}/playtests/{}", state.server_url, playtest))
+        .send()
+        .await?;
+    Ok(())
+}
+
+// Project
+#[tauri::command]
+pub async fn open_uproject(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!("{}/project/open-uproject", state.server_url))
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn force_download_dlls(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/download-dlls", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn force_download_engine(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/download-engine", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/project/install-git-hooks?refresh=true",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_engine_commit_with_uproject(
+    state: tauri::State<'_, State>,
+) -> Result<String, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/project/sync-engine-commit-with-uproject",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    let response_text = res.text().await?;
+    Ok(response_text)
+}
+
+#[tauri::command]
+pub async fn sync_uproject_commit_with_engine(
+    state: tauri::State<'_, State>,
+) -> Result<String, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/project/sync-uproject-commit-with-engine",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    let response_text = res.text().await?;
+    Ok(response_text)
+}
+
+async fn generate_and_open_sln(
+    url: String,
+    open: bool,
+    generate: bool,
+    client: reqwest::Client,
+) -> Result<(), TauriError> {
+    let endpoint: String = format!("{}/project/sln?open={}&generate={}", url, open, generate);
+    let res = client.post(endpoint).send().await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(())
+}
+
+pub async fn tray_open_sln(url: String, client: reqwest::Client) -> Result<(), TauriError> {
+    let open = true;
+    let generate = false;
+    generate_and_open_sln(url, open, generate, client).await
+}
+
+pub async fn tray_generate_and_open_sln(
+    url: String,
+    client: reqwest::Client,
+) -> Result<(), TauriError> {
+    let open = true;
+    let generate = true;
+    generate_and_open_sln(url, open, generate, client).await
+}
+
+#[tauri::command]
+pub async fn generate_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let open = false;
+    let generate = true;
+    generate_and_open_sln(
+        state.server_url.clone(),
+        open,
+        generate,
+        state.client.clone(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn open_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let open = true;
+    let generate = false;
+    generate_and_open_sln(
+        state.server_url.clone(),
+        open,
+        generate,
+        state.client.clone(),
+    )
+    .await
+}

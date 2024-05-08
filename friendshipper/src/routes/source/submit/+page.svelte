@@ -1,0 +1,596 @@
+<script lang="ts">
+	import {
+		Badge,
+		Button,
+		ButtonGroup,
+		Card,
+		Label,
+		Modal,
+		Spinner,
+		TabItem,
+		Table,
+		TableBody,
+		TableBodyCell,
+		TableBodyRow,
+		TableHead,
+		TableHeadCell,
+		Tabs,
+		Textarea,
+		Tooltip
+	} from 'flowbite-svelte';
+	import { LinkOutline, QuestionCircleOutline, RotateOutline } from 'flowbite-svelte-icons';
+	import { onMount } from 'svelte';
+	import { emit, listen } from '@tauri-apps/api/event';
+	import { open } from '@tauri-apps/api/shell';
+	import { sendNotification } from '@tauri-apps/api/notification';
+	import { type CommitFileInfo, ModifiedFilesCard, ProgressModal } from '@ethos/core';
+	import { get } from 'svelte/store';
+	import type { GitHubPullRequest, PushRequest, RevertFilesRequest, Snapshot } from '$lib/types';
+	import {
+		deleteSnapshot,
+		getCommitFileTextClass,
+		getPullRequests,
+		getRepoStatus,
+		listSnapshots,
+		quickSubmit,
+		restoreSnapshot,
+		revertFiles,
+		saveSnapshot,
+		showCommitFiles
+	} from '$lib/repo';
+	import {
+		allModifiedFiles,
+		appConfig,
+		commitMessage,
+		repoConfig,
+		repoStatus,
+		selectedFiles
+	} from '$lib/stores';
+
+	let loading = false;
+	let fetchingPulls = false;
+	let quickSubmitting = false;
+	let promptForPAT = false;
+	let preferencesOpen = false;
+
+	// commit file details
+	let expandedCommit = '';
+	let loadingCommitFiles = false;
+	let commitFiles: CommitFileInfo[] = [];
+
+	let selectAll = false;
+	let pulls: GitHubPullRequest[] = [];
+
+	let loadingSnapshots = false;
+	let snapshots: Snapshot[] = [];
+
+	$: activeQuickSubmitPull = pulls.find((pull) => pull.headRefName === $repoStatus?.branch);
+	$: canSubmit =
+		$selectedFiles.length > 0 &&
+		get(commitMessage) !== '' &&
+		!loading &&
+		activeQuickSubmitPull === undefined &&
+		$repoConfig?.trunkBranch === $repoStatus?.branch;
+
+	void listen('preferences-closed', () => {
+		preferencesOpen = false;
+	});
+
+	const refreshFiles = async (triggerLoading: boolean) => {
+		if (triggerLoading) {
+			loading = true;
+		}
+
+		try {
+			$repoStatus = await getRepoStatus();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		// clear selected files if they no longer exist
+		$selectedFiles = $selectedFiles.filter(
+			(file) =>
+				$repoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
+				$repoStatus?.untrackedFiles.some((f) => f.path === file.path)
+		);
+
+		if (triggerLoading) {
+			loading = false;
+		}
+	};
+
+	const refreshPulls = async () => {
+		fetchingPulls = true;
+		try {
+			const newPulls = await getPullRequests(10);
+
+			// check if any pull requests have been merged
+			const currentMergedPulls = pulls.filter((pull) => pull.state === 'MERGED');
+			const newMergedPulls = newPulls.filter((pull) => pull.state === 'MERGED');
+			const mergedPulls = newMergedPulls.filter(
+				(pull) => !currentMergedPulls.some((p) => p.number === pull.number)
+			);
+
+			if (mergedPulls.length > 0 && pulls.length > 0) {
+				sendNotification({
+					title: 'Friendshipper',
+					body: 'Quick Submit changes merged!',
+					icon: '/assets/icon.png'
+				});
+			}
+
+			pulls = newPulls;
+		} catch (e) {
+			await emit('error', e);
+		}
+		fetchingPulls = false;
+	};
+
+	const refreshSnapshots = async () => {
+		loadingSnapshots = true;
+		try {
+			snapshots = await listSnapshots();
+		} catch (e) {
+			await emit('error', e);
+		}
+		loadingSnapshots = false;
+	};
+
+	const handleRestoreSnapshot = async (commit: string) => {
+		loadingSnapshots = true;
+
+		try {
+			await restoreSnapshot(commit);
+
+			$selectedFiles = [];
+			selectAll = false;
+
+			await refreshFiles(true);
+
+			await emit('success', 'Snapshot restored!');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loadingSnapshots = false;
+	};
+
+	const handleDeleteSnapshot = async (commit: string) => {
+		loadingSnapshots = true;
+
+		try {
+			await deleteSnapshot(commit);
+
+			$selectedFiles = [];
+			selectAll = false;
+
+			await refreshSnapshots();
+
+			await emit('success', 'Snapshot deleted!');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loadingSnapshots = false;
+	};
+
+	const setExpandedCommit = async (commit: string) => {
+		expandedCommit = commit;
+
+		if (commit === '') {
+			commitFiles = [];
+			return;
+		}
+
+		loadingCommitFiles = true;
+		commitFiles = await showCommitFiles(commit, true);
+		loadingCommitFiles = false;
+	};
+
+	const handleRevertFiles = async () => {
+		loading = true;
+
+		await refreshFiles(false);
+
+		const req: RevertFilesRequest = {
+			files: $selectedFiles.map((file) => file.path)
+		};
+
+		try {
+			await revertFiles(req);
+
+			$repoStatus = await getRepoStatus();
+
+			$selectedFiles = [];
+			selectAll = false;
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		await refreshFiles(false);
+
+		loading = false;
+	};
+
+	const handleSaveSnapshot = async () => {
+		loading = true;
+
+		await refreshFiles(false);
+
+		try {
+			await saveSnapshot($selectedFiles.map((file) => file.path));
+
+			$selectedFiles = [];
+			selectAll = false;
+
+			await emit('success', 'Snapshot saved!');
+
+			await refreshSnapshots();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+	};
+
+	const handleQuickSubmit = async () => {
+		loading = true;
+		quickSubmitting = true;
+
+		await refreshFiles(false);
+
+		const req: PushRequest = {
+			commitMessage: $commitMessage,
+			files: $selectedFiles.map((file) => file.path)
+		};
+
+		try {
+			await quickSubmit(req);
+
+			$repoStatus = await getRepoStatus();
+
+			$commitMessage = '';
+			$selectedFiles = [];
+			selectAll = false;
+
+			await refreshPulls();
+
+			await emit('success', 'Pull request opened!');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		quickSubmitting = false;
+		loading = false;
+	};
+
+	const handleOpenPreferences = async () => {
+		promptForPAT = false;
+		preferencesOpen = true;
+		await emit('open-preferences');
+	};
+	const getStatusBadgeText = (pull: GitHubPullRequest): string => {
+		if (pull.state === 'OPEN') {
+			if (pull.mergeable === 'CONFLICTING') {
+				return 'Conflicts';
+			}
+
+			if (pull.mergeQueueEntry !== null) {
+				if (
+					pull.mergeQueueEntry.state === 'QUEUED' ||
+					pull.mergeQueueEntry.state === 'AWAITING_CHECKS'
+				) {
+					return 'Queued';
+				}
+
+				if (pull.mergeQueueEntry.state === 'UNMERGEABLE') {
+					return 'Unmergeable';
+				}
+			}
+			return 'Open';
+		}
+		if (pull.state === 'MERGED') {
+			return 'Merged';
+		}
+		if (pull.state === 'CLOSED') {
+			return 'Closed';
+		}
+
+		return '';
+	};
+
+	const getStatusBadgeClass = (pull: GitHubPullRequest): string => {
+		if (pull.state === 'OPEN') {
+			if (pull.mergeable === 'CONFLICTING') {
+				return 'bg-red-700 dark:bg-red-700';
+			}
+
+			if (pull.mergeQueueEntry !== null) {
+				if (
+					pull.mergeQueueEntry.state === 'QUEUED' ||
+					pull.mergeQueueEntry.state === 'AWAITING_CHECKS'
+				) {
+					return 'bg-yellow-500 dark:bg-yellow-500 animate-pulse';
+				}
+
+				if (pull.mergeQueueEntry.state === 'UNMERGEABLE') {
+					return 'bg-red-700 dark:bg-red-700';
+				}
+			}
+		}
+		if (pull.state === 'MERGED') {
+			return 'bg-lime-600 dark:bg-lime-600';
+		}
+		if (pull.state === 'CLOSED') {
+			return 'bg-red-800 dark:bg-red-800';
+		}
+
+		return 'bg-primary-500 dark:bg-primary-500';
+	};
+
+	onMount(() => {
+		void refreshFiles(true);
+		void refreshSnapshots();
+
+		if ($appConfig.githubPAT === '') {
+			if (!preferencesOpen) {
+				promptForPAT = true;
+			}
+		} else {
+			void refreshPulls();
+		}
+
+		const interval = setInterval(() => {
+			if (!quickSubmitting) {
+				void refreshFiles(true);
+				void refreshSnapshots();
+			}
+		}, 10000);
+
+		const pullsInterval = setInterval(() => {
+			if (!fetchingPulls && !preferencesOpen) {
+				if ($appConfig.githubPAT !== '') {
+					void refreshPulls();
+				} else {
+					promptForPAT = true;
+				}
+			}
+		}, 10000);
+
+		return () => {
+			clearInterval(interval);
+			clearInterval(pullsInterval);
+		};
+	});
+</script>
+
+<div class="flex items-center justify-between gap-2">
+	<div class="flex items-center gap-2">
+		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Submit Changes</p>
+		<Button disabled={loading} class="!p-1.5" primary on:click={() => refreshFiles(true)}>
+			{#if loading}
+				<Spinner size="4" />
+			{:else}
+				<RotateOutline class="w-4 h-4" />
+			{/if}
+		</Button>
+	</div>
+</div>
+<div class="flex flex-row h-full gap-2 overflow-auto">
+	<div class="flex flex-col gap-2 w-full h-full overflow-x-auto">
+		<ModifiedFilesCard
+			disabled={loading}
+			bind:selectedFiles={$selectedFiles}
+			bind:selectAll
+			modifiedFiles={$allModifiedFiles}
+			onRevertFiles={handleRevertFiles}
+			onSaveSnapshot={handleSaveSnapshot}
+		/>
+	</div>
+	<div class="flex flex-col h-full gap-2 w-full max-w-[32rem]">
+		<Card
+			class="w-full h-full p-4 sm:p-4 max-w-full max-h-16 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+		>
+			<div class="flex flex-row items-center justify-between gap-2">
+				<p class="font-semibold text-sm text-gray-400">
+					On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
+				</p>
+			</div>
+		</Card>
+		<Card
+			class="w-full p-4 sm:p-4 max-w-full h-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+		>
+			<div class="flex flex-col w-full h-full gap-2">
+				<Label for="commit-message" class="mb-2 text-white">Commit Message</Label>
+				<Textarea
+					id="commit-message"
+					bind:value={$commitMessage}
+					class="text-white bg-secondary-800 dark:bg-space-950 min-h-[4rem] h-full border-gray-400"
+				/>
+				<div class="flex flex-row w-full align-middle justify-end">
+					<ButtonGroup class="space-x-px">
+						<Button
+							id="quick-submit"
+							color="primary"
+							disabled={!canSubmit}
+							on:click={handleQuickSubmit}
+							>Quick Submit
+							<QuestionCircleOutline class="w-6 h-fit pl-2 align-middle" />
+						</Button>
+					</ButtonGroup>
+				</div>
+			</div>
+		</Card>
+	</div>
+</div>
+<Card
+	class="w-full p-4 mt-2 sm:p-4 max-w-full min-h-[16rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+>
+	<Tabs style="underline" contentClass="bg-secondary-700 dark:bg-space-900">
+		<TabItem open title="My Submits" class="bg-secondary-700 dark:bg-space-900">
+			<Table color="custom" class="mt-3" striped>
+				<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+					<TableHeadCell class="p-2">Number</TableHeadCell>
+					<TableHeadCell class="p-2">Title</TableHeadCell>
+					<TableHeadCell class="p-2">Status</TableHeadCell>
+					<TableHeadCell class="p-2">Created/Merged At</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each pulls as pull, index}
+						<TableBodyRow
+							class="text-left border-b-0 p-2 {index % 2 === 0
+								? 'bg-secondary-700 dark:bg-space-900'
+								: 'bg-secondary-800 dark:bg-space-950'}"
+						>
+							<TableBodyCell id="pr-{index}" class="p-2">
+								<Button
+									size="sm"
+									class="p-2 py-0 flex gap-1 border-none bg-blue-500 dark:bg-blue-500 hover:bg-blue-600 dark:hover:bg-blue-600 border-r-2"
+									on:click={() => open(pull.permalink)}
+								>
+									<LinkOutline class="w-3 h-3" />
+									{pull.number}
+								</Button>
+							</TableBodyCell>
+							<TableBodyCell class="p-2">
+								{pull.title}
+							</TableBodyCell>
+							<TableBodyCell class="p-2"
+								><Badge class="text-white dark:text-white w-full {getStatusBadgeClass(pull)}"
+									>{getStatusBadgeText(pull)}</Badge
+								></TableBodyCell
+							>
+							<TableBodyCell class="p-2"
+								>{new Date(
+									pull.mergedAt !== null ? pull.mergedAt : pull.createdAt
+								).toLocaleString()}</TableBodyCell
+							>
+						</TableBodyRow>
+					{:else}
+						<TableBodyRow>
+							<TableBodyCell class="p-2" />
+							<TableBodyCell class="p-2">You have no open pull requests.</TableBodyCell>
+						</TableBodyRow>
+					{/each}
+				</TableBody>
+			</Table>
+		</TabItem>
+		<TabItem title="Snapshots">
+			<Table color="custom" class="mt-3" striped>
+				<TableHead
+					align="center"
+					class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950"
+				>
+					<TableHeadCell class="p-2">Timestamp</TableHeadCell>
+					<TableHeadCell class="p-2">Commit</TableHeadCell>
+					<TableHeadCell class="p-2 text-center">Restore</TableHeadCell>
+					<TableHeadCell class="p-2 text-center">Files</TableHeadCell>
+					<TableHeadCell class="p-2 text-center">Delete</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each snapshots as snapshot, index}
+						<TableBodyRow
+							align="center"
+							class="text-left border-b-0 p-2 {index % 2 === 0
+								? 'bg-secondary-800 dark:bg-space-900'
+								: 'bg-secondary-700 dark:bg-space-950'}"
+						>
+							<TableBodyCell class="p-2">
+								{new Date(snapshot.timestamp).toLocaleString()}
+							</TableBodyCell>
+							<TableBodyCell class="p-2">
+								{snapshot.commit}
+							</TableBodyCell>
+							<TableBodyCell class="flex justify-center p-2"
+								><Button
+									disabled={loadingSnapshots}
+									size="xs"
+									on:click={async () => {
+										await handleRestoreSnapshot(snapshot.commit);
+									}}>Restore</Button
+								></TableBodyCell
+							>
+							<TableBodyCell class="py-2 w-4">
+								<Button
+									size="xs"
+									color="primary"
+									on:click={() =>
+										expandedCommit === snapshot.commit
+											? setExpandedCommit('')
+											: setExpandedCommit(snapshot.commit)}
+								>
+									{#if expandedCommit === snapshot.commit}
+										Hide
+									{:else}
+										Show
+									{/if}
+								</Button>
+							</TableBodyCell>
+							<TableBodyCell class="flex items-center justify-center py-2">
+								<Button
+									size="xs"
+									color="red"
+									on:click={() => handleDeleteSnapshot(snapshot.commit)}
+								>
+									Delete
+								</Button>
+							</TableBodyCell>
+						</TableBodyRow>
+						{#if expandedCommit === snapshot.commit}
+							<TableBodyRow
+								class="text-left border-b-0 p-2 {index % 2 === 0
+									? 'bg-secondary-700 dark:bg-space-900'
+									: 'bg-secondary-800 dark:bg-space-950'}"
+							>
+								<td />
+								<td colspan="4" class="border-0">
+									<div class="w-full pb-4 px-6">
+										<p class="text-white">Commit Files</p>
+										{#if loadingCommitFiles}
+											<Spinner class="w-4 h-4" />
+										{:else}
+											{#each commitFiles as file}
+												<span class={getCommitFileTextClass(file.action)}>
+													{file.file}<br />
+												</span>
+											{/each}
+										{/if}
+									</div>
+								</td>
+							</TableBodyRow>
+						{/if}
+					{:else}
+						<TableBodyRow>
+							<TableBodyCell class="p-2" />
+							<TableBodyCell class="p-2">You have no snapshots.</TableBodyCell>
+						</TableBodyRow>
+					{/each}
+				</TableBody>
+			</Table>
+		</TabItem>
+	</Tabs>
+</Card>
+<Tooltip
+	triggeredBy="#quick-submit"
+	class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
+	placement="bottom"
+	><p>
+		<span class="text-primary-400">Quick Submit</span> allows you to submit changes without syncing
+		latest from <span class="font-mono text-primary-400">main</span>.<br /><br />
+		This will open a pull request on GitHub and automatically merge it, putting your changes into the
+		merge queue. Because of this, you may need to wait for other builds in the merge queue to finish
+		before your changes will appear on
+		<span class="font-mono text-primary-400">main</span>.<br /><br />
+		You may only <span class="text-primary-400">Quick Submit</span> when on
+		<span class="text-primary-400">main</span>.
+	</p>
+</Tooltip>
+
+<Modal open={promptForPAT} dismissable={false} class="bg-secondary-700 dark:bg-space-900">
+	<div class="flex items-center justify-between gap-2">
+		<span>Looks like you haven't provided a GitHub Personal Access Token yet!</span>
+		<Button size="xs" on:click={handleOpenPreferences}>Open Preferences</Button>
+	</div>
+</Modal>
+
+<ProgressModal showModal={quickSubmitting} title="Opening pull request" />

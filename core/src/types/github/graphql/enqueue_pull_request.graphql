@@ -1,0 +1,5 @@
+mutation EnqueuePullRequest($id: ID!) {
+    enqueuePullRequest(input : {pullRequestId: $id}) {
+        clientMutationId
+    }
+}

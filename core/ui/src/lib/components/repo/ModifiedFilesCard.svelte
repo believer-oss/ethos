@@ -1,0 +1,320 @@
+<script lang="ts">
+	import {
+		Alert,
+		Button,
+		Card,
+		Checkbox,
+		Modal,
+		Table,
+		TableBody,
+		TableBodyCell,
+		TableBodyRow,
+		TableHead,
+		TableHeadCell,
+		Tooltip
+	} from 'flowbite-svelte';
+	import {
+		CloseCircleSolid,
+		FileEditSolid,
+		InfoCircleSolid,
+		PlusSolid
+	} from 'flowbite-svelte-icons';
+	import { type ModifiedFile, ModifiedFileState } from '$lib/types/index.js';
+
+	export let disabled: boolean;
+	export let modifiedFiles: ModifiedFile[];
+	export let selectedFiles: ModifiedFile[];
+	export let onSaveSnapshot: () => Promise<void> = async () => {};
+	export let snapshotsEnabled = true;
+	export let selectAll: boolean = false;
+	export let onRevertFiles: (files: string[]) => Promise<void>;
+
+	let showRevertConfirmation = false;
+	let shiftHeld = false;
+
+	const onKeyDown = (e: KeyboardEvent) => {
+		if (e.key === 'Shift') {
+			shiftHeld = true;
+		}
+	};
+
+	const onKeyup = (e: KeyboardEvent) => {
+		if (e.key === 'Shift') {
+			shiftHeld = false;
+		}
+	};
+
+	const promptForRevertConfirmation = () => {
+		showRevertConfirmation = true;
+	};
+
+	const closeRevertConfirmation = () => {
+		showRevertConfirmation = false;
+	};
+
+	const handleFileToggled = (selectedFile: ModifiedFile) => {
+		// if ctrl is held, select or unselect everything in between
+		if (shiftHeld) {
+			const currentIndex = modifiedFiles.findIndex((file) => file.path === selectedFile.path);
+			const lastSelectedIndex = modifiedFiles.findIndex(
+				(file) => selectedFiles[selectedFiles.length - 1].path === file.path
+			);
+
+			if (currentIndex > lastSelectedIndex) {
+				for (let i = lastSelectedIndex + 1; i <= currentIndex; i += 1) {
+					if (!selectedFiles.includes(modifiedFiles[i])) {
+						selectedFiles = [...selectedFiles, modifiedFiles[i]];
+					} else {
+						selectedFiles = selectedFiles.filter((item) => item.path !== modifiedFiles[i].path);
+					}
+				}
+			} else {
+				for (let i = currentIndex; i < lastSelectedIndex; i += 1) {
+					if (!selectedFiles.includes(modifiedFiles[i])) {
+						selectedFiles = [...selectedFiles, modifiedFiles[i]];
+					} else {
+						selectedFiles = selectedFiles.filter((item) => item.path !== modifiedFiles[i].path);
+					}
+				}
+			}
+
+			// if we're unchecking, include the last selected file as well
+			if (!selectedFiles.includes(selectedFile)) {
+				selectedFiles = selectedFiles.filter(
+					(item) => item.path !== modifiedFiles[lastSelectedIndex].path
+				);
+			}
+
+			return;
+		}
+
+		if (!selectedFiles.includes(selectedFile)) {
+			selectedFiles = [...selectedFiles, selectedFile];
+		} else {
+			selectedFiles = selectedFiles.filter((item) => item.path !== selectedFile.path);
+		}
+	};
+	const handleSelectAllFiles = (e: Event) => {
+		if ((e.target as HTMLInputElement).checked) {
+			selectAll = true;
+			selectedFiles = modifiedFiles.map((file) => file) ?? [];
+		} else {
+			selectAll = false;
+			selectedFiles = [];
+		}
+	};
+
+	const getFileTextClass = (file: ModifiedFile): string => {
+		if (file.workingState === '?') {
+			return 'text-lime-500 dark:text-lime-500';
+		}
+		if (file.workingState === 'M') {
+			return 'text-yellow-300 dark:text-yellow-300';
+		}
+		if (file.workingState === 'D') {
+			return 'text-red-700 dark:text-red-700';
+		}
+
+		if (file.indexState === 'A') {
+			return 'text-lime-500 dark:text-lime-500';
+		}
+		if (file.indexState === 'M') {
+			return 'text-yellow-300 dark:text-yellow-300';
+		}
+		if (file.indexState === 'D') {
+			return 'text-red-700 dark:text-red-700';
+		}
+
+		return '';
+	};
+
+	const getModifiedState = (file: ModifiedFile): ModifiedFileState => {
+		if (file.workingState === '?') {
+			return ModifiedFileState.Added;
+		}
+		if (file.workingState === 'M') {
+			return ModifiedFileState.Modified;
+		}
+		if (file.workingState === 'D') {
+			return ModifiedFileState.Deleted;
+		}
+
+		if (file.indexState === 'A') {
+			return ModifiedFileState.Added;
+		}
+		if (file.indexState === 'M') {
+			return ModifiedFileState.Modified;
+		}
+		if (file.indexState === 'D') {
+			return ModifiedFileState.Deleted;
+		}
+
+		return ModifiedFileState.Unknown;
+	};
+</script>
+
+<svelte:window on:keydown={onKeyDown} on:keyup={onKeyup} />
+<Card
+	class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 h-full overflow-y-hidden border-0 shadow-none"
+>
+	<div class="flex justify-between items-center gap-2 pb-2">
+		<h3 class="text-primary-400 text-xl">Modified Files</h3>
+		<div class="flex gap-2">
+			<Button
+				size="xs"
+				disabled={disabled || selectedFiles.length === 0}
+				on:click={promptForRevertConfirmation}>Revert Selected</Button
+			>
+			{#if snapshotsEnabled}
+				<Button
+					size="xs"
+					disabled={disabled || selectedFiles.length === 0}
+					on:click={onSaveSnapshot}>Save Snapshot</Button
+				>
+			{/if}
+		</div>
+	</div>
+	<Table color="custom" striped={true}>
+		<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+			<TableHeadCell class="p-1 w-8">
+				<Checkbox
+					disabled={modifiedFiles.length === 0}
+					class="!p-1.5"
+					checked={selectAll}
+					on:change={(e) => {
+						handleSelectAllFiles(e);
+					}}
+				/>
+				<Tooltip
+					class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
+					placement="right"
+					>Select/deselect all
+				</Tooltip>
+			</TableHeadCell>
+			<TableHeadCell class="p-1" />
+			<TableHeadCell class="p-1">File Path</TableHeadCell>
+		</TableHead>
+		<TableBody>
+			{#each modifiedFiles as file, index}
+				<TableBodyRow
+					class="text-left border-b-0 {index % 2 === 0
+						? 'bg-secondary-700 dark:bg-space-900'
+						: 'bg-secondary-800 dark:bg-space-950'}"
+				>
+					<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
+						<Checkbox
+							class="!p-1.5"
+							checked={selectedFiles.some((selectedFile) => selectedFile.path === file.path)}
+							on:change={() => {
+								handleFileToggled(file);
+							}}
+						/>
+					</TableBodyCell>
+					<TableBodyCell tdClass="p-1 w-8">
+						{#if getModifiedState(file) === ModifiedFileState.Added}
+							<PlusSolid class="w-4 h-4 text-lime-500" />
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="right"
+								>Added
+							</Tooltip>
+						{:else if getModifiedState(file) === ModifiedFileState.Modified}
+							<FileEditSolid class="w-4 h-4 text-yellow-300" />
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="right"
+								>Modified
+							</Tooltip>
+						{:else if getModifiedState(file) === ModifiedFileState.Deleted}
+							<CloseCircleSolid class="w-4 h-4 text-red-700" />
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="right"
+								>Deleted
+							</Tooltip>
+						{/if}
+					</TableBodyCell>
+					<TableBodyCell class="p-1 whitespace-nowrap font-medium">
+						<Button
+							outline
+							size="xs"
+							class="p-0 w-full active:border-none focus:ring-0 dark:active:border-none dark:focus:ring-0 border-none justify-start items-center text-left {getFileTextClass(
+								file
+							)} {index % 2 === 0
+								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
+								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
+							on:click={() => handleFileToggled(file)}>{file.path}</Button
+						>
+					</TableBodyCell>
+				</TableBodyRow>
+			{:else}
+				<TableBodyRow class="text-center border-b-0 bg-secondary-700 dark:bg-space-900">
+					<TableBodyCell class="p-1" colspan="3">
+						<p class="text-gray-300">No modified files</p>
+					</TableBodyCell>
+				</TableBodyRow>
+			{/each}
+		</TableBody>
+	</Table>
+</Card>
+
+<Modal
+	class="bg-secondary-700 dark:bg-space-900"
+	bodyClass="!border-t-0 flex-1 overflow-y-auto overscroll-contain"
+	open={showRevertConfirmation}
+	dismissable={false}
+>
+	<div class="flex flex-col h-full gap-2">
+		<p class="text-lg font-semibold text-gray-300">
+			Are you sure you want to revert the selected files?
+		</p>
+		<Alert class="bg-secondary-800 dark:bg-space-950 my-2 py-2 text-white dark:text-white">
+			<InfoCircleSolid slot="icon" class="w-4 h-4" />
+			Warning: Reverting <span class="font-bold">newly added</span> files will delete them from your
+			computer.
+		</Alert>
+		<div
+			class="bg-secondary-800 dark:bg-space-950 p-2 h-full w-full text-white overflow-auto text-nowrap"
+		>
+			{#each selectedFiles as file}
+				<div class="flex gap-2 items-center">
+					{#if getModifiedState(file) === ModifiedFileState.Added}
+						<PlusSolid class="w-4 h-4 text-lime-500" />
+						<Tooltip
+							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+							placement="right"
+							>Added
+						</Tooltip>
+					{:else if getModifiedState(file) === ModifiedFileState.Modified}
+						<FileEditSolid class="w-4 h-4 text-yellow-300" />
+						<Tooltip
+							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+							placement="right"
+							>Modified
+						</Tooltip>
+					{:else if getModifiedState(file) === ModifiedFileState.Deleted}
+						<CloseCircleSolid class="w-4 h-4 text-red-700" />
+						<Tooltip
+							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+							placement="right"
+							>Deleted
+						</Tooltip>
+					{/if}
+					<p class="font-bold {getFileTextClass(file)}">{file.path}</p>
+				</div>
+			{/each}
+		</div>
+		<div class="flex justify-end gap-2">
+			<Button
+				size="sm"
+				on:click={async () => {
+					closeRevertConfirmation();
+					await onRevertFiles(selectedFiles.map((file) => file.path));
+
+					selectAll = false;
+				}}>Yes</Button
+			>
+			<Button size="sm" on:click={closeRevertConfirmation}>No</Button>
+		</div>
+	</div>
+</Modal>
