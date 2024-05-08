@@ -165,10 +165,6 @@ impl SsoAccessTokenProvider {
                         refresh_token: String::from(refresh_token),
                     };
 
-                    print!("\x1B[1A");
-                    print!("\x1B[2K");
-                    std::io::stdout().flush().unwrap();
-
                     break Ok(access_token);
                 }
                 Err(err) => {
