@@ -13,7 +13,7 @@
 	export let playtest: Playtest | null;
 	export let onSubmit: () => void;
 
-	let project: string | null = null;
+	const project = playtest.metadata.annotations['believer.dev/project'].toString();
 	let prevProject: string | null = null;
 
 	let commits: { name: string; value: string }[] = [];
@@ -95,7 +95,7 @@
 				feedbackURL: data.feedbackURL
 			};
 
-			await updatePlaytest(playtest?.metadata.name, spec);
+			await updatePlaytest(playtest?.metadata.name, data.project, spec);
 		} else if (mode === ModalState.Creating) {
 			const spec: PlaytestSpec = {
 				displayName: data.name,
@@ -180,7 +180,7 @@
 		<Label class="space-y-2 text-xs text-white">
 			<span>Project</span>
 			<Select
-				bind:value={project}
+				value={project}
 				size="sm"
 				name="project"
 				class={inputClass}
