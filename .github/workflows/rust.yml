@@ -67,7 +67,8 @@ jobs:
         with:
           files: |
             ${{ matrix.app }}/**/*
-            core/**/*
+            ethos-core/**/*
+            Cargo.lock
 
       - name: Install ubuntu dependencies
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
@@ -171,6 +172,7 @@ jobs:
           files: |
             ${{ matrix.app }}/**/*
             ethos-core/**/*
+            Cargo.lock
 
       - name: set up rust toolchain
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
