@@ -1,6 +1,8 @@
 name: Rust
 
 on:
+  push:
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
     types: [ "labeled", "opened", "reopened", "synchronize" ]
@@ -13,7 +15,7 @@ env:
 
 jobs:
   frontend-checks:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'push') }}
     strategy:
       matrix:
         app: [ "core/ui", "friendshipper", "birdie" ]
@@ -46,7 +48,7 @@ jobs:
           yarn lint
 
   build-linux:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'push') }}
     runs-on:
       group: ethos-linux
     strategy:
@@ -95,10 +97,6 @@ jobs:
 
       - name: Run unit tests
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cargo test --verbose --release -p ethos-core
           cargo test --verbose --release --bin ${{ matrix.app }}
@@ -112,10 +110,6 @@ jobs:
 
       - name: Build
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cd ${{ matrix.app }}
           yarn
@@ -157,7 +151,7 @@ jobs:
         run: aws s3 sync ${REF##*-} s3://${{ secrets.S3_BUCKET_NAME }}/tauri-${{ matrix.app }}/${REF##*-}
 
   build-windows:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'push') }}
     runs-on:
       group: ethos-windows
     strategy:
@@ -192,10 +186,6 @@ jobs:
 
       - name: Run unit tests
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cargo test --verbose --release -p ethos-core
           cargo test --verbose --release --bin ${{ matrix.app }}
@@ -209,10 +199,6 @@ jobs:
 
       - name: Build
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cd ${{ matrix.app }}
           yarn
