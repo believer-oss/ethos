@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::mpsc::Sender;
 
 use anyhow::{anyhow, Result};
