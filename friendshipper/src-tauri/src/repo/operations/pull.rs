@@ -122,15 +122,34 @@ impl Task for PullOp {
 
                 status_op.execute().await?;
             }
+        } else {
+            // If we're not on a Quick Submit branch, update the status and check for conflicts.
+            let status_op = StatusOp {
+                repo_status: self.repo_status.clone(),
+                app_config: self.app_config.clone(),
+                git_client: self.git_client.clone(),
+                aws_client: self.aws_client.clone(),
+                storage: self.storage.clone(),
+                skip_fetch: true,
+                skip_dll_check: false,
+            };
+
+            status_op.execute().await?;
+
+            let repo_status = self.repo_status.read();
+            if !repo_status.conflicts.is_empty() {
+                bail!("Conflicts detected, cannot pull. See Diagnostics.");
+            }
         }
 
         // Check repo status to see if we need to pull at all.
         //
-        // Note that we do NOT check to see if there are upstream conflicts. Typically this shouldn't be an issue since most
-        // content creators will be using Quick Submit to submit changes, and checking for conflicts after switching over from
-        // a Quick Submit branch will always yield false positives, as the commits from the f11r branch will almost always have
-        // a different SHA since there will likely have been other changes that have gone in since the submitter synced.
-        // Since we pull using a rebase, the local commits will be safely merged with the upstream ones and essentially dissapear.
+        // Note that we do NOT check to see if there are upstream conflicts if this is a Quick Submit branch. Typically
+        // this shouldn't be an issue since most content creators will be using Quick Submit to submit changes, and checking for
+        // conflicts after switching over from a Quick Submit branch will always yield false positives, as the commits from the
+        // f11r branch will almost always have a different SHA since there will likely have been other changes that have gone in
+        // since the submitter synced. Since we pull using a rebase, the local commits will be safely merged with the upstream ones
+        // and essentially disappear.
         {
             let repo_status = self.repo_status.read();
             if repo_status.commits_behind == 0 {

@@ -50,7 +50,7 @@
 
 			repoStatusCheck = CheckStatus.Success;
 
-			if ($repoStatus?.conflictsUpstream) {
+			if ($repoStatus?.conflictUpstream) {
 				mergeConflictCheck = CheckStatus.Failure;
 			} else {
 				mergeConflictCheck = CheckStatus.Success;
