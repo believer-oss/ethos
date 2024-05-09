@@ -1,6 +1,12 @@
+<div align='center'>
+
 # Ethos
 
-Ethos is a collection of game development tools. Each of these tools serves a unique purpose.
+**A collection of game development tools for working with Git**
+
+[![Discord](https://img.shields.io/discord/1194345901687316520?logo=discord&logoColor=white&color=%235865F2)](https://discord.gg/pzEgMhynzP)
+[![Build status](https://github.com/believer-oss/ethos/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/believer-oss/ethos/actions/workflows/rust.yml)
+</div>
 
 ### The stack
 
@@ -31,3 +37,7 @@ Birdie is an application for art teams to manage their assets through Git LFS. A
 Birdie is in its early stages. Our plan for Birdie is to introduce a more well-defined game-centric taxonomy to files via metadata, enabling users to search for files by "character", "location", or "chapter", for example.
 
 See Birdie's documentation [here](./birdie/README.md).
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
