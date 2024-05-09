@@ -7,7 +7,6 @@
 		DarkMode,
 		Modal,
 		Sidebar,
-		SidebarDropdownItem,
 		SidebarDropdownWrapper,
 		SidebarGroup,
 		SidebarItem,
@@ -88,12 +87,14 @@
 	let latest = '';
 	let updateAvailable = false;
 
+	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus?.conflicts.length > 0;
+
 	const spanClass = 'flex-1 ml-3 whitespace-nowrap';
-	const sidebarSubItemClass = 'my-1 pl-8 text-sm text-primary-400 dark:text-primary-400';
+	const sidebarSubItemClass = 'mx-2 my-1 text-sm text-primary-400 dark:text-primary-400';
 	const sidebarSubItemInactiveClass =
-		'flex items-center justify-between my-1 px-2 py-1 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 bg-secondary-700 dark:bg-space-900 hover:bg-secondary-800 dark:hover:bg-space-950';
+		'flex items-center justify-between mx-2 my-1 px-2 py-1 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 bg-secondary-800 dark:bg-space-950 hover:bg-secondary-700 dark:hover:bg-space-900';
 	const sidebarSubItemActiveClass =
-		'flex items-center justify-between my-1 px-2 py-1 text-base font-normal bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950';
+		'flex items-center justify-between mx-2 my-1 px-2 py-1 text-base font-normal bg-secondary-700 dark:bg-space-900 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-700 dark:hover:bg-space-900';
 
 	$: activeUrl = $page.url.pathname;
 
@@ -516,7 +517,7 @@
 						<SidebarDropdownWrapper
 							label="Source"
 							class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-							ulClass="py-1"
+							ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 						>
 							<svelte:fragment slot="icon">
 								<CodeBranchSolid
@@ -538,14 +539,26 @@
 								active={activeUrl === '/source/submit'}
 							>
 								<svelte:fragment slot="subtext">
-									<span
-										class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
-										0
-											? 'bg-primary-600 dark:bg-primary-600'
-											: 'bg-gray-500 dark:bg-gray-500'}"
-									>
-										{$allModifiedFiles.length}
-									</span>
+									<div class="flex w-full gap-1 pl-2 ms-3 items-center justify-end">
+										<span
+											class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+											0
+												? 'bg-primary-600 dark:bg-primary-600'
+												: 'bg-gray-500 dark:bg-gray-500'}"
+										>
+											{$allModifiedFiles.length}
+										</span>
+										{#if conflictsDetected}
+											<span
+												class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+												0
+													? 'bg-red-700 dark:bg-red-700'
+													: 'bg-gray-500 dark:bg-gray-500'}"
+											>
+												{$repoStatus?.conflicts.length}
+											</span>
+										{/if}
+									</div>
 								</svelte:fragment>
 							</SidebarItem>
 							<SidebarItem
@@ -589,7 +602,7 @@
 						<SidebarDropdownWrapper
 							label="Ludos"
 							class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-							ulClass="py-1"
+							ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 						>
 							<svelte:fragment slot="icon">
 								<DatabaseSolid
@@ -602,9 +615,10 @@
 							<svelte:fragment slot="arrowdown">
 								<ChevronDownSolid class="h-3 w-3 text-white" />
 							</svelte:fragment>
-							<SidebarDropdownItem
+							<SidebarItem
 								label="Storage"
 								activeClass={sidebarSubItemActiveClass}
+								nonActiveClass={sidebarSubItemInactiveClass}
 								class={sidebarSubItemClass}
 								href="/ludos/objects"
 								active={activeUrl === '/ludos/objects'}
@@ -614,7 +628,7 @@
 					<SidebarDropdownWrapper
 						label="System"
 						class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-						ulClass="py-1"
+						ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 					>
 						<svelte:fragment slot="icon">
 							<ComputerSpeakerSolid
@@ -627,9 +641,10 @@
 						<svelte:fragment slot="arrowdown">
 							<ChevronDownSolid class="h-3 w-3 text-white" />
 						</svelte:fragment>
-						<SidebarDropdownItem
+						<SidebarItem
 							label="Logs"
 							activeClass={sidebarSubItemActiveClass}
+							nonActiveClass={sidebarSubItemInactiveClass}
 							class={sidebarSubItemClass}
 							href="/system/logs"
 							active={activeUrl === '/system/logs'}
