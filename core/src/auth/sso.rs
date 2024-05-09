@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::sync::mpsc::Sender;
 
 use anyhow::{anyhow, Result};
@@ -164,10 +163,6 @@ impl SsoAccessTokenProvider {
                         device_client,
                         refresh_token: String::from(refresh_token),
                     };
-
-                    print!("\x1B[1A");
-                    print!("\x1B[2K");
-                    std::io::stdout().flush().unwrap();
 
                     break Ok(access_token);
                 }
