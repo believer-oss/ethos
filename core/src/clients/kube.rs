@@ -486,6 +486,10 @@ impl KubeClient {
 
                 let mut playtest = Playtest::new(name, input.spec);
                 playtest.metadata.resource_version = existing.metadata.resource_version;
+                playtest.metadata.annotations = Some(BTreeMap::from([(
+                    String::from("believer.dev/project"),
+                    input.project,
+                )]));
                 playtest.spec.groups = existing.spec.groups;
 
                 match api.replace(name, &pp, &playtest).await {

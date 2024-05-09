@@ -93,6 +93,7 @@ pub struct CreatePlaytestRequest {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpdatePlaytestRequest {
+    pub project: String,
     pub spec: PlaytestSpec,
 }
 

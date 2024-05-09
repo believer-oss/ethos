@@ -25,8 +25,13 @@ export const createPlaytest = async (
 	await invoke('create_playtest', { req });
 };
 
-export const updatePlaytest = async (playtest: string, spec: PlaytestSpec): Promise<void> => {
+export const updatePlaytest = async (
+	playtest: string,
+	project: string,
+	spec: PlaytestSpec
+): Promise<void> => {
 	const req = {
+		project,
 		spec
 	};
 	await invoke('update_playtest', { playtest, req });
