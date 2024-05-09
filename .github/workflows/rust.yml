@@ -95,10 +95,6 @@ jobs:
 
       - name: Run unit tests
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cargo test --verbose --release -p ethos-core
           cargo test --verbose --release --bin ${{ matrix.app }}
@@ -112,10 +108,6 @@ jobs:
 
       - name: Build
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cd ${{ matrix.app }}
           yarn
@@ -192,10 +184,6 @@ jobs:
 
       - name: Run unit tests
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cargo test --verbose --release -p ethos-core
           cargo test --verbose --release --bin ${{ matrix.app }}
@@ -209,10 +197,6 @@ jobs:
 
       - name: Build
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_ROLE_NAME: ${{ secrets.AWS_ROLE_NAME }}
-          AWS_SSO_START_URL: ${{ secrets.AWS_SSO_START_URL }}
         run: |
           cd ${{ matrix.app }}
           yarn
