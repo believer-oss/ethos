@@ -1,6 +1,8 @@
 name: Rust
 
 on:
+  push:
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
     types: [ "labeled", "opened", "reopened", "synchronize" ]
@@ -13,7 +15,7 @@ env:
 
 jobs:
   frontend-checks:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'push') }}
     strategy:
       matrix:
         app: [ "core/ui", "friendshipper", "birdie" ]
@@ -46,7 +48,7 @@ jobs:
           yarn lint
 
   build-linux:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'push') }}
     runs-on:
       group: ethos-linux
     strategy:
@@ -149,7 +151,7 @@ jobs:
         run: aws s3 sync ${REF##*-} s3://${{ secrets.S3_BUCKET_NAME }}/tauri-${{ matrix.app }}/${REF##*-}
 
   build-windows:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'push') }}
     runs-on:
       group: ethos-windows
     strategy:
