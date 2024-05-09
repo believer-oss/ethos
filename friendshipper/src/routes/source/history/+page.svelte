@@ -33,6 +33,8 @@
 	let inAsyncOperation = false;
 	let asyncModalText = '';
 
+	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus.conflicts.length > 0;
+
 	const refresh = async () => {
 		loading = true;
 		repoStatus.set(await getRepoStatus());
@@ -191,12 +193,19 @@
 		<Button
 			size="xs"
 			color="primary"
-			disabled={inAsyncOperation}
+			disabled={inAsyncOperation || conflictsDetected}
 			on:click={async () => handleSyncClicked()}
 		>
 			<RotateOutline class="w-3 h-3 mr-2" />
 			Sync
 		</Button>
+		{#if conflictsDetected}
+			<Tooltip
+				class="ml-2 w-36 text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
+				placement="bottom"
+				>Conflicts detected!
+			</Tooltip>
+		{/if}
 		<Button
 			size="xs"
 			color="primary"

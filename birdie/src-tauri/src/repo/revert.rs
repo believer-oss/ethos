@@ -31,8 +31,8 @@ impl Task for RevertFilesOp {
             bail!("no files provided");
         }
 
-        let remote_branch = self.repo_status.read().remote_branch.clone();
-        let mut args: Vec<&str> = vec!["checkout", &remote_branch, "--"];
+        let branch = self.repo_status.read().branch.clone();
+        let mut args: Vec<&str> = vec!["checkout", &branch, "--"];
 
         for file in &self.files {
             args.push(file);
