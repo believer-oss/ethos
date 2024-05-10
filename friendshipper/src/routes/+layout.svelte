@@ -191,18 +191,15 @@
 
 		if (!loginRequired) {
 			try {
-				const [dynamicConfigResponse, projectConfigResponse, buildsResponse, locksResponse] =
-					await Promise.all([
-						getDynamicConfig(),
-						getProjectConfig(),
-						getBuilds(250),
-						verifyLocks()
-					]);
+				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
+					getDynamicConfig(),
+					getProjectConfig(),
+					getBuilds(250)
+				]);
 
 				projectConfigs.set(projectConfigResponse);
 				dynamicConfig.set(dynamicConfigResponse);
 				builds.set(buildsResponse);
-				locks.set(locksResponse);
 
 				if ($builds.entries && $builds.entries.length > 0) {
 					selectedCommit.set($builds.entries[0]);
@@ -211,15 +208,13 @@
 				}
 
 				if ($appConfig.repoPath !== '') {
-					const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
-						getRepoConfig(),
-						getRepoStatus(),
-						getAllCommits()
-					]);
+					const [repoConfigResponse, repoStatusResponse, commitsResponse, locksResponse] =
+						await Promise.all([getRepoConfig(), getRepoStatus(), getAllCommits(), verifyLocks()]);
 
 					repoConfig.set(repoConfigResponse);
 					repoStatus.set(repoStatusResponse);
 					commits.set(commitsResponse);
+					locks.set(locksResponse);
 				}
 
 				loadingBuilds = true;
