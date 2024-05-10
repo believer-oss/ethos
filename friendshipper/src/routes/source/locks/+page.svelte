@@ -18,7 +18,7 @@
 	import { onMount } from 'svelte';
 	import { RotateOutline } from 'flowbite-svelte-icons';
 	import { releaseLocks, verifyLocks } from '$lib/repo';
-	import { locks } from '$lib/stores';
+	import { allModifiedFiles, locks } from '$lib/stores';
 
 	let loading = false;
 	let selectedForRelease: string[] = [];
@@ -33,6 +33,9 @@
 	);
 	$: filteredTheirs = $locks.theirs.filter(
 		(item) => item.path.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1
+	);
+	$: unmodifiedLockedFiles = $locks.ours.filter(
+		(lock) => !$allModifiedFiles.find((file) => file.path === lock.path)
 	);
 
 	const handleRelease = (e: Event, path: string, ours: boolean) => {
@@ -106,6 +109,23 @@
 		loading = false;
 	};
 
+	const handleReleaseUnmodified = async () => {
+		if (unmodifiedLockedFiles.length === 0) return;
+
+		loading = true;
+		try {
+			await releaseLocks(
+				unmodifiedLockedFiles.map((lock) => lock.path),
+				false
+			);
+			await refreshLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+		selectedForRelease = [];
+		loading = false;
+	};
+
 	const formatPath = (path: string) => {
 		if (path === '/') return path;
 		return path.replace(/\/$/, '').split('/').pop();
@@ -135,6 +155,14 @@
 			on:click={handleReleaseSelected}
 			>Release Selected
 		</Button>
+		<Button
+			id="release-unmodified"
+			disabled={unmodifiedLockedFiles.length === 0}
+			class="!p-1.5 text-xs"
+			color="primary"
+			on:click={handleReleaseUnmodified}
+			>Unlock Unmodified (<span class="px-0.5">{unmodifiedLockedFiles.length}</span>)
+		</Button>
 		{#if loading}
 			<Spinner size="4" />
 		{/if}
@@ -154,6 +182,12 @@
 			>Warning: This will release other users' locks!
 		</Tooltip>
 	{/if}
+	<Tooltip
+		triggeredBy="#release-unmodified"
+		class="w-auto text-xs text-white bg-secondary-800 dark:bg-space-950"
+		placement="bottom"
+		>Release locks for any unmodified files
+	</Tooltip>
 </div>
 <Card
 	class="w-full min-h-[12rem] p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 overflow-y-hidden border-0 shadow-none"
