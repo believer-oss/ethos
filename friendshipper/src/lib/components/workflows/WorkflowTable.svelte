@@ -43,7 +43,7 @@
 		const annotations = workflow.metadata.annotations || {};
 		const displayName = annotations['believer.dev/display-name'];
 		if (displayName) {
-			return displayName as string;
+			return displayName;
 		}
 
 		// take everything up until the final -
@@ -56,7 +56,7 @@
 		const annotations = workflow.metadata.annotations || {};
 		const desc = annotations['believer.dev/description'];
 		if (desc) {
-			return desc as string;
+			return desc;
 		}
 		return `Build steps for ${getWorkflowName(workflow)}`;
 	};

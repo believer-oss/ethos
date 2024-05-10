@@ -13,13 +13,21 @@
 	export let playtest: Playtest | null;
 	export let onSubmit: () => void;
 
-	$: project = playtest?.metadata.annotations['believer.dev/project'] ?? null;
 	let prevProject: string | null = null;
 
 	let commits: { name: string; value: string }[] = [];
 	let maps: { value: string; name: string }[] = [];
 	let submitting = false;
 	let deleting = false;
+
+	const getPlaytestProject = (item: Nullable<Playtest>): string => {
+		if (item === null) return '';
+		if (item.metadata.annotations === null) return '';
+
+		return item.metadata.annotations['believer.dev/project'] ?? '';
+	};
+
+	$: project = getPlaytestProject(playtest);
 
 	const getProjectValues = async (
 		item: Nullable<Playtest>,
@@ -44,7 +52,7 @@
 			projVersions = entries;
 		}
 
-		maps = $activeProjectConfig?.maps.map((m) => ({ value: m, name: m }));
+		maps = $activeProjectConfig?.maps.map((m) => ({ value: m, name: m })) ?? [];
 
 		commits = projVersions.map((v) => ({
 			value: v.commit,
@@ -120,7 +128,7 @@
 		showModal = false;
 
 		// Put the real project back in the global state.
-		$appConfig.selectedArtifactProject = prevProject;
+		$appConfig.selectedArtifactProject = prevProject ?? '';
 
 		onSubmit();
 	};

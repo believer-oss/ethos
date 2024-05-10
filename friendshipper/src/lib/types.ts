@@ -60,8 +60,8 @@ export interface Metadata {
 	creationTimestamp: Nullable<string>;
 	name: string;
 	namespace: Nullable<string>;
-	annotations: Nullable<Map<string, string>>;
-	labels: Nullable<Map<string, string>>;
+	annotations: Nullable<Record<string, string>>;
+	labels: Nullable<Record<string, string>>;
 	uid: string;
 }
 
