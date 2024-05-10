@@ -41,3 +41,7 @@ See Birdie's documentation [here](./birdie/README.md).
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+
+## Acknowledgements
+
+- Martin Sturm (@sturmm) for granting us permission to use [aws-easy-sso](https://github.com/sturmm/aws-easy-sso)'s auth code for AWS SSO integration.
