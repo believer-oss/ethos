@@ -13,7 +13,7 @@
 	export let playtest: Playtest | null;
 	export let onSubmit: () => void;
 
-	const project = playtest.metadata.annotations['believer.dev/project'].toString();
+	$: project = playtest?.metadata.annotations['believer.dev/project'] ?? null;
 	let prevProject: string | null = null;
 
 	let commits: { name: string; value: string }[] = [];

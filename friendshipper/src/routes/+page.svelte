@@ -236,7 +236,7 @@
 		if (nextPlaytest !== null) {
 			const playtestAssignment = getPlaytestGroupForUser(nextPlaytest, $appConfig.userDisplayName);
 			if (playtestAssignment && playtestAssignment.serverRef) {
-				const project = nextPlaytest.metadata.annotations['believer.dev/project'].toString();
+				const project = nextPlaytest.metadata.annotations['believer.dev/project'];
 				const entry = await getBuilds(250, project).then((a) =>
 					a.entries.find((b) => b.commit === nextPlaytest.spec.version)
 				);
