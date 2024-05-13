@@ -555,20 +555,32 @@ pub async fn verify_locks(
 #[tauri::command]
 pub async fn get_servers(
     state: tauri::State<'_, State>,
-    commit: &str,
+    commit: Option<String>,
 ) -> Result<Vec<GameServerResults>, TauriError> {
-    let res = state
-        .client
-        .get(format!("{}/servers?commit={}", state.server_url, commit))
-        .send()
-        .await?;
+    let mut req = state.client.get(format!("{}/servers", state.server_url));
 
-    if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+    if let Some(commit) = commit {
+        req = req.query(&[("commit", commit)]);
     }
 
-    Ok(res.json().await?)
+    match req.send().await {
+        Ok(res) => {
+            if res.status().is_client_error() {
+                let body = res.text().await?;
+                Err(TauriError { message: body })
+            } else {
+                match res.json::<Vec<GameServerResults>>().await {
+                    Ok(res) => Ok(res),
+                    Err(err) => Err(TauriError {
+                        message: err.to_string(),
+                    }),
+                }
+            }
+        }
+        Err(err) => Err(TauriError {
+            message: err.to_string(),
+        }),
+    }
 }
 
 #[tauri::command]

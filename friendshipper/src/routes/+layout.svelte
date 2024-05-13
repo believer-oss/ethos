@@ -16,9 +16,9 @@
 	} from 'flowbite-svelte';
 	import {
 		BuildingSolid,
-		ChevronDownSolid,
-		ChevronUpSolid,
-		CloseSolid,
+		ChevronDownOutline,
+		ChevronUpOutline,
+		CloseOutline,
 		CodeBranchSolid,
 		CogOutline,
 		ComputerSpeakerSolid,
@@ -26,7 +26,8 @@
 		HomeSolid,
 		MinusOutline,
 		UserSolid,
-		WindowOutline
+		WindowOutline,
+		ServerOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { Canvas } from '@threlte/core';
@@ -97,9 +98,9 @@
 	const spanClass = 'flex-1 ml-3 whitespace-nowrap';
 	const sidebarSubItemClass = 'mx-2 my-1 text-sm text-primary-400 dark:text-primary-400';
 	const sidebarSubItemInactiveClass =
-		'flex items-center justify-between mx-2 my-1 px-2 py-1 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 bg-secondary-800 dark:bg-space-950 hover:bg-secondary-700 dark:hover:bg-space-900';
+			'flex items-center justify-between mx-2 my-1 px-2 py-1 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 bg-secondary-800 dark:bg-space-950 hover:bg-secondary-700 dark:hover:bg-space-900';
 	const sidebarSubItemActiveClass =
-		'flex items-center justify-between mx-2 my-1 px-2 py-1 text-base font-normal bg-secondary-700 dark:bg-space-900 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-700 dark:hover:bg-space-900';
+			'flex items-center justify-between mx-2 my-1 px-2 py-1 text-base font-normal bg-secondary-700 dark:bg-space-900 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-700 dark:hover:bg-space-900';
 
 	$: activeUrl = $page.url.pathname;
 
@@ -214,7 +215,7 @@
 
 				if ($appConfig.repoPath !== '') {
 					const [repoConfigResponse, repoStatusResponse, commitsResponse, locksResponse] =
-						await Promise.all([getRepoConfig(), getRepoStatus(), getAllCommits(), verifyLocks()]);
+							await Promise.all([getRepoConfig(), getRepoStatus(), getAllCommits(), verifyLocks()]);
 
 					repoConfig.set(repoConfigResponse);
 					repoStatus.set(repoStatusResponse);
@@ -225,29 +226,29 @@
 				loadingBuilds = true;
 
 				getWorkflows()
-					.then((response) => {
-						workflows.set(response.commits);
-						loadingBuilds = false;
-					})
-					.catch((e) => {
-						if (e instanceof Error) {
-							void emit('error', e);
-						}
-					});
+						.then((response) => {
+							workflows.set(response.commits);
+							loadingBuilds = false;
+						})
+						.catch((e) => {
+							if (e instanceof Error) {
+								void emit('error', e);
+							}
+						});
 			} catch (e) {
 				await emit('error', e);
 			}
 
 			if ($appConfig.engineRepoUrl !== '') {
 				getWorkflows(true)
-					.then((response) => {
-						engineWorkflows.set(response.commits);
-					})
-					.catch((e) => {
-						if (e instanceof Error) {
-							void emit('error', e);
-						}
-					});
+						.then((response) => {
+							engineWorkflows.set(response.commits);
+						})
+						.catch((e) => {
+							if (e instanceof Error) {
+								void emit('error', e);
+							}
+						});
 			}
 		}
 
@@ -318,28 +319,28 @@
 		};
 
 		initialize()
-			.then(() => {
-				void refresh();
-
-				const interval = setInterval(() => {
+				.then(() => {
 					void refresh();
-				}, refreshInterval);
-				const authInterval = setInterval(() => {
-					void checkAuth();
-				}, refreshInterval);
 
-				showWelcomeModal = !get(appConfig).initialized;
+					const interval = setInterval(() => {
+						void refresh();
+					}, refreshInterval);
+					const authInterval = setInterval(() => {
+						void checkAuth();
+					}, refreshInterval);
 
-				return () => {
-					clearInterval(interval);
-					clearInterval(authInterval);
-				};
-			})
-			.catch((e) => {
-				if (e instanceof Error) {
-					void emit('error', e);
-				}
-			});
+					showWelcomeModal = !get(appConfig).initialized;
+
+					return () => {
+						clearInterval(interval);
+						clearInterval(authInterval);
+					};
+				})
+				.catch((e) => {
+					if (e instanceof Error) {
+						void emit('error', e);
+					}
+				});
 	});
 
 	void listen('error', (e) => {
@@ -401,66 +402,66 @@
 <WelcomeModal bind:showModal={showWelcomeModal} onClose={initialize} />
 
 <PreferencesModal
-	bind:showModal={showPreferencesModal}
-	bind:requestInFlight={preferencesModalRequestInFlight}
-	bind:showProgressModal
-	{handleCheckForUpdates}
+		bind:showModal={showPreferencesModal}
+		bind:requestInFlight={preferencesModalRequestInFlight}
+		bind:showProgressModal
+		{handleCheckForUpdates}
 />
 
 <div class="flex flex-col h-screen w-screen border border-primary-900 overflow-hidden rounded-md">
 	<div
-		class="flex justify-between items-center gap-1 w-full h-8 bg-secondary-800 dark:bg-space-950 border-b border-opacity-50 border-dotted border-primary-500"
-		data-tauri-drag-region
+			class="flex justify-between items-center gap-1 w-full h-8 bg-secondary-800 dark:bg-space-950 border-b border-opacity-50 border-dotted border-primary-500"
+			data-tauri-drag-region
 	>
 		<div class="pl-2 flex gap-2 items-center">
 			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300"
-				>friendshipper</span
-			>
+		>friendshipper</span
+		>
 		</div>
 		<div class="pr-2 flex gap-2 justify-end">
 			<Button
-				outline
-				color="dark"
-				size="xs"
-				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
-				on:click={async () => {
+					outline
+					color="dark"
+					size="xs"
+					class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+					on:click={async () => {
 					await appWindow.minimize();
 				}}><MinusOutline class="h-4 w-4" /></Button
 			>
 			<Button
-				outline
-				color="dark"
-				size="xs"
-				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
-				on:click={async () => {
+					outline
+					color="dark"
+					size="xs"
+					class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+					on:click={async () => {
 					await appWindow.toggleMaximize();
 				}}><WindowOutline class="h-4 w-4" /></Button
 			>
 			<Button
-				outline
-				color="dark"
-				size="xs"
-				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
-				on:click={async () => {
+					outline
+					color="dark"
+					size="xs"
+					class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+					on:click={async () => {
 					await appWindow.hide();
-				}}><CloseSolid class="h-4 w-4" /></Button
+				}}><CloseOutline class="h-4 w-4" /></Button
 			>
 		</div>
 	</div>
 	{#if !initialized}
 		{#if loginRequired && loginPrompted}
 			<div
-				class="flex flex-col p-4 align-middle justify-around h-full w-full bg-secondary-800 dark:bg-space-950"
+					class="flex flex-col p-4 align-middle justify-around h-full w-full bg-secondary-800 dark:bg-space-950"
 			>
 				<Card
-					class="w-full p-4 sm:p-4 max-w-full flex flex-col align-middle gap-2 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+						class="w-full p-4 sm:p-4 max-w-full flex flex-col align-middle gap-2 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 				>
 					<img src="/assets/7B_5.png" alt="Friendshipper Logo" class="w-24 h-24 mx-auto" />
 					<h3 class="text-xl text-white text-center">Log in to Friendshipper!</h3>
 					<div class="flex flex-row justify-around align-middle">
 						<Button
-							class="w-[300px]"
-							on:click={async () => {
+								class="w-[300px]"
+								on:click={async () => {
 								try {
 									await refreshLogin();
 									await initialize();
@@ -470,14 +471,14 @@
 									await emit('error', e);
 								}
 							}}
-							>Log In
+						>Log In
 						</Button>
 					</div>
 				</Card>
 			</div>
 		{:else}
 			<div
-				class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
+					class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
 			>
 				<div class="flex items-center gap-2">
 					<span class="text-gray-300 text-xl">{startupMessage}...</span>
@@ -488,65 +489,79 @@
 		{/if}
 	{:else}
 		<div
-			class="flex bg-secondary-800 dark:bg-space-950 h-full overflow-y-hidden w-full overflow-x-hidden"
+				class="flex bg-secondary-800 dark:bg-space-950 h-full overflow-y-hidden w-full overflow-x-hidden"
 		>
 			<QuickLaunchModal bind:showModal={quickLaunching} serverName={quickLaunchServerName} />
 			<Sidebar
-				asideClass="w-56 shadow-md sticky top-0 h-full"
-				activeClass="flex items-center p-2 text-base font-normal text-gray-900 bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
-				nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
-				{activeUrl}
+					asideClass="w-56 shadow-md sticky top-0 h-full"
+					activeClass="flex items-center p-2 text-base font-normal text-gray-900 bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
+					nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
+					{activeUrl}
 			>
 				<SidebarWrapper class="h-full rounded-none bg-secondary-700 dark:bg-space-900">
 					<SidebarGroup>
 						<SidebarItem
-							class="group/item"
-							label="Home"
-							href="/"
-							active={activeUrl === '/'}
-							{spanClass}
+								class="group/item"
+								label="Home"
+								href="/"
+								active={activeUrl === '/'}
+								{spanClass}
 						>
 							<svelte:fragment slot="icon">
 								<HomeSolid
-									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+								/>
+							</svelte:fragment>
+						</SidebarItem>
+						<SidebarItem
+								class="group/item"
+								label="Playtests"
+								href="/playtests"
+								active={activeUrl === '/playtests'}
+								{spanClass}
+						>
+							<svelte:fragment slot="icon">
+								<UserSolid
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 								/>
 							</svelte:fragment>
 						</SidebarItem>
 						<SidebarItem
 							class="group/item"
-							label="Playtests"
-							href="/playtests"
-							active={activeUrl === '/playtests'}
+							label="Servers"
+							href="/servers"
+							active={activeUrl === '/servers'}
 							{spanClass}
 						>
 							<svelte:fragment slot="icon">
-								<UserSolid
+								<ServerOutline
 									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 								/>
 							</svelte:fragment>
 						</SidebarItem>
+
 						{#if loadingBuilds}
 							<Button
-								class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
-								disabled
+									class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
+									disabled
 							>
 								<Spinner class="w-5 h-5 border-none" />
 								<span class="font-normal text-base text-gray-400 dark:text-gray-300">Builds</span>
 							</Button>
 						{:else}
 							<SidebarItem
-								class="group/item"
-								label="Builds"
-								href="/builds"
-								active={activeUrl === '/builds'}
-								{spanClass}
+									class="group/item"
+									label="Builds"
+									href="/builds"
+									active={activeUrl === '/builds'}
+									{spanClass}
 							>
 								<svelte:fragment slot="icon">
 									{#if loadingBuilds}
 										<Spinner class="w-5 h-5 border-none" />
 									{:else}
 										<BuildingSolid
-											class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+												class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 										/>
 									{/if}
 								</svelte:fragment>
@@ -554,33 +569,33 @@
 						{/if}
 						{#if $appConfig.repoPath !== ''}
 							<SidebarDropdownWrapper
-								label="Source"
-								class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-								ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
+									label="Source"
+									class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
+									ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 							>
 								<svelte:fragment slot="icon">
 									<CodeBranchSolid
-										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+											class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 									/>
 								</svelte:fragment>
 								<svelte:fragment slot="arrowup">
-									<ChevronUpSolid class="h-3 w-3 text-white" />
+									<ChevronUpOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<svelte:fragment slot="arrowdown">
-									<ChevronDownSolid class="h-3 w-3 text-white" />
+									<ChevronDownOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<SidebarItem
-									label="Submit"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									spanClass={sidebarSubItemClass}
-									href="/source/submit"
-									active={activeUrl === '/source/submit'}
+										label="Submit"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										spanClass={sidebarSubItemClass}
+										href="/source/submit"
+										active={activeUrl === '/source/submit'}
 								>
 									<svelte:fragment slot="subtext">
 										<div class="flex w-full gap-1 pl-2 ms-3 items-center justify-end">
 											<span
-												class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+													class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
 												0
 													? 'bg-primary-600 dark:bg-primary-600'
 													: 'bg-gray-500 dark:bg-gray-500'}"
@@ -589,7 +604,7 @@
 											</span>
 											{#if conflictsDetected}
 												<span
-													class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+														class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
 													0
 														? 'bg-red-700 dark:bg-red-700'
 														: 'bg-gray-500 dark:bg-gray-500'}"
@@ -601,24 +616,24 @@
 									</svelte:fragment>
 								</SidebarItem>
 								<SidebarItem
-									label="Commits"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									spanClass={sidebarSubItemClass}
-									href="/source/history"
-									active={activeUrl === '/source/history'}
+										label="Commits"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										spanClass={sidebarSubItemClass}
+										href="/source/history"
+										active={activeUrl === '/source/history'}
 								/>
 								<SidebarItem
-									label="Locks"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									spanClass={sidebarSubItemClass}
-									href="/source/locks"
-									active={activeUrl === '/source/locks'}
+										label="Locks"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										spanClass={sidebarSubItemClass}
+										href="/source/locks"
+										active={activeUrl === '/source/locks'}
 								>
 									<svelte:fragment slot="subtext">
 										<span
-											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
+												class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
 												.ours.length > 0
 												? 'bg-primary-600 dark:bg-primary-600'
 												: 'bg-gray-500 dark:bg-gray-500'}"
@@ -628,65 +643,65 @@
 									</svelte:fragment>
 								</SidebarItem>
 								<SidebarItem
-									label="Diagnostics"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									spanClass={sidebarSubItemClass}
-									href="/source/diagnostics"
-									active={activeUrl === '/source/diagnostics'}
+										label="Diagnostics"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										spanClass={sidebarSubItemClass}
+										href="/source/diagnostics"
+										active={activeUrl === '/source/diagnostics'}
 								/>
 							</SidebarDropdownWrapper>
 						{/if}
 						{#if $dynamicConfig.ludosEnabled && $appConfig.ludosShowUI}
 							<SidebarDropdownWrapper
-								label="Ludos"
-								class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-								ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
+									label="Ludos"
+									class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
+									ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 							>
 								<svelte:fragment slot="icon">
 									<DatabaseSolid
-										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+											class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 									/>
 								</svelte:fragment>
 								<svelte:fragment slot="arrowup">
-									<ChevronUpSolid class="h-3 w-3 text-white" />
+									<ChevronUpOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<svelte:fragment slot="arrowdown">
-									<ChevronDownSolid class="h-3 w-3 text-white" />
+									<ChevronDownOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<SidebarItem
-									label="Storage"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									class={sidebarSubItemClass}
-									href="/ludos/objects"
-									active={activeUrl === '/ludos/objects'}
+										label="Storage"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										class={sidebarSubItemClass}
+										href="/ludos/objects"
+										active={activeUrl === '/ludos/objects'}
 								/>
 							</SidebarDropdownWrapper>
 						{/if}
 						<SidebarDropdownWrapper
-							label="System"
-							class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-							ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
+								label="System"
+								class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
+								ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 						>
 							<svelte:fragment slot="icon">
 								<ComputerSpeakerSolid
-									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 								/>
 							</svelte:fragment>
 							<svelte:fragment slot="arrowup">
-								<ChevronUpSolid class="h-3 w-3 text-white" />
+								<ChevronUpOutline class="h-5 w-5 text-white" />
 							</svelte:fragment>
 							<svelte:fragment slot="arrowdown">
-								<ChevronDownSolid class="h-3 w-3 text-white" />
+								<ChevronDownOutline class="h-5 w-5 text-white" />
 							</svelte:fragment>
 							<SidebarItem
-								label="Logs"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								class={sidebarSubItemClass}
-								href="/system/logs"
-								active={activeUrl === '/system/logs'}
+									label="Logs"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									class={sidebarSubItemClass}
+									href="/system/logs"
+									active={activeUrl === '/system/logs'}
 							/>
 						</SidebarDropdownWrapper>
 					</SidebarGroup>
@@ -702,12 +717,12 @@
 						<div class="flex flex-col">
 							<div class="flex mt-2">
 								<Button
-									class="!p-2 active:border-none focus:outline-none"
-									label="Preferences"
-									on:click={() => {
+										class="!p-2 active:border-none focus:outline-none"
+										label="Preferences"
+										on:click={() => {
 										showPreferencesModal = true;
 									}}
-									bind:disabled={preferencesModalRequestInFlight}
+										bind:disabled={preferencesModalRequestInFlight}
 								>
 									{#if preferencesModalRequestInFlight}
 										<Spinner class="h-6 w-6 border-none" />
@@ -716,15 +731,15 @@
 									{/if}
 								</Button>
 								<Button
-									outline
-									class="mb-1 p-0 w-full hover:bg-secondary-700 dark:hover:bg-space-900 hover:text-primary-500 dark:hover:text-primary-500 active:border-none dark:active:border-none focus:ring-0 dark:focus:ring-0 border-none text-primary-500 dark:text-primary-500 text-center text-sm"
-									on:click={toggleVersionText}
-									>{(hidePizza && `v${appVersion}`) || 'Have a piece of pizza!'}
+										outline
+										class="mb-1 p-0 w-full hover:bg-secondary-700 dark:hover:bg-space-900 hover:text-primary-500 dark:hover:text-primary-500 active:border-none dark:active:border-none focus:ring-0 dark:focus:ring-0 border-none text-primary-500 dark:text-primary-500 text-center text-sm"
+										on:click={toggleVersionText}
+								>{(hidePizza && `v${appVersion}`) || 'Have a piece of pizza!'}
 								</Button>
 							</div>
 							<div
-								class="w-full h-24 bg-black border rounded border-primary-500 dark:border-primary-500 hover:cursor-grab active:cursor-grabbing mt-2"
-								class:hidePizza
+									class="w-full h-24 bg-black border rounded border-primary-500 dark:border-primary-500 hover:cursor-grab active:cursor-grabbing mt-2"
+									class:hidePizza
 							>
 								<Canvas>
 									<Pizza />
@@ -751,11 +766,11 @@
 
 <!-- Update modal, not quite worthy of a component yet -->
 <Modal
-	open={updateAvailable && !$updateDismissed}
-	size="sm"
-	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
-	bodyClass="!border-t-0"
-	on:close={() => {
+		open={updateAvailable && !$updateDismissed}
+		size="sm"
+		defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+		bodyClass="!border-t-0"
+		on:close={() => {
 		updateDismissed.set(true);
 	}}
 >
@@ -764,7 +779,7 @@
 			Friendshipper <span class="font-mono text-primary-400">v{latest}</span> is available!
 		</div>
 		<Button disabled={updating} color="green" class="flex gap-2" on:click={handleUpdateClicked}
-			>Upgrade
+		>Upgrade
 			{#if updating}
 				<Spinner color="white" class="h-4 w-4 border-none" />
 			{/if}
