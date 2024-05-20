@@ -18,7 +18,16 @@ use ethos_core::types::errors::CoreError;
 use crate::state::AppState;
 use crate::APP_NAME;
 
+#[cfg(target_os = "macos")]
+use crate::VERSION;
+
+#[cfg(target_os = "macos")]
+pub async fn get_latest_version() -> Result<String, CoreError> {
+    Ok(VERSION.to_string())
+}
+
 #[debug_handler]
+#[cfg(not(target_os = "macos"))]
 pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 

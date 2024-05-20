@@ -37,6 +37,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/locks/verify", get(operations::verify_locks_handler))
         .route("/locks/lock", post(operations::acquire_locks_handler))
         .route("/locks/unlock", post(operations::release_locks_handler))
+        .route("/gh/queue", get(operations::gh::get_merge_queue))
         .route("/gh/submit", post(operations::gh::submit_handler))
         .route("/gh/pulls", get(operations::gh::get_pull_requests))
         .route("/gh/pulls/:id", get(operations::gh::get_pull_request))

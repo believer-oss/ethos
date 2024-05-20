@@ -13,6 +13,7 @@ import type {
 	RepoStatus,
 	VerifyLocksResponse
 } from '$lib/types';
+import { getPlaytestGroupForUser } from '$lib/playtests';
 
 export const updateDismissed = writable(false);
 export const dynamicConfig = writable(<DynamicConfig>{});
@@ -20,6 +21,7 @@ export const dynamicConfig = writable(<DynamicConfig>{});
 export const projectConfigs = writable(<ProjectConfig[]>[]);
 
 export const playtests = writable(<Playtest[]>[]);
+
 export const builds = writable(<ArtifactListResponse>{});
 export const appConfig = writable(<AppConfig>{});
 export const repoConfig = writable(<Nullable<RepoConfig>>null);
@@ -35,6 +37,17 @@ export const locks = writable(<VerifyLocksResponse>{
 	ours: [],
 	theirs: [],
 	nextCursor: null
+});
+export const nextPlaytest = derived([playtests, appConfig], ([$playtests, $appConfig]) => {
+	if ($playtests.length > 0) {
+		const nextAssigned = $playtests.find(
+			(p) => getPlaytestGroupForUser(p, $appConfig.userDisplayName) != null
+		);
+
+		return nextAssigned || $playtests[0];
+	}
+
+	return null;
 });
 
 export const activeProjectConfig: Readable<Nullable<ProjectConfig>> = derived(

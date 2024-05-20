@@ -1,0 +1,25 @@
+query GetMergeQueue($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+        mergeQueue {
+            __typename
+            url
+            entries(first: 50) {
+                __typename
+                nodes {
+                    __typename
+                    headCommit {
+                        __typename
+                        author {
+                            __typename
+                            name
+                        }
+                        message
+                    }
+                    enqueuedAt
+                    state
+                }
+
+            }
+        }
+    }
+}

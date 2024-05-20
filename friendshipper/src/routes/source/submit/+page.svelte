@@ -425,7 +425,7 @@
 							disabled={!canSubmit}
 							on:click={handleQuickSubmit}
 							>Quick Submit
-							<QuestionCircleOutline class="w-6 h-fit pl-2 align-middle" />
+							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 						</Button>
 					</ButtonGroup>
 				</div>
@@ -436,9 +436,9 @@
 <Card
 	class="w-full p-4 mt-2 sm:p-4 max-w-full min-h-[16rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 >
-	<Tabs style="underline" contentClass="bg-secondary-700 dark:bg-space-900">
+	<Tabs style="underline" contentClass="bg-secondary-700 dark:bg-space-900 h-full overflow-y-auto">
 		<TabItem open title="My Submits" class="bg-secondary-700 dark:bg-space-900">
-			<Table color="custom" class="mt-3" striped>
+			<Table color="custom" striped>
 				<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 					<TableHeadCell class="p-2">Number</TableHeadCell>
 					<TableHeadCell class="p-2">Title</TableHeadCell>
@@ -486,7 +486,7 @@
 			</Table>
 		</TabItem>
 		<TabItem title="Snapshots">
-			<Table color="custom" class="mt-3" striped>
+			<Table color="custom" striped>
 				<TableHead
 					align="center"
 					class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950"
