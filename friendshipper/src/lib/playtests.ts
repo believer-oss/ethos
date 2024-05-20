@@ -52,5 +52,8 @@ export const unassignUserFromPlaytest = async (playtest: string, user: string): 
 	await invoke('unassign_user_from_playtest', { req });
 };
 
-export const getPlaytestGroupForUser = (playtest: Playtest, user: string): Nullable<GroupStatus> =>
-	playtest.status?.groups.find((group) => group?.users?.includes(user)) ?? null;
+export const getPlaytestGroupForUser = (
+	playtest: Nullable<Playtest>,
+	user: string
+): Nullable<GroupStatus> =>
+	playtest?.status?.groups.find((group) => group?.users?.includes(user)) ?? null;

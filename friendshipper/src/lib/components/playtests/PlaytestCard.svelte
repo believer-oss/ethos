@@ -17,7 +17,8 @@
 	import { openUrl } from '$lib/utils';
 
 	export let playtest: Playtest;
-	export let handleEditPlaytest: ((playtest: Playtest | null) => Promise<void>) | null = null;
+	export let handleEditPlaytest: ((playtest: Playtest | null) => void) | null = null;
+	export let compact = false;
 
 	export let loading: boolean;
 
@@ -114,8 +115,8 @@
 						color="primary"
 						size="xs"
 						class="py-1"
-						on:click={async () => {
-							if (handleEditPlaytest !== null) await handleEditPlaytest(playtest);
+						on:click={() => {
+							if (handleEditPlaytest !== null) handleEditPlaytest(playtest);
 						}}
 					>
 						<EditOutline class="w-3 h-3" />
@@ -159,13 +160,15 @@
 			<span class="text-center font-bold text-sm"
 				>map: <span class="text-primary-400 font-normal">{playtest.spec.map}</span>
 			</span>
-			<span class="text-center font-bold text-sm"
-				>group size: <span class="text-primary-400 font-normal"
-					>{playtest.spec.playersPerGroup}</span
-				>
-			</span>
+			{#if !compact}
+				<span class="text-center font-bold text-sm"
+					>group size: <span class="text-primary-400 font-normal"
+						>{playtest.spec.playersPerGroup}</span
+					>
+				</span>
+			{/if}
 		</div>
-		{#if playtest.spec.feedbackURL !== ''}
+		{#if playtest.spec.feedbackURL !== '' && !compact}
 			<div class="flex gap-1">
 				<Button
 					outline
@@ -191,7 +194,13 @@
 			</div>
 		{/if}
 	</div>
-	<div class="grid grid-cols-4 xl:grid-cols-2 gap-4 overflow-y-auto pb-2 pr-2">
+	<div
+		class="grid xl:grid-cols-2 gap-4 max-h-[12rem] overflow-y-auto pb-2 pr-2 w-full"
+		class:grid-cols-2={compact}
+		class:xl:grid-cols-4={compact}
+		class:grid-cols-4={!compact}
+		class:xl:grid-cols-2={!compact}
+	>
 		{#if playtest.status != null}
 			{#each getSortedGroups(playtest) as group, index}
 				<Card class={getGroupClass(group)}>
@@ -254,6 +263,17 @@
 							>
 						{/if}
 					</ButtonGroup>
+				</Card>
+			{:else}
+				<Card
+					class="w-full h-full p-0 sm:p-0 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+				>
+					<div class="flex gap-2 items-center">
+						<p class="text-white">You haven't joined this playtest.</p>
+						<Button size="xs" href="/playtests"
+							>Playtests<LinkOutline class="ml-2 h-4 w-4" /></Button
+						>
+					</div>
 				</Card>
 			{/each}
 		{/if}

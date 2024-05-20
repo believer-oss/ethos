@@ -7,6 +7,7 @@ use ethos_core::tauri::State;
 use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::config::{DynamicConfig, UnrealVerSelDiagResponse};
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
+use ethos_core::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
 use ethos_core::types::locks::VerifyLocksResponse;
 use ethos_core::types::playtests::{
@@ -525,12 +526,25 @@ pub async fn get_pull_requests(
         return Err(TauriError { message: body });
     }
 
-    let body = res.text().await?;
-    let json = serde_json::from_str(&body).map_err(|e| TauriError {
-        message: e.to_string(),
-    })?;
+    Ok(res.json().await?)
+}
 
-    Ok(json)
+#[tauri::command]
+pub async fn get_merge_queue(
+    state: tauri::State<'_, State>,
+) -> Result<GetMergeQueueRepositoryMergeQueue, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/gh/queue", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
 }
 
 // Locks

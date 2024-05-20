@@ -1,3 +1,5 @@
+use crate::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
+use crate::types::github::merge_queue::{get_merge_queue, GetMergeQueue};
 use crate::types::github::pulls::get_pull_request::GetPullRequestRepositoryPullRequest;
 use crate::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
 use crate::types::github::pulls::{
@@ -205,6 +207,36 @@ impl GraphQLClient {
                 branch,
                 e
             )),
+        }
+    }
+
+    pub async fn get_merge_queue(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<GetMergeQueueRepositoryMergeQueue> {
+        match post_graphql::<GetMergeQueue, _>(
+            &self.client,
+            GITHUB_GRAPHQL_URL,
+            get_merge_queue::Variables {
+                owner: owner.to_string(),
+                name: repo.to_string(),
+            },
+        )
+        .await
+        {
+            Ok(res) => {
+                let merge_queue: GetMergeQueueRepositoryMergeQueue = res
+                    .data
+                    .ok_or(anyhow!("Failed to get valid response data"))?
+                    .repository
+                    .ok_or(anyhow!("Failed to get valid repository"))?
+                    .merge_queue
+                    .ok_or(anyhow!("Failed to get valid merge queue"))?;
+
+                Ok(merge_queue)
+            }
+            Err(e) => Err(anyhow!("Error getting merge queue: {}", e)),
         }
     }
 }

@@ -3,6 +3,7 @@ import type { Commit, CommitFileInfo } from '@ethos/core';
 import type {
 	CloneRequest,
 	GitHubPullRequest,
+	MergeQueue,
 	PushRequest,
 	RebaseStatusResponse,
 	RepoStatus,
@@ -139,3 +140,5 @@ export const getCommitFileTextClass = (action: string) => {
 	}
 	return '';
 };
+
+export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');

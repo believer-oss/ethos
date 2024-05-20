@@ -130,7 +130,7 @@ export interface PlaytestSpec {
 }
 
 export interface GroupStatus extends Group {
-	serverRef: LocalObjectReference;
+	serverRef?: LocalObjectReference;
 }
 
 export interface PlaytestStatus {
@@ -185,13 +185,33 @@ export interface RepoStatus {
 	lastPullRequest?: PullRequestStatus;
 }
 
+export interface CommitAuthor {
+	name: string;
+}
+
+export interface Commit {
+	author: CommitAuthor;
+	message: string;
+}
+
 export interface MergeQueueEntry {
 	estimatedTimeToMerge: Nullable<number>;
+	headCommit: Commit;
+	enqueuedAt: string;
 	state: 'QUEUED' | 'AWAITING_CHECKS' | 'LOCKED' | 'MERGEABLE' | 'UNMERGEABLE';
 }
 
 export interface PullRequestAuthor {
 	login: string;
+}
+
+interface MergeQueueEntryConnection {
+	nodes: MergeQueueEntry[];
+}
+
+export interface MergeQueue {
+	url: string;
+	entries: MergeQueueEntryConnection;
 }
 
 export interface GitHubPullRequest {

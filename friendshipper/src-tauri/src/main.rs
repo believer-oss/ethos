@@ -182,6 +182,7 @@ fn main() {
             revert_files,
             force_download_dlls,
             force_download_engine,
+            get_merge_queue,
             reinstall_git_hooks,
             save_snapshot,
             stop_workflow,
