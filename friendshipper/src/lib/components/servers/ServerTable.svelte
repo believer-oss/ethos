@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Table, TableBody, TableBodyCell, TableBodyRow, Tooltip } from 'flowbite-svelte';
-	import { ArchiveDownloadOutline, CodeOutline, FileCopyOutline } from 'flowbite-svelte-icons';
+	import { ArchiveArrowDownOutline, CodeOutline, FileCopyOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
@@ -133,7 +133,7 @@
 							on:click={() => handleDownloadLogs(server)}
 							on:mouseleave={resetLogDownloadState}
 						>
-							<ArchiveDownloadOutline class="w-4 h-4" />
+							<ArchiveArrowDownOutline class="w-4 h-4" />
 						</Button>
 						<Tooltip
 							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"

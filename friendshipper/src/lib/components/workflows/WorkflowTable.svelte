@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Badge, Button, Card, Indicator, Tooltip } from 'flowbite-svelte';
-	import { ChevronDownSolid, ChevronUpSolid, CloseSolid, CodeOutline } from 'flowbite-svelte-icons';
+	import { ChevronDownOutline, ChevronUpOutline, CloseOutline, CodeOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
 	import { stopWorkflow } from '$lib/builds';
@@ -155,9 +155,9 @@
 				selectedCommit === commit.commit ? setSelectedCommit('') : setSelectedCommit(commit.commit)}
 		>
 			{#if selectedCommit === commit.commit}
-				<ChevronDownSolid class="w-4 h-4 text-white" />
+				<ChevronDownOutline class="w-4 h-4 text-white" />
 			{:else}
-				<ChevronUpSolid class="w-4 h-4 text-white" />
+				<ChevronUpOutline class="w-4 h-4 text-white" />
 			{/if}
 		</Button>
 	</div>
@@ -183,7 +183,7 @@
 										await stop(workflow.metadata.name);
 									}}
 								>
-									<CloseSolid class="w-4 h-4" />
+									<CloseOutline class="w-4 h-4" />
 								</Button>
 								<Tooltip
 									class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"

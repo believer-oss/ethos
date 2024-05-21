@@ -18,7 +18,7 @@
 		FolderOpenOutline,
 		FileOutline,
 		ArrowUpOutline,
-		RotateOutline,
+		RefreshOutline,
 		TrashBinOutline
 	} from 'flowbite-svelte-icons';
 
@@ -245,7 +245,7 @@
 		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Ludos Storage</p>
 	</div>
 	<Button class="!p-1.5" primary on:click={refresh} disabled={inAsyncOperation}>
-		<RotateOutline class="w-4 h-4" />
+		<RefreshOutline class="w-4 h-4" />
 	</Button>
 </div>
 

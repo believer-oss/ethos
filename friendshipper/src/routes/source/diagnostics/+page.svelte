@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Accordion, AccordionItem, Button, Card, Spinner, Tooltip } from 'flowbite-svelte';
-	import { FileCopyOutline, RotateOutline } from 'flowbite-svelte-icons';
+	import { FileCopyOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { json } from 'svelte-highlight/languages';
 	import Highlight from 'svelte-highlight';
 	import 'svelte-highlight/styles/github-dark.css';
@@ -142,7 +142,7 @@
 			{#if loading}
 				<Spinner size="4" />
 			{:else}
-				<RotateOutline class="w-4 h-4" />
+				<RefreshOutline class="w-4 h-4" />
 			{/if}
 		</Button>
 		<Button

@@ -15,10 +15,9 @@
 	} from 'flowbite-svelte';
 	import {
 		CloseCircleSolid,
-		FileEditSolid,
-		FolderOpenSolid,
+		FileOutline,
 		InfoCircleSolid,
-		PlusSolid
+		PlusOutline
 	} from 'flowbite-svelte-icons';
 	import { type ModifiedFile, ModifiedFileState } from '$lib/types/index.js';
 
@@ -214,14 +213,14 @@
 					</TableBodyCell>
 					<TableBodyCell tdClass="p-1 w-8">
 						{#if getModifiedState(file) === ModifiedFileState.Added}
-							<PlusSolid class="w-4 h-4 text-lime-500" />
+							<PlusOutline class="w-4 h-4 text-lime-500" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
 								>Added
 							</Tooltip>
 						{:else if getModifiedState(file) === ModifiedFileState.Modified}
-							<FileEditSolid class="w-4 h-4 text-yellow-300" />
+							<FileOutline class="w-4 h-4 text-yellow-300" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
@@ -288,14 +287,14 @@
 			{#each selectedFiles as file}
 				<div class="flex gap-2 items-center">
 					{#if getModifiedState(file) === ModifiedFileState.Added}
-						<PlusSolid class="w-4 h-4 text-lime-500" />
+						<PlusOutline class="w-4 h-4 text-lime-500" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
 							>Added
 						</Tooltip>
 					{:else if getModifiedState(file) === ModifiedFileState.Modified}
-						<FileEditSolid class="w-4 h-4 text-yellow-300" />
+						<FileOutline class="w-4 h-4 text-yellow-300" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"

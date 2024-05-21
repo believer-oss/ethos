@@ -9,7 +9,7 @@
 		DropdownItem
 	} from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { ChevronDownSolid, RotateOutline, FileCodeSolid } from 'flowbite-svelte-icons';
+	import { ChevronDownOutline, RefreshOutline, FileCodeSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { CommitTable, ProgressModal } from '@ethos/core';
 	import {
@@ -185,7 +185,7 @@
 			{#if loading || inAsyncOperation}
 				<Spinner size="4" />
 			{:else}
-				<RotateOutline class="w-4 h-4" />
+				<RefreshOutline class="w-4 h-4" />
 			{/if}
 		</Button>
 	</div>
@@ -196,7 +196,7 @@
 			disabled={inAsyncOperation || conflictsDetected}
 			on:click={async () => handleSyncClicked()}
 		>
-			<RotateOutline class="w-3 h-3 mr-2" />
+			<RefreshOutline class="w-3 h-3 mr-2" />
 			Sync
 		</Button>
 		{#if conflictsDetected}
@@ -227,7 +227,7 @@
 			</Button>
 		{/if}
 		<Button size="xs" color="primary" id="advancedDropdown" disabled={inAsyncOperation}>
-			<ChevronDownSolid size="xs" />
+			<ChevronDownOutline size="xs" />
 		</Button>
 	</ButtonGroup>
 	<Dropdown placement="bottom-start" triggeredBy="#advancedDropdown">
