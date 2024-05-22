@@ -28,11 +28,13 @@
 	let allowReleaseOtherLocks = false;
 	let searchTerm = '';
 
-	$: filteredOurs = $locks.ours.filter(
-		(item) => item.path.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1
+	$: filteredOurs = $locks.ours.filter((item) =>
+		item.path.toLowerCase().includes(searchTerm.toLowerCase())
 	);
 	$: filteredTheirs = $locks.theirs.filter(
-		(item) => item.path.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1
+		(item) =>
+			item.path.toLowerCase().includes(searchTerm.toLowerCase()) ||
+			item.owner?.name.toLowerCase().includes(searchTerm.toLowerCase())
 	);
 	$: unmodifiedLockedFiles = $locks.ours.filter(
 		(lock) => !$allModifiedFiles.find((file) => file.path === lock.path)
