@@ -72,6 +72,7 @@ pub struct Git {
 pub struct Opts<'a> {
     pub ignored_errors: &'a [&'a str],
     pub should_log_stdout: bool,
+    pub return_complete_error: bool,
 }
 
 impl Default for Opts<'_> {
@@ -79,23 +80,39 @@ impl Default for Opts<'_> {
         Opts {
             ignored_errors: &[],
             should_log_stdout: true,
+            return_complete_error: false,
         }
     }
 }
 
 impl Opts<'_> {
-    pub fn with_ignored<'a>(ignored_errors: &'a [&'a str]) -> Opts {
+    pub fn new_with_ignored<'a>(ignored_errors: &'a [&'a str]) -> Opts {
         Opts {
             ignored_errors,
             should_log_stdout: true,
+            return_complete_error: false,
         }
     }
 
-    pub fn without_logs<'a>() -> Opts<'a> {
+    pub fn new_without_logs<'a>() -> Opts<'a> {
         Opts {
             ignored_errors: &[],
             should_log_stdout: false,
+            return_complete_error: false,
         }
+    }
+
+    pub fn new_with_complete_error<'a>() -> Opts<'a> {
+        Opts {
+            ignored_errors: &[],
+            should_log_stdout: true,
+            return_complete_error: true,
+        }
+    }
+
+    pub fn with_complete_error(mut self) -> Self {
+        self.return_complete_error = true;
+        self
     }
 }
 
@@ -326,17 +343,39 @@ impl Git {
         };
         // Ignore "remote ref does not exist" error - if that's the case, then the remote branch that we want to delete
         // doesn't exist anyway, so it's effectively deleted
-        self.run(&args, Opts::with_ignored(&["remote ref does not exist"]))
-            .await
+        self.run(
+            &args,
+            Opts::new_with_ignored(&["remote ref does not exist"]),
+        )
+        .await
     }
 
     pub async fn verify_locks(&self) -> anyhow::Result<VerifyLocksResponse> {
-        let output = self
+        let output = match self
             .run_and_collect_output(
                 &["lfs", "locks", "--verify", "--json"],
-                Opts::without_logs(),
+                Opts::new_without_logs().with_complete_error(),
             )
-            .await?;
+            .await
+        {
+            Ok(output) => output,
+            Err(e) => {
+                // if this is a problem with the lock cache, delete the lock cache file
+                if e.to_string().contains("lockcache.db") {
+                    let lock_cache_path = self.repo_path.join(".git/lfs/lockcache.db");
+                    if lock_cache_path.exists() {
+                        std::fs::remove_file(lock_cache_path)?;
+                    }
+                }
+
+                // then try again
+                self.run_and_collect_output(
+                    &["lfs", "locks", "--verify", "--json"],
+                    Opts::new_without_logs(),
+                )
+                .await?
+            }
+        };
 
         let response: VerifyLocksResponse = serde_json::from_str(&output)?;
 
@@ -351,10 +390,7 @@ impl Git {
                 "--pretty=format:%H|%s|%an|%aI",
                 git_ref,
             ],
-            Opts {
-                ignored_errors: &[],
-                should_log_stdout: false,
-            },
+            Opts::default(),
         )
         .await
     }
@@ -367,7 +403,7 @@ impl Git {
     pub async fn status(&self) -> anyhow::Result<String> {
         self.run_and_collect_output(
             &["status", "--porcelain", "-uall", "--branch"],
-            Opts::without_logs(),
+            Opts::new_without_logs(),
         )
         .await
     }
@@ -386,7 +422,7 @@ impl Git {
     }
 
     pub async fn diff_filenames(&self, range: &str) -> anyhow::Result<String> {
-        self.run_and_collect_output(&["diff", "--name-only", range], Opts::without_logs())
+        self.run_and_collect_output(&["diff", "--name-only", range], Opts::new_without_logs())
             .await
     }
 
@@ -409,8 +445,7 @@ impl Git {
             .await;
         match res {
             Err(e) => {
-                error!("git {:?} failed with error: {}", args, e);
-                bail!("Git command failed. Check the log for details.");
+                bail!("git {:?} failed with error: {}", args, e);
             }
             Ok(_) => Ok(output.unwrap()),
         }
@@ -535,6 +570,11 @@ impl Git {
                 let locked_lines = err_lines.read();
                 let err_output: String = locked_lines.join("\n");
                 error!("Failed to run: {}.\n{}", git_cmd_str, err_output);
+
+                if opts.return_complete_error {
+                    bail!("Git command failed: {}", err_output);
+                }
+
                 bail!("Git command failed. Check the log for details.");
             }
         }

@@ -105,7 +105,7 @@ impl Task for AddOp {
         }
 
         self.git_client
-            .run(args.as_slice(), Opts::without_logs())
+            .run(args.as_slice(), Opts::new_without_logs())
             .await?;
 
         Ok(())
