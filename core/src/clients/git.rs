@@ -525,7 +525,7 @@ impl Git {
                 // per update.
                 let mut line = line;
 
-                if line.starts_with("Updating files") {
+                if line.contains("Updating files") {
                     line = "Updating files...".to_string();
                 }
 

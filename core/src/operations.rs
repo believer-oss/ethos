@@ -9,7 +9,7 @@ use anyhow::bail;
 use async_trait::async_trait;
 use chrono::DateTime;
 use reqwest::StatusCode;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[derive(Clone)]
 pub struct CommitOp {
@@ -68,6 +68,14 @@ impl LogOp {
             true => self.repo_status.read().remote_branch.clone(),
             false => self.repo_status.read().branch.clone(),
         };
+
+        // Sometimes we ask for the remote branch's log, but the branch may be deleted as part
+        // of the pull request process. In this case, we should return an empty log.
+        if git_ref.is_empty() {
+            debug!("Branch is empty, returning empty log");
+            return Ok(vec![]);
+        }
+
         let output = self.git_client.log(self.limit, &git_ref).await?;
         let result = output
             .lines()
