@@ -9,11 +9,13 @@
 	import { getRepoStatus, revertFiles, submit } from '$lib/repo';
 	import {
 		allModifiedFiles,
+		appConfig,
 		commitMessage,
 		repoConfig,
 		repoStatus,
 		selectedFiles
 	} from '$lib/stores';
+	import { openUrl } from '$lib/utils';
 
 	let loading = false;
 	let submitting = false;
@@ -25,6 +27,14 @@
 		get(commitMessage) !== '' &&
 		!loading &&
 		$repoConfig?.trunkBranch === $repoStatus?.branch;
+
+	const handleOpenDirectory = async (path: string) => {
+		const parent = path.split('/').slice(0, -1).join('/');
+
+		const fullPath = `${$appConfig.repoPath}/${parent}`;
+
+		await openUrl(fullPath);
+	};
 
 	const refreshFiles = async (triggerLoading: boolean) => {
 		if (triggerLoading) {
@@ -132,6 +142,7 @@
 			disabled={loading}
 			bind:selectedFiles={$selectedFiles}
 			bind:selectAll
+			onOpenDirectory={handleOpenDirectory}
 			modifiedFiles={$allModifiedFiles}
 			onRevertFiles={handleRevertFiles}
 			snapshotsEnabled={false}

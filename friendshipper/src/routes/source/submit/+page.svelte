@@ -46,6 +46,7 @@
 		repoStatus,
 		selectedFiles
 	} from '$lib/stores';
+	import { openUrl } from '$lib/utils';
 
 	let loading = false;
 	let fetchingPulls = false;
@@ -75,6 +76,14 @@
 	void listen('preferences-closed', () => {
 		preferencesOpen = false;
 	});
+
+	const handleOpenDirectory = async (path: string) => {
+		const parent = path.split('/').slice(0, -1).join('/');
+
+		const fullPath = `${$appConfig.repoPath}/${parent}`;
+
+		await openUrl(fullPath);
+	};
 
 	const refreshFiles = async (triggerLoading: boolean) => {
 		if (triggerLoading) {
@@ -383,6 +392,7 @@
 			bind:selectedFiles={$selectedFiles}
 			bind:selectAll
 			modifiedFiles={$allModifiedFiles}
+			onOpenDirectory={handleOpenDirectory}
 			onRevertFiles={handleRevertFiles}
 			onSaveSnapshot={handleSaveSnapshot}
 		/>
