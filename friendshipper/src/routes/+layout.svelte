@@ -5,6 +5,7 @@
 		Button,
 		Card,
 		DarkMode,
+		Img,
 		Modal,
 		Sidebar,
 		SidebarDropdownWrapper,
@@ -17,12 +18,15 @@
 		BuildingSolid,
 		ChevronDownSolid,
 		ChevronUpSolid,
+		CloseSolid,
 		CodeBranchSolid,
 		CogOutline,
 		ComputerSpeakerSolid,
 		DatabaseSolid,
 		HomeSolid,
-		UserSolid
+		MinusOutline,
+		UserSolid,
+		WindowOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { Canvas } from '@threlte/core';
@@ -33,6 +37,7 @@
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
+	import { appWindow } from '@tauri-apps/api/window';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -252,8 +257,7 @@
 	onMount(() => {
 		// show app window
 		const setupAppWindow = async (): Promise<void> => {
-			const { appWindow } = await import('@tauri-apps/api/window');
-			void appWindow.show();
+			await appWindow.show();
 		};
 
 		void setupAppWindow();
@@ -403,204 +407,270 @@
 	{handleCheckForUpdates}
 />
 
-{#if !initialized}
-	{#if loginRequired && loginPrompted}
-		<div
-			class="flex flex-col p-4 align-middle justify-around h-screen w-full bg-secondary-800 dark:bg-space-950"
-		>
-			<Card
-				class="w-full p-4 sm:p-4 max-w-full flex flex-col align-middle gap-2 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+<div class="flex flex-col h-screen w-screen border border-primary-900 overflow-hidden rounded-md">
+	<div
+		class="flex justify-between items-center gap-1 w-full h-8 bg-secondary-800 dark:bg-space-950 border-b border-opacity-50 border-dotted border-primary-500"
+		data-tauri-drag-region
+	>
+		<div class="pl-2 flex gap-2 items-center">
+			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300"
+				>friendshipper</span
 			>
-				<img src="/assets/7B_5.png" alt="Friendshipper Logo" class="w-24 h-24 mx-auto" />
-				<h3 class="text-xl text-white text-center">Log in to Friendshipper!</h3>
-				<div class="flex flex-row justify-around align-middle">
-					<Button
-						class="w-[300px]"
-						on:click={async () => {
-							try {
-								await refreshLogin();
-								await initialize();
-
-								loginPrompted = false;
-							} catch (e) {
-								await emit('error', e);
-							}
-						}}
-						>Log In
-					</Button>
-				</div>
-			</Card>
 		</div>
+		<div class="pr-2 flex gap-2 justify-end">
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={async () => {
+					await appWindow.minimize();
+				}}><MinusOutline class="h-4 w-4" /></Button
+			>
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={async () => {
+					await appWindow.toggleMaximize();
+				}}><WindowOutline class="h-4 w-4" /></Button
+			>
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={async () => {
+					await appWindow.hide();
+				}}><CloseSolid class="h-4 w-4" /></Button
+			>
+		</div>
+	</div>
+	{#if !initialized}
+		{#if loginRequired && loginPrompted}
+			<div
+				class="flex flex-col p-4 align-middle justify-around h-full w-full bg-secondary-800 dark:bg-space-950"
+			>
+				<Card
+					class="w-full p-4 sm:p-4 max-w-full flex flex-col align-middle gap-2 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+				>
+					<img src="/assets/7B_5.png" alt="Friendshipper Logo" class="w-24 h-24 mx-auto" />
+					<h3 class="text-xl text-white text-center">Log in to Friendshipper!</h3>
+					<div class="flex flex-row justify-around align-middle">
+						<Button
+							class="w-[300px]"
+							on:click={async () => {
+								try {
+									await refreshLogin();
+									await initialize();
+
+									loginPrompted = false;
+								} catch (e) {
+									await emit('error', e);
+								}
+							}}
+							>Log In
+						</Button>
+					</div>
+				</Card>
+			</div>
+		{:else}
+			<div
+				class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
+			>
+				<div class="flex items-center gap-2">
+					<span class="text-gray-300 text-xl">{startupMessage}...</span>
+					<Spinner size="4" />
+				</div>
+				<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
+			</div>
+		{/if}
 	{:else}
 		<div
-			class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
+			class="flex bg-secondary-800 dark:bg-space-950 h-full overflow-y-hidden w-full overflow-x-hidden"
 		>
-			<div class="flex items-center gap-2">
-				<span class="text-gray-300 text-xl">{startupMessage}...</span>
-				<Spinner size="4" />
-			</div>
-			<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
-		</div>
-	{/if}
-{:else}
-	<div
-		class="flex bg-secondary-800 dark:bg-space-950 h-screen overflow-y-hidden w-full overflow-x-hidden"
-	>
-		<QuickLaunchModal bind:showModal={quickLaunching} serverName={quickLaunchServerName} />
-		<Sidebar
-			asideClass="w-56 shadow-md sticky top-0 h-screen"
-			activeClass="flex items-center p-2 text-base font-normal text-gray-900 bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
-			nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
-			{activeUrl}
-		>
-			<SidebarWrapper class="h-full rounded-none bg-secondary-700 dark:bg-space-900">
-				<SidebarGroup>
-					<SidebarItem
-						class="group/item"
-						label="Home"
-						href="/"
-						active={activeUrl === '/'}
-						{spanClass}
-					>
-						<svelte:fragment slot="icon">
-							<HomeSolid
-								class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-							/>
-						</svelte:fragment>
-					</SidebarItem>
-					<SidebarItem
-						class="group/item"
-						label="Playtests"
-						href="/playtests"
-						active={activeUrl === '/playtests'}
-						{spanClass}
-					>
-						<svelte:fragment slot="icon">
-							<UserSolid
-								class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-							/>
-						</svelte:fragment>
-					</SidebarItem>
-					{#if loadingBuilds}
-						<Button
-							class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
-							disabled
-						>
-							<Spinner class="w-5 h-5 border-none" />
-							<span class="font-normal text-base text-gray-400 dark:text-gray-300">Builds</span>
-						</Button>
-					{:else}
+			<QuickLaunchModal bind:showModal={quickLaunching} serverName={quickLaunchServerName} />
+			<Sidebar
+				asideClass="w-56 shadow-md sticky top-0 h-full"
+				activeClass="flex items-center p-2 text-base font-normal text-gray-900 bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
+				nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
+				{activeUrl}
+			>
+				<SidebarWrapper class="h-full rounded-none bg-secondary-700 dark:bg-space-900">
+					<SidebarGroup>
 						<SidebarItem
 							class="group/item"
-							label="Builds"
-							href="/builds"
-							active={activeUrl === '/builds'}
+							label="Home"
+							href="/"
+							active={activeUrl === '/'}
 							{spanClass}
 						>
 							<svelte:fragment slot="icon">
-								{#if loadingBuilds}
-									<Spinner class="w-5 h-5 border-none" />
-								{:else}
-									<BuildingSolid
-										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-									/>
-								{/if}
-							</svelte:fragment>
-						</SidebarItem>
-					{/if}
-					{#if $appConfig.repoPath !== ''}
-						<SidebarDropdownWrapper
-							label="Source"
-							class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-							ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
-						>
-							<svelte:fragment slot="icon">
-								<CodeBranchSolid
+								<HomeSolid
 									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 								/>
 							</svelte:fragment>
-							<svelte:fragment slot="arrowup">
-								<ChevronUpSolid class="h-3 w-3 text-white" />
+						</SidebarItem>
+						<SidebarItem
+							class="group/item"
+							label="Playtests"
+							href="/playtests"
+							active={activeUrl === '/playtests'}
+							{spanClass}
+						>
+							<svelte:fragment slot="icon">
+								<UserSolid
+									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+								/>
 							</svelte:fragment>
-							<svelte:fragment slot="arrowdown">
-								<ChevronDownSolid class="h-3 w-3 text-white" />
-							</svelte:fragment>
-							<SidebarItem
-								label="Submit"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/submit"
-								active={activeUrl === '/source/submit'}
+						</SidebarItem>
+						{#if loadingBuilds}
+							<Button
+								class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
+								disabled
 							>
-								<svelte:fragment slot="subtext">
-									<div class="flex w-full gap-1 pl-2 ms-3 items-center justify-end">
-										<span
-											class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
-											0
-												? 'bg-primary-600 dark:bg-primary-600'
-												: 'bg-gray-500 dark:bg-gray-500'}"
-										>
-											{$allModifiedFiles.length}
-										</span>
-										{#if conflictsDetected}
+								<Spinner class="w-5 h-5 border-none" />
+								<span class="font-normal text-base text-gray-400 dark:text-gray-300">Builds</span>
+							</Button>
+						{:else}
+							<SidebarItem
+								class="group/item"
+								label="Builds"
+								href="/builds"
+								active={activeUrl === '/builds'}
+								{spanClass}
+							>
+								<svelte:fragment slot="icon">
+									{#if loadingBuilds}
+										<Spinner class="w-5 h-5 border-none" />
+									{:else}
+										<BuildingSolid
+											class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+										/>
+									{/if}
+								</svelte:fragment>
+							</SidebarItem>
+						{/if}
+						{#if $appConfig.repoPath !== ''}
+							<SidebarDropdownWrapper
+								label="Source"
+								class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
+								ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
+							>
+								<svelte:fragment slot="icon">
+									<CodeBranchSolid
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+									/>
+								</svelte:fragment>
+								<svelte:fragment slot="arrowup">
+									<ChevronUpSolid class="h-3 w-3 text-white" />
+								</svelte:fragment>
+								<svelte:fragment slot="arrowdown">
+									<ChevronDownSolid class="h-3 w-3 text-white" />
+								</svelte:fragment>
+								<SidebarItem
+									label="Submit"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/submit"
+									active={activeUrl === '/source/submit'}
+								>
+									<svelte:fragment slot="subtext">
+										<div class="flex w-full gap-1 pl-2 ms-3 items-center justify-end">
 											<span
 												class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
 												0
-													? 'bg-red-700 dark:bg-red-700'
+													? 'bg-primary-600 dark:bg-primary-600'
 													: 'bg-gray-500 dark:bg-gray-500'}"
 											>
-												{$repoStatus?.conflicts.length}
+												{$allModifiedFiles.length}
 											</span>
-										{/if}
-									</div>
-								</svelte:fragment>
-							</SidebarItem>
-							<SidebarItem
-								label="Commits"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/history"
-								active={activeUrl === '/source/history'}
-							/>
-							<SidebarItem
-								label="Locks"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/locks"
-								active={activeUrl === '/source/locks'}
+											{#if conflictsDetected}
+												<span
+													class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+													0
+														? 'bg-red-700 dark:bg-red-700'
+														: 'bg-gray-500 dark:bg-gray-500'}"
+												>
+													{$repoStatus?.conflicts.length}
+												</span>
+											{/if}
+										</div>
+									</svelte:fragment>
+								</SidebarItem>
+								<SidebarItem
+									label="Commits"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/history"
+									active={activeUrl === '/source/history'}
+								/>
+								<SidebarItem
+									label="Locks"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/locks"
+									active={activeUrl === '/source/locks'}
+								>
+									<svelte:fragment slot="subtext">
+										<span
+											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
+												.ours.length > 0
+												? 'bg-primary-600 dark:bg-primary-600'
+												: 'bg-gray-500 dark:bg-gray-500'}"
+										>
+											{$locks.ours.length}
+										</span>
+									</svelte:fragment>
+								</SidebarItem>
+								<SidebarItem
+									label="Diagnostics"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/diagnostics"
+									active={activeUrl === '/source/diagnostics'}
+								/>
+							</SidebarDropdownWrapper>
+						{/if}
+						{#if $dynamicConfig.ludosEnabled && $appConfig.ludosShowUI}
+							<SidebarDropdownWrapper
+								label="Ludos"
+								class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
+								ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 							>
-								<svelte:fragment slot="subtext">
-									<span
-										class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
-											.ours.length > 0
-											? 'bg-primary-600 dark:bg-primary-600'
-											: 'bg-gray-500 dark:bg-gray-500'}"
-									>
-										{$locks.ours.length}
-									</span>
+								<svelte:fragment slot="icon">
+									<DatabaseSolid
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+									/>
 								</svelte:fragment>
-							</SidebarItem>
-							<SidebarItem
-								label="Diagnostics"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/diagnostics"
-								active={activeUrl === '/source/diagnostics'}
-							/>
-						</SidebarDropdownWrapper>
-					{/if}
-					{#if $dynamicConfig.ludosEnabled && $appConfig.ludosShowUI}
+								<svelte:fragment slot="arrowup">
+									<ChevronUpSolid class="h-3 w-3 text-white" />
+								</svelte:fragment>
+								<svelte:fragment slot="arrowdown">
+									<ChevronDownSolid class="h-3 w-3 text-white" />
+								</svelte:fragment>
+								<SidebarItem
+									label="Storage"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									class={sidebarSubItemClass}
+									href="/ludos/objects"
+									active={activeUrl === '/ludos/objects'}
+								/>
+							</SidebarDropdownWrapper>
+						{/if}
 						<SidebarDropdownWrapper
-							label="Ludos"
+							label="System"
 							class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
 							ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
 						>
 							<svelte:fragment slot="icon">
-								<DatabaseSolid
+								<ComputerSpeakerSolid
 									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
 								/>
 							</svelte:fragment>
@@ -611,93 +681,68 @@
 								<ChevronDownSolid class="h-3 w-3 text-white" />
 							</svelte:fragment>
 							<SidebarItem
-								label="Storage"
+								label="Logs"
 								activeClass={sidebarSubItemActiveClass}
 								nonActiveClass={sidebarSubItemInactiveClass}
 								class={sidebarSubItemClass}
-								href="/ludos/objects"
-								active={activeUrl === '/ludos/objects'}
+								href="/system/logs"
+								active={activeUrl === '/system/logs'}
 							/>
 						</SidebarDropdownWrapper>
-					{/if}
-					<SidebarDropdownWrapper
-						label="System"
-						class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-						ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
-					>
-						<svelte:fragment slot="icon">
-							<ComputerSpeakerSolid
-								class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-							/>
-						</svelte:fragment>
-						<svelte:fragment slot="arrowup">
-							<ChevronUpSolid class="h-3 w-3 text-white" />
-						</svelte:fragment>
-						<svelte:fragment slot="arrowdown">
-							<ChevronDownSolid class="h-3 w-3 text-white" />
-						</svelte:fragment>
-						<SidebarItem
-							label="Logs"
-							activeClass={sidebarSubItemActiveClass}
-							nonActiveClass={sidebarSubItemInactiveClass}
-							class={sidebarSubItemClass}
-							href="/system/logs"
-							active={activeUrl === '/system/logs'}
-						/>
-					</SidebarDropdownWrapper>
-				</SidebarGroup>
-				<div class="top-[100vh] sticky">
-					<div class="h-4 w-full mt-2">
-						{#if loading}
-							<div class="flex items-center justify-center h-full w-full gap-2">
-								<Spinner size="4" />
-								<span class="text-gray-400 text-xs">{loadingText}</span>
+					</SidebarGroup>
+					<div class="top-[100vh] sticky">
+						<div class="h-4 w-full mt-2">
+							{#if loading}
+								<div class="flex items-center justify-center h-full w-full gap-2">
+									<Spinner size="4" />
+									<span class="text-gray-400 text-xs">{loadingText}</span>
+								</div>
+							{/if}
+						</div>
+						<div class="flex flex-col">
+							<div class="flex mt-2">
+								<Button
+									class="!p-2 active:border-none focus:outline-none"
+									label="Preferences"
+									on:click={() => {
+										showPreferencesModal = true;
+									}}
+									bind:disabled={preferencesModalRequestInFlight}
+								>
+									{#if preferencesModalRequestInFlight}
+										<Spinner class="h-6 w-6 border-none" />
+									{:else}
+										<CogOutline class="h-6 w-6 border-none" />
+									{/if}
+								</Button>
+								<Button
+									outline
+									class="mb-1 p-0 w-full hover:bg-secondary-700 dark:hover:bg-space-900 hover:text-primary-500 dark:hover:text-primary-500 active:border-none dark:active:border-none focus:ring-0 dark:focus:ring-0 border-none text-primary-500 dark:text-primary-500 text-center text-sm"
+									on:click={toggleVersionText}
+									>{(hidePizza && `v${appVersion}`) || 'Have a piece of pizza!'}
+								</Button>
 							</div>
-						{/if}
-					</div>
-					<div class="flex flex-col">
-						<div class="flex mt-2">
-							<Button
-								class="!p-2 active:border-none focus:outline-none"
-								label="Preferences"
-								on:click={() => {
-									showPreferencesModal = true;
-								}}
-								bind:disabled={preferencesModalRequestInFlight}
+							<div
+								class="w-full h-24 bg-black border rounded border-primary-500 dark:border-primary-500 hover:cursor-grab active:cursor-grabbing mt-2"
+								class:hidePizza
 							>
-								{#if preferencesModalRequestInFlight}
-									<Spinner class="h-6 w-6 border-none" />
-								{:else}
-									<CogOutline class="h-6 w-6 border-none" />
-								{/if}
-							</Button>
-							<Button
-								outline
-								class="mb-1 p-0 w-full hover:bg-secondary-700 dark:hover:bg-space-900 hover:text-primary-500 dark:hover:text-primary-500 active:border-none dark:active:border-none focus:ring-0 dark:focus:ring-0 border-none text-primary-500 dark:text-primary-500 text-center text-sm"
-								on:click={toggleVersionText}
-								>{(hidePizza && `v${appVersion}`) || 'Have a piece of pizza!'}
-							</Button>
-						</div>
-						<div
-							class="w-full h-24 bg-black border rounded border-primary-500 dark:border-primary-500 hover:cursor-grab active:cursor-grabbing mt-2"
-							class:hidePizza
-						>
-							<Canvas>
-								<Pizza />
-							</Canvas>
+								<Canvas>
+									<Pizza />
+								</Canvas>
+							</div>
 						</div>
 					</div>
-				</div>
-			</SidebarWrapper>
-		</Sidebar>
+				</SidebarWrapper>
+			</Sidebar>
 
-		<div class="px-4 mx-auto w-full h-full overflow-hidden">
-			<main class="w-full h-full flex flex-col pb-2 overflow-hidden">
-				<slot class="overflow-hidden" />
-			</main>
+			<div class="px-4 mx-auto w-full h-full overflow-hidden">
+				<main class="w-full h-full flex flex-col pb-2 overflow-hidden">
+					<slot class="overflow-hidden" />
+				</main>
+			</div>
 		</div>
-	</div>
-{/if}
+	{/if}
+</div>
 <ErrorToast bind:show={hasError} {errorMessage} onClose={onErrorDismissed} />
 <SuccessToast bind:show={hasSuccess} message={successMessage} onClose={onSuccessDismissed} />
 <ProgressModal bind:showModal={showProgressModal} title="Cloning new repo" />
