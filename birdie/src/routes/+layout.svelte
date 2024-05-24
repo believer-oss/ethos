@@ -5,6 +5,7 @@
 		Accordion,
 		AccordionItem,
 		Button,
+		Img,
 		Modal,
 		Sidebar,
 		SidebarDropdownItem,
@@ -15,10 +16,13 @@
 		Spinner
 	} from 'flowbite-svelte';
 	import {
+		CloseSolid,
 		CodeBranchSolid,
 		CogOutline,
 		ComputerSpeakerSolid,
-		HomeSolid
+		HomeSolid,
+		MinusOutline,
+		WindowOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { Canvas } from '@threlte/core';
@@ -30,6 +34,7 @@
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
+	import { appWindow } from '@tauri-apps/api/window';
 	import { page } from '$app/stores';
 	import {
 		commits,
@@ -179,8 +184,7 @@
 	onMount(() => {
 		// show app window
 		const setupAppWindow = async (): Promise<void> => {
-			const { appWindow } = await import('@tauri-apps/api/window');
-			void appWindow.show();
+			await appWindow.show();
 		};
 		void setupAppWindow();
 
@@ -255,196 +259,235 @@
 	{handleCheckForUpdates}
 />
 
-{#if !initialized}
+<div class="flex flex-col h-screen w-screen border border-primary-900 overflow-hidden rounded-md">
 	<div
-		class="flex flex-col gap-2 px-12 dark:bg-secondary-800 items-center w-screen h-screen justify-center"
+		class="flex justify-between items-center gap-1 w-full h-8 bg-secondary-800 dark:bg-space-950 border-b border-opacity-50 border-dotted border-primary-500"
+		data-tauri-drag-region
 	>
-		<div class="flex items-center gap-2">
-			<span class="text-gray-300 text-xl">{startupMessage}...</span>
-			<Spinner size="4" />
+		<div class="pl-2 flex gap-2 items-center">
+			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300">birdie</span>
 		</div>
-		{#if initializationLog !== ''}
-			<Accordion
-				activeClass="dark:hover:bg-secondary-700 focus:ring-0 dark:border-gray-300 text-white overflow-auto py-2"
-				inactiveClass="dark:hover:bg-secondary-700 dark:border-gray-300 text-white py-2"
-				class="w-full dark:border-gray-300"
+		<div class="pr-2 flex gap-2 justify-end">
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={async () => {
+					await appWindow.minimize();
+				}}><MinusOutline class="h-4 w-4" /></Button
 			>
-				<AccordionItem class="w-full" borderSharedClass="dark:border-gray-300">
-					<div slot="header" class="flex items-center justify-between text-center w-full pr-2">
-						<span class="text-xs text-gray-300 font-mono w-full"
-							>Click here to see startup logs</span
-						>
-					</div>
-					<div
-						class="bg-secondary-800 text-gray-300 font-mono w-full max-h-[60vh] overflow-y-auto p-2"
-					>
-						<code class="whitespace-pre-wrap truncate">{initializationLog}</code>
-					</div>
-				</AccordionItem>
-			</Accordion>
-		{/if}
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={async () => {
+					await appWindow.toggleMaximize();
+				}}><WindowOutline class="h-4 w-4" /></Button
+			>
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={async () => {
+					await appWindow.hide();
+				}}><CloseSolid class="h-4 w-4" /></Button
+			>
+		</div>
 	</div>
-{:else}
-	<div class="flex dark:bg-secondary-700 h-screen overflow-y-hidden w-full overflow-x-hidden">
-		<Sidebar
-			asideClass="w-56 shadow-md sticky top-0 h-screen"
-			activeClass="flex items-center p-2 text-base font-normal text-gray-900 dark:bg-secondary-700 rounded-lg dark:text-primary-400 dark:hover:bg-secondary-700"
-			nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg dark:text-primary-400 dark:hover:bg-secondary-700"
-			{activeUrl}
+	{#if !initialized}
+		<div
+			class="flex flex-col gap-2 px-12 dark:bg-secondary-800 items-center w-screen h-full justify-center"
 		>
-			<SidebarWrapper class="h-full rounded-none dark:bg-secondary-800">
-				<SidebarGroup>
-					<SidebarItem
-						class="group/item"
-						label="Home"
-						href="/"
-						active={activeUrl === '/'}
-						{spanClass}
-					>
-						<svelte:fragment slot="icon">
-							<HomeSolid
-								class="w-5 h-5 transition duration-75 dark:text-gray-400 dark:group-hover/item:text-white"
-							/>
-						</svelte:fragment>
-					</SidebarItem>
-					{#if $appConfig.repoPath !== ''}
+			<div class="flex items-center gap-2">
+				<span class="text-gray-300 text-xl">{startupMessage}...</span>
+				<Spinner size="4" />
+			</div>
+			{#if initializationLog !== ''}
+				<Accordion
+					activeClass="dark:hover:bg-secondary-700 focus:ring-0 dark:border-gray-300 text-white overflow-auto py-2"
+					inactiveClass="dark:hover:bg-secondary-700 dark:border-gray-300 text-white py-2"
+					class="w-full dark:border-gray-300"
+				>
+					<AccordionItem class="w-full" borderSharedClass="dark:border-gray-300">
+						<div slot="header" class="flex items-center justify-between text-center w-full pr-2">
+							<span class="text-xs text-gray-300 font-mono w-full"
+								>Click here to see startup logs</span
+							>
+						</div>
+						<div
+							class="bg-secondary-800 text-gray-300 font-mono w-full max-h-[60vh] overflow-y-auto p-2"
+						>
+							<code class="whitespace-pre-wrap truncate">{initializationLog}</code>
+						</div>
+					</AccordionItem>
+				</Accordion>
+			{/if}
+		</div>
+	{:else}
+		<div class="flex dark:bg-secondary-700 h-full overflow-y-hidden w-full overflow-x-hidden">
+			<Sidebar
+				asideClass="w-56 shadow-md sticky top-0 h-full"
+				activeClass="flex items-center p-2 text-base font-normal text-gray-900 dark:bg-secondary-700 rounded-lg dark:text-primary-400 dark:hover:bg-secondary-700"
+				nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg dark:text-primary-400 dark:hover:bg-secondary-700"
+				{activeUrl}
+			>
+				<SidebarWrapper class="h-full rounded-none dark:bg-secondary-800">
+					<SidebarGroup>
+						<SidebarItem
+							class="group/item"
+							label="Home"
+							href="/"
+							active={activeUrl === '/'}
+							{spanClass}
+						>
+							<svelte:fragment slot="icon">
+								<HomeSolid
+									class="w-5 h-5 transition duration-75 dark:text-gray-400 dark:group-hover/item:text-white"
+								/>
+							</svelte:fragment>
+						</SidebarItem>
+						{#if $appConfig.repoPath !== ''}
+							<SidebarDropdownWrapper
+								label="Source"
+								class="group/item dark:text-primary-400 dark:hover:bg-secondary-700 rounded-lg"
+								ulClass="py-1"
+							>
+								<svelte:fragment slot="icon">
+									<CodeBranchSolid
+										class="w-5 h-5 transition duration-75 dark:text-gray-400 dark:group-hover/item:text-white"
+									/>
+								</svelte:fragment>
+								<SidebarItem
+									label="Submit"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/submit"
+									active={activeUrl === '/source/submit'}
+								>
+									<svelte:fragment slot="subtext">
+										<span
+											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+											0
+												? 'bg-primary-600 dark:bg-primary-600'
+												: 'bg-gray-500 dark:bg-gray-500'}"
+										>
+											{$allModifiedFiles.length}
+										</span>
+									</svelte:fragment>
+								</SidebarItem>
+								<SidebarItem
+									label="Commits"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/history"
+									active={activeUrl === '/source/history'}
+								/>
+								<SidebarItem
+									label="Locks"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/locks"
+									active={activeUrl === '/source/locks'}
+								>
+									<svelte:fragment slot="subtext">
+										<span
+											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
+												.ours.length > 0
+												? 'bg-primary-600 dark:bg-primary-600'
+												: 'bg-gray-500 dark:bg-gray-500'}"
+										>
+											{$locks.ours.length}
+										</span>
+									</svelte:fragment>
+								</SidebarItem>
+								<SidebarItem
+									label="Diagnostics"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/diagnostics"
+									active={activeUrl === '/source/diagnostics'}
+								/>
+							</SidebarDropdownWrapper>
+						{/if}
 						<SidebarDropdownWrapper
-							label="Source"
+							label="System"
 							class="group/item dark:text-primary-400 dark:hover:bg-secondary-700 rounded-lg"
 							ulClass="py-1"
 						>
 							<svelte:fragment slot="icon">
-								<CodeBranchSolid
+								<ComputerSpeakerSolid
 									class="w-5 h-5 transition duration-75 dark:text-gray-400 dark:group-hover/item:text-white"
 								/>
 							</svelte:fragment>
-							<SidebarItem
-								label="Submit"
+							<SidebarDropdownItem
+								label="Logs"
 								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/submit"
-								active={activeUrl === '/source/submit'}
-							>
-								<svelte:fragment slot="subtext">
-									<span
-										class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
-										0
-											? 'bg-primary-600 dark:bg-primary-600'
-											: 'bg-gray-500 dark:bg-gray-500'}"
-									>
-										{$allModifiedFiles.length}
-									</span>
-								</svelte:fragment>
-							</SidebarItem>
-							<SidebarItem
-								label="Commits"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/history"
-								active={activeUrl === '/source/history'}
-							/>
-							<SidebarItem
-								label="Locks"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/locks"
-								active={activeUrl === '/source/locks'}
-							>
-								<svelte:fragment slot="subtext">
-									<span
-										class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
-											.ours.length > 0
-											? 'bg-primary-600 dark:bg-primary-600'
-											: 'bg-gray-500 dark:bg-gray-500'}"
-									>
-										{$locks.ours.length}
-									</span>
-								</svelte:fragment>
-							</SidebarItem>
-							<SidebarItem
-								label="Diagnostics"
-								activeClass={sidebarSubItemActiveClass}
-								nonActiveClass={sidebarSubItemInactiveClass}
-								spanClass={sidebarSubItemClass}
-								href="/source/diagnostics"
-								active={activeUrl === '/source/diagnostics'}
+								class={sidebarSubItemClass}
+								href="/system/logs"
+								active={activeUrl === '/system/logs'}
 							/>
 						</SidebarDropdownWrapper>
-					{/if}
-					<SidebarDropdownWrapper
-						label="System"
-						class="group/item dark:text-primary-400 dark:hover:bg-secondary-700 rounded-lg"
-						ulClass="py-1"
-					>
-						<svelte:fragment slot="icon">
-							<ComputerSpeakerSolid
-								class="w-5 h-5 transition duration-75 dark:text-gray-400 dark:group-hover/item:text-white"
-							/>
-						</svelte:fragment>
-						<SidebarDropdownItem
-							label="Logs"
-							activeClass={sidebarSubItemActiveClass}
-							class={sidebarSubItemClass}
-							href="/system/logs"
-							active={activeUrl === '/system/logs'}
-						/>
-					</SidebarDropdownWrapper>
-				</SidebarGroup>
-				<div class="top-[100vh] sticky">
-					<div class="h-4 w-full mt-2">
-						{#if loading}
-							<div class="flex items-center justify-center h-full w-full gap-2">
-								<Spinner size="4" />
-								<span class="text-gray-400 text-xs">{loadingText}</span>
+					</SidebarGroup>
+					<div class="top-[100vh] sticky">
+						<div class="h-4 w-full mt-2">
+							{#if loading}
+								<div class="flex items-center justify-center h-full w-full gap-2">
+									<Spinner size="4" />
+									<span class="text-gray-400 text-xs">{loadingText}</span>
+								</div>
+							{/if}
+						</div>
+						<div class="flex flex-col">
+							<div class="flex mt-2">
+								<Button
+									class="!p-2 active:border-none focus:outline-none"
+									label="Preferences"
+									on:click={() => {
+										showPreferencesModal = true;
+									}}
+									bind:disabled={preferencesModalRequestInFlight}
+								>
+									{#if preferencesModalRequestInFlight}
+										<Spinner class="h-6 w-6 border-none" />
+									{:else}
+										<CogOutline class="h-6 w-6 border-none" />
+									{/if}
+								</Button>
+								<Button
+									outline
+									class="mb-1 p-0 w-full dark:hover:bg-secondary-800 dark:hover:text-primary-500 dark:active:border-none dark:focus:ring-0 border-none dark:text-primary-500 text-center text-sm"
+									on:click={toggleVersionText}
+									>{(hidePizza && `v${appVersion}`) || 'Have a piece of pizza!'}
+								</Button>
 							</div>
-						{/if}
-					</div>
-					<div class="flex flex-col">
-						<div class="flex mt-2">
-							<Button
-								class="!p-2 active:border-none focus:outline-none"
-								label="Preferences"
-								on:click={() => {
-									showPreferencesModal = true;
-								}}
-								bind:disabled={preferencesModalRequestInFlight}
+							<div
+								class="w-full h-24 bg-black border rounded dark:border-primary-500 hover:cursor-grab active:cursor-grabbing mt-2"
+								class:hidePizza
 							>
-								{#if preferencesModalRequestInFlight}
-									<Spinner class="h-6 w-6 border-none" />
-								{:else}
-									<CogOutline class="h-6 w-6 border-none" />
-								{/if}
-							</Button>
-							<Button
-								outline
-								class="mb-1 p-0 w-full dark:hover:bg-secondary-800 dark:hover:text-primary-500 dark:active:border-none dark:focus:ring-0 border-none dark:text-primary-500 text-center text-sm"
-								on:click={toggleVersionText}
-								>{(hidePizza && `v${appVersion}`) || 'Have a piece of pizza!'}
-							</Button>
-						</div>
-						<div
-							class="w-full h-24 bg-black border rounded dark:border-primary-500 hover:cursor-grab active:cursor-grabbing mt-2"
-							class:hidePizza
-						>
-							<Canvas>
-								<Pizza />
-							</Canvas>
+								<Canvas>
+									<Pizza />
+								</Canvas>
+							</div>
 						</div>
 					</div>
-				</div>
-			</SidebarWrapper>
-		</Sidebar>
+				</SidebarWrapper>
+			</Sidebar>
 
-		<div class="px-4 mx-auto w-full h-full overflow-hidden">
-			<main class="w-full h-full flex flex-col pb-2 overflow-hidden">
-				<slot class="overflow-hidden" />
-			</main>
+			<div class="px-4 mx-auto w-full h-full overflow-hidden">
+				<main class="w-full h-full flex flex-col pb-2 overflow-hidden">
+					<slot class="overflow-hidden" />
+				</main>
+			</div>
 		</div>
-	</div>
-{/if}
+	{/if}
+</div>
 <ErrorToast bind:show={hasError} {errorMessage} onClose={onErrorDismissed} />
 <SuccessToast bind:show={hasSuccess} message={successMessage} onClose={onSuccessDismissed} />
 <ProgressModal bind:showModal={showProgressModal} title="Cloning new repo" />
