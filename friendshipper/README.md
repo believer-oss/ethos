@@ -153,7 +153,7 @@ In this example, we’ll make a new release for v4.0.0.
 
 ### Update config files
 
-Run the [Update App Version](https://github.com/BelieverCo/friendshipper/actions/workflows/release.yml) workflow in
+Run the [Update App Version](https://github.com/believer-oss/friendshipper/actions/workflows/release.yml) workflow in
 GitHub Actions, specifying `4.0.0` as the version. This workflow will automatically open a Pull Request that updates all
 the files that need to be modified with the new version number. Make sure this Pull Request is approved, then merge it.
 
@@ -161,7 +161,7 @@ the files that need to be modified with the new version number. Make sure this P
 
 Navigate to the releases page:
 
-https://github.com/BelieverCo/ethos/releases
+https://github.com/believer-oss/ethos/releases
 
 Select `Draft a new release`
 

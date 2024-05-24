@@ -15,7 +15,7 @@ use ethos_core::BIN_SUFFIX;
 use crate::state::AppState;
 use crate::APP_NAME;
 
-static REPO_OWNER: &str = "BelieverCo";
+static REPO_OWNER: &str = "believer-oss";
 static REPO_NAME: &str = "ethos";
 
 #[debug_handler]
