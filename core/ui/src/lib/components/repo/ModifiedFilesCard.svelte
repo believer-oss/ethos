@@ -16,6 +16,7 @@
 	import {
 		CloseCircleSolid,
 		FileEditSolid,
+		FolderOpenSolid,
 		InfoCircleSolid,
 		PlusSolid
 	} from 'flowbite-svelte-icons';
@@ -28,6 +29,7 @@
 	export let snapshotsEnabled = true;
 	export let selectAll: boolean = false;
 	export let onRevertFiles: (files: string[]) => Promise<void>;
+	export let onOpenDirectory: (path: string) => Promise<void>;
 
 	let showRevertConfirmation = false;
 	let shiftHeld = false;
@@ -234,7 +236,14 @@
 							</Tooltip>
 						{/if}
 					</TableBodyCell>
-					<TableBodyCell class="p-1 whitespace-nowrap font-medium">
+					<TableBodyCell class="p-1 flex gap-1 items-center h-full whitespace-nowrap font-medium">
+						<Button
+							outline
+							size="xs"
+							class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
+							on:click={async () => onOpenDirectory(file.path)}
+							><FolderOpenSolid class="w-4 h-4" /></Button
+						>
 						<Button
 							outline
 							size="xs"
