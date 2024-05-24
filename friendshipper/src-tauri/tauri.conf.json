@@ -28,7 +28,15 @@
 				"all": true
 			},
 			"window": {
-				"show": true
+				"all": false,
+				"close": true,
+				"hide": true,
+				"show": true,
+				"maximize": true,
+				"minimize": true,
+				"unmaximize": true,
+				"unminimize": true,
+				"startDragging": true
 			},
 			"process": {
 				"relaunch": true
@@ -84,7 +92,9 @@
 				"title": "Friendshipper",
 				"minWidth": 980,
 				"minHeight": 600,
-				"visible": false
+				"visible": false,
+				"decorations": false,
+				"transparent": true
 			}
 		]
 	}

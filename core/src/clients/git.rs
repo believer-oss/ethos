@@ -390,7 +390,7 @@ impl Git {
                 "--pretty=format:%H|%s|%an|%aI",
                 git_ref,
             ],
-            Opts::default(),
+            Opts::new_without_logs(),
         )
         .await
     }

@@ -330,7 +330,7 @@ impl StatusOp {
 
         debug!("s3 entries list: {:?}", builds);
 
-        let git_opts = git::Opts::default();
+        let git_opts = git::Opts::new_without_logs();
         let local_commit_shas: String = self
             .git_client
             .run_and_collect_output(&["log", "--format=\"%H\"", "-1000"], git_opts)
