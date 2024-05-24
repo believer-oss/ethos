@@ -85,7 +85,9 @@
 				"title": "Birdie",
 				"minWidth": 1100,
 				"minHeight": 640,
-				"visible": false
+				"visible": false,
+				"decorations": false,
+				"transparent": true
 			}
 		]
 	}
