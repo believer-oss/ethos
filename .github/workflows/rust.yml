@@ -222,7 +222,7 @@ jobs:
             ${{ matrix.app }}.exe
 
       - name: Prepare files for s3
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) && matrix.app == 'friendshipper' }}
         env:
           REF: ${{ github.ref_name }}
         run: |
@@ -233,14 +233,14 @@ jobs:
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) && matrix.app == 'friendshipper' }}
         with:
           aws-access-key-id: ${{ secrets.S3_UPLOAD_ACCESS_KEY }}
           aws-secret-access-key: ${{ secrets.S3_UPLOAD_SECRET_KEY }}
           aws-region: us-west-2
 
       - name: Upload to s3
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) && matrix.app == 'friendshipper' }}
         env:
           REF: ${{ github.ref_name }}
         run: |
