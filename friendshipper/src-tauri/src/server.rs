@@ -10,6 +10,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use config::Config;
 use directories_next::BaseDirs;
+use ethos_core::middleware::uri::{uri_passthrough, RequestUri};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
@@ -167,18 +168,21 @@ impl Server {
                 }
             }
 
-            let app = crate::router(shared_state.clone())?.layer(
+            let app = crate::router(shared_state.clone())?
+                .layer(axum::middleware::from_fn(uri_passthrough))
+                .layer(
                 TraceLayer::new_for_http()
                     .on_request(|request: &Request<Body>, _span: &Span| {
                         info!(method = %request.method(), path = %request.uri().path(), "request");
                     })
                     .on_response(|response: &Response, latency: Duration, _span: &Span| {
+                        let path = response.extensions().get::<RequestUri>().map(|r| r.0.path()).unwrap_or("unknown");
                         match response.status() {
                             StatusCode::OK => {
-                                debug!(status = %response.status(), latency = ?latency, "response");
+                                info!(status = %response.status(), latency = ?latency, path, "response");
                             }
                             _ => {
-                                warn!(status = %response.status(), latency = ?latency, "response");
+                                warn!(status = %response.status(), latency = ?latency, path, "response");
                             }
                         }
                     }),
