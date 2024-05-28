@@ -475,6 +475,9 @@ impl Git {
             cmd.arg(arg);
         }
 
+        // disable clone protection
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+
         if !&self.repo_path.as_os_str().is_empty() {
             // if the first arg is clone, set current dir to the parent, then canonicalize
             if args[0] == "clone" {
