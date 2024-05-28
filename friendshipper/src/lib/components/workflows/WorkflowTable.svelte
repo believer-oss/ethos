@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { Badge, Button, Card, Indicator, Tooltip } from 'flowbite-svelte';
-	import { ChevronDownOutline, ChevronUpOutline, CloseOutline, CodeOutline } from 'flowbite-svelte-icons';
+	import {
+		ChevronDownOutline,
+		ChevronUpOutline,
+		CloseOutline,
+		CodeOutline
+	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
 	import { stopWorkflow } from '$lib/builds';
@@ -155,9 +160,9 @@
 				selectedCommit === commit.commit ? setSelectedCommit('') : setSelectedCommit(commit.commit)}
 		>
 			{#if selectedCommit === commit.commit}
-				<ChevronDownOutline class="w-4 h-4 text-white" />
+				<ChevronDownOutline class="w-5 h-5 text-white" />
 			{:else}
-				<ChevronUpOutline class="w-4 h-4 text-white" />
+				<ChevronUpOutline class="w-5 h-5 text-white" />
 			{/if}
 		</Button>
 	</div>

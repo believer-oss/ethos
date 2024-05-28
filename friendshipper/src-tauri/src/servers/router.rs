@@ -157,22 +157,20 @@ async fn get_server(
     info!("Fetching server {}", name);
 
     match kube_client.get_gameserver(&name).await {
-        Ok(server) => {
-            match server.status {
-                Some(status) => Ok(Json(GameServerResults {
-                    display_name: match server.spec.display_name.clone(){
-                        Some(name) => name,
-                        None => server.metadata.name.clone().unwrap(),
-                    },
-                    name: server.metadata.name.unwrap(),
-                    ip: status.ip,
-                    port: status.port,
-                    netimgui_port: status.netimgui_port,
-                    version: server.spec.version.clone(),
-                })),
-                None => Err(CoreError::from(anyhow!("Server is not ready yet"))),
-            }
-        }
+        Ok(server) => match server.status {
+            Some(status) => Ok(Json(GameServerResults {
+                display_name: match server.spec.display_name.clone() {
+                    Some(name) => name,
+                    None => server.metadata.name.clone().unwrap(),
+                },
+                name: server.metadata.name.unwrap(),
+                ip: status.ip,
+                port: status.port,
+                netimgui_port: status.netimgui_port,
+                version: server.spec.version.clone(),
+            })),
+            None => Err(CoreError::from(anyhow!("Server is not ready yet"))),
+        },
         Err(e) => Err(CoreError::from(anyhow!("Error getting server: {:?}", e))),
     }
 }

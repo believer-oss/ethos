@@ -1,23 +1,33 @@
 <script lang="ts">
-	import { Button, Table, TableBody, TableBodyCell, TableBodyRow, Tooltip } from 'flowbite-svelte';
+	import {
+		Button,
+		Table,
+		TableBody,
+		TableBodyCell,
+		TableBodyRow,
+		TableHead,
+		TableHeadCell,
+		Tooltip
+	} from 'flowbite-svelte';
 	import { ArchiveArrowDownOutline, CodeOutline, FileCopyOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
-	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
+	import { ProgressModal } from '@ethos/core';
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
 	import { builds } from '$lib/stores';
 	import { syncClient } from '$lib/builds';
 	import { downloadServerLogs, terminateServer } from '$lib/gameServers';
-	import { ProgressModal } from '@ethos/core';
+	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
 
 	const defaultLogTooltip = 'Download server logs';
+
+	export let servers: GameServerResult[] = [];
+	export let onUpdateServers: () => Promise<void>;
+	export let showHeader = false;
 
 	// Loading states
 	let syncing = false;
 	let downloadingLogs = false;
 	let logTooltip = defaultLogTooltip;
-
-	export let servers: GameServerResult[] = [];
-	export let onUpdateServers: () => Promise<void>;
 
 	// logs modal
 	let showServerLogsModal = false;
@@ -35,7 +45,6 @@
 		const entry = $builds.entries.find((e) => e.commit === server.version);
 
 		if (!entry) {
-			console.log('NO');
 			return;
 		}
 
@@ -81,10 +90,17 @@
 </script>
 
 <Table color="custom" striped={true} divClass="w-full h-full overflow-x-hidden overflow-y-auto">
+	{#if showHeader}
+		<TableHead class="text-center border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+			<TableHeadCell class="">Name</TableHeadCell>
+			<TableHeadCell class="">Version</TableHeadCell>
+			<TableHeadCell class="" />
+		</TableHead>
+	{/if}
 	<TableBody>
 		{#if servers.length === 0}
 			<TableBodyRow class="text-center p-2">
-				<TableBodyCell class="py-2" colspan="4">
+				<TableBodyCell class="" colspan="4">
 					<p class="text-gray-400 dark:text-gray-400">No servers found</p>
 				</TableBodyCell>
 			</TableBodyRow>
@@ -92,18 +108,16 @@
 			{#each servers as server, index}
 				<TableBodyRow
 					class="text-center border-b-0 p-2 {index % 2 === 0
-						? 'bg-secondary-800 dark:bg-space-950'
-						: 'bg-secondary-700 dark:bg-space-900'}"
+						? 'bg-secondary-700 dark:bg-space-900'
+						: 'bg-secondary-800 dark:bg-space-950'}"
 				>
 					<TableBodyCell class="py-2 text-xs"
 						>{formatServerName(server.displayName || server.name)}</TableBodyCell
 					>
-					<TableBodyCell class="py-2 text-xs">{formatServerName(server.name)}</TableBodyCell>
-					<Tooltip
-						class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-						placement="top"
-						>{server.name}
-					</Tooltip>
+					<TableBodyCell
+						class="py-2 w-16 max-w-[4rem] break-normal overflow-ellipsis whitespace-nowrap text-xs"
+						>{server.version.substring(0, 8)}</TableBodyCell
+					>
 					<TableBodyCell class="py-2 flex gap-2 justify-end">
 						<Button
 							outline
@@ -167,5 +181,5 @@
 	</TableBody>
 </Table>
 
-<ProgressModal bind:showModal={syncing} title="Syncing Client" />
+<ProgressModal bind:showModal={syncing} />
 <ServerLogsModal bind:showModal={showServerLogsModal} serverName={selectedServerName} />

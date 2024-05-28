@@ -1,21 +1,10 @@
 <script lang="ts">
-	import {
-		Button,
-		Card,
-		Label,
-		Select,
-		Spinner,
-		Tooltip
-	} from 'flowbite-svelte';
+	import { Button, Card, Label, Select, Spinner, Tooltip } from 'flowbite-svelte';
 	import { invoke } from '@tauri-apps/api/tauri';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import {
-		CirclePlusOutline,
-		FolderOpenOutline
-	} from 'flowbite-svelte-icons';
+	import { CirclePlusOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
-	import { ProgressModal } from '@ethos/core';
 	import {
 		activeProjectConfig,
 		appConfig,
@@ -35,11 +24,7 @@
 		QuickLaunchEvent,
 		SyncClientRequest
 	} from '$lib/types';
-	import {
-		getServers,
-		launchServer,
-		openLogsFolder,
-	} from '$lib/gameServers';
+	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
 	import { syncClient, getBuilds } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { getPlaytestGroupForUser } from '$lib/playtests';
@@ -56,10 +41,6 @@
 	let servers: GameServerResult[] = [];
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
 	let recentCommits = get(builtCommits);
-
-	// logs modal
-	let showServerLogsModal = false;
-	let selectedServerName = '';
 
 	const getNextPlaytest = (pts: Playtest[]): Nullable<Playtest> => {
 		if (pts.length > 0) {
@@ -121,6 +102,11 @@
 			recentCommits = get(builtCommits);
 		};
 
+	$: $selectedCommit,
+		() => {
+			selected = get(selectedCommit);
+		};
+
 	const handleServerCreate = async () => {
 		if (selected === null) {
 			return;
@@ -128,6 +114,7 @@
 
 		try {
 			await updateServers(selected.commit);
+			selected = get(selectedCommit);
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -379,7 +366,7 @@
 
 				<ServerModal
 					bind:showModal={showServerModal}
-					buildEntry={selected}
+					initialEntry={selected}
 					{handleServerCreate}
 					{handleAutoLaunch}
 				/>
@@ -422,6 +409,3 @@
 		>{getMainButtonText()}
 	</Button>
 {/key}
-
-<ProgressModal bind:showModal={syncing} />
-<ServerLogsModal bind:showModal={showServerLogsModal} serverName={selectedServerName} />

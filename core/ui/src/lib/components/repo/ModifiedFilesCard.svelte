@@ -16,6 +16,7 @@
 	import {
 		CloseCircleSolid,
 		FileOutline,
+		FolderOpenOutline,
 		InfoCircleSolid,
 		PlusOutline
 	} from 'flowbite-svelte-icons';
@@ -164,14 +165,16 @@
 			<Button
 				size="xs"
 				disabled={disabled || selectedFiles.length === 0}
-				on:click={promptForRevertConfirmation}>Revert Selected</Button
-			>
+				on:click={promptForRevertConfirmation}
+				>Revert Selected
+			</Button>
 			{#if snapshotsEnabled}
 				<Button
 					size="xs"
 					disabled={disabled || selectedFiles.length === 0}
-					on:click={onSaveSnapshot}>Save Snapshot</Button
-				>
+					on:click={onSaveSnapshot}
+					>Save Snapshot
+				</Button>
 			{/if}
 		</div>
 	</div>
@@ -241,18 +244,21 @@
 							size="xs"
 							class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
 							on:click={async () => onOpenDirectory(file.path)}
-							><FolderOpenSolid class="w-4 h-4" /></Button
 						>
+							<FolderOpenOutline class="w-4 h-4" />
+						</Button>
 						<Button
 							outline
 							size="xs"
 							class="p-0 w-full active:border-none focus:ring-0 dark:active:border-none dark:focus:ring-0 border-none justify-start items-center text-left {getFileTextClass(
 								file
-							)} {index % 2 === 0
+							)}
+                                {index % 2 === 0
 								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
 								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
-							on:click={() => handleFileToggled(file)}>{file.path}</Button
-						>
+							on:click={() => handleFileToggled(file)}
+							>{file.path}
+						</Button>
 					</TableBodyCell>
 				</TableBodyRow>
 			{:else}
@@ -318,10 +324,10 @@
 				on:click={async () => {
 					closeRevertConfirmation();
 					await onRevertFiles(selectedFiles.map((file) => file.path));
-
 					selectAll = false;
-				}}>Yes</Button
-			>
+				}}
+				>Yes
+			</Button>
 			<Button size="sm" on:click={closeRevertConfirmation}>No</Button>
 		</div>
 	</div>

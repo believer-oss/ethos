@@ -235,30 +235,28 @@ impl KubeClient {
         }
 
         match api.list(&lp).await {
-            Ok(res) => {
-                Ok(res
-                    .items
-                    .iter()
-                    .map(|i| {
-                        let (ip, port, netimgui_port) = match &i.status {
-                            Some(v) => (v.ip.clone(), v.port, v.netimgui_port),
-                            None => (Some("Missing".to_string()), 0, 0),
-                        };
+            Ok(res) => Ok(res
+                .items
+                .iter()
+                .map(|i| {
+                    let (ip, port, netimgui_port) = match &i.status {
+                        Some(v) => (v.ip.clone(), v.port, v.netimgui_port),
+                        None => (Some("Missing".to_string()), 0, 0),
+                    };
 
-                        GameServerResults {
-                            name: i.metadata.name.clone().unwrap(),
-                            display_name: match i.spec.display_name.clone(){
-                                Some(name) => name,
-                                None => i.metadata.name.clone().unwrap(),
-                            },
-                            ip,
-                            port,
-                            netimgui_port,
-                            version: i.spec.version.clone(),
-                        }
-                    })
-                    .collect::<Vec<GameServerResults>>())
-            }
+                    GameServerResults {
+                        name: i.metadata.name.clone().unwrap(),
+                        display_name: match i.spec.display_name.clone() {
+                            Some(name) => name,
+                            None => i.metadata.name.clone().unwrap(),
+                        },
+                        ip,
+                        port,
+                        netimgui_port,
+                        version: i.spec.version.clone(),
+                    }
+                })
+                .collect::<Vec<GameServerResults>>()),
             Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
         }
     }
@@ -294,7 +292,11 @@ impl KubeClient {
                 }),
                 ..Default::default()
             },
-            spec: GameServerSpec {display_name: Some(display_name.to_string()), version: tag, map },
+            spec: GameServerSpec {
+                display_name: Some(display_name.to_string()),
+                version: tag,
+                map,
+            },
             status: None,
         };
 
