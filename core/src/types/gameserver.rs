@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
     namespaced
 )]
 #[kube(status = "GameServerStatus")]
+#[serde(rename_all = "camelCase")]
 pub struct GameServerSpec {
+    pub display_name: Option<String>,
     pub version: String,
     pub map: Option<String>,
 }
