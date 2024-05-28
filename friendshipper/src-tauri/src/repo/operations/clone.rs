@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::Json;
+use ethos_core::clients::git::configure_global;
 use fs_extra::dir::get_size;
 use tracing::info;
 
@@ -68,10 +69,19 @@ pub async fn clone_handler(
         }
     });
 
+    // set pack window
+    configure_global("pack.window", "1").await?;
+
     state
         .git()
         .run(
-            &["clone", "--filter=tree:0", "--progress", &request.url],
+            &[
+                "clone",
+                "--filter=tree:0",
+                "--progress",
+                &request.url,
+                &request.path,
+            ],
             Default::default(),
         )
         .await?;
