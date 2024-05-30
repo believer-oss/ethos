@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Card, Spinner, TabItem, Tabs, Tooltip } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { RotateOutline } from 'flowbite-svelte-icons';
+	import { RefreshOutline } from 'flowbite-svelte-icons';
 	import { getWorkflows } from '$lib/builds';
 	import type { Nullable, Workflow } from '$lib/types';
 	import WorkflowLogsModal from '$lib/components/workflows/WorkflowLogsModal.svelte';
@@ -43,7 +43,7 @@
 		{#if loading}
 			<Spinner size="4" />
 		{:else}
-			<RotateOutline class="w-4 h-4" />
+			<RefreshOutline class="w-4 h-4" />
 		{/if}
 	</Button>
 </div>

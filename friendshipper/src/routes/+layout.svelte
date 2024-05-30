@@ -16,9 +16,9 @@
 	} from 'flowbite-svelte';
 	import {
 		BuildingSolid,
-		ChevronDownSolid,
-		ChevronUpSolid,
-		CloseSolid,
+		ChevronDownOutline,
+		ChevronUpOutline,
+		CloseOutline,
 		CodeBranchSolid,
 		CogOutline,
 		ComputerSpeakerSolid,
@@ -26,7 +26,8 @@
 		HomeSolid,
 		MinusOutline,
 		UserSolid,
-		WindowOutline
+		WindowOutline,
+		ServerOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { Canvas } from '@threlte/core';
@@ -443,7 +444,7 @@
 				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
 				on:click={async () => {
 					await appWindow.hide();
-				}}><CloseSolid class="h-4 w-4" /></Button
+				}}><CloseOutline class="h-4 w-4" /></Button
 			>
 		</div>
 	</div>
@@ -525,6 +526,20 @@
 								/>
 							</svelte:fragment>
 						</SidebarItem>
+						<SidebarItem
+							class="group/item"
+							label="Servers"
+							href="/servers"
+							active={activeUrl === '/servers'}
+							{spanClass}
+						>
+							<svelte:fragment slot="icon">
+								<ServerOutline
+									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+								/>
+							</svelte:fragment>
+						</SidebarItem>
+
 						{#if loadingBuilds}
 							<Button
 								class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
@@ -564,10 +579,10 @@
 									/>
 								</svelte:fragment>
 								<svelte:fragment slot="arrowup">
-									<ChevronUpSolid class="h-3 w-3 text-white" />
+									<ChevronUpOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<svelte:fragment slot="arrowdown">
-									<ChevronDownSolid class="h-3 w-3 text-white" />
+									<ChevronDownOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<SidebarItem
 									label="Submit"
@@ -649,10 +664,10 @@
 									/>
 								</svelte:fragment>
 								<svelte:fragment slot="arrowup">
-									<ChevronUpSolid class="h-3 w-3 text-white" />
+									<ChevronUpOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<svelte:fragment slot="arrowdown">
-									<ChevronDownSolid class="h-3 w-3 text-white" />
+									<ChevronDownOutline class="h-5 w-5 text-white" />
 								</svelte:fragment>
 								<SidebarItem
 									label="Storage"
@@ -675,10 +690,10 @@
 								/>
 							</svelte:fragment>
 							<svelte:fragment slot="arrowup">
-								<ChevronUpSolid class="h-3 w-3 text-white" />
+								<ChevronUpOutline class="h-5 w-5 text-white" />
 							</svelte:fragment>
 							<svelte:fragment slot="arrowdown">
-								<ChevronDownSolid class="h-3 w-3 text-white" />
+								<ChevronDownOutline class="h-5 w-5 text-white" />
 							</svelte:fragment>
 							<SidebarItem
 								label="Logs"

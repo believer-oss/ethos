@@ -27,9 +27,8 @@ use crate::types::playtests::{
     CreatePlaytestRequest, Group, GroupFullError, Playtest, UpdatePlaytestRequest,
 };
 use crate::types::project::ProjectConfig;
-use crate::{AWSClient, KUBE_DISPLAY_NAME_LABEL_KEY, KUBE_SHA_LABEL_KEY};
+use crate::{AWSClient, KUBE_SHA_LABEL_KEY};
 
-static DISPLAY_NAME_LABEL_KEY: &str = KUBE_DISPLAY_NAME_LABEL_KEY;
 static SHA_LABEL_KEY: &str = KUBE_SHA_LABEL_KEY;
 
 #[derive(Clone, Debug)]
@@ -236,53 +235,28 @@ impl KubeClient {
         }
 
         match api.list(&lp).await {
-            Ok(res) => {
-                Ok(res
-                    .items
-                    .iter()
-                    .map(|i| {
-                        let (ip, port, netimgui_port) = match &i.status {
-                            Some(v) => (v.ip.clone(), v.port, v.netimgui_port),
-                            None => (Some("Missing".to_string()), 0, 0),
-                        };
+            Ok(res) => Ok(res
+                .items
+                .iter()
+                .map(|i| {
+                    let (ip, port, netimgui_port) = match &i.status {
+                        Some(v) => (v.ip.clone(), v.port, v.netimgui_port),
+                        None => (Some("Missing".to_string()), 0, 0),
+                    };
 
-                        // get display name
-                        let mut display_name = "";
-                        let mut version = "";
-                        if i.metadata
-                            .labels
-                            .as_ref()
-                            .unwrap()
-                            .contains_key(DISPLAY_NAME_LABEL_KEY)
-                        {
-                            display_name = i
-                                .metadata
-                                .labels
-                                .as_ref()
-                                .unwrap()
-                                .get(DISPLAY_NAME_LABEL_KEY)
-                                .unwrap();
-
-                            version = i
-                                .metadata
-                                .labels
-                                .as_ref()
-                                .unwrap()
-                                .get(SHA_LABEL_KEY)
-                                .unwrap();
-                        }
-
-                        GameServerResults {
-                            name: i.metadata.name.clone().unwrap(),
-                            display_name: display_name.to_string(),
-                            ip,
-                            port,
-                            netimgui_port,
-                            version: version.to_string(),
-                        }
-                    })
-                    .collect::<Vec<GameServerResults>>())
-            }
+                    GameServerResults {
+                        name: i.metadata.name.clone().unwrap(),
+                        display_name: match i.spec.display_name.clone() {
+                            Some(name) => name,
+                            None => i.metadata.name.clone().unwrap(),
+                        },
+                        ip,
+                        port,
+                        netimgui_port,
+                        version: i.spec.version.clone(),
+                    }
+                })
+                .collect::<Vec<GameServerResults>>()),
             Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
         }
     }
@@ -313,13 +287,16 @@ impl KubeClient {
                 namespace: Some("game-servers".to_string()),
                 labels: Some({
                     let mut labels = BTreeMap::new();
-                    labels.insert(DISPLAY_NAME_LABEL_KEY.to_string(), display_name.to_string());
                     labels.insert(SHA_LABEL_KEY.to_string(), sha.clone());
                     labels
                 }),
                 ..Default::default()
             },
-            spec: GameServerSpec { version: tag, map },
+            spec: GameServerSpec {
+                display_name: Some(display_name.to_string()),
+                version: tag,
+                map,
+            },
             status: None,
         };
 

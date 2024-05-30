@@ -21,7 +21,6 @@ pub static ETHOS_APP_NAME: &str = "ethos";
 const DYNAMIC_CONFIG_KEY: &str = "friendshipper/dynamic-config.json";
 static AWS_REGION: &str = "us-west-2";
 pub const KUBE_SHA_LABEL_KEY: &str = "believer.dev/commit";
-pub const KUBE_DISPLAY_NAME_LABEL_KEY: &str = "believer.dev/name";
 pub static AWS_ACCOUNT_ID: &str = match option_env!("AWS_ACCOUNT_ID") {
     Some(account_id) => account_id,
     None => "",

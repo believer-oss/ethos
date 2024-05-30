@@ -4,7 +4,7 @@ import type { GameServerResult, LaunchRequest } from '$lib/types';
 export const getServer = async (name: string): Promise<GameServerResult> =>
 	invoke('get_server', { name });
 
-export const getServers = async (commit: string): Promise<GameServerResult[]> =>
+export const getServers = async (commit?: string): Promise<GameServerResult[]> =>
 	invoke('get_servers', { commit });
 
 export const launchServer = async (req: LaunchRequest): Promise<void> =>

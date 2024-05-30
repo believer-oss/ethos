@@ -15,7 +15,7 @@
 		Tooltip
 	} from 'flowbite-svelte';
 	import {
-		AtomSolid,
+		AtomOutline,
 		CloudArrowUpSolid,
 		CodeBranchSolid,
 		DatabaseSolid,
@@ -349,7 +349,7 @@
 	</div>
 
 	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
-		<AtomSolid />
+		<AtomOutline />
 		Engine Options
 	</h1>
 	<div class="rounded-lg border border-gray-300 dark:border-gray-300">

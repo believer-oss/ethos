@@ -10,7 +10,7 @@
 		TableHeadCell,
 		Tooltip
 	} from 'flowbite-svelte';
-	import { ChevronDownSolid, ChevronRightSolid, ChevronUpSolid } from 'flowbite-svelte-icons';
+	import { ChevronDownOutline, ChevronRightOutline, ChevronUpOutline } from 'flowbite-svelte-icons';
 	import type { Commit, CommitFileInfo, Nullable } from '$lib/types/index.js';
 
 	export let commits: Commit[];
@@ -80,7 +80,7 @@
 						: 'font-light'}"
 				>
 					{#if isCommitLatestLocal(commit.sha)}
-						<ChevronRightSolid class="w-3 h-3 mr-2 -ml-6" />
+						<ChevronRightOutline class="w-3 h-3 mr-2 -ml-6" />
 					{/if}
 					{commit.sha}</TableBodyCell
 				>
@@ -108,9 +108,9 @@
 							expandedCommit === commit.sha ? setExpandedCommit('') : setExpandedCommit(commit.sha)}
 					>
 						{#if expandedCommit === commit.sha}
-							<ChevronDownSolid size="xs" />
+							<ChevronDownOutline size="xs" />
 						{:else}
-							<ChevronUpSolid size="xs" />
+							<ChevronUpOutline size="xs" />
 						{/if}
 					</Button>
 				</TableBodyCell>

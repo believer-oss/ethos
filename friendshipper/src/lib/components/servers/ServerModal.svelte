@@ -1,14 +1,22 @@
 <script lang="ts">
 	import { Button, Helper, Input, Label, Modal, Select, Toggle } from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
-	import { launchServer } from '$lib/gameServers';
-	import type { ArtifactEntry } from '$lib/types';
-	import { activeProjectConfig } from '$lib/stores';
+	import { get } from 'svelte/store';
+	import { ProgressModal } from '@ethos/core';
+	import { getServers, launchServer } from '$lib/gameServers';
+	import type { ArtifactEntry, GameServerResult, Nullable, SyncClientRequest } from '$lib/types';
+	import {
+		activeProjectConfig,
+		builds,
+		builtCommits,
+		selectedCommit,
+		workflowMap
+	} from '$lib/stores';
+	import { syncClient } from '$lib/builds';
 
 	export let showModal: boolean;
-	export let buildEntry: ArtifactEntry;
 	export let handleServerCreate: () => Promise<void> = async () => {};
-	export let handleAutoLaunch: (serverName: string) => Promise<void>;
+	export let initialEntry: Nullable<ArtifactEntry> = null;
 
 	let busy = false;
 	let serverName = '';
@@ -17,6 +25,11 @@
 	let autoLaunch = false;
 
 	const maps = $activeProjectConfig?.maps.map((m) => ({ name: m, value: m }));
+
+	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
+	let recentCommits = get(builtCommits);
+
+	let syncing = false;
 
 	const validateServerName = (name: string): boolean => {
 		if (name === '') return true;
@@ -30,12 +43,72 @@
 		hasError = !validateServerName(serverName);
 	};
 
+	const handleCommitChange = (newCommit: Nullable<ArtifactEntry>) => {
+		if (newCommit === null) {
+			return;
+		}
+
+		selectedCommit.set(newCommit);
+	};
+
+	$: void handleCommitChange(selected);
+
+	$: $builtCommits,
+		() => {
+			recentCommits = get(builtCommits);
+		};
+
+	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
+		if (entry === null) {
+			return;
+		}
+
+		syncing = true;
+		const req: SyncClientRequest = {
+			artifactEntry: entry,
+			methodPrefix: $builds.methodPrefix,
+			launchOptions: {
+				ip: server.ip,
+				port: server.port,
+				netimguiPort: server.netimguiPort
+			}
+		};
+
+		try {
+			await syncClient(req);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		syncing = false;
+	};
+
+	const handleAutoLaunch = async (name: string) => {
+		if (selected === null) {
+			return;
+		}
+		const servers = await getServers();
+		const server = servers.find((s) => s.displayName === name);
+		if (server) {
+			try {
+				await handleSyncClient(selected, server);
+				selected = get(selectedCommit);
+			} catch (e) {
+				await emit('error', e);
+			}
+		}
+	};
+
 	const handleSubmit = async () => {
+		if (selected === null) {
+			return;
+		}
+
 		busy = true;
 
 		try {
 			await launchServer({
-				commit: buildEntry.commit,
+				commit: selected.commit,
 				displayName: serverName,
 				checkForExisting: false,
 				map
@@ -60,14 +133,36 @@
 
 <Modal
 	size="xs"
-	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto overflow-x-hidden"
 	bodyClass="!border-t-0"
 	bind:open={showModal}
+	on:open={() => {
+		selected = initialEntry !== null ? initialEntry : get(selectedCommit);
+	}}
 	autoclose={false}
 	outsideclose
 >
 	<form class="flex flex-col space-y-4" action="#" on:submit|preventDefault={handleSubmit}>
 		<h4 class="text-lg font-semibold text-primary-400">Launch Server</h4>
+		<Label color={hasError ? 'red' : 'gray'} class="space-y-2 text-xs text-white">
+			<span>Version</span>
+			<Select
+				size="sm"
+				class="bg-secondary-700 dark:bg-space-900 border-white dark:border-white text-white dark:text-white"
+				placeholder="Select a commit"
+				bind:value={selected}
+				required
+			>
+				{#if recentCommits}
+					{#each recentCommits as commit}
+						<option value={commit.value}>
+							{commit.name.substring(0, 8)}
+							{$workflowMap.get(commit.name)?.message?.substring(0, 55) || ''}
+						</option>
+					{/each}
+				{/if}
+			</Select>
+		</Label>
 		<Label color={hasError ? 'red' : 'gray'} class="space-y-2 text-xs text-white">
 			<span>Name</span>
 			<Input
@@ -82,9 +177,9 @@
 			/>
 		</Label>
 		{#if hasError}
-			<Helper class="mt-2" color="red"
-				><span class="font-medium">Error!</span> Server names can only include A-Z, a-z, 0-9, -, and
-				_.
+			<Helper class="mt-2" color="red">
+				<span class="font-medium">Error!</span>
+				Server names can only include A-Z, a-z, 0-9, -, and _.
 			</Helper>
 		{/if}
 		<Label class="space-y-2 text-xs text-white">
@@ -98,9 +193,11 @@
 				required
 			/>
 		</Label>
-		<Toggle class="text-white" bind:checked={autoLaunch} name="launch"
-			>Sync client and join server immediately</Toggle
-		>
+		<Toggle class="text-white" bind:checked={autoLaunch} name="launch">
+			Sync client and join server immediately
+		</Toggle>
 		<Button disabled={busy || hasError} type="submit" class="w-full">Submit</Button>
 	</form>
 </Modal>
+
+<ProgressModal bind:showModal={syncing} />

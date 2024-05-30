@@ -16,7 +16,7 @@
 	} from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
-	import { RotateOutline } from 'flowbite-svelte-icons';
+	import { RefreshOutline } from 'flowbite-svelte-icons';
 	import { releaseLocks, verifyLocks } from '$lib/repo';
 	import { allModifiedFiles, locks } from '$lib/stores';
 
@@ -147,7 +147,7 @@
 	<div class="flex items-center gap-2">
 		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">File Locks</p>
 		<Button class="!p-1.5" primary on:click={refreshLocks}>
-			<RotateOutline class="w-4 h-4" />
+			<RefreshOutline class="w-4 h-4" />
 		</Button>
 		<Button
 			id="release-selected"

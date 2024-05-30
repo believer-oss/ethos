@@ -15,10 +15,10 @@
 	} from 'flowbite-svelte';
 	import {
 		CloseCircleSolid,
-		FileEditSolid,
-		FolderOpenSolid,
+		FileOutline,
+		FolderOpenOutline,
 		InfoCircleSolid,
-		PlusSolid
+		PlusOutline
 	} from 'flowbite-svelte-icons';
 	import { type ModifiedFile, ModifiedFileState } from '$lib/types/index.js';
 
@@ -165,14 +165,16 @@
 			<Button
 				size="xs"
 				disabled={disabled || selectedFiles.length === 0}
-				on:click={promptForRevertConfirmation}>Revert Selected</Button
-			>
+				on:click={promptForRevertConfirmation}
+				>Revert Selected
+			</Button>
 			{#if snapshotsEnabled}
 				<Button
 					size="xs"
 					disabled={disabled || selectedFiles.length === 0}
-					on:click={onSaveSnapshot}>Save Snapshot</Button
-				>
+					on:click={onSaveSnapshot}
+					>Save Snapshot
+				</Button>
 			{/if}
 		</div>
 	</div>
@@ -214,14 +216,14 @@
 					</TableBodyCell>
 					<TableBodyCell tdClass="p-1 w-8">
 						{#if getModifiedState(file) === ModifiedFileState.Added}
-							<PlusSolid class="w-4 h-4 text-lime-500" />
+							<PlusOutline class="w-4 h-4 text-lime-500" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
 								>Added
 							</Tooltip>
 						{:else if getModifiedState(file) === ModifiedFileState.Modified}
-							<FileEditSolid class="w-4 h-4 text-yellow-300" />
+							<FileOutline class="w-4 h-4 text-yellow-300" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
@@ -242,18 +244,21 @@
 							size="xs"
 							class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
 							on:click={async () => onOpenDirectory(file.path)}
-							><FolderOpenSolid class="w-4 h-4" /></Button
 						>
+							<FolderOpenOutline class="w-4 h-4" />
+						</Button>
 						<Button
 							outline
 							size="xs"
 							class="p-0 w-full active:border-none focus:ring-0 dark:active:border-none dark:focus:ring-0 border-none justify-start items-center text-left {getFileTextClass(
 								file
-							)} {index % 2 === 0
+							)}
+                                {index % 2 === 0
 								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
 								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
-							on:click={() => handleFileToggled(file)}>{file.path}</Button
-						>
+							on:click={() => handleFileToggled(file)}
+							>{file.path}
+						</Button>
 					</TableBodyCell>
 				</TableBodyRow>
 			{:else}
@@ -288,14 +293,14 @@
 			{#each selectedFiles as file}
 				<div class="flex gap-2 items-center">
 					{#if getModifiedState(file) === ModifiedFileState.Added}
-						<PlusSolid class="w-4 h-4 text-lime-500" />
+						<PlusOutline class="w-4 h-4 text-lime-500" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
 							>Added
 						</Tooltip>
 					{:else if getModifiedState(file) === ModifiedFileState.Modified}
-						<FileEditSolid class="w-4 h-4 text-yellow-300" />
+						<FileOutline class="w-4 h-4 text-yellow-300" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
@@ -319,10 +324,10 @@
 				on:click={async () => {
 					closeRevertConfirmation();
 					await onRevertFiles(selectedFiles.map((file) => file.path));
-
 					selectAll = false;
-				}}>Yes</Button
-			>
+				}}
+				>Yes
+			</Button>
 			<Button size="sm" on:click={closeRevertConfirmation}>No</Button>
 		</div>
 	</div>

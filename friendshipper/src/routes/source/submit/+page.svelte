@@ -18,7 +18,7 @@
 		Textarea,
 		Tooltip
 	} from 'flowbite-svelte';
-	import { LinkOutline, QuestionCircleOutline, RotateOutline } from 'flowbite-svelte-icons';
+	import { LinkOutline, QuestionCircleOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/shell';
@@ -380,7 +380,7 @@
 			{#if loading}
 				<Spinner size="4" />
 			{:else}
-				<RotateOutline class="w-4 h-4" />
+				<RefreshOutline class="w-4 h-4" />
 			{/if}
 		</Button>
 	</div>

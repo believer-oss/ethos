@@ -1729,10 +1729,10 @@ flatted@^3.2.9:
   resolved "https://registry.npmjs.org/flatted/-/flatted-3.2.9.tgz"
   integrity sha512-36yxDn5H7OFZQla0/jFJmbIKTdZAQHngCedGxiMmpNfEZM0sdEeT+WczLQrjK6D7o2aiyLYDnkw0R3JK0Qv1RQ==
 
-flowbite-svelte-icons@^0.4.4:
-  version "0.4.4"
-  resolved "https://registry.npmjs.org/flowbite-svelte-icons/-/flowbite-svelte-icons-0.4.4.tgz"
-  integrity sha512-fOZri6HYYyo13olXQzvoid19hlYR/HjzQobpzBPkj8QseCJ9R1uWR7bNlhPl5vFCElqcfm3UooYiwT4rKKiqzQ==
+flowbite-svelte-icons@^1.6.1:
+  version "1.6.1"
+  resolved "https://registry.yarnpkg.com/flowbite-svelte-icons/-/flowbite-svelte-icons-1.6.1.tgz#10da0f5aafdbe1f34dcc44293bd2c0020482262b"
+  integrity sha512-Kw/7BzA6fqlFq7tBNudwX0KVU4cbyyXcMcgHTraMwGBtvBQan0RKMbvWwqm4JZNvLGAvRv1BM2EF7rzo/oam1Q==
 
 flowbite-svelte@^0.44.18:
   version "0.44.20"

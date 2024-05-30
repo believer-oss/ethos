@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FolderOpenOutline, RotateOutline } from 'flowbite-svelte-icons';
+	import { FolderOpenOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import {
 		Badge,
 		Button,
@@ -75,7 +75,7 @@
 	<div class="flex items-center gap-2">
 		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Logs</p>
 		<Button disabled={loading} class="!p-1.5" primary on:click={refreshLogs}>
-			<RotateOutline class="w-4 h-4" />
+			<RefreshOutline class="w-4 h-4" />
 		</Button>
 		<Label class="text-sm text-gray-300">Filter by level:</Label>
 		<MultiSelect

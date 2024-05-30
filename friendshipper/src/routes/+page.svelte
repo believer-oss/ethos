@@ -1,28 +1,10 @@
 <script lang="ts">
-	import {
-		Button,
-		Card,
-		Label,
-		Select,
-		Spinner,
-		Table,
-		TableBody,
-		TableBodyCell,
-		TableBodyRow,
-		Tooltip
-	} from 'flowbite-svelte';
+	import { Button, Card, Label, Select, Spinner, Tooltip } from 'flowbite-svelte';
 	import { invoke } from '@tauri-apps/api/tauri';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import {
-		ArchiveDownloadOutline,
-		CirclePlusOutline,
-		CodeOutline,
-		FileCopyOutline,
-		FolderOpenOutline
-	} from 'flowbite-svelte-icons';
+	import { CirclePlusOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
-	import { ProgressModal } from '@ethos/core';
 	import {
 		activeProjectConfig,
 		appConfig,
@@ -42,19 +24,11 @@
 		QuickLaunchEvent,
 		SyncClientRequest
 	} from '$lib/types';
-	import {
-		downloadServerLogs,
-		getServers,
-		launchServer,
-		openLogsFolder,
-		terminateServer
-	} from '$lib/gameServers';
+	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
 	import { syncClient, getBuilds } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { getPlaytestGroupForUser } from '$lib/playtests';
-	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
-
-	const defaultLogTooltip = 'Download server logs';
+	import ServerTable from '$lib/components/servers/ServerTable.svelte';
 
 	// Loading states
 	let playtestLoading = false;
@@ -63,16 +37,10 @@
 	let buildVerified = false;
 	let fetchingServers = false;
 	let showServerModal = false;
-	let downloadingLogs = false;
-	let logTooltip = defaultLogTooltip;
 
 	let servers: GameServerResult[] = [];
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
 	let recentCommits = get(builtCommits);
-
-	// logs modal
-	let showServerLogsModal = false;
-	let selectedServerName = '';
 
 	const getNextPlaytest = (pts: Playtest[]): Nullable<Playtest> => {
 		if (pts.length > 0) {
@@ -134,6 +102,11 @@
 			recentCommits = get(builtCommits);
 		};
 
+	$: $selectedCommit,
+		() => {
+			selected = get(selectedCommit);
+		};
+
 	const handleServerCreate = async () => {
 		if (selected === null) {
 			return;
@@ -141,6 +114,7 @@
 
 		try {
 			await updateServers(selected.commit);
+			selected = get(selectedCommit);
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -169,41 +143,6 @@
 		}
 
 		syncing = false;
-	};
-
-	const handleAutoLaunch = async (serverName: string) => {
-		if (selected === null) {
-			return;
-		}
-
-		const server = servers.find((s) => s.displayName === serverName);
-		if (server) {
-			try {
-				await handleSyncClient(selected, server);
-			} catch (e) {
-				await emit('error', e);
-			}
-		}
-	};
-
-	const handleDownloadLogs = async (server: GameServerResult) => {
-		downloadingLogs = true;
-		logTooltip = 'Downloading...';
-		await downloadServerLogs(server.name);
-
-		if (downloadingLogs) {
-			logTooltip = 'Done!';
-		}
-	};
-
-	const resetLogDownloadState = () => {
-		logTooltip = defaultLogTooltip;
-		downloadingLogs = false;
-	};
-
-	const handleCopyText = (server: GameServerResult) => {
-		const url = `friendshipper://launch/${server.name}`;
-		void navigator.clipboard.writeText(url);
 	};
 
 	const shouldDisableLaunchButton = (): boolean => {
@@ -289,21 +228,6 @@
 		if (server) {
 			await handleSyncClient(selected, server);
 		}
-	};
-
-	const handleTerminateServer = async (name: string) => {
-		if (selected === null) return;
-
-		await terminateServer(name);
-		await updateServers(selected.commit);
-	};
-
-	const formatServerName = (name: string): string => {
-		if (name.length > 30) {
-			return `${name.slice(0, 27)}...`;
-		}
-
-		return name;
 	};
 
 	void listen('quick-launch', (event) => {
@@ -427,99 +351,17 @@
 
 				<ServerModal
 					bind:showModal={showServerModal}
-					buildEntry={selected}
+					initialEntry={selected}
 					{handleServerCreate}
-					{handleAutoLaunch}
 				/>
 
-				<div class="mt-2 p-2 border dark:border rounded-lg">
-					<Table color="custom" striped={true} divClass="max-h-[20vh] xl:max-h-full overflow-auto">
-						<TableBody>
-							{#if servers.length === 0}
-								<TableBodyRow class="text-center p-2">
-									<TableBodyCell class="py-2" colspan="4">
-										<p class="text-gray-400 dark:text-gray-400">No servers found</p>
-									</TableBodyCell>
-								</TableBodyRow>
-							{:else}
-								{#each servers as server, index}
-									<TableBodyRow
-										class="text-center border-b-0 p-2 {index % 2 === 0
-											? 'bg-secondary-800 dark:bg-space-950'
-											: 'bg-secondary-700 dark:bg-space-900'}"
-									>
-										<TableBodyCell class="py-2 text-xs"
-											>{formatServerName(server.displayName || server.name)}</TableBodyCell
-										>
-										<TableBodyCell class="py-2 text-xs"
-											>{formatServerName(server.name)}</TableBodyCell
-										>
-										<Tooltip
-											class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-											placement="top"
-											>{server.name}
-										</Tooltip>
-										<TableBodyCell class="py-2 flex gap-2 justify-end">
-											<Button
-												outline
-												disabled={syncing}
-												size="sm"
-												on:click={async () => handleSyncClient(selected, server)}
-												>Sync & Join
-											</Button>
-											<Button
-												outline
-												size="sm"
-												on:click={() => {
-													showServerLogsModal = true;
-													selectedServerName = server.name;
-												}}
-											>
-												<CodeOutline class="w-4 h-4" />
-											</Button>
-											<Tooltip
-												class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-												placement="bottom"
-												>Tail server logs
-											</Tooltip>
-											<Button
-												outline
-												size="sm"
-												on:click={() => handleDownloadLogs(server)}
-												on:mouseleave={resetLogDownloadState}
-											>
-												<ArchiveDownloadOutline class="w-4 h-4" />
-											</Button>
-											<Tooltip
-												class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-												placement="bottom"
-												>{logTooltip}
-											</Tooltip>
-											<Button outline size="sm" on:click={() => handleCopyText(server)}>
-												<FileCopyOutline class="w-4 h-4" />
-											</Button>
-											<Tooltip
-												class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-												placement="bottom"
-												>Copy launch URL
-											</Tooltip>
-											<Button
-												outline
-												disabled={syncing}
-												size="sm"
-												color="red"
-												on:click={async () => {
-													await handleTerminateServer(server.name);
-												}}
-											>
-												Terminate
-											</Button>
-										</TableBodyCell>
-									</TableBodyRow>
-								{/each}
-							{/if}
-						</TableBody>
-					</Table>
+				<div class="max-h-[20vh] mt-2 p-2 border dark:border rounded-lg">
+					<ServerTable
+						{servers}
+						onUpdateServers={async () => {
+							await updateServers(selected.commit);
+						}}
+					/>
 				</div>
 			</Card>
 		{/if}
@@ -551,6 +393,3 @@
 		>{getMainButtonText()}
 	</Button>
 {/key}
-
-<ProgressModal bind:showModal={syncing} />
-<ServerLogsModal bind:showModal={showServerLogsModal} serverName={selectedServerName} />
