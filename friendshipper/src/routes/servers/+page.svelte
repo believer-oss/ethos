@@ -4,12 +4,11 @@
 	import { onMount } from 'svelte';
 	import { CirclePlusOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
-	import { appConfig, builds, selectedCommit } from '$lib/stores';
-	import type { ArtifactEntry, GameServerResult, Nullable, SyncClientRequest } from '$lib/types';
+	import { appConfig, selectedCommit } from '$lib/stores';
+	import type { ArtifactEntry, GameServerResult, Nullable } from '$lib/types';
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
 	import { getServers } from '$lib/gameServers';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
-	import { syncClient } from '$lib/builds';
 
 	let fetchingServers = false;
 	let servers: GameServerResult[] = [];
@@ -40,43 +39,6 @@
 			selected = get(selectedCommit);
 		} catch (e) {
 			await emit('error', e);
-		}
-	};
-
-	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
-		if (entry === null) {
-			return;
-		}
-
-		const req: SyncClientRequest = {
-			artifactEntry: entry,
-			methodPrefix: $builds.methodPrefix,
-			launchOptions: {
-				ip: server.ip,
-				port: server.port,
-				netimguiPort: server.netimguiPort
-			}
-		};
-
-		try {
-			await syncClient(req);
-		} catch (e) {
-			await emit('error', e);
-		}
-	};
-
-	const handleAutoLaunch = async (serverName: string) => {
-		if (selected === null) {
-			return;
-		}
-
-		const server = servers.find((s) => s.displayName === serverName);
-		if (server) {
-			try {
-				await handleSyncClient(selected, server);
-			} catch (e) {
-				await emit('error', e);
-			}
 		}
 	};
 
@@ -128,4 +90,4 @@
 	/>
 </Card>
 
-<ServerModal bind:showModal {handleServerCreate} {handleAutoLaunch} />
+<ServerModal bind:showModal {handleServerCreate} />

@@ -145,21 +145,6 @@
 		syncing = false;
 	};
 
-	const handleAutoLaunch = async (serverName: string) => {
-		if (selected === null) {
-			return;
-		}
-
-		const server = servers.find((s) => s.displayName === serverName);
-		if (server) {
-			try {
-				await handleSyncClient(selected, server);
-			} catch (e) {
-				await emit('error', e);
-			}
-		}
-	};
-
 	const shouldDisableLaunchButton = (): boolean => {
 		if (nextPlaytest !== null) {
 			const playtestAssignment = getPlaytestGroupForUser(nextPlaytest, $appConfig.userDisplayName);
@@ -368,7 +353,6 @@
 					bind:showModal={showServerModal}
 					initialEntry={selected}
 					{handleServerCreate}
-					{handleAutoLaunch}
 				/>
 
 				<div class="max-h-[20vh] mt-2 p-2 border dark:border rounded-lg">

@@ -2,13 +2,20 @@
 	import { Button, Helper, Input, Label, Modal, Select, Toggle } from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { get } from 'svelte/store';
-	import { launchServer } from '$lib/gameServers';
-	import type { ArtifactEntry, Nullable } from '$lib/types';
-	import { activeProjectConfig, builtCommits, selectedCommit, workflowMap } from '$lib/stores';
+	import { ProgressModal } from '@ethos/core';
+	import { getServers, launchServer } from '$lib/gameServers';
+	import type { ArtifactEntry, GameServerResult, Nullable, SyncClientRequest } from '$lib/types';
+	import {
+		activeProjectConfig,
+		builds,
+		builtCommits,
+		selectedCommit,
+		workflowMap
+	} from '$lib/stores';
+	import { syncClient } from '$lib/builds';
 
 	export let showModal: boolean;
 	export let handleServerCreate: () => Promise<void> = async () => {};
-	export let handleAutoLaunch: (serverName: string) => Promise<void>;
 	export let initialEntry: Nullable<ArtifactEntry> = null;
 
 	let busy = false;
@@ -22,6 +29,8 @@
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
 	let recentCommits = get(builtCommits);
 
+	let syncing = false;
+
 	const validateServerName = (name: string): boolean => {
 		if (name === '') return true;
 
@@ -32,6 +41,62 @@
 
 	const handleValidation = () => {
 		hasError = !validateServerName(serverName);
+	};
+
+	const handleCommitChange = (newCommit: Nullable<ArtifactEntry>) => {
+		if (newCommit === null) {
+			return;
+		}
+
+		selectedCommit.set(newCommit);
+	};
+
+	$: void handleCommitChange(selected);
+
+	$: $builtCommits,
+		() => {
+			recentCommits = get(builtCommits);
+		};
+
+	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
+		if (entry === null) {
+			return;
+		}
+
+		syncing = true;
+		const req: SyncClientRequest = {
+			artifactEntry: entry,
+			methodPrefix: $builds.methodPrefix,
+			launchOptions: {
+				ip: server.ip,
+				port: server.port,
+				netimguiPort: server.netimguiPort
+			}
+		};
+
+		try {
+			await syncClient(req);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		syncing = false;
+	};
+
+	const handleAutoLaunch = async (name: string) => {
+		if (selected === null) {
+			return;
+		}
+		const servers = await getServers();
+		const server = servers.find((s) => s.displayName === name);
+		if (server) {
+			try {
+				await handleSyncClient(selected, server);
+				selected = get(selectedCommit);
+			} catch (e) {
+				await emit('error', e);
+			}
+		}
 	};
 
 	const handleSubmit = async () => {
@@ -64,21 +129,6 @@
 
 		autoLaunch = false;
 	};
-
-	const handleCommitChange = (newCommit: Nullable<ArtifactEntry>) => {
-		if (newCommit === null) {
-			return;
-		}
-
-		selectedCommit.set(newCommit);
-	};
-
-	$: void handleCommitChange(selected);
-
-	$: $builtCommits,
-		() => {
-			recentCommits = get(builtCommits);
-		};
 </script>
 
 <Modal
@@ -149,3 +199,5 @@
 		<Button disabled={busy || hasError} type="submit" class="w-full">Submit</Button>
 	</form>
 </Modal>
+
+<ProgressModal bind:showModal={syncing} />
