@@ -5,6 +5,7 @@
 	import { get } from 'svelte/store';
 	import { CirclePlusOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
+	import { ProgressModal } from '@ethos/core';
 	import {
 		activeProjectConfig,
 		appConfig,
@@ -393,3 +394,5 @@
 		>{getMainButtonText()}
 	</Button>
 {/key}
+
+<ProgressModal bind:showModal={syncing} />
