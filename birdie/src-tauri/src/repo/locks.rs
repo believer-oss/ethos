@@ -11,6 +11,7 @@ use tokio::sync::RwLock as TokioRwLock;
 use tracing::warn;
 
 use ethos_core::clients::git;
+use ethos_core::clients::git::Opts;
 use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::{Lock, LockOperation, LockResponse, VerifyLocksResponse};
@@ -73,7 +74,10 @@ impl LockCache {
 
         let output = self
             .git()
-            .run_and_collect_output(&["lfs", "locks", "--verify", "--json"], Default::default())
+            .run_and_collect_output(
+                &["lfs", "locks", "--verify", "--json"],
+                Opts::new_without_logs(),
+            )
             .await?;
 
         let output: VerifyLocksResponse = serde_json::from_str(&output)?;
