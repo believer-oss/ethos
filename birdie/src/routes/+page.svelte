@@ -4,15 +4,20 @@
 		BreadcrumbItem,
 		Button,
 		Card,
+		Checkbox,
 		Input,
 		Modal,
 		Select,
-		Spinner
+		Spinner,
+		Table,
+		TableBody,
+		TableBodyCell,
+		TableBodyRow
 	} from 'flowbite-svelte';
 	import { onMount, tick } from 'svelte';
 	import { CheckSolid, CloseSolid, EditOutline, FolderSolid } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
-	import { CommitTable } from '@ethos/core';
+	import { CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import {
 		downloadLFSFiles,
@@ -45,11 +50,12 @@
 	let allFiles: string[] = [];
 	let selectedFile: Nullable<LFSFile> = null;
 	let downloadInProgress: boolean = false;
-	let downloadMessage: string = '';
 	let search: string = '';
 	let showSearchModal: boolean = false;
 	let searchInput: HTMLInputElement;
 	let modalLoading: boolean = false;
+	let selectedFiles: LFSFile[] = [];
+	let shiftHeld = false;
 
 	$: filteredFiles = allFiles.filter(
 		(file) =>
@@ -124,6 +130,49 @@
 		loadingFileHistory = false;
 	};
 
+	const handleFileToggled = (selected: LFSFile) => {
+		// if ctrl is held, select or unselect everything in between
+		if (shiftHeld) {
+			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
+			const lastSelectedIndex = $currentRootFiles.findIndex(
+				(file) => selectedFiles[selectedFiles.length - 1].name === file.name
+			);
+
+			if (currentIndex > lastSelectedIndex) {
+				for (let i = lastSelectedIndex + 1; i <= currentIndex; i += 1) {
+					if (!selectedFiles.includes($currentRootFiles[i])) {
+						selectedFiles = [...selectedFiles, $currentRootFiles[i]];
+					} else {
+						selectedFiles = selectedFiles.filter((item) => item.name !== $currentRootFiles[i].name);
+					}
+				}
+			} else {
+				for (let i = currentIndex; i < lastSelectedIndex; i += 1) {
+					if (!selectedFiles.includes($currentRootFiles[i])) {
+						selectedFiles = [...selectedFiles, $currentRootFiles[i]];
+					} else {
+						selectedFiles = selectedFiles.filter((item) => item.name !== $currentRootFiles[i].name);
+					}
+				}
+			}
+
+			// if we're unchecking, include the last selected file as well
+			if (!selectedFiles.includes(selected)) {
+				selectedFiles = selectedFiles.filter(
+					(item) => item.name !== $currentRootFiles[lastSelectedIndex].name
+				);
+			}
+
+			return;
+		}
+
+		if (!selectedFiles.includes(selected)) {
+			selectedFiles = [...selectedFiles, selected];
+		} else {
+			selectedFiles = selectedFiles.filter((item) => item.name !== selected.name);
+		}
+	};
+
 	const formatBytes = (bytes: number, decimals = 2): string => {
 		if (bytes === 0) return '0 Bytes';
 
@@ -162,11 +211,6 @@
 
 	const downloadFiles = async (paths: string[]) => {
 		downloadInProgress = true;
-		downloadMessage = 'Downloading...';
-
-		const unlisten = await listen('git-log', (message) => {
-			downloadMessage = message.payload as string;
-		});
 
 		try {
 			await downloadLFSFiles(paths);
@@ -174,13 +218,12 @@
 			await emit('error', e);
 		}
 
-		unlisten();
 		downloadInProgress = false;
 
 		await refreshFiles();
 	};
 
-	const downloadFile = async (selected: Nullable<LFSFile>) => {
+	const handleDownloadFile = async (selected: Nullable<LFSFile>) => {
 		if (selected === null || selectedFile === null) return;
 		const fullPath = `${$currentRoot}/${selected.name}`;
 
@@ -193,9 +236,24 @@
 		}
 	};
 
+	const handleDownloadSelectedFiles = async () => {
+		if (selectedFiles.length === 0) return;
+
+		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+
+		try {
+			await downloadFiles(paths);
+
+			selectedFiles = [];
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
 	const goHome = async () => {
 		$currentRoot = '';
 		selectedFile = null;
+		selectedFiles = [];
 		await refreshFiles();
 	};
 
@@ -203,6 +261,7 @@
 		ancestry = ancestry.slice(0, index + 1);
 		$currentRoot = ancestry.join('/');
 		selectedFile = null;
+		selectedFiles = [];
 		await refreshFiles();
 	};
 
@@ -210,6 +269,7 @@
 		const currRoot = get(currentRoot);
 		$currentRoot = currRoot === '' ? root : `${$currentRoot}/${root}`;
 		selectedFile = null;
+		selectedFiles = [];
 		await refreshFiles();
 	};
 
@@ -275,6 +335,11 @@
 	};
 
 	const onKeyDown = async (event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			shiftHeld = true;
+			return;
+		}
+
 		if (!$enableGlobalSearch) return;
 
 		if (search === '' && event.key.match(/^[a-z]$/) && $appConfig.repoPath !== '') {
@@ -282,6 +347,12 @@
 
 			await tick();
 			searchInput.focus();
+		}
+	};
+
+	const onKeyUp = (e: KeyboardEvent) => {
+		if (e.key === 'Shift') {
+			shiftHeld = false;
 		}
 	};
 
@@ -328,7 +399,7 @@
 	});
 </script>
 
-<svelte:window on:keydown={onKeyDown} />
+<svelte:window on:keydown={onKeyDown} on:keyup={onKeyUp} />
 <div class="flex flex-col h-full gap-2">
 	<div class="flex items-baseline gap-2">
 		<p class="text-2xl mt-2 dark:text-primary-400">Asset Explorer</p>
@@ -380,33 +451,64 @@
 					<p class="text-center text-gray-500 dark:text-gray-400">No files found</p>
 				{:else}
 					<div class="flex flex-col gap-2 w-full">
-						{#each $currentRootFiles as file}
-							{#if file.fileType === FileType.Directory}
-								<Button
-									disabled={loading}
-									class="justify-start py-1"
-									on:click={async () => {
-										await setCurrentRoot(file.name);
-									}}><FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
-								>
-							{:else}
-								<div class="flex gap-2 items-center w-full">
-									<div class="w-4">{file.locked ? '🔒' : ''}</div>
-									<Button
-										outline
-										class="justify-start border-0 py-0.5 rounded-md"
-										on:click={() => selectFile(file)}
+						<Table>
+							<TableBody>
+								{#each $currentRootFiles as file, index}
+									<TableBodyRow
+										class="text-left border-b-0 {index % 2 === 0
+											? 'bg-secondary-700 dark:bg-space-900'
+											: 'bg-secondary-800 dark:bg-space-950'}"
 									>
-										{file.name}
-									</Button>
-								</div>
-							{/if}
-						{/each}
+										<TableBodyCell class="p-1 w-8">
+											<Checkbox
+												class="!p-1.5 mr-0"
+												checked={selectedFiles.some((selected) => selected.name === file.name)}
+												on:change={() => {
+													handleFileToggled(file);
+												}}
+											/>
+										</TableBodyCell>
+										<TableBodyCell class="p-2">
+											{#if file.fileType === FileType.Directory}
+												<Button
+													outline
+													disabled={loading}
+													class="flex justify-start items-center py-0.5 pl-2 border-0 w-full"
+													on:click={async () => {
+														await setCurrentRoot(file.name);
+													}}><FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
+												>
+											{:else}
+												<div class="flex gap-2 items-center justify-start w-full">
+													<Button
+														outline
+														class="justify-start border-0 py-0.5 pl-2 rounded-md w-full"
+														on:click={() => selectFile(file)}
+													>
+														<div class="w-3 mr-3">{file.locked ? '🔒' : ''}</div>
+														{file.name}
+													</Button>
+												</div>
+											{/if}
+										</TableBodyCell>
+									</TableBodyRow>
+								{/each}
+							</TableBody>
+						</Table>
 					</div>
 				{/if}
 			</Card>
 		</div>
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
+			{#if selectedFiles.length > 0}
+				<Card
+					class="w-full p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
+				>
+					<Button class="w-full" on:click={handleDownloadSelectedFiles}
+						>Download Selected Files</Button
+					>
+				</Card>
+			{/if}
 			<Card
 				class="w-full h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
 			>
@@ -478,7 +580,7 @@
 						</div>
 						<Button on:click={() => showInExplorer(selectedFile)}>Show in Explorer</Button>
 						{#if selectedFile.lfsState === LocalFileLFSState.Stub}
-							<Button on:click={() => downloadFile(selectedFile)}>Download</Button>
+							<Button on:click={() => handleDownloadFile(selectedFile)}>Download</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}
@@ -500,13 +602,7 @@
 	{/if}
 </div>
 
-{#if downloadInProgress}
-	<div class="fixed bottom-0 right-0 p-4">
-		<Card class="w-80 p-4 dark:bg-secondary-600 dark:text-white">
-			<code class="text-center">{downloadMessage}</code>
-		</Card>
-	</div>
-{/if}
+<ProgressModal title="Downloading files" bind:showModal={downloadInProgress} />
 
 <Modal
 	bind:open={showSearchModal}

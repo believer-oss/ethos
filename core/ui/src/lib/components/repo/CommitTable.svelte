@@ -61,7 +61,8 @@
 
 <Table color="custom" striped={true}>
 	<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
-		<TableHeadCell class="pl-8">SHA</TableHeadCell>
+		<TableHeadCell class="p-1 w-8" />
+		<TableHeadCell class="pl-1">SHA</TableHeadCell>
 		<TableHeadCell>Message</TableHeadCell>
 		<TableHeadCell>Timestamp</TableHeadCell>
 		<TableHeadCell>Author</TableHeadCell>
@@ -74,14 +75,16 @@
 					? 'bg-secondary-700 dark:bg-space-900'
 					: 'bg-secondary-800 dark:bg-space-950'}"
 			>
+				<TableBodyCell class="px-2 w-3 max-w-3">
+					{#if isCommitLatestLocal(commit.sha)}
+						<ChevronRightOutline class="w-3 h-3" />
+					{/if}
+				</TableBodyCell>
 				<TableBodyCell
-					class="flex items-center py-2 pl-8 {isCommitLatestLocal(commit.sha)
+					class="h-full items-center pl-1 py-2 {isCommitLatestLocal(commit.sha)
 						? 'font-bold'
 						: 'font-light'}"
 				>
-					{#if isCommitLatestLocal(commit.sha)}
-						<ChevronRightOutline class="w-3 h-3 mr-2 -ml-6" />
-					{/if}
 					{commit.sha}</TableBodyCell
 				>
 				<TableBodyCell
