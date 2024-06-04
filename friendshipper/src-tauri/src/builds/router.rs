@@ -245,7 +245,7 @@ pub async fn wipe_client_data(State(state): State<Arc<AppState>>) -> Result<(), 
         .collect::<Vec<_>>();
 
     for entry in entries {
-        fs::remove_dir_all(&entry.path()).map_err(CoreError::from)?;
+        fs::remove_dir_all(entry.path()).map_err(CoreError::from)?;
     }
 
     Ok(())

@@ -71,16 +71,18 @@
 <Modal
 	defaultClass="dark:bg-secondary-800 overflow-y-auto"
 	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
-	dismissable={false}
+	dismissable
 	autoclose={false}
 	on:open={onOpen}
-	outsideclose
 >
 	<div class="flex items-center justify-between gap-2">
 		<p class="text-2xl dark:text-primary-400 mb-2">Preferences</p>
 		<Button
 			outline
+			class="mr-7"
 			on:click={async () => {
 				checkForUpdatesInFlight = true;
 				await handleCheckForUpdates();
