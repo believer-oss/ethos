@@ -520,7 +520,7 @@ pub async fn add_file(path: &str) {
     let output = Command::new("git")
         .arg("add")
         .arg(path)
-        .current_dir(&TEST_DIR.join("test-local"))
+        .current_dir(TEST_DIR.join("test-local"))
         .output()
         .await;
 
@@ -542,7 +542,7 @@ pub async fn commit(message: &str) {
         .arg("commit")
         .arg("-m")
         .arg(message)
-        .current_dir(&TEST_DIR.join("test-local"))
+        .current_dir(TEST_DIR.join("test-local"))
         .output()
         .await;
 
@@ -564,7 +564,7 @@ pub async fn push(branch: &str) {
         .arg("push")
         .arg("origin")
         .arg(branch)
-        .current_dir(&TEST_DIR.join("test-local"))
+        .current_dir(TEST_DIR.join("test-local"))
         .output()
         .await;
 
@@ -587,7 +587,7 @@ pub async fn get_latest_commit_message(branch: &str) -> String {
         .arg(branch)
         .arg("-1")
         .arg("--pretty=%B")
-        .current_dir(&TEST_DIR.join("test-local"))
+        .current_dir(TEST_DIR.join("test-local"))
         .output()
         .await;
 

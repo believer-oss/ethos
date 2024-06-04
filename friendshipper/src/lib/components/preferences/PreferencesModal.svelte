@@ -146,11 +146,12 @@
 <Modal
 	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
 	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
-	dismissable={false}
+	dismissable
 	autoclose={false}
 	on:open={onOpen}
-	outsideclose
 >
 	<div class="flex items-center justify-between gap-2">
 		<div class="flex items-center gap-2">
@@ -162,6 +163,7 @@
 		</div>
 		<Button
 			outline
+			class="mr-5"
 			on:click={async () => {
 				checkForUpdatesInFlight = true;
 				await handleCheckForUpdates();
@@ -563,8 +565,9 @@
 						<Button
 							outline
 							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={handleResetConfig}>Reset Config</Button
-						>
+							on:click={handleResetConfig}
+							>Reset Config
+						</Button>
 						<span class="w-full"
 							>Delete local <code>config.yaml</code> and start fresh (requires app restart)</span
 						>
@@ -573,28 +576,31 @@
 						<Button
 							outline
 							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={handleWipeClientData}>Wipe Data Directory</Button
-						>
+							on:click={handleWipeClientData}
+							>Wipe Data Directory
+						</Button>
 						<span class="w-full">Delete previously downloaded game clients</span>
 					</div>
 					<div class="flex gap-2 items-center">
 						<Button
 							outline
 							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={handleResetLongtail}>Re-install Longtail</Button
-						>
+							on:click={handleResetLongtail}
+							>Re-install Longtail
+						</Button>
 						<span class="w-full">Reset Longtail installation (requires app restart)</span>
 					</div>
 					<div class="flex gap-2 items-center">
 						<Button
 							outline
 							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={restart}>Restart</Button
-						>
+							on:click={restart}
+							>Restart
+						</Button>
 						<span class="w-full">Restart Friendshipper</span>
 					</div>
-				</div></AccordionItem
-			>
+				</div>
+			</AccordionItem>
 		</Accordion>
 	</Card>
 

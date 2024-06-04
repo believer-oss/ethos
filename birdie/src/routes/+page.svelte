@@ -610,8 +610,9 @@
 	size="xl"
 	placement="top-center"
 	defaultClass="dark:bg-secondary-800 overflow-y-hidden"
-	dialogClass="fixed top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 flex overflow-y-hidden"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex overflow-y-hidden"
 	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 >
 	<div class="flex flex-col gap-4 h-full">
 		<div class="flex flex-col gap-1">

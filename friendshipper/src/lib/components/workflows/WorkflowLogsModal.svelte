@@ -89,6 +89,8 @@
 	class="bg-secondary-700 dark:bg-space-900 relative flex flex-col mx-auto max-h-[100vh] border-0"
 	placement="top-center"
 	bodyClass="!border-t-0 overflow-y-hidden h-full"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
 	autoclose={false}
 	outsideclose

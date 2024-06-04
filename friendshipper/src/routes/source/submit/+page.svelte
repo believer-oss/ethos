@@ -596,7 +596,13 @@
 	</p>
 </Tooltip>
 
-<Modal open={promptForPAT} dismissable={false} class="bg-secondary-700 dark:bg-space-900">
+<Modal
+	open={promptForPAT}
+	dismissable={false}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+>
 	<div class="flex items-center justify-between gap-2">
 		<span>Looks like you haven't provided a GitHub Personal Access Token yet!</span>
 		<Button size="xs" on:click={handleOpenPreferences}>Open Preferences</Button>
