@@ -958,7 +958,7 @@ dependencies = [
  "lazy_static",
  "log",
  "octocrab",
- "open 5.1.3",
+ "open 5.1.4",
  "parking_lot",
  "regex",
  "reqwest",
@@ -1867,7 +1867,7 @@ dependencies = [
  "log",
  "log-panics",
  "obws",
- "open 5.1.3",
+ "open 5.1.4",
  "parking_lot",
  "pem",
  "rand 0.8.5",
@@ -2034,7 +2034,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "anyhow",
  "aws-sdk-s3",
@@ -2055,7 +2055,7 @@ dependencies = [
  "log-panics",
  "obws",
  "octocrab",
- "open 5.1.3",
+ "open 5.1.4",
  "parking_lot",
  "regex",
  "reqwest",
@@ -3970,9 +3970,9 @@ dependencies = [
 
 [[package]]
 name = "open"
-version = "5.1.3"
+version = "5.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb49fbd5616580e9974662cb96a3463da4476e649a7e4b258df0de065db0657"
+checksum = "b5ca541f22b1c46d4bb9801014f234758ab4297e7870b904b6a8415b980a7388"
 dependencies = [
  "is-wsl",
  "libc",
@@ -5770,9 +5770,9 @@ dependencies = [
 
 [[package]]
 name = "tar"
-version = "0.4.40"
+version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16afcea1f22891c49a00c751c7b63b2233284064f11a200fc624137c51e2ddb"
+checksum = "cb797dad5fb5b76fcf519e702f4a589483b5ef06567f160c392832c1f5e44909"
 dependencies = [
  "filetime",
  "libc",
@@ -5787,9 +5787,9 @@ checksum = "e1fc403891a21bcfb7c37834ba66a547a8f402146eba7265b5a6d88059c9ff2f"
 
 [[package]]
 name = "tauri"
-version = "1.6.7"
+version = "1.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c7177b6be45bbb875aa239578f5adc982a1b3d5ea5b315ccd100aeb0043374"
+checksum = "77567d2b3b74de4588d544147142d02297f3eaa171a25a065252141d8597a516"
 dependencies = [
  "anyhow",
  "cocoa",
@@ -6864,9 +6864,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3de34ae270483955a94f4b21bdaaeb83d508bb84a01435f393818edb0012009"
+checksum = "3c452ad30530b54a4d8e71952716a212b08efd0f3562baa66c29a618b07da7c3"
 dependencies = [
  "rustls-pki-types",
 ]
