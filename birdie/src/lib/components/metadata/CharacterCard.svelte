@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Card, Input, Label } from 'flowbite-svelte';
-	import { CheckSolid, CloseSolid, EditOutline } from 'flowbite-svelte-icons';
+	import { CheckSolid, CloseSolid, EditOutline, PlusSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type { DirectoryMetadata, Nullable } from '$lib/types';
 	import { enableGlobalSearch } from '$lib/stores';
@@ -22,11 +22,18 @@
 
 		if (!tempMetadata.character) {
 			tempMetadata.character = {
-				name: ''
+				codeName: '',
+				characterName: ''
 			};
 		}
 
 		editingMetadata = true;
+	};
+
+	const handleAddRig = () => {};
+
+	const handleRemoveRig = (rigName: string) => {
+		tempMetadata.character.rigs.delete(rigName);
 	};
 
 	const cancelEditMetadata = () => {
@@ -77,10 +84,33 @@
 	</div>
 	<div>
 		{#if editingMetadata && tempMetadata && tempMetadata.character}
-			<Label for="name" class="mb-1">Name</Label>
-			<Input label="Name" bind:value={tempMetadata.character.name} />
+			<div class="flex h=20 items-center gap-2 mb-2 justify-between">
+				<Label for="codeName" class="mb-1">Code_Name</Label>
+				<Input label="CodeName" bind:value={tempMetadata.character.codeName} />
+			</div>
+
+			<div class="flex items-center gap-2 mb-2 justify-between">
+				<Label for="characterName" class="mb-1">Name</Label>
+				<Input label="CharacterName" bind:value={tempMetadata.character.characterName} />
+			</div>
+
+			<div class="flex items-center gap-2 mb-2 justify-between">
+				<Label for="rig" class="mb-1">Rigs</Label>
+				<Button size="xs" on:click={handleAddRig}><PlusSolid class="w-4 h-4" /></Button>
+			</div>
+
+			{#each Object.entries(tempMetadata.character.rigs) as [rigName, _]}
+				<div class="flex gap-2">
+					<Label for="rigName" class="mb-1">{rigName}</Label>
+					<Input label="rigPath" bind:value={tempMetadata.character.rigs[rigName]} />
+					<Button size="xs" on:click={() => handleRemoveRig(rigName)}
+						><CloseSolid class="w-4 h-4" /></Button
+					>
+				</div>
+			{/each}
 		{:else}
-			Name: {metadata?.character?.name ?? ''}
+			CodeName: {metadata?.character?.codeName ?? ''}
+			Name: {metadata?.character?.characterName ?? ''}
 		{/if}
 	</div>
 </Card>
