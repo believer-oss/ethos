@@ -274,7 +274,18 @@ export enum DirectoryClass {
 }
 
 export interface CharacterMetadata {
-	name: string;
+	codeName: string;
+	characterName: string;
+	rigs: Map<string, string>;
+	// animations: &[CategoryMetadata];
+	// meshes: &[CategoryMetadata];
+}
+
+export interface RigsMetadata {
+	body: string;
+	face: string;
+	weaponPrimary: string;
+	weaponSecondary: string;
 }
 
 export interface DirectoryMetadata {
