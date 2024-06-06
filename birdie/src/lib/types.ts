@@ -276,16 +276,9 @@ export enum DirectoryClass {
 export interface CharacterMetadata {
 	codeName: string;
 	characterName: string;
-	rigs: Map<string, string>;
-	// animations: &[CategoryMetadata];
-	// meshes: &[CategoryMetadata];
-}
-
-export interface RigsMetadata {
-	body: string;
-	face: string;
-	weaponPrimary: string;
-	weaponSecondary: string;
+	rigs: Record<string, string>;
+	animations: Record<string, string>;
+	meshes: Record<string, string>;
 }
 
 export interface DirectoryMetadata {
