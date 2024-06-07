@@ -172,7 +172,7 @@
 			</div>
 
 			<div class="flex items-center gap-2 mt-6 mb-2">
-				<Label for="rig" class="mb-1 w-1/2">RIGS</Label>
+				<Label for="rig" class="mb-1 w-1/2">CONTROL RIGS</Label>
 				<div class="flex items-center gap-2 w-1/2">
 					<Label for="newRigName" class="font-bold w-3/4 mb-1" style="text-align: right"
 						>New Rig File</Label
@@ -226,7 +226,7 @@
 			{/each}
 
 			<div class="flex items-center gap-2 mt-6 mb-2">
-				<Label for="rig" class="mb-1 w-1/2">MESHES</Label>
+				<Label for="rig" class="mb-1 w-1/2">SKELETAL MESHES</Label>
 				<div class="flex items-center gap-2 w-1/2">
 					<Label for="newMeshName" class="font-bold w-3/4 mb-1" style="text-align: right"
 						>New Mesh File</Label
