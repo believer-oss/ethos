@@ -9,7 +9,6 @@
 	import { getRepoStatus, revertFiles, submit } from '$lib/repo';
 	import {
 		allModifiedFiles,
-		appConfig,
 		commitMessage,
 		repoConfig,
 		repoStatus,
@@ -31,7 +30,8 @@
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
 
-		const fullPath = `${$appConfig.repoPath}/${parent}`;
+		// Birdie opens up the Y drive
+		const fullPath = `Y:/${parent}`;
 
 		await openUrl(fullPath);
 	};
