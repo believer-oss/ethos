@@ -130,6 +130,13 @@
 		return '';
 	};
 
+	const getFileDisplayString = (file: ModifiedFile): string => {
+		if (file.displayName === '') {
+			return file.path;
+		}
+		return file.displayName;
+	};
+
 	const getModifiedState = (file: ModifiedFile): ModifiedFileState => {
 		if (file.workingState === '?') {
 			return ModifiedFileState.Added;
@@ -196,7 +203,7 @@
 				</Tooltip>
 			</TableHeadCell>
 			<TableHeadCell class="p-1" />
-			<TableHeadCell class="p-1">File Path</TableHeadCell>
+			<TableHeadCell class="p-1">File</TableHeadCell>
 		</TableHead>
 		<TableBody>
 			{#each modifiedFiles as file, index}
@@ -257,8 +264,13 @@
 								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
 								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
 							on:click={() => handleFileToggled(file)}
-							>{file.path}
+							>{getFileDisplayString(file)}
 						</Button>
+						{#if file.displayName !== ''}
+							<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
+								{file.path}
+							</Tooltip>
+						{/if}
 					</TableBodyCell>
 				</TableBodyRow>
 			{:else}
@@ -316,7 +328,12 @@
 							>Deleted
 						</Tooltip>
 					{/if}
-					<p class="font-bold {getFileTextClass(file)}">{file.path}</p>
+					<p class="font-bold {getFileTextClass(file)}">{getFileDisplayString(file)}</p>
+					{#if file.displayName !== ''}
+						<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
+							{file.path}
+						</Tooltip>
+					{/if}
 				</div>
 			{/each}
 		</div>

@@ -1,5 +1,6 @@
 export interface ModifiedFile {
 	path: string;
+	displayName: string;
 	indexState: string;
 	workingState: string;
 }

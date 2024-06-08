@@ -162,6 +162,8 @@ pub async fn submit_handler(
         StatusOp {
             repo_status: state.repo_status.clone(),
             app_config: state.app_config.clone(),
+            repo_config: state.repo_config.clone(),
+            ofpa_cache: state.ofpa_cache.clone(),
             git_client: state.git(),
             aws_client: aws_client.clone(),
             storage: state.storage.read().clone().unwrap(),

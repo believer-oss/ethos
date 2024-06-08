@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct File {
     pub path: String,
 
+    #[serde(rename = "displayName")]
+    pub display_name: String,
     #[serde(rename = "indexState")]
     pub index_state: String,
     #[serde(rename = "workingState")]
@@ -36,6 +38,7 @@ impl File {
 
         Self {
             path,
+            display_name: String::new(),
             index_state,
             working_state,
         }

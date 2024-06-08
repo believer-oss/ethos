@@ -132,6 +132,8 @@ pub async fn push_handler(
     let status_op = {
         StatusOp {
             repo_status: state.repo_status.clone(),
+            repo_config: state.repo_config.clone(),
+            ofpa_cache: state.ofpa_cache.clone(),
             app_config: state.app_config.clone(),
             git_client: state.git(),
             aws_client: aws_client.clone(),
@@ -183,9 +185,9 @@ pub async fn push_handler(
 
         let task = PullOp {
             app_config: state.app_config.clone(),
-            uproject_path_relative: state.repo_config.read().uproject_path.clone(),
+            repo_config: state.repo_config.clone(),
+            ofpa_cache: state.ofpa_cache.clone(),
             repo_status: state.repo_status.clone(),
-            trunk_branch: state.repo_config.read().trunk_branch.clone(),
             longtail: state.longtail.clone(),
             longtail_tx: state.longtail_tx.clone(),
             aws_client: aws_client.clone(),

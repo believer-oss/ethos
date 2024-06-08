@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::str;
 use std::sync::Arc;
 
@@ -15,12 +16,15 @@ use ethos_core::storage::{
     ArtifactStorage, Platform,
 };
 use ethos_core::types::config::AppConfigRef;
+use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{File, RepoStatus};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
 use crate::state::AppState;
+use crate::system::unreal::OFPANameCache;
+use crate::system::unreal::OFPANameCacheRef;
 
 pub type RepoStatusRef = Arc<RwLock<RepoStatus>>;
 
@@ -60,6 +64,8 @@ pub struct StatusOp {
     pub git_client: git::Git,
     pub repo_status: RepoStatusRef,
     pub app_config: AppConfigRef,
+    pub repo_config: RepoConfigRef,
+    pub ofpa_cache: OFPANameCacheRef,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
     pub skip_fetch: bool,
@@ -88,8 +94,11 @@ impl StatusOp {
                 .await?;
         }
 
+        info!("StatusOp: running git status...");
         let status_output = self.git_client.status().await?;
         let status_lines = status_output.lines().collect::<Vec<_>>();
+
+        info!("StatusOp: parsing status state...");
 
         let mut status = RepoStatus::new();
         let pull_dlls = self.app_config.read().pull_dlls;
@@ -153,6 +162,24 @@ impl StatusOp {
             }
         }
 
+        // get display names if available for OFPA
+        {
+            info!("StatusOp: fetching OFPA filenames...");
+
+            let mut combined_files = status.modified_files.0.clone();
+            combined_files.append(&mut status.untracked_files.0.clone());
+
+            self.update_filelist_display_names(&mut combined_files)
+                .await;
+
+            let num_modified = status.modified_files.0.len();
+
+            status.modified_files.0 = combined_files[0..num_modified].to_vec();
+            status.untracked_files.0 = combined_files[num_modified..].to_vec();
+        }
+
+        info!("StatusOp: checking HEAD SHA and remote URL info...");
+
         status.commit_head_origin = self
             .git_client
             .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
@@ -201,10 +228,13 @@ impl StatusOp {
         }
 
         if !self.skip_dll_check {
+            info!("StatusOp: searching for remote DLL archives...");
+
             self.find_dll_archive_url_info(&mut status).await?;
             status.pull_dlls = pull_dlls;
         }
 
+        info!("StatusOp: finding upstream modified files...");
         status.modified_upstream = self.get_modified_upstream(&status).await?;
 
         status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
@@ -215,8 +245,11 @@ impl StatusOp {
         let mut repo_status = self.repo_status.write();
         *repo_status = status.clone();
 
+        info!("StatusOp: done.");
+
         Ok(status)
     }
+
     async fn get_modified_upstream(
         &self,
         status: &RepoStatus,
@@ -351,6 +384,46 @@ impl StatusOp {
 
         Ok(())
     }
+
+    pub async fn update_filelist_display_names(&self, files: &mut [File]) {
+        let filenames: Vec<String> = files.iter().map(|v| v.path.clone()).collect();
+
+        let asset_names: Vec<String> = {
+            let repo_path = self.app_config.read().repo_path.clone();
+            let uproject_path = self
+                .app_config
+                .read()
+                .get_uproject_path(&self.repo_config.read());
+            let engine_path = self
+                .app_config
+                .read()
+                .load_engine_path_from_repo(&self.repo_config.read())
+                .unwrap_or_default();
+
+            OFPANameCache::get_names(
+                self.ofpa_cache.clone(),
+                &PathBuf::from(repo_path),
+                &uproject_path,
+                &engine_path,
+                &filenames,
+            )
+            .await
+        };
+
+        assert_eq!(files.len(), asset_names.len());
+
+        // the suggested replacement to use an enumerator with an index and value is *more* complicated than
+        // this simple parallel array code...
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..files.len() {
+            files[i].display_name = asset_names[i].clone();
+
+            debug!(
+                "updating file {} to have display name '{}'",
+                files[i].path, asset_names[i]
+            );
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -382,6 +455,8 @@ pub async fn status_handler(
         StatusOp {
             repo_status: state.repo_status.clone(),
             app_config: state.app_config.clone(),
+            repo_config: state.repo_config.clone(),
+            ofpa_cache: state.ofpa_cache.clone(),
             git_client: state.git(),
             aws_client: aws_client.clone(),
             storage,
