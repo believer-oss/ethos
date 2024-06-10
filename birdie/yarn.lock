@@ -1374,6 +1374,11 @@ flowbite-svelte-icons@^0.4.4:
   resolved "https://registry.npmjs.org/flowbite-svelte-icons/-/flowbite-svelte-icons-0.4.4.tgz"
   integrity sha512-fOZri6HYYyo13olXQzvoid19hlYR/HjzQobpzBPkj8QseCJ9R1uWR7bNlhPl5vFCElqcfm3UooYiwT4rKKiqzQ==
 
+flowbite-svelte-icons@^1.6.1:
+  version "1.6.1"
+  resolved "https://registry.yarnpkg.com/flowbite-svelte-icons/-/flowbite-svelte-icons-1.6.1.tgz#10da0f5aafdbe1f34dcc44293bd2c0020482262b"
+  integrity sha512-Kw/7BzA6fqlFq7tBNudwX0KVU4cbyyXcMcgHTraMwGBtvBQan0RKMbvWwqm4JZNvLGAvRv1BM2EF7rzo/oam1Q==
+
 flowbite-svelte@^0.44.18:
   version "0.44.20"
   resolved "https://registry.yarnpkg.com/flowbite-svelte/-/flowbite-svelte-0.44.20.tgz#e2e39e18a28172d96dfeec107ee7e98f4957321f"

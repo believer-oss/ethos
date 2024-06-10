@@ -20,6 +20,7 @@ use ethos_core::types::repo::PullResponse;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
+use crate::config::RepoConfigRef;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::repo::operations::UpdateEngineOp;
 use crate::state::AppState;
@@ -30,9 +31,9 @@ use super::{DownloadDllsOp, RepoStatusRef, StatusOp};
 #[derive(Clone)]
 pub struct PullOp {
     pub app_config: AppConfigRef,
-    pub uproject_path_relative: String,
+    pub repo_config: RepoConfigRef,
+    pub ofpa_cache: unreal::OFPANameCacheRef,
     pub repo_status: RepoStatusRef,
-    pub trunk_branch: String,
     pub longtail: Longtail,
     pub longtail_tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
@@ -53,11 +54,14 @@ impl Task for PullOp {
                 StatusOp {
                     repo_status: self.repo_status.clone(),
                     app_config: self.app_config.clone(),
+                    repo_config: self.repo_config.clone(),
+                    ofpa_cache: self.ofpa_cache.clone(),
                     git_client: self.git_client.clone(),
                     aws_client: self.aws_client.clone(),
                     storage: self.storage.clone(),
                     skip_fetch: false,
                     skip_dll_check: false,
+                    skip_ofpa_translation: false,
                 }
             };
 
@@ -96,7 +100,8 @@ impl Task for PullOp {
             }
 
             did_stash = self.git_client.stash(git::StashAction::Push).await?;
-            self.git_client.checkout(&self.trunk_branch).await?;
+            let trunk_branch = self.repo_config.read().trunk_branch.clone();
+            self.git_client.checkout(&trunk_branch).await?;
 
             // cleanup the old quicksubmit branch
             self.git_client
@@ -111,12 +116,15 @@ impl Task for PullOp {
                 let status_op = {
                     StatusOp {
                         repo_status: self.repo_status.clone(),
+                        repo_config: self.repo_config.clone(),
+                        ofpa_cache: self.ofpa_cache.clone(),
                         app_config: self.app_config.clone(),
                         git_client: self.git_client.clone(),
                         aws_client: self.aws_client.clone(),
                         storage: self.storage.clone(),
                         skip_fetch: true,
                         skip_dll_check: false,
+                        skip_ofpa_translation: false,
                     }
                 };
 
@@ -126,12 +134,15 @@ impl Task for PullOp {
             // If we're not on a Quick Submit branch, update the status and check for conflicts.
             let status_op = StatusOp {
                 repo_status: self.repo_status.clone(),
+                repo_config: self.repo_config.clone(),
+                ofpa_cache: self.ofpa_cache.clone(),
                 app_config: self.app_config.clone(),
                 git_client: self.git_client.clone(),
                 aws_client: self.aws_client.clone(),
                 storage: self.storage.clone(),
                 skip_fetch: true,
                 skip_dll_check: false,
+                skip_ofpa_translation: false,
             };
 
             status_op.execute().await?;
@@ -159,7 +170,8 @@ impl Task for PullOp {
             }
         }
 
-        let uproject_path = PathBuf::from(&app_config.repo_path).join(&self.uproject_path_relative);
+        let uproject_path_relative = self.repo_config.read().uproject_path.clone();
+        let uproject_path = PathBuf::from(&app_config.repo_path).join(&uproject_path_relative);
 
         // save engine association before the .uproject potentially gets updated
         let old_uproject: Option<UProject> = match UProject::load(&uproject_path) {
@@ -184,11 +196,14 @@ impl Task for PullOp {
                 StatusOp {
                     repo_status: self.repo_status.clone(),
                     app_config: self.app_config.clone(),
+                    repo_config: self.repo_config.clone(),
+                    ofpa_cache: self.ofpa_cache.clone(),
                     git_client: self.git_client.clone(),
                     aws_client: self.aws_client.clone(),
                     storage: self.storage.clone(),
                     skip_fetch: true,
                     skip_dll_check: false,
+                    skip_ofpa_translation: false,
                 }
             };
 
@@ -203,7 +218,7 @@ impl Task for PullOp {
         };
 
         if app_config.pull_dlls {
-            match RepoConfig::get_project_name(&self.uproject_path_relative) {
+            match RepoConfig::get_project_name(&uproject_path_relative) {
                 Some(project_name) => {
                     let download_op = DownloadDllsOp {
                         git_client: self.git_client.clone(),
@@ -219,7 +234,7 @@ impl Task for PullOp {
                     download_op.execute().await?
                 }
                 None => {
-                    error!("Unable to parse project name from uproject path {}. DLL download unavailable.", &self.uproject_path_relative);
+                    error!("Unable to parse project name from uproject path {}. DLL download unavailable.", &uproject_path_relative);
                 }
             }
         }
@@ -308,9 +323,9 @@ pub async fn pull_handler(
 
     let pull_op = PullOp {
         app_config: state.app_config.clone(),
-        uproject_path_relative: state.repo_config.read().uproject_path.clone(),
+        repo_config: state.repo_config.clone(),
+        ofpa_cache: state.ofpa_cache.clone(),
         repo_status: state.repo_status.clone(),
-        trunk_branch: state.repo_config.read().trunk_branch.clone(),
         longtail: state.longtail.clone(),
         longtail_tx: state.longtail_tx.clone(),
         aws_client: aws_client.clone(),

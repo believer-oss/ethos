@@ -9,7 +9,14 @@
 	import { appConfig, onboardingInProgress, repoStatus } from '$lib/stores';
 	import UnrealEngineLogo from '$lib/icons/UnrealEngineLogo.svelte';
 	import { configureGitUser, installGit } from '$lib/system';
-	import { cloneRepo, forceDownloadDlls, forceDownloadEngine, getRepoStatus } from '$lib/repo';
+	import {
+		cloneRepo,
+		forceDownloadDlls,
+		forceDownloadEngine,
+		getRepoStatus,
+		SkipDllCheck,
+		SkipOfpaTranslation
+	} from '$lib/repo';
 
 	enum Page {
 		AWSConfig = 1,
@@ -160,7 +167,7 @@
 
 			// force update of repo status
 			message = 'Updating repo status...';
-			$repoStatus = await getRepoStatus();
+			$repoStatus = await getRepoStatus(SkipDllCheck.False, SkipOfpaTranslation.True);
 
 			// run initial fetch of DLLs - it may be worth moving this and the engine fetch
 			// to the clone endpoint on the backend
