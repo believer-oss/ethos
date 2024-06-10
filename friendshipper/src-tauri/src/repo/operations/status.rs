@@ -416,7 +416,7 @@ impl StatusOp {
         // this simple parallel array code...
         #[allow(clippy::needless_range_loop)]
         for i in 0..files.len() {
-            files[i].display_name = asset_names[i].clone();
+            files[i].display_name.clone_from(&asset_names[i]);
 
             debug!(
                 "updating file {} to have display name '{}'",

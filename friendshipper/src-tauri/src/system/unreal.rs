@@ -1,3 +1,4 @@
+use anyhow::bail;
 use ethos_core::types::config::UProject;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -5,8 +6,8 @@ use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::os::windows::process::CommandExt;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
 use tracing::error;
@@ -14,11 +15,7 @@ use tracing::info;
 use tracing::warn;
 
 #[cfg(windows)]
-use anyhow::bail;
-#[cfg(windows)]
-use ethos_core::CREATE_NO_WINDOW;
-#[cfg(windows)]
-use std::path::PathBuf;
+use {ethos_core::CREATE_NO_WINDOW, std::os::windows::process::CommandExt};
 
 pub type OFPANameCacheRef = std::sync::Arc<RwLock<OFPANameCache>>;
 
@@ -162,16 +159,15 @@ impl OFPANameCache {
                 should_try_commandlet = true;
             }
 
-            #[cfg(windows)]
             if should_try_commandlet {
                 let mut editor_dir: PathBuf = PathBuf::from(engine_path);
-                editor_dir.push("Engine\\Binaries\\Win64");
+                editor_dir.push("Engine/Binaries/Win64");
 
                 let mut editor_debug_exe: PathBuf = editor_dir.clone();
-                editor_debug_exe.push("UnrealEditor-Win64-DebugGame-Cmd.exe");
+                editor_debug_exe.push("UnrealEditor-Win64-DebugGame-Cmd");
 
                 let mut editor_dev_exe: PathBuf = editor_dir.clone();
-                editor_dev_exe.push("UnrealEditor-Cmd.exe");
+                editor_dev_exe.push("UnrealEditor-Cmd");
 
                 // If the DebugGame exe exists, the user is likely an engineer iterating on code, so check and see which exe is newer and use that one.
                 // Note that this is an ungodly amount of nesting but is the simplest way to check the two filetimes without doing a bunch of unwraps.
