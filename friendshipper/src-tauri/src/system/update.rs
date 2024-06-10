@@ -32,6 +32,8 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
     let token = state.app_config.read().ensure_github_pat()?;
     let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
 
+    let app_name = APP_NAME.to_lowercase();
+
     let releases = octocrab
         .repos(REPO_OWNER, REPO_NAME)
         .releases()
@@ -47,11 +49,11 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
             }
 
             let tag_name = release.tag_name.clone();
-            if release.tag_name.starts_with(APP_NAME)
+            if release.tag_name.starts_with(&app_name)
                 && release
                     .assets
                     .iter()
-                    .any(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX))
+                    .any(|asset| asset.name == format!("{}{}", &app_name, BIN_SUFFIX))
             {
                 return Some(tag_name);
             }
@@ -62,7 +64,7 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
 
     match latest {
         Some(latest) => Ok(latest
-            .strip_prefix(&format!("{}-v", APP_NAME))
+            .strip_prefix(&format!("{}-v", &app_name))
             .unwrap()
             .to_string()),
         None => Err(anyhow!("No latest version found").into()),
@@ -74,6 +76,8 @@ pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreEr
     info!("Running update");
     let token = state.app_config.read().ensure_github_pat()?;
     let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
+
+    let app_name = APP_NAME.to_lowercase();
 
     let releases = octocrab
         .repos(REPO_OWNER, REPO_NAME)
@@ -89,11 +93,11 @@ pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreEr
                 return None;
             }
 
-            if release.tag_name.starts_with(APP_NAME)
+            if release.tag_name.starts_with(&app_name)
                 && release
                     .assets
                     .iter()
-                    .any(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX))
+                    .any(|asset| asset.name == format!("{}{}", &app_name, BIN_SUFFIX))
             {
                 return Some(release);
             }
@@ -107,7 +111,7 @@ pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreEr
             let asset = latest
                 .assets
                 .iter()
-                .find(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX));
+                .find(|asset| asset.name == format!("{}{}", &app_name, BIN_SUFFIX));
 
             match asset {
                 Some(asset) => {
@@ -125,7 +129,7 @@ pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreEr
                         ))
                         .header("Authorization", format!("Bearer {}", token))
                         .header("Accept", "application/octet-stream")
-                        .header("User-Agent", APP_NAME)
+                        .header("User-Agent", &app_name)
                         .send()
                         .await?;
 
