@@ -1,4 +1,3 @@
-use anyhow::bail;
 use ethos_core::types::config::UProject;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -15,7 +14,7 @@ use tracing::info;
 use tracing::warn;
 
 #[cfg(windows)]
-use {ethos_core::CREATE_NO_WINDOW, std::os::windows::process::CommandExt};
+use {anyhow::bail, ethos_core::CREATE_NO_WINDOW, std::os::windows::process::CommandExt};
 
 pub type OFPANameCacheRef = std::sync::Arc<RwLock<OFPANameCache>>;
 
