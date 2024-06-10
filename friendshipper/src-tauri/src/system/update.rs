@@ -1,19 +1,16 @@
+use std::fs;
 use std::fs::File;
-use std::{
-    fs::{self},
-    io::Write,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::io::Write;
+use std::sync::Arc;
 
 use anyhow::anyhow;
-use aws_sdk_s3::Client;
 use axum::{debug_handler, extract::State};
-use directories_next::BaseDirs;
+use octocrab::models::repos::Release;
+use octocrab::Octocrab;
 use tracing::{error, info};
 
-use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::types::errors::CoreError;
+use ethos_core::BIN_SUFFIX;
 
 use crate::state::AppState;
 use crate::APP_NAME;
@@ -26,91 +23,148 @@ pub async fn get_latest_version() -> Result<String, CoreError> {
     Ok(VERSION.to_string())
 }
 
+static REPO_OWNER: &str = "believer-oss";
+static REPO_NAME: &str = "ethos";
+
 #[debug_handler]
 #[cfg(not(target_os = "macos"))]
 pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
-    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
+    let token = state.app_config.read().ensure_github_pat()?;
+    let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
 
-    match aws_client.get_latest_object_key(APP_NAME).await? {
-        Some(entry) => {
-            let version = entry.get_semver().unwrap();
-            info!("Found latest version: {}", version);
-            Ok(version.to_string())
-        }
-        None => {
-            info!("No latest version found");
-            Err(CoreError(anyhow!("No latest version found")))
-        }
+    let releases = octocrab
+        .repos(REPO_OWNER, REPO_NAME)
+        .releases()
+        .list()
+        .send()
+        .await?;
+
+    let latest: Option<String> = releases
+        .into_iter()
+        .filter_map(|release| {
+            if release.draft || release.prerelease {
+                return None;
+            }
+
+            let tag_name = release.tag_name.clone();
+            if release.tag_name.starts_with(APP_NAME)
+                && release
+                    .assets
+                    .iter()
+                    .any(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX))
+            {
+                return Some(tag_name);
+            }
+
+            None
+        })
+        .next();
+
+    match latest {
+        Some(latest) => Ok(latest
+            .strip_prefix(&format!("{}-v", APP_NAME))
+            .unwrap()
+            .to_string()),
+        None => Err(anyhow!("No latest version found").into()),
     }
 }
 
 #[debug_handler]
 pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
-    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
-
     info!("Running update");
-    if let Some(latest) = aws_client.get_latest_object_key(APP_NAME).await? {
-        let sdk_config = aws_client.get_sdk_config().await;
-        let client = Client::new(&sdk_config);
-        let exe_path = match std::env::current_exe() {
-            Ok(path) => path,
-            Err(e) => {
-                return Err(anyhow!("Error getting current exe path: {:?}", e).into());
+    let token = state.app_config.read().ensure_github_pat()?;
+    let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
+
+    let releases = octocrab
+        .repos(REPO_OWNER, REPO_NAME)
+        .releases()
+        .list()
+        .send()
+        .await?;
+
+    let latest: Option<Release> = releases
+        .into_iter()
+        .filter_map(|release| {
+            if release.draft || release.prerelease {
+                return None;
             }
-        };
 
-        let tmp_path = format!("{}_tmp", exe_path.to_str().unwrap());
-
-        let key = latest.key.to_string();
-
-        info!("Downloading key: {}", key);
-
-        let mut file = File::create(tmp_path.clone())?;
-        let config = state.app_config.read().clone();
-        let mut result = match client
-            .get_object()
-            .bucket(config.aws_config.unwrap().artifact_bucket_name)
-            .key(key)
-            .send()
-            .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Error downloading exe: {:?}", e);
-                return Err(anyhow!("Error downloading exe: {:?}", e).into());
+            if release.tag_name.starts_with(APP_NAME)
+                && release
+                    .assets
+                    .iter()
+                    .any(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX))
+            {
+                return Some(release);
             }
-        };
 
-        while let Some(bytes) = result.body.try_next().await? {
-            file.write_all(&bytes)?;
+            None
+        })
+        .next();
+
+    match latest {
+        Some(latest) => {
+            let asset = latest
+                .assets
+                .iter()
+                .find(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX));
+
+            match asset {
+                Some(asset) => {
+                    // download release
+                    info!(
+                        "https://api.github.com/repos/{}/{}/releases/assets/{}",
+                        REPO_OWNER, REPO_NAME, asset.id
+                    );
+
+                    let client = reqwest::Client::new();
+                    let mut response = client
+                        .get(format!(
+                            "https://api.github.com/repos/{}/{}/releases/assets/{}",
+                            REPO_OWNER, REPO_NAME, asset.id
+                        ))
+                        .header("Authorization", format!("Bearer {}", token))
+                        .header("Accept", "application/octet-stream")
+                        .header("User-Agent", APP_NAME)
+                        .send()
+                        .await?;
+
+                    if response.status().is_client_error() {
+                        let text = response.text().await?;
+                        error!("Error downloading asset: {:?}", text.clone());
+                        return Err(CoreError(anyhow!("Error downloading asset: {:?}", text)));
+                    }
+
+                    let exe_path = match std::env::current_exe() {
+                        Ok(path) => path,
+                        Err(e) => {
+                            return Err(anyhow!("Error getting current exe path: {:?}", e).into());
+                        }
+                    };
+
+                    let tmp_path = format!("{}_tmp", exe_path.to_str().unwrap());
+                    info!("Downloading to: {}", tmp_path);
+
+                    let mut file = File::create(tmp_path.clone())?;
+                    while let Some(chunk) = response.chunk().await? {
+                        file.write_all(&chunk)?;
+                    }
+
+                    match self_replace::self_replace(&tmp_path) {
+                        Ok(_) => {
+                            info!("Updated exe");
+                            fs::remove_file(&tmp_path)?;
+                            Ok(())
+                        }
+                        Err(e) => {
+                            error!("Error replacing exe: {:?}", e);
+                            Err(anyhow!("Error replacing exe: {:?}", e).into())
+                        }
+                    }
+                }
+                None => Err(anyhow!("No asset found").into()),
+            }
         }
-
-        return match self_replace::self_replace(&tmp_path) {
-            Ok(_) => {
-                info!("Removing file: {}", tmp_path);
-                fs::remove_file(&tmp_path)?;
-
-                info!("Update complete");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Error replacing exe: {:?}", e);
-                Err(anyhow!("Error replacing exe: {:?}", e).into())
-            }
-        };
-    }
-
-    Err(anyhow!("No latest version found").into())
-}
-
-pub fn get_data_dir() -> Option<PathBuf> {
-    if let Some(base_dirs) = BaseDirs::new() {
-        let data_dir = base_dirs.data_dir().join(APP_NAME).join("data");
-
-        fs::create_dir_all(&data_dir).unwrap();
-
-        Some(data_dir)
-    } else {
-        None
+        None => Err(anyhow!("No latest version found").into()),
     }
 }
