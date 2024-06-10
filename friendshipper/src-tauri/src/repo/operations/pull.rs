@@ -61,6 +61,7 @@ impl Task for PullOp {
                     storage: self.storage.clone(),
                     skip_fetch: false,
                     skip_dll_check: false,
+                    skip_ofpa_translation: false,
                 }
             };
 
@@ -123,6 +124,7 @@ impl Task for PullOp {
                         storage: self.storage.clone(),
                         skip_fetch: true,
                         skip_dll_check: false,
+                        skip_ofpa_translation: false,
                     }
                 };
 
@@ -140,6 +142,7 @@ impl Task for PullOp {
                 storage: self.storage.clone(),
                 skip_fetch: true,
                 skip_dll_check: false,
+                skip_ofpa_translation: false,
             };
 
             status_op.execute().await?;
@@ -200,6 +203,7 @@ impl Task for PullOp {
                     storage: self.storage.clone(),
                     skip_fetch: true,
                     skip_dll_check: false,
+                    skip_ofpa_translation: false,
                 }
             };
 

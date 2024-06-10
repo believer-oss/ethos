@@ -70,6 +70,7 @@ pub struct StatusOp {
     pub storage: ArtifactStorage,
     pub skip_fetch: bool,
     pub skip_dll_check: bool,
+    pub skip_ofpa_translation: bool,
 }
 
 #[async_trait]
@@ -163,7 +164,7 @@ impl StatusOp {
         }
 
         // get display names if available for OFPA
-        {
+        if !self.skip_ofpa_translation {
             info!("StatusOp: fetching OFPA filenames...");
 
             let mut combined_files = status.modified_files.0.clone();
@@ -433,6 +434,8 @@ pub struct StatusParams {
     pub skip_fetch: bool,
     #[serde(default)]
     pub skip_dll_check: bool,
+    #[serde(default)]
+    pub skip_ofpa_translation: bool,
 }
 
 #[debug_handler]
@@ -462,6 +465,7 @@ pub async fn status_handler(
             storage,
             skip_fetch: params.skip_fetch,
             skip_dll_check: params.skip_dll_check,
+            skip_ofpa_translation: params.skip_ofpa_translation,
         }
     };
 

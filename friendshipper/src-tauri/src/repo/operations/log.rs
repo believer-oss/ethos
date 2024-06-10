@@ -53,6 +53,7 @@ pub async fn log_handler(
                 storage: state.storage.read().clone().unwrap(),
                 skip_fetch: false,
                 skip_dll_check: false,
+                skip_ofpa_translation: false,
             }
         };
 

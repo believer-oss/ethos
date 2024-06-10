@@ -63,7 +63,13 @@
 	import { checkLoginRequired, refreshLogin } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
-	import { getAllCommits, getRepoStatus, verifyLocks } from '$lib/repo';
+	import {
+		getAllCommits,
+		getRepoStatus,
+		verifyLocks,
+		SkipDllCheck,
+		SkipOfpaTranslation
+	} from '$lib/repo';
 	import { getLatestVersion, openSystemLogsFolder, restart, runUpdate } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
@@ -215,7 +221,12 @@
 
 				if ($appConfig.repoPath !== '') {
 					const [repoConfigResponse, repoStatusResponse, commitsResponse, locksResponse] =
-						await Promise.all([getRepoConfig(), getRepoStatus(), getAllCommits(), verifyLocks()]);
+						await Promise.all([
+							getRepoConfig(),
+							getRepoStatus(SkipDllCheck.False, SkipOfpaTranslation.True),
+							getAllCommits(),
+							verifyLocks()
+						]);
 
 					repoConfig.set(repoConfigResponse);
 					repoStatus.set(repoStatusResponse);

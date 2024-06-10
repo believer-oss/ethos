@@ -51,8 +51,24 @@ export const cloneRepo = async (req: CloneRequest): Promise<void> => {
 	await invoke('clone_repo', { req });
 };
 
-export const getRepoStatus = async (skipDllCheck: boolean = false): Promise<RepoStatus> =>
-	invoke('get_repo_status', { skipDllCheck });
+export enum SkipDllCheck {
+	False = 0,
+	True = 1
+}
+
+export enum SkipOfpaTranslation {
+	False = 0,
+	True = 1
+}
+
+export const getRepoStatus = async (
+	shouldSkipDllCheck: SkipDllCheck = SkipDllCheck.False,
+	shouldSkipOfpaTranslation: SkipOfpaTranslation = SkipOfpaTranslation.False
+): Promise<RepoStatus> => {
+	const skipDllCheck: boolean = shouldSkipDllCheck === SkipDllCheck.True;
+	const skipOfpaTranslation: boolean = shouldSkipOfpaTranslation === SkipOfpaTranslation.True;
+	return invoke('get_repo_status', { skipDllCheck, skipOfpaTranslation });
+};
 
 export const submit = async (req: PushRequest): Promise<void> => invoke('submit', { req });
 
