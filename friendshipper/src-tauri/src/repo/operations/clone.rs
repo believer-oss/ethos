@@ -52,11 +52,13 @@ pub async fn clone_handler(
         .unwrap_or_default()
         .trim_end_matches(".git");
     let repo_path = PathBuf::from(&request.path).join(repo_name);
+    let repo_path_str = repo_path.to_str().unwrap_or_default();
 
     let tx = state.git_tx.clone();
+    let size_check_path = repo_path.clone();
     let status_handle = tokio::spawn(async move {
         loop {
-            let mut size = get_size(&repo_path).unwrap_or_default() as f64 / 1024.0 / 1024.0;
+            let mut size = get_size(&size_check_path).unwrap_or_default() as f64 / 1024.0 / 1024.0;
 
             if size > 1024.0 {
                 size /= 1024.0;
@@ -80,7 +82,7 @@ pub async fn clone_handler(
                 "--filter=tree:0",
                 "--progress",
                 &request.url,
-                &request.path,
+                repo_path_str,
             ],
             Default::default(),
         )
