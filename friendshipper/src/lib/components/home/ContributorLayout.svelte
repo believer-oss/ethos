@@ -334,7 +334,7 @@
 									<TableBodyCell
 										class="p-2 text-primary-400 dark:text-primary-400 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-1/2 max-w-[22vw]"
 									>
-										{node.headCommit.message.split('\n')[0]}
+										{node.headCommit.message.split('\n')[0] ?? 'No message'}
 									</TableBodyCell>
 									<TableBodyCell class="p-2 text-center"
 										>{node.headCommit.author.name}</TableBodyCell
