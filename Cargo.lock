@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.2.0"
+version = "4.2.1"
 dependencies = [
  "anyhow",
  "aws-sdk-s3",
