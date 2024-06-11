@@ -143,7 +143,11 @@ impl OFPANameCache {
                                     if item.error.is_empty() {
                                         cache.add_name(&item.file_path, &item.asset_name);
                                     } else {
-                                        warn!("{}", item.error);
+                                        tracing::debug!(
+                                            "Error translating file path {}: {}",
+                                            item.file_path,
+                                            item.error
+                                        );
                                     }
                                 }
                                 web_request_succeeded = true;
@@ -220,7 +224,10 @@ impl OFPANameCache {
                                     }
                                     if let Some(caps) = OFPA_FRIENDLYNAME_ERROR_REGEX.captures(line)
                                     {
-                                        warn!("{}", caps[1].to_string());
+                                        warn!(
+                                            "Failed translating OFPA path. error: {}",
+                                            caps[1].to_string()
+                                        );
                                     }
                                 }
                             }

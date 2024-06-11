@@ -17,6 +17,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { RefreshOutline } from 'flowbite-svelte-icons';
+	import type { Lock } from '$lib/types';
 	import { releaseLocks, verifyLocks } from '$lib/repo';
 	import { allModifiedFiles, locks } from '$lib/stores';
 
@@ -133,6 +134,13 @@
 		return path.replace(/\/$/, '').split('/').pop();
 	};
 
+	const getLockDisplayName = (lock: Lock): string => {
+		if (lock.display_name === null || lock.display_name === '') {
+			return formatPath(lock.path);
+		}
+		return lock.display_name;
+	};
+
 	const getLockTimestamp = (locked_at: string): string => {
 		const date = new Date(locked_at);
 		return date.toLocaleString();
@@ -229,7 +237,7 @@
 						/>
 					</TableBodyCell>
 					<TableBodyCell id="lock-{index}" class="p-2">
-						{formatPath(lock.path)}
+						{getLockDisplayName(lock)}
 					</TableBodyCell>
 					<TableBodyCell class="p-2">
 						{lock.owner?.name}
@@ -284,7 +292,7 @@
 							/>
 						</TableBodyCell>
 						<TableBodyCell id="lock-{index}" class="p-2">
-							{formatPath(lock.path)}
+							{getLockDisplayName(lock)}
 						</TableBodyCell>
 						<TableBodyCell class="p-2">
 							{lock.owner?.name}
