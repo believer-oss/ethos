@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
@@ -9,6 +10,8 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{CommitFileInfo, ShowCommitFilesResponse};
 
 use crate::state::AppState;
+use crate::system::unreal::CanUseCommandlet;
+use crate::system::unreal::OFPANameCache;
 
 #[derive(Deserialize, Serialize)]
 pub struct ShowCommitFilesParams {
@@ -40,7 +43,7 @@ pub async fn show_commit_files(
         .run_and_collect_output(&args, Default::default())
         .await?;
 
-    let files: Vec<CommitFileInfo> = output
+    let mut files: Vec<CommitFileInfo> = output
         .lines()
         .skip(match params.stash {
             true => 0,
@@ -51,9 +54,42 @@ pub async fn show_commit_files(
             let parts = line.split_whitespace().collect::<Vec<&str>>();
             let action = parts.first().unwrap_or(&"").to_string();
             let file = parts.get(1).unwrap_or(&"").to_string();
-            CommitFileInfo { action, file }
+            CommitFileInfo {
+                action,
+                file,
+                display_name: String::new(),
+            }
         })
         .collect();
+
+    let file_paths: Vec<String> = files.iter().map(|v| v.file.clone()).collect();
+
+    let repo_path = state.app_config.read().repo_path.clone();
+    let uproject_path = state
+        .app_config
+        .read()
+        .get_uproject_path(&state.repo_config.read());
+    let engine_path = state
+        .app_config
+        .read()
+        .load_engine_path_from_repo(&state.repo_config.read())
+        .unwrap_or_default();
+
+    let ofpa_names = OFPANameCache::get_names(
+        state.ofpa_cache.clone(),
+        &PathBuf::from(repo_path),
+        &uproject_path,
+        &engine_path,
+        &file_paths,
+        CanUseCommandlet::Never,
+    )
+    .await;
+
+    assert_eq!(files.len(), ofpa_names.len());
+
+    for i in 0..files.len() {
+        files[i].display_name.clone_from(&ofpa_names[i]);
+    }
 
     Ok(Json(files))
 }

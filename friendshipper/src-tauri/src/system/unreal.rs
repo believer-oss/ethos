@@ -59,6 +59,12 @@ impl Default for OFPANameCache {
     }
 }
 
+#[derive(Eq, PartialEq)]
+pub enum CanUseCommandlet {
+    Never,
+    FallbackOnly,
+}
+
 impl OFPANameCache {
     pub fn new() -> Self {
         Self {
@@ -88,6 +94,7 @@ impl OFPANameCache {
         uproject_path: &Path,
         engine_path: &Path,
         paths: &[String],
+        can_use_commandlet: CanUseCommandlet,
     ) -> Vec<String> {
         let is_editor_running = is_editor_process_running(repo_path);
 
@@ -107,9 +114,8 @@ impl OFPANameCache {
         }
 
         if !paths_to_request.is_empty() {
-            let mut should_try_commandlet = false;
-
             // try to do a web request first, because it'll be faster than running the commandlet
+            let mut web_request_succeeded = false;
             if is_editor_running {
                 let request_data = OFPAFriendlyNamesRequest {
                     filenames: paths_to_request.clone(),
@@ -122,41 +128,38 @@ impl OFPANameCache {
                     .send()
                     .await;
 
-                match res_or_err {
-                    Ok(res) => {
-                        if res.status().is_client_error() {
-                            let body = res.text().await.unwrap();
-                            warn!(
-                                "Got an error response. Falling back to commandlet. Error: {}",
-                                body
-                            );
-                            should_try_commandlet = true;
-                        } else {
-                            match res.json::<OFPAFriendlyNamesResponse>().await {
-                                Ok(data) => {
-                                    let mut cache = cache_ref.write();
-                                    for item in data.names {
-                                        if item.error.is_empty() {
-                                            cache.add_name(&item.file_path, &item.asset_name);
-                                        } else {
-                                            warn!("{}", item.error);
-                                        }
+                if let Ok(res) = res_or_err {
+                    if res.status().is_client_error() {
+                        let body = res.text().await.unwrap();
+                        warn!(
+                            "Got an error response. Falling back to commandlet. Error: {}",
+                            body
+                        );
+                    } else {
+                        match res.json::<OFPAFriendlyNamesResponse>().await {
+                            Ok(data) => {
+                                let mut cache = cache_ref.write();
+                                for item in data.names {
+                                    if item.error.is_empty() {
+                                        cache.add_name(&item.file_path, &item.asset_name);
+                                    } else {
+                                        warn!("{}", item.error);
                                     }
                                 }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to unpack json response. Falling back to commandlet. Error: {}", e
-                                    );
-                                    should_try_commandlet = true;
-                                }
-                            };
-                        }
+                                web_request_succeeded = true;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to unpack json response. Falling back to commandlet. Error: {}", e
+                                );
+                            }
+                        };
                     }
-                    Err(_) => should_try_commandlet = true,
                 }
-            } else {
-                should_try_commandlet = true;
             }
+
+            let should_try_commandlet =
+                !web_request_succeeded && can_use_commandlet == CanUseCommandlet::FallbackOnly;
 
             if should_try_commandlet {
                 let mut editor_dir: PathBuf = PathBuf::from(engine_path);

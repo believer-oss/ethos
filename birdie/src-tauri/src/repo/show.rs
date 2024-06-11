@@ -51,7 +51,11 @@ pub async fn show_commit_files(
             let parts = line.split_whitespace().collect::<Vec<&str>>();
             let action = parts.first().unwrap_or(&"").to_string();
             let file = parts.get(1).unwrap_or(&"").to_string();
-            CommitFileInfo { action, file }
+            CommitFileInfo {
+                action,
+                file,
+                display_name: String::new(),
+            }
         })
         .collect();
 

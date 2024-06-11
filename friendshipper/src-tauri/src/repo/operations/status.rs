@@ -23,6 +23,7 @@ use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
 use crate::state::AppState;
+use crate::system::unreal::CanUseCommandlet;
 use crate::system::unreal::OFPANameCache;
 use crate::system::unreal::OFPANameCacheRef;
 
@@ -407,6 +408,7 @@ impl StatusOp {
                 &uproject_path,
                 &engine_path,
                 &filenames,
+                CanUseCommandlet::FallbackOnly,
             )
             .await
         };

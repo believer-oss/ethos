@@ -232,9 +232,11 @@ pub struct PullResponse {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommitFileInfo {
     pub action: String,
     pub file: String,
+    pub display_name: String,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]

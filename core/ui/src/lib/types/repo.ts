@@ -23,4 +23,5 @@ export interface Commit {
 export interface CommitFileInfo {
 	action: string;
 	file: string;
+	displayName: string;
 }

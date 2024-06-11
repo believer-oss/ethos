@@ -57,6 +57,13 @@
 
 		return '';
 	};
+
+	const getFileDisplayName = (file: CommitFileInfo): string => {
+		if (file.displayName === '') {
+			return file.file;
+		}
+		return file.displayName;
+	};
 </script>
 
 <Table color="custom" striped={true}>
@@ -139,7 +146,7 @@
 							{:else}
 								{#each commitFiles as file}
 									<span class={getCommitFileTextClass(file.action)}>
-										{file.file}<br />
+										{getFileDisplayName(file)}<br />
 									</span>
 								{/each}
 							{/if}
