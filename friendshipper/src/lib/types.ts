@@ -251,6 +251,7 @@ export interface Lock {
 	path: string;
 	locked_at: string;
 	owner: Nullable<LockOwnerInfo>;
+	display_name: Nullable<string>;
 }
 
 export interface VerifyLocksResponse {

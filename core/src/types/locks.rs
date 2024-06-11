@@ -12,12 +12,16 @@ pub struct RefInfo {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Lock {
+    // git lfs locks --verify --json outputs an object with these fields
     pub id: String,
     pub path: String,
     pub locked_at: String,
-
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<OwnerInfo>,
+
+    // these fields are our own additions, so we have to wrap them in Option to make sure serialization from the json still works
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
