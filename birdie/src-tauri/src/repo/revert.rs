@@ -105,15 +105,17 @@ pub async fn revert_files_handler(
     }
 
     if !modified.is_empty() {
-        let op = {
-            RevertFilesOp {
-                git_client: state.git(),
-                repo_status: state.repo_status.clone(),
-                files: modified.iter().map(|f| f.path.clone()).collect(),
-            }
-        };
+        for chunk in modified.chunks(50) {
+            let op = {
+                RevertFilesOp {
+                    git_client: state.git(),
+                    repo_status: state.repo_status.clone(),
+                    files: chunk.iter().map(|f| f.path.clone()).collect(),
+                }
+            };
 
-        sequence.push(Box::new(op));
+            sequence.push(Box::new(op));
+        }
     }
 
     let github_pat = state.app_config.read().ensure_github_pat()?;
