@@ -28,8 +28,13 @@ static REPO_NAME: &str = "ethos";
 
 #[debug_handler]
 #[cfg(not(target_os = "macos"))]
-pub async fn get_latest_version() -> Result<String, CoreError> {
-    let octocrab = Octocrab::builder().build()?;
+pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
+    let token = state.app_config.read().github_pat.clone();
+    let octocrab = if let Some(token) = token {
+        Octocrab::builder().personal_token(token).build()?
+    } else {
+        Octocrab::builder().build()?
+    };
 
     let app_name = APP_NAME.to_lowercase();
 
@@ -73,8 +78,12 @@ pub async fn get_latest_version() -> Result<String, CoreError> {
 #[debug_handler]
 pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
     info!("Running update");
-    let token = state.app_config.read().ensure_github_pat().ok();
-    let octocrab = Octocrab::builder().build()?;
+    let token = state.app_config.read().github_pat.clone();
+    let octocrab = if let Some(ref token) = token {
+        Octocrab::builder().personal_token(token.clone()).build()?
+    } else {
+        Octocrab::builder().build()?
+    };
 
     let app_name = APP_NAME.to_lowercase();
 
