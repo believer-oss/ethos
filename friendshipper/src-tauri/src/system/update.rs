@@ -1,9 +1,10 @@
 use std::fs;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
 
 use anyhow::anyhow;
-use axum::debug_handler;
+use axum::{debug_handler, extract::State};
 use octocrab::models::repos::Release;
 use octocrab::Octocrab;
 use tracing::{error, info};
@@ -11,6 +12,7 @@ use tracing::{error, info};
 use ethos_core::types::errors::CoreError;
 use ethos_core::BIN_SUFFIX;
 
+use crate::state::AppState;
 use crate::APP_NAME;
 
 #[cfg(target_os = "macos")]
@@ -26,8 +28,13 @@ static REPO_NAME: &str = "ethos";
 
 #[debug_handler]
 #[cfg(not(target_os = "macos"))]
-pub async fn get_latest_version() -> Result<String, CoreError> {
-    let octocrab = Octocrab::builder().build()?;
+pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
+    let token = state.app_config.read().github_pat.clone();
+    let octocrab = if let Some(token) = token {
+        Octocrab::builder().personal_token(token).build()?
+    } else {
+        Octocrab::builder().build()?
+    };
 
     let app_name = APP_NAME.to_lowercase();
 
@@ -69,9 +76,14 @@ pub async fn get_latest_version() -> Result<String, CoreError> {
 }
 
 #[debug_handler]
-pub async fn run_update() -> Result<(), CoreError> {
+pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
     info!("Running update");
-    let octocrab = Octocrab::builder().build()?;
+    let token = state.app_config.read().github_pat.clone();
+    let octocrab = if let Some(ref token) = token {
+        Octocrab::builder().personal_token(token.clone()).build()?
+    } else {
+        Octocrab::builder().build()?
+    };
 
     let app_name = APP_NAME.to_lowercase();
 
@@ -118,15 +130,21 @@ pub async fn run_update() -> Result<(), CoreError> {
                     );
 
                     let client = reqwest::Client::new();
-                    let mut response = client
+                    let response = client
                         .get(format!(
                             "https://api.github.com/repos/{}/{}/releases/assets/{}",
                             REPO_OWNER, REPO_NAME, asset.id
                         ))
                         .header("Accept", "application/octet-stream")
-                        .header("User-Agent", &app_name)
-                        .send()
-                        .await?;
+                        .header("User-Agent", &app_name);
+                    let mut response = if let Some(token) = token {
+                        response
+                            .header("Authorization", format!("Bearer {}", token))
+                            .send()
+                            .await?
+                    } else {
+                        response.send().await?
+                    };
 
                     if response.status().is_client_error() {
                         let text = response.text().await?;
