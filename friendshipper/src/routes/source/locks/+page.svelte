@@ -14,6 +14,7 @@
 		Toggle,
 		Tooltip
 	} from 'flowbite-svelte';
+	import { derived } from 'svelte/store';
 	import { emit } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { RefreshOutline } from 'flowbite-svelte-icons';
@@ -29,15 +30,36 @@
 	let allowReleaseOtherLocks = false;
 	let searchTerm = '';
 
-	$: filteredOurs = $locks.ours.filter((item) =>
+	const formatPath = (path: string) => {
+		if (path === '/') return path;
+		return path.replace(/\/$/, '').split('/').pop();
+	};
+
+	const getLockDisplayName = (lock: Lock): string => {
+		if (lock.display_name === null || lock.display_name === '') {
+			return formatPath(lock.path);
+		}
+		return lock.display_name;
+	};
+
+	const sortLocksFunc = (a, b) => {
+		const aName = getLockDisplayName(a);
+		const bName = getLockDisplayName(b);
+		return aName < bName ? -1 : 1;
+	};
+
+	$: sortedOurs = derived(locks, ($locks) => $locks.ours.sort(sortLocksFunc), []);
+	$: sortedTheirs = derived(locks, ($locks) => $locks.theirs.sort(sortLocksFunc), []);
+
+	$: filteredOurs = $sortedOurs.filter((item) =>
 		item.path.toLowerCase().includes(searchTerm.toLowerCase())
 	);
-	$: filteredTheirs = $locks.theirs.filter(
+	$: filteredTheirs = $sortedTheirs.filter(
 		(item) =>
 			item.path.toLowerCase().includes(searchTerm.toLowerCase()) ||
 			item.owner?.name.toLowerCase().includes(searchTerm.toLowerCase())
 	);
-	$: unmodifiedLockedFiles = $locks.ours.filter(
+	$: unmodifiedLockedFiles = $sortedOurs.filter(
 		(lock) => !$allModifiedFiles.find((file) => file.path === lock.path)
 	);
 
@@ -57,25 +79,25 @@
 		if (!allowReleaseOtherLocks) return;
 
 		if ((e.target as HTMLInputElement).checked) {
-			const paths = $locks.theirs.map((lock) => lock.path);
+			const paths = $sortedTheirs.map((lock) => lock.path);
 			selectedForRelease = selectedForRelease.concat(paths);
 
-			numOthersSelected += $locks.theirs.length;
+			numOthersSelected += $sortedTheirs.length;
 
 			selectedForRelease = selectedForRelease.filter(
 				(item, index) => selectedForRelease.indexOf(item) === index
 			);
 		} else {
-			numOthersSelected -= $locks.theirs.length;
+			numOthersSelected -= $sortedTheirs.length;
 			selectedForRelease = selectedForRelease.filter(
-				(path) => !$locks.theirs.map((lock) => lock.path).includes(path)
+				(path) => !$sortedTheirs.map((lock) => lock.path).includes(path)
 			);
 		}
 	};
 
 	const handleReleaseAllOurs = (e: Event) => {
 		if ((e.target as HTMLInputElement).checked) {
-			const paths = $locks.ours.map((lock) => lock.path);
+			const paths = $sortedOurs.map((lock) => lock.path);
 			selectedForRelease = selectedForRelease.concat(paths);
 
 			selectedForRelease = selectedForRelease.filter(
@@ -83,7 +105,7 @@
 			);
 		} else {
 			selectedForRelease = selectedForRelease.filter(
-				(path) => !$locks.ours.map((lock) => lock.path).includes(path)
+				(path) => !$sortedOurs.map((lock) => lock.path).includes(path)
 			);
 		}
 	};
@@ -127,18 +149,6 @@
 		}
 		selectedForRelease = [];
 		loading = false;
-	};
-
-	const formatPath = (path: string) => {
-		if (path === '/') return path;
-		return path.replace(/\/$/, '').split('/').pop();
-	};
-
-	const getLockDisplayName = (lock: Lock): string => {
-		if (lock.display_name === null || lock.display_name === '') {
-			return formatPath(lock.path);
-		}
-		return lock.display_name;
 	};
 
 	const getLockTimestamp = (locked_at: string): string => {

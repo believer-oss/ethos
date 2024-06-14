@@ -118,7 +118,11 @@ export const allModifiedFiles = derived(repoStatus, ($repoStatus) => {
 	const modified = $repoStatus?.modifiedFiles ?? [];
 
 	const all: ModifiedFile[] = [...untracked, ...modified];
-	all.sort((a, b) => (a.path < b.path ? -1 : 1));
+	all.sort((a, b) => {
+		const aName = a.displayName === '' ? a.path : a.displayName;
+		const bName = b.displayName === '' ? b.path : b.displayName;
+		return aName < bName ? -1 : 1;
+	});
 
 	return all;
 });

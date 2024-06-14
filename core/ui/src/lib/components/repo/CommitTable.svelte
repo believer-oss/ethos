@@ -23,6 +23,13 @@
 	let loadingCommitFiles = false;
 	let commitFiles: CommitFileInfo[] = [];
 
+	const getFileDisplayName = (file: CommitFileInfo): string => {
+		if (file.displayName === '') {
+			return file.file;
+		}
+		return file.displayName;
+	};
+
 	const isCommitLatestLocal = (sha: string): boolean => {
 		if (commits.length === 0) {
 			return false;
@@ -41,6 +48,7 @@
 
 		loadingCommitFiles = true;
 		commitFiles = await showFilesHandler(commit, false);
+		commitFiles.sort((a, b) => (getFileDisplayName(a) < getFileDisplayName(b) ? -1 : 1));
 		loadingCommitFiles = false;
 	};
 
@@ -56,13 +64,6 @@
 		}
 
 		return '';
-	};
-
-	const getFileDisplayName = (file: CommitFileInfo): string => {
-		if (file.displayName === '') {
-			return file.file;
-		}
-		return file.displayName;
 	};
 </script>
 
