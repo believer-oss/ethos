@@ -5,10 +5,14 @@ use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+// use std::sync::atomic::AtomicU32;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -51,6 +55,7 @@ struct OFPAFriendlyNamesResponse {
 #[derive(Debug)]
 pub struct OFPANameCache {
     pub path_to_name_map: HashMap<String, String>,
+    pub cmd_request_id: RwLock<u32>,
 }
 
 impl Default for OFPANameCache {
@@ -69,6 +74,7 @@ impl OFPANameCache {
     pub fn new() -> Self {
         Self {
             path_to_name_map: HashMap::new(),
+            cmd_request_id: RwLock::new(0),
         }
     }
 
@@ -143,10 +149,9 @@ impl OFPANameCache {
                                     if item.error.is_empty() {
                                         cache.add_name(&item.file_path, &item.asset_name);
                                     } else {
-                                        tracing::debug!(
+                                        debug!(
                                             "Error translating file path {}: {}",
-                                            item.file_path,
-                                            item.error
+                                            item.file_path, item.error
                                         );
                                     }
                                 }
@@ -166,80 +171,119 @@ impl OFPANameCache {
                 !web_request_succeeded && can_use_commandlet == CanUseCommandlet::FallbackOnly;
 
             if should_try_commandlet {
-                let mut editor_dir: PathBuf = PathBuf::from(engine_path);
-                editor_dir.push("Engine/Binaries/Win64");
+                // We pass the list of requests to the Unreal commandlet by file, because there can be so many file paths that
+                // they overflow the commandline limits.
+                let mut listfile_path = std::env::temp_dir();
+                listfile_path.push("Friendshipper");
 
-                let mut editor_debug_exe: PathBuf = editor_dir.clone();
-                editor_debug_exe.push("UnrealEditor-Win64-DebugGame-Cmd");
+                if !listfile_path.exists() {
+                    if let Err(e) = std::fs::create_dir(&listfile_path) {
+                        error!(
+                            "Failed to create directory: {:?}. Reason: {}",
+                            listfile_path, e
+                        );
+                    }
+                }
 
-                let mut editor_dev_exe: PathBuf = editor_dir.clone();
-                editor_dev_exe.push("UnrealEditor-Cmd");
+                // There can be multiple get_names() requests going at the same time, so make sure they don't stomp on each other
+                {
+                    let cache = cache_ref.read();
+                    let mut cmd_request_id = cache.cmd_request_id.write();
+                    *cmd_request_id += 1;
 
-                // If the DebugGame exe exists, the user is likely an engineer iterating on code, so check and see which exe is newer and use that one.
-                // Note that this is an ungodly amount of nesting but is the simplest way to check the two filetimes without doing a bunch of unwraps.
-                let editor_exe: PathBuf = 'exe: {
-                    if let Ok(editor_debug_exe_metadata) = std::fs::metadata(&editor_debug_exe) {
-                        if let Ok(editor_dev_exe_metadata) = std::fs::metadata(&editor_dev_exe) {
-                            if let Ok(debug_modified) = editor_debug_exe_metadata.modified() {
-                                if let Ok(dev_modified) = editor_dev_exe_metadata.modified() {
-                                    if let Ok(debug_elapsed) = debug_modified.elapsed() {
-                                        if let Ok(dev_elapsed) = dev_modified.elapsed() {
-                                            if debug_elapsed < dev_elapsed {
-                                                break 'exe editor_debug_exe;
-                                            }
+                    listfile_path.push(format!("ofpa_names_request_{}.txt", cmd_request_id));
+                }
+
+                let is_listfile_valid: bool = {
+                    match File::create(&listfile_path) {
+                        Err(e) => {
+                            error!("Failed to create listfile '{:?}' for TranslateOFPAFilenames commandlet, unable to translate names. Error: {}", listfile_path, e);
+                            false
+                        }
+                        Ok(file) => {
+                            let mut writer = std::io::BufWriter::new(file);
+                            for path in paths_to_request {
+                                if let Err(e) = writeln!(writer, "{}", &path) {
+                                    warn!(
+                                        "Failed to write string '{}' to file {:?}. Reason: {}",
+                                        path, listfile_path, e
+                                    );
+                                }
+                            }
+                            match writer.flush() {
+                                Err(e) => {
+                                    error!("Failed to write listfile '{:?}' for TranslateOFPAFilenames commandlet, unable to translate names. Error: {}", listfile_path, e);
+                                    false
+                                }
+                                Ok(()) => true,
+                            }
+                        }
+                    }
+                };
+
+                if is_listfile_valid {
+                    let mut editor_dir: PathBuf = PathBuf::from(engine_path);
+                    editor_dir.push("Engine/Binaries/Win64");
+
+                    let mut editor_exe: PathBuf = editor_dir.clone();
+                    editor_exe.push("UnrealEditor-Cmd");
+
+                    let listfile_path_str = listfile_path.to_string_lossy();
+
+                    let mut cmd = Command::new(editor_exe);
+                    cmd.current_dir(&editor_dir);
+                    cmd.arg(uproject_path);
+                    cmd.arg("-Run=TranslateOFPAFilenames");
+                    cmd.arg(format!("-ListFile=\'{}\'", listfile_path_str));
+
+                    #[cfg(windows)]
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+
+                    info!("Running Unreal commandlet: {:?}", cmd);
+
+                    match cmd.output() {
+                        Ok(output) => {
+                            if output.status.success() {
+                                let mut cache = cache_ref.write();
+                                let stdout = String::from_utf8(output.stdout).unwrap_or_default();
+                                for line in stdout.lines() {
+                                    if line.contains(
+                                        "LogFriendshipperTranslateOFPAFilenamesCommandlet",
+                                    ) {
+                                        if let Some(caps) =
+                                            OFPA_FRIENDLYNAME_LOG_SUCCESS_REGEX.captures(line)
+                                        {
+                                            let file = &caps[1];
+                                            let name = &caps[2];
+                                            cache.add_name(file, name);
+                                        }
+                                        if let Some(caps) =
+                                            OFPA_FRIENDLYNAME_ERROR_REGEX.captures(line)
+                                        {
+                                            debug!(
+                                                "Failed translating OFPA path. error: {}",
+                                                caps[1].to_string()
+                                            );
                                         }
                                     }
                                 }
+                            } else {
+                                let stderr = String::from_utf8(output.stderr).unwrap_or_default();
+                                error!(
+                                    "Failed to run TranslateOFPAFilenames commandlet. Error output:\n{}",
+                                    stderr
+                                );
                             }
                         }
+                        Err(e) => warn!("Error running commandlet: {}", e),
                     }
-                    editor_dev_exe
-                };
-
-                let mut cmd = Command::new(editor_exe);
-                cmd.current_dir(&editor_dir);
-                cmd.arg(uproject_path);
-                cmd.arg("-Run=TranslateOFPAFilenames");
-                for path in paths_to_request {
-                    cmd.arg(path);
                 }
 
-                #[cfg(windows)]
-                cmd.creation_flags(CREATE_NO_WINDOW);
-
-                match cmd.output() {
-                    Ok(output) => {
-                        if output.status.success() {
-                            let mut cache = cache_ref.write();
-                            let stdout = String::from_utf8(output.stdout).unwrap_or_default();
-                            for line in stdout.lines() {
-                                if line.contains("LogFriendshipperTranslateOFPAFilenamesCommandlet")
-                                {
-                                    if let Some(caps) =
-                                        OFPA_FRIENDLYNAME_LOG_SUCCESS_REGEX.captures(line)
-                                    {
-                                        let file = &caps[1];
-                                        let name = &caps[2];
-                                        cache.add_name(file, name);
-                                    }
-                                    if let Some(caps) = OFPA_FRIENDLYNAME_ERROR_REGEX.captures(line)
-                                    {
-                                        warn!(
-                                            "Failed translating OFPA path. error: {}",
-                                            caps[1].to_string()
-                                        );
-                                    }
-                                }
-                            }
-                        } else {
-                            let stderr = String::from_utf8(output.stderr).unwrap_or_default();
-                            error!(
-                                "Failed to run TranslateOFPAFilenames commandlet. Error output:\n{}",
-                                stderr
-                            );
-                        }
-                    }
-                    Err(e) => warn!("Error running commandlet: {}", e),
+                // decrement the counter now that we don't need the file anymore
+                {
+                    let cache = cache_ref.read();
+                    let mut cmd_request_id = cache.cmd_request_id.write();
+                    *cmd_request_id -= 1;
                 }
             }
         }
