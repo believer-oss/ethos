@@ -301,7 +301,11 @@
 				await emit('error', e);
 			}
 
-			playtests.set(await playtestsPromise);
+			try {
+				playtests.set(await playtestsPromise);
+			} catch (e) {
+				await emit('error', e);
+			}
 
 			if ($appConfig.repoPath !== '') {
 				try {
