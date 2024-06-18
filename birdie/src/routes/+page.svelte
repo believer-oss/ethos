@@ -595,7 +595,9 @@
 		<Card
 			class="w-full p-4 sm:p-4 max-w-full max-h-[50vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 		>
-			{#if !loadingFileHistory}
+			{#if loadingFileHistory}
+				<Spinner class="w-4 h-4 dark:text-gray-500 fill-white" />
+			{:else}
 				<CommitTable {commits} showFilesHandler={showCommitFiles} />
 			{/if}
 		</Card>

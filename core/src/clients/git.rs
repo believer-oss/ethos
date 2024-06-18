@@ -62,6 +62,18 @@ pub enum SaveSnapshotIndexOption {
     DiscardIndex,
 }
 
+#[derive(Eq, PartialEq)]
+pub enum PullStrategy {
+    Rebase,
+    FFOnly,
+}
+
+#[derive(Eq, PartialEq)]
+pub enum PullStashStrategy {
+    Autostash,
+    None,
+}
+
 #[derive(Clone, Debug)]
 pub struct Git {
     pub repo_path: PathBuf,
@@ -164,9 +176,23 @@ impl Git {
         self.run(&["commit", "-m", message], Opts::default()).await
     }
 
-    pub async fn pull(&self) -> anyhow::Result<()> {
-        self.run(&["pull", "--rebase", "--autostash"], Opts::default())
-            .await
+    pub async fn pull(
+        &self,
+        pull_strategy: PullStrategy,
+        stash_strategy: PullStashStrategy,
+    ) -> anyhow::Result<()> {
+        let mut args = vec!["pull"];
+        match pull_strategy {
+            PullStrategy::Rebase => args.push("--rebase"),
+            PullStrategy::FFOnly => args.push("--ff-only"),
+        }
+
+        match stash_strategy {
+            PullStashStrategy::Autostash => args.push("--autostash"),
+            PullStashStrategy::None => {}
+        }
+
+        self.run(&args, Opts::default()).await
     }
 
     pub async fn push(&self, branch: &str) -> anyhow::Result<()> {

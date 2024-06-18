@@ -6,6 +6,7 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
 
 use ethos_core::clients::git;
+use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
 use ethos_core::types::config::AppConfig;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{PullResponse, RepoStatusRef};
@@ -56,7 +57,9 @@ impl Task for PullOp {
             }
         }
 
-        self.git_client.pull().await?;
+        self.git_client
+            .pull(PullStrategy::FFOnly, PullStashStrategy::None)
+            .await?;
 
         {
             let status_op = {
