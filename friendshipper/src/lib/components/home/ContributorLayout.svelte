@@ -193,6 +193,18 @@
 		}
 	};
 
+	const getCommitMessage = (commit): string => {
+		if (commit != null) {
+			if (commit.message != null) {
+				const trimmed: string = commit.message.split('\n')[0];
+				if (trimmed != null) {
+					return trimmed;
+				}
+			}
+		}
+		return 'No message';
+	};
+
 	onMount(() => {
 		void refresh();
 
@@ -334,7 +346,7 @@
 									<TableBodyCell
 										class="p-2 text-primary-400 dark:text-primary-400 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-1/2 max-w-[22vw]"
 									>
-										{node.headCommit.message.split('\n')[0] ?? 'No message'}
+										{getCommitMessage(node.headCommit)}
 									</TableBodyCell>
 									<TableBodyCell class="p-2 text-center"
 										>{node.headCommit.author.name}</TableBodyCell
