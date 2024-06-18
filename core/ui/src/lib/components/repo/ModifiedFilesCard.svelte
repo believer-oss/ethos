@@ -24,6 +24,7 @@
 
 	export let disabled: boolean;
 	export let modifiedFiles: ModifiedFile[];
+	export let conflicts: string[];
 	export let selectedFiles: ModifiedFile[];
 	export let onSaveSnapshot: () => Promise<void> = async () => {};
 	export let snapshotsEnabled = true;
@@ -254,6 +255,12 @@
 						>
 							<FolderOpenOutline class="w-4 h-4" />
 						</Button>
+						{#if conflicts.includes(file.path)}
+							<span> 🔥 </span>
+							<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
+								CONFLICT!!!
+							</Tooltip>
+						{/if}
 						<Button
 							outline
 							size="xs"
@@ -264,7 +271,8 @@
 								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
 								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
 							on:click={() => handleFileToggled(file)}
-							>{getFileDisplayString(file)}
+						>
+							{getFileDisplayString(file)}
 						</Button>
 						{#if file.displayName !== ''}
 							<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
@@ -328,7 +336,9 @@
 							>Deleted
 						</Tooltip>
 					{/if}
-					<p class="font-bold {getFileTextClass(file)}">{getFileDisplayString(file)}</p>
+					<p class="font-bold {getFileTextClass(file)}">
+						{getFileDisplayString(file)}
+					</p>
 					{#if file.displayName !== ''}
 						<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
 							{file.path}
