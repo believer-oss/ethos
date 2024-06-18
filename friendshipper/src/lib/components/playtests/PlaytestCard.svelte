@@ -249,14 +249,15 @@
 							{/if}
 						{/if}
 						<Button
-							disabled={$dynamicConfig.playtestDiscordChannels.length <= index}
+							disabled={$dynamicConfig.playtestDiscordChannels != null &&
+								$dynamicConfig.playtestDiscordChannels.length <= index}
 							outline
 							class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
 							on:click={() => openUrl($dynamicConfig.playtestDiscordChannels[index].url)}
 						>
 							<DiscordSolid class="text-white w-5 h-5" />
 						</Button>
-						{#if $dynamicConfig.playtestDiscordChannels.length > index}
+						{#if $dynamicConfig.playtestDiscordChannels != null && $dynamicConfig.playtestDiscordChannels.length > index}
 							<Tooltip
 								class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
 								placement="top">{$dynamicConfig.playtestDiscordChannels[index].name}</Tooltip

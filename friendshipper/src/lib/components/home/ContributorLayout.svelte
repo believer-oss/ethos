@@ -47,25 +47,41 @@
 	let progressModalText = '';
 
 	const refreshPlaytests = async () => {
-		loadingPlaytests = true;
-		$playtests = await getPlaytests();
-		loadingPlaytests = false;
+		try {
+			loadingPlaytests = true;
+			$playtests = await getPlaytests();
+			loadingPlaytests = false;
+		} catch (e) {
+			await emit('error', e);
+		}
 	};
 
 	const refreshRepo = async () => {
-		loadingRepoStatus = true;
-		$repoStatus = await getRepoStatus();
-		loadingRepoStatus = false;
+		try {
+			loadingRepoStatus = true;
+			$repoStatus = await getRepoStatus();
+			loadingRepoStatus = false;
+		} catch (e) {
+			await emit('error', e);
+		}
 	};
 
 	const refreshMergeQueue = async () => {
-		loadingMergeQueue = true;
-		mergeQueue = await getMergeQueue();
-		loadingMergeQueue = false;
+		try {
+			loadingMergeQueue = true;
+			mergeQueue = await getMergeQueue();
+			loadingMergeQueue = false;
+		} catch (e) {
+			await emit('error', e);
+		}
 	};
 
 	const refresh = async () => {
-		await Promise.all([refreshPlaytests(), refreshRepo(), refreshMergeQueue()]);
+		try {
+			await Promise.all([refreshPlaytests(), refreshRepo(), refreshMergeQueue()]);
+		} catch (e) {
+			await emit('error', e);
+		}
 	};
 
 	const shouldDisableLaunchButton = (): boolean => {
