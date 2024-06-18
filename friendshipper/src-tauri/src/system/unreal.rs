@@ -233,6 +233,7 @@ impl OFPANameCache {
                     let mut cmd = Command::new(editor_exe);
                     cmd.current_dir(&editor_dir);
                     cmd.arg(uproject_path);
+                    cmd.arg("-unattended");
                     cmd.arg("-Run=TranslateOFPAFilenames");
                     cmd.arg(format!("-ListFile=\'{}\'", listfile_path_str));
 
