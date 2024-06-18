@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Accordion, AccordionItem, Button, Input, Label, Modal, Select } from 'flowbite-svelte';
+	import { Button, Input, Label, Modal, Select } from 'flowbite-svelte';
 	import { ExclamationCircleOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type { ArtifactEntry, Nullable, Playtest, PlaytestSpec } from '$lib/types';
@@ -14,6 +14,7 @@
 	export let onSubmit: () => void;
 
 	let prevProject: string | null = null;
+	let showConfirmation: boolean = false;
 
 	let commits: { name: string; value: string }[] = [];
 	let maps: { value: string; name: string }[] = [];
@@ -141,6 +142,9 @@
 
 		deleting = false;
 		showModal = false;
+		showConfirmation = false;
+
+		await emit('success', 'Playtest deleted successfully!');
 
 		onSubmit();
 	};
@@ -167,11 +171,23 @@
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
-	autoclose={false}
 >
 	<form class="flex flex-col space-y-4" action="#" on:submit|preventDefault={handleSubmit}>
-		<h4 class="text-lg font-semibold text-primary-400">
+		<h4 class="flex items-center gap-3 text-lg font-semibold text-primary-400">
 			{mode === ModalState.Creating ? 'Create Playtest' : 'Edit Playtest'}
+			{#if mode === ModalState.Editing}
+				<Button
+					class="p-2"
+					size="sm"
+					color="red"
+					on:click={() => {
+						showConfirmation = true;
+						showModal = false;
+					}}
+				>
+					Delete
+				</Button>
+			{/if}
 		</h4>
 		<Label class="space-y-2 text-xs text-white">
 			<span>Name</span>
@@ -290,26 +306,32 @@
 				value={playtest ? playtest.spec.feedbackURL : ''}
 			/>
 		</Label>
-		{#if mode === ModalState.Editing}
-			<Accordion>
-				<AccordionItem
-					class="p-2 hover:bg-secondary-700 dark:hover:bg-space-900"
-					activeClass="p-2 bg-secondary-700 dark:bg-space-900"
-					paddingDefault="p-2"
-				>
-					<span slot="header" class="text-base text-gray-300 flex gap-2">
-						<ExclamationCircleOutline class="mt-0.5" />
-						<span>Danger Zone</span>
-					</span>
-					<Button size="sm" color="red" disabled={deleting} on:click={() => handleDelete()}
-						>Delete Playtest
-					</Button>
-				</AccordionItem>
-			</Accordion>
-		{/if}
 		<Button type="submit" class="w-full" disabled={submitting}>Submit</Button>
 	</form>
 </Modal>
 
-<style>
-</style>
+<Modal
+	defaultClass="bg-secondary-500 dark:bg-space-900 overflow-y-auto"
+	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	bind:open={showConfirmation}
+	size="xs"
+	autoclose
+	dismissable={false}
+>
+	<div class="text-center">
+		<ExclamationCircleOutline class="mx-auto mb-4 text-white w-12 h-12 dark:text-gray-200" />
+		<h3 class="mb-5 text-lg font-normal text-white">
+			Are you sure you want to delete this playtest?
+		</h3>
+		<Button class="me-2" disabled={deleting} on:click={() => handleDelete()}>Yes, I'm sure</Button>
+		<Button
+			color="alternative"
+			on:click={() => {
+				showConfirmation = false;
+				showModal = true;
+			}}>No, cancel</Button
+		>
+	</div>
+</Modal>
