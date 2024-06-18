@@ -9,6 +9,7 @@ use tracing::{error, info};
 
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
+use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
@@ -185,7 +186,9 @@ impl Task for PullOp {
             Ok(uproject) => Some(uproject),
         };
 
-        self.git_client.pull().await?;
+        self.git_client
+            .pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await?;
 
         if did_stash {
             self.git_client.stash(git::StashAction::Pop).await?;
