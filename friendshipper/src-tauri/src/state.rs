@@ -7,6 +7,7 @@ use tokio::sync::mpsc::Sender as MPSCSender;
 use tokio::sync::RwLock as TokioRwLock;
 use tracing::{debug, info, warn};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::git;
 use ethos_core::clients::github;
 use ethos_core::clients::kube::KubeClient;
@@ -27,8 +28,8 @@ pub enum FrontendOp {
     ShowUI,
 }
 
-#[derive(Debug)]
-pub struct AppState {
+#[derive(Clone)]
+pub struct AppState<T> {
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
     pub dynamic_config: DynamicConfigRef,
@@ -56,9 +57,14 @@ pub struct AppState {
 
     pub gameserver_log_tx: STDSender<String>,
     pub git_tx: STDSender<String>,
+
+    pub engine: T,
 }
 
-impl AppState {
+impl<T> AppState<T>
+where
+    T: EngineProvider,
+{
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         app_config: AppConfigRef,
@@ -146,6 +152,8 @@ impl AppState {
             config.selected_artifact_project = selected_artifact_project;
         }
 
+        let engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());
+
         debug!("AppState preparation complete.");
         Ok(Self {
             app_config,
@@ -167,6 +175,7 @@ impl AppState {
             log_path,
             git_tx,
             gameserver_log_tx: server_log_tx,
+            engine,
         })
     }
 

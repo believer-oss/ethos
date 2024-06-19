@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::routing::post;
@@ -12,6 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 
 use crate::state::AppState;
@@ -79,19 +78,24 @@ pub struct DeletePayload {
 const JSON_STR: &str = "json";
 const LUDOS_ACCESS_KEY: &str = "x-ludos-access-key";
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/get", post(objects_get))
         .route("/put", post(objects_put))
         .route("/list", post(objects_list))
         .route("/delete", post(objects_delete))
-        .with_state(shared_state)
 }
 
-async fn objects_get(
-    State(state): State<Arc<AppState>>,
+async fn objects_get<T>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<GetPayload>,
-) -> Result<Json<GetResponse>, CoreError> {
+) -> Result<Json<GetResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let dynamic_config = state.dynamic_config.read().clone();
     if dynamic_config.ludos_access_secret.is_empty() {
         return Err(CoreError(anyhow!("Ludos access secret is not set")));
@@ -134,10 +138,13 @@ async fn objects_get(
     Ok(get_data)
 }
 
-async fn objects_put(
-    State(state): State<Arc<AppState>>,
+async fn objects_put<T>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<PutPayload>,
-) -> Result<Json<PutResponse>, CoreError> {
+) -> Result<Json<PutResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let dynamic_config = state.dynamic_config.read().clone();
     if dynamic_config.ludos_access_secret.is_empty() {
         return Err(CoreError(anyhow!("Ludos access secret is not set")));
@@ -162,10 +169,13 @@ async fn objects_put(
     handle_result::<PutResponse>(res).await
 }
 
-async fn objects_list(
-    State(state): State<Arc<AppState>>,
+async fn objects_list<T>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<ListPayload>,
-) -> Result<Json<ListResponse>, CoreError> {
+) -> Result<Json<ListResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let dynamic_config = state.dynamic_config.read().clone();
     if dynamic_config.ludos_access_secret.is_empty() {
         return Err(CoreError(anyhow!("Ludos access secret is not set")));
@@ -183,10 +193,13 @@ async fn objects_list(
     handle_result::<ListResponse>(res).await
 }
 
-async fn objects_delete(
-    State(state): State<Arc<AppState>>,
+async fn objects_delete<T>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<DeletePayload>,
-) -> Result<Json<DeletePayload>, CoreError> {
+) -> Result<Json<DeletePayload>, CoreError>
+where
+    T: EngineProvider,
+{
     let dynamic_config = state.dynamic_config.read().clone();
     if dynamic_config.ludos_access_secret.is_empty() {
         return Err(CoreError(anyhow!("Ludos access secret is not set")));
@@ -223,6 +236,6 @@ where
 
     match res.json::<T>().await {
         Err(e) => Err(CoreError(anyhow!("Failed reading response body: {}", e))),
-        Ok(body) => Ok(axum::Json(body)),
+        Ok(body) => Ok(Json(body)),
     }
 }

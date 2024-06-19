@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::Json;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -9,12 +7,16 @@ use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::ConfigureUserRequest;
 
+use crate::engine::EngineProvider;
 #[cfg(windows)]
 use ethos_core::CREATE_NO_WINDOW;
 
 use crate::state::AppState;
 
-pub async fn install(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn install<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     #[cfg(target_os = "windows")]
     {
         let mut cmd = Command::new("winget");

@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use anyhow::Context;
-use axum::{async_trait, debug_handler, extract::State, Json};
+use axum::{async_trait, extract::State, Json};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -13,6 +11,7 @@ use ethos_core::types::locks::ForceUnlock;
 use ethos_core::types::repo::PushRequest;
 use ethos_core::worker::{Task, TaskSequence};
 
+use crate::engine::EngineProvider;
 use crate::{repo::operations::PullOp, state::AppState};
 
 use super::{RepoStatusRef, StatusOp};
@@ -79,11 +78,13 @@ impl Task for PushOp {
     }
 }
 
-#[debug_handler]
-pub async fn push_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn push_handler<T>(
+    State(state): State<AppState<T>>,
     Json(request): Json<PushRequest>,
-) -> Result<Json<PushResponse>, CoreError> {
+) -> Result<Json<PushResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     info!("push request: {:?}", request);
@@ -195,6 +196,7 @@ pub async fn push_handler(
             storage,
             git_client: state.git(),
             github_client: state.github_client.read().clone(),
+            engine: state.engine.clone(),
         };
 
         sequence.push(Box::new(task));

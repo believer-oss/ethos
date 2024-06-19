@@ -1,23 +1,22 @@
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::sync::Arc;
 
 use anyhow::anyhow;
-use axum::debug_handler;
 use axum::extract::State;
 use axum::Json;
 use tracing::error;
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::logs::LogEntry;
 
 use crate::state::AppState;
 
-#[debug_handler]
-pub async fn get_logs(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<LogEntry>>, CoreError> {
+pub async fn get_logs<T>(State(state): State<AppState<T>>) -> Result<Json<Vec<LogEntry>>, CoreError>
+where
+    T: EngineProvider,
+{
     let mut results = vec![];
     let log_path = state.log_path.clone();
 
@@ -53,7 +52,10 @@ pub async fn get_logs(
     Ok(Json(results))
 }
 
-pub async fn open_system_logs_folder(State(state): State<Arc<AppState>>) {
+pub async fn open_system_logs_folder<T>(State(state): State<AppState<T>>)
+where
+    T: EngineProvider,
+{
     let log_path = state.log_path.clone();
     if let Err(e) = open::that(log_path.as_os_str()) {
         error!("Failed to open logs folder: {:?}", e);

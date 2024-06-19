@@ -46,6 +46,7 @@ urlencoding = { workspace = true }
 
 ethos-core = { workspace = true }
 
+async-trait = "0.1"
 tauri-plugin-deep-link = "0.1.2"
 log-panics = { version = "2", features = ["with-backtrace"] }
 thiserror = "1.0.47"

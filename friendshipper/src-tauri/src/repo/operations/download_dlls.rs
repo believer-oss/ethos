@@ -6,7 +6,6 @@ use std::sync::mpsc::Sender;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
-use axum::debug_handler;
 use axum::extract::State;
 use axum::{async_trait, Json};
 use serde::Deserialize;
@@ -15,6 +14,7 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
 use tracing::warn;
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::longtail;
@@ -29,9 +29,7 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
-use crate::system::unreal;
 use crate::AppState;
-use crate::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadResponse {
@@ -39,7 +37,7 @@ pub struct DownloadResponse {
 }
 
 #[derive(Clone)]
-pub struct DownloadDllsOp {
+pub struct DownloadDllsOp<T> {
     pub git_client: git::Git,
     pub project_name: String,
     pub dll_commit: String,
@@ -49,14 +47,16 @@ pub struct DownloadDllsOp {
     pub tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
     pub artifact_prefix: String,
+    pub engine: T,
 }
 
 #[async_trait]
-impl Task for DownloadDllsOp {
+impl<T> Task for DownloadDllsOp<T>
+where
+    T: EngineProvider,
+{
     async fn execute(&self) -> anyhow::Result<()> {
-        if unreal::is_editor_process_running(&self.git_client.repo_path) {
-            bail!("Close Unreal Editor and re-run operation to download DLLs.");
-        }
+        self.engine.check_ready_to_sync_repo().await?;
 
         if self.dll_commit.is_empty() {
             bail!("No DLL archive found for current branch.");
@@ -175,10 +175,12 @@ impl Task for DownloadDllsOp {
     }
 }
 
-#[debug_handler]
-pub async fn download_dlls_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<DownloadResponse>, CoreError> {
+pub async fn download_dlls_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<DownloadResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     if !state.app_config.read().pull_dlls {
@@ -215,6 +217,7 @@ pub async fn download_dlls_handler(
             tx: tx_lock.clone(),
             aws_client: aws_client.clone(),
             artifact_prefix,
+            engine: state.engine.clone(),
         }
     };
 

@@ -1,12 +1,11 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use axum::extract::State;
-use axum::{async_trait, debug_handler, Json};
+use axum::{async_trait, Json};
 use octocrab::models::pulls::MergeableState;
 use octocrab::Octocrab;
 use tracing::info;
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::github;
 use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
@@ -96,11 +95,13 @@ impl Task for GitHubSubmitOp {
     }
 }
 
-#[debug_handler]
-pub async fn submit_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn submit_handler<T>(
+    State(state): State<AppState<T>>,
     Json(request): Json<PushRequest>,
-) -> Result<Json<String>, CoreError> {
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     {

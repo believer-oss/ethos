@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -12,6 +12,7 @@ use serde::Serialize;
 use tokio::process::Command;
 use tracing::{error, info};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::git;
 use ethos_core::clients::git::CommitFormat;
 use ethos_core::clients::git::CommitHead;
@@ -35,10 +36,13 @@ struct SolutionParams {
     open: bool,
 }
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/sln", post(sln_handler))
-        .route("/open-uproject", post(open_uproject))
+        .route("/open-project", post(open_project))
         .route(
             "/install-git-hooks",
             post(operations::install_git_hooks_handler),
@@ -51,45 +55,22 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
             "/sync-uproject-commit-with-engine",
             post(sync_uproject_commit_with_engine),
         )
-        .with_state(shared_state)
 }
 
-async fn open_uproject(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
-    let relative_path = state.repo_config.read().uproject_path.clone();
-
-    if relative_path.is_empty() {
-        return Err(CoreError(anyhow!(
-            "No project path configured. Set in Preferences and try again."
-        )));
-    }
-
-    let repo_path = state.app_config.read().repo_path.clone();
-    let repo_path = PathBuf::from(repo_path);
-    let path_absolute: PathBuf = repo_path.join(relative_path);
-
-    if !unreal::is_editor_process_running(&repo_path) {
-        match open::that(path_absolute) {
-            Ok(_) => (),
-            Err(e) => {
-                error!("Failed to open Unreal Editor: {}", e);
-                return Err(CoreError(anyhow!(
-                    "Failed to open Unreal Editor. Check log for more details."
-                )));
-            }
-        }
-    } else {
-        return Err(CoreError(anyhow!(
-            "Attempted to open uproject - Unreal Editor is already running."
-        )));
-    }
-
-    Ok(())
+async fn open_project<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    state.engine.open_project().await.map_err(CoreError)
 }
 
-async fn sln_handler(
-    State(state): State<Arc<AppState>>,
+async fn sln_handler<T>(
+    State(state): State<AppState<T>>,
     solution: Query<SolutionParams>,
-) -> Result<(), CoreError> {
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let res = generate_and_open_project(&state, &solution).await;
     match res {
         Err(e) => Err(CoreError(e)),
@@ -97,10 +78,13 @@ async fn sln_handler(
     }
 }
 
-async fn generate_and_open_project(
-    state: &Arc<AppState>,
+async fn generate_and_open_project<T>(
+    state: &AppState<T>,
     solution: &SolutionParams,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    T: EngineProvider,
+{
     let project_relative_path = state.repo_config.read().uproject_path.clone();
 
     let solution_relative_path = project_relative_path.replace(".uproject", ".sln");
@@ -163,9 +147,12 @@ async fn generate_and_open_project(
     Ok(())
 }
 
-async fn sync_engine_commit_with_uproject(
-    State(state): State<Arc<AppState>>,
-) -> Result<String, CoreError> {
+async fn sync_engine_commit_with_uproject<T>(
+    State(state): State<AppState<T>>,
+) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
     info!("Syncing engine commit with uproject.");
 
     let app_config = state.app_config.read().clone();
@@ -218,9 +205,12 @@ async fn sync_engine_commit_with_uproject(
     Ok(engine_commit)
 }
 
-async fn sync_uproject_commit_with_engine(
-    State(state): State<Arc<AppState>>,
-) -> Result<String, CoreError> {
+async fn sync_uproject_commit_with_engine<T>(
+    State(state): State<AppState<T>>,
+) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
     info!("Syncing uproject with current engine commit.");
 
     let app_config = state.app_config.read().clone();

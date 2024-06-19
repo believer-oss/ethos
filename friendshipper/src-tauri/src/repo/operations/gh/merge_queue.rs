@@ -1,17 +1,19 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::Json;
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 
 use crate::state::AppState;
 
-pub async fn get_merge_queue(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<GetMergeQueueRepositoryMergeQueue>, CoreError> {
+pub async fn get_merge_queue<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<GetMergeQueueRepositoryMergeQueue>, CoreError>
+where
+    T: EngineProvider,
+{
     let owner: String;
     let repo: String;
     {

@@ -1,14 +1,14 @@
 use std::fs;
-use std::sync::Arc;
 
 use anyhow::Context;
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
-use axum::{debug_handler, Json, Router};
+use axum::{Json, Router};
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::argo::{
     ARGO_WORKFLOW_COMMIT_LABEL_KEY, ARGO_WORKFLOW_COMPARE_ANNOTATION_KEY,
     ARGO_WORKFLOW_MESSAGE_ANNOTATION_KEY, ARGO_WORKFLOW_PUSHER_LABEL_KEY,
@@ -16,19 +16,22 @@ use ethos_core::clients::argo::{
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::clients::obs;
-use ethos_core::longtail::Longtail;
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList, Platform,
 };
 use ethos_core::types::argo::workflow::Workflow;
 use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::errors::CoreError;
+use ethos_core::types::gameserver::GameServerResults;
 
 use crate::state::AppState;
 
 const UNKNOWN_PUSHER: &str = "unknown";
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/", get(get_builds))
         .route("/client/sync", post(sync_client))
@@ -38,7 +41,6 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/workflows", get(get_workflows))
         .route("/workflows/logs", get(get_logs_for_workflow_node))
         .route("/workflows/stop", post(stop_workflow))
-        .with_state(shared_state)
 }
 
 #[derive(Default, Deserialize)]
@@ -52,10 +54,13 @@ fn get_default_limit() -> usize {
     10
 }
 
-async fn get_builds(
-    State(state): State<Arc<AppState>>,
+async fn get_builds<T>(
+    State(state): State<AppState<T>>,
     params: Query<GetBuildsParams>,
-) -> Result<Json<ArtifactList>, CoreError> {
+) -> Result<Json<ArtifactList>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
     aws_client.check_config().await?;
 
@@ -99,11 +104,13 @@ struct VerifyServerImageParams {
     commit: String,
 }
 
-#[debug_handler]
-async fn verify_server_image(
-    State(state): State<Arc<AppState>>,
+async fn verify_server_image<T>(
+    State(state): State<AppState<T>>,
     params: Query<VerifyServerImageParams>,
-) -> Json<bool> {
+) -> Json<bool>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone()).unwrap();
     Json(
         aws_client
@@ -112,10 +119,13 @@ async fn verify_server_image(
     )
 }
 
-async fn sync_client(
-    State(state): State<Arc<AppState>>,
+async fn sync_client<T>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<SyncClientRequest>,
-) -> Result<(), CoreError> {
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     let local_path = state
@@ -178,21 +188,35 @@ async fn sync_client(
         Err(e) => return Err(CoreError::from(e)),
     }
 
-    let player_name = state.app_config.read().user_display_name.clone();
-
     if let Some(launch_options) = payload.launch_options {
         info!(
             "Launching game client with server host {}:{}",
             launch_options.ip, launch_options.port
         );
 
-        let child = match Longtail::launch(
-            local_path,
-            &launch_options.ip,
-            launch_options.port,
-            launch_options.netimgui_port,
-            &player_name,
-        ) {
+        // Assume this GameServerResults type will become an engine-specific type in the future.
+        // Right now, we're asking the client to basically look up game servers, then send us back
+        // the IP, port, and netimgui port, and that seems inefficient. We should be able to have the client
+        // send us a unique identifier for the server, and then we can call a generic GameServer -> LaunchConfig
+        // style method.
+        let game_server_results = GameServerResults {
+            // these fields don't matter
+            name: "".to_string(),
+            display_name: "".to_string(),
+            version: "".to_string(),
+
+            // these fields matter
+            ip: Some(launch_options.ip),
+            port: launch_options.port,
+            netimgui_port: launch_options.netimgui_port,
+        };
+
+        let args = state.engine.create_launch_args(
+            state.app_config.read().clone(),
+            state.repo_config.read().clone(),
+            game_server_results,
+        );
+        let child = match state.engine.launch(local_path, args) {
             Ok(child) => child,
             Err(e) => {
                 error!("Failed to launch game client with error: {}", e);
@@ -231,7 +255,10 @@ async fn sync_client(
     Ok(())
 }
 
-pub async fn wipe_client_data(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn wipe_client_data<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let local_path = state.longtail.download_path.0.clone();
 
     // delete all directories in the download path except "logs"
@@ -251,7 +278,10 @@ pub async fn wipe_client_data(State(state): State<Arc<AppState>>) -> Result<(), 
     Ok(())
 }
 
-pub async fn reset_longtail(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn reset_longtail<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let longtail_path = state.longtail.exec_path.clone();
 
     if let Some(longtail_path) = longtail_path {
@@ -283,11 +313,13 @@ pub struct GetWorkflowsResponse {
     pub commits: Vec<CommitWorkflowInfo>,
 }
 
-#[debug_handler]
-async fn get_workflows(
-    State(state): State<Arc<AppState>>,
+async fn get_workflows<T>(
+    State(state): State<AppState<T>>,
     params: Query<GetWorkflowsParams>,
-) -> Result<Json<GetWorkflowsResponse>, CoreError> {
+) -> Result<Json<GetWorkflowsResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     let config = state.app_config.read().clone();
@@ -376,10 +408,13 @@ pub struct GetWorkflowNodeLogsParams {
     pub node_id: String,
 }
 
-pub async fn get_logs_for_workflow_node(
-    State(state): State<Arc<AppState>>,
+pub async fn get_logs_for_workflow_node<T>(
+    State(state): State<AppState<T>>,
     params: Query<GetWorkflowNodeLogsParams>,
-) -> Result<String, CoreError> {
+) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
     let logs = kube_client
         .get_logs_for_workflow_node(&params.uid, &params.node_id)
@@ -393,10 +428,13 @@ pub struct StopWorkflowParams {
     pub workflow: String,
 }
 
-pub async fn stop_workflow(
-    State(state): State<Arc<AppState>>,
+pub async fn stop_workflow<T>(
+    State(state): State<AppState<T>>,
     params: Query<StopWorkflowParams>,
-) -> Result<String, CoreError> {
+) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
     let wf = kube_client.stop_workflow(&params.workflow).await?;
     Ok(wf)

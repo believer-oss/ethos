@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::extract::Query;
-use axum::{async_trait, debug_handler, extract::State, Json};
+use axum::{async_trait, extract::State, Json};
 use parking_lot::RwLock;
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::storage::{
@@ -440,11 +441,13 @@ pub struct StatusParams {
     pub skip_ofpa_translation: bool,
 }
 
-#[debug_handler]
-pub async fn status_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn status_handler<T>(
+    State(state): State<AppState<T>>,
     params: Query<StatusParams>,
-) -> Result<Json<RepoStatus>, CoreError> {
+) -> Result<Json<RepoStatus>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     let storage = match state.storage.read().clone() {

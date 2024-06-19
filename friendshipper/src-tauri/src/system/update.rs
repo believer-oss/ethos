@@ -1,10 +1,9 @@
 use std::fs;
 use std::fs::File;
 use std::io::Write;
-use std::sync::Arc;
 
 use anyhow::anyhow;
-use axum::{debug_handler, extract::State};
+use axum::extract::State;
 use octocrab::models::repos::Release;
 use octocrab::Octocrab;
 use tracing::{error, info};
@@ -12,6 +11,7 @@ use tracing::{error, info};
 use ethos_core::types::errors::CoreError;
 use ethos_core::BIN_SUFFIX;
 
+use crate::engine::EngineProvider;
 use crate::state::AppState;
 use crate::APP_NAME;
 
@@ -26,9 +26,11 @@ pub async fn get_latest_version() -> Result<String, CoreError> {
 static REPO_OWNER: &str = "believer-oss";
 static REPO_NAME: &str = "ethos";
 
-#[debug_handler]
 #[cfg(not(target_os = "macos"))]
-pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
+pub async fn get_latest_version<T>(State(state): State<AppState<T>>) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
     let token = state.app_config.read().github_pat.clone();
     let octocrab = if let Some(token) = token {
         Octocrab::builder().personal_token(token).build()?
@@ -75,8 +77,10 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
     }
 }
 
-#[debug_handler]
-pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn run_update<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     info!("Running update");
     let token = state.app_config.read().github_pat.clone();
     let octocrab = if let Some(ref token) = token {

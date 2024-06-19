@@ -1,23 +1,26 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::extract::{Path, Query, State};
 use axum::routing::{delete, get, post};
-use axum::{debug_handler, Json, Router};
+use axum::{Json, Router};
 use directories_next::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
 
 use crate::state::AppState;
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/", get(get_servers).post(launch_server))
         .route("/open-logs", post(open_logs_folder))
@@ -25,7 +28,6 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/:name/logs", post(download_logs))
         .route("/:name/logs/tail", post(tail_logs))
         .route("/logs/stop", post(stop_tail))
-        .with_state(shared_state)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -33,11 +35,13 @@ struct GetServersParams {
     commit: Option<String>,
 }
 
-#[debug_handler]
-async fn get_servers(
-    State(state): State<Arc<AppState>>,
+async fn get_servers<T>(
+    State(state): State<AppState<T>>,
     params: Query<GetServersParams>,
-) -> Result<Json<Vec<GameServerResults>>, CoreError> {
+) -> Result<Json<Vec<GameServerResults>>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     let commit = params.commit.clone();
@@ -59,11 +63,13 @@ async fn get_servers(
     }
 }
 
-#[debug_handler]
-async fn launch_server(
-    State(state): State<Arc<AppState>>,
+async fn launch_server<T>(
+    State(state): State<AppState<T>>,
     Json(request): Json<LaunchRequest>,
-) -> Result<Json<String>, CoreError> {
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     info!("Launching server at version {}", request.commit);
@@ -87,10 +93,13 @@ pub struct DownloadLogsResponse {
     pub path: String,
 }
 
-async fn download_logs(
+async fn download_logs<T>(
     Path(name): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<DownloadLogsResponse>, CoreError> {
+    State(state): State<AppState<T>>,
+) -> Result<Json<DownloadLogsResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     info!("Downloading logs for {}", name);
@@ -148,10 +157,13 @@ async fn download_logs(
     )))
 }
 
-async fn get_server(
+async fn get_server<T>(
     Path(name): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<GameServerResults>, CoreError> {
+    State(state): State<AppState<T>>,
+) -> Result<Json<GameServerResults>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     info!("Fetching server {}", name);
@@ -175,10 +187,13 @@ async fn get_server(
     }
 }
 
-async fn terminate_server(
+async fn terminate_server<T>(
     Path(name): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<String>, CoreError> {
+    State(state): State<AppState<T>>,
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     info!("Terminating server {}", name);
@@ -188,10 +203,13 @@ async fn terminate_server(
     Ok(Json(String::from("ok")))
 }
 
-async fn tail_logs(
+async fn tail_logs<T>(
     Path(name): Path<String>,
-    State(state): State<Arc<AppState>>,
-) -> Result<(), CoreError> {
+    State(state): State<AppState<T>>,
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     info!("Tailing logs for {}", name);
@@ -200,7 +218,10 @@ async fn tail_logs(
     Ok(())
 }
 
-async fn stop_tail(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+async fn stop_tail<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     info!("Stopping tail");

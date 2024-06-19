@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::extract::State;
@@ -8,15 +7,19 @@ use ethos_core::clients::git::configure_global;
 use fs_extra::dir::get_size;
 use tracing::info;
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::CloneRequest;
 
 use crate::state::AppState;
 
-pub async fn clone_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn clone_handler<T>(
+    State(state): State<AppState<T>>,
     Json(request): Json<CloneRequest>,
-) -> Result<(), CoreError> {
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     // If the repo exists, let's check if it's a git repo
     let mut repo_path = PathBuf::from(&request.path);
     let project_name = request

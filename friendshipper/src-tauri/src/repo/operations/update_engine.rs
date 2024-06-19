@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::bail;
+use axum::async_trait;
 use axum::extract::State;
-use axum::{async_trait, debug_handler};
 use ethos_core::fs::LocalDownloadPath;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
@@ -24,6 +23,7 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
+use crate::engine::EngineProvider;
 use crate::system::unreal;
 use crate::AppState;
 
@@ -180,8 +180,10 @@ impl Task for UpdateEngineOp {
     }
 }
 
-#[debug_handler]
-pub async fn update_engine_handler(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn update_engine_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     let storage = match state.storage.read().clone() {

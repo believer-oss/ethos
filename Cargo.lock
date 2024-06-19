@@ -2050,6 +2050,7 @@ name = "friendshipper"
 version = "4.2.4"
 dependencies = [
  "anyhow",
+ "async-trait",
  "aws-sdk-s3",
  "axum",
  "base64 0.21.7",

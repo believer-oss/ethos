@@ -1,12 +1,12 @@
 use std::fs;
-use std::sync::Arc;
 
 use anyhow::bail;
 use axum::extract::State;
-use axum::{async_trait, debug_handler, Json};
+use axum::{async_trait, Json};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::git;
 use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
@@ -15,24 +15,25 @@ use ethos_core::types::repo::RevertFilesRequest;
 use ethos_core::worker::{Task, TaskSequence};
 
 use crate::state::AppState;
-use crate::system::unreal;
 
 use super::{File, RepoStatusRef};
 
 #[derive(Clone)]
-pub struct RevertFilesOp {
+pub struct RevertFilesOp<T> {
     pub files: Vec<String>,
     pub git_client: git::Git,
     pub repo_status: RepoStatusRef,
+    pub engine: T,
 }
 
 // Note: This is not "git revert", it's "git checkout -- <files>"
 #[async_trait]
-impl Task for RevertFilesOp {
+impl<T> Task for RevertFilesOp<T>
+where
+    T: EngineProvider,
+{
     async fn execute(&self) -> anyhow::Result<()> {
-        if unreal::is_editor_process_running(&self.git_client.repo_path) {
-            bail!("Cannot revert while Unreal Editor is running.");
-        }
+        self.engine.check_ready_to_sync_repo().await?;
 
         if self.files.is_empty() {
             bail!("no files provided");
@@ -55,11 +56,13 @@ impl Task for RevertFilesOp {
     }
 }
 
-#[debug_handler]
-pub async fn revert_files_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn revert_files_handler<T>(
+    State(state): State<AppState<T>>,
     Json(request): Json<RevertFilesRequest>,
-) -> Result<Json<String>, CoreError> {
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
@@ -117,6 +120,7 @@ pub async fn revert_files_handler(
                     git_client: state.git(),
                     repo_status: state.repo_status.clone(),
                     files: chunk.iter().map(|f| f.path.clone()).collect(),
+                    engine: state.engine.clone(),
                 }
             };
 

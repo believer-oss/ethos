@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf};
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -10,6 +10,7 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::error;
 use tracing::{debug, info};
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 
@@ -75,10 +76,13 @@ impl Task for InstallGitHooksOp {
     }
 }
 
-pub async fn install_git_hooks_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn install_git_hooks_handler<T>(
+    State(state): State<AppState<T>>,
     params: Query<InstallGitHooksParams>,
-) -> Result<(), CoreError> {
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     if params.refresh {
         let config = state.app_config.read();
         let repo_config = config.initialize_repo_config();

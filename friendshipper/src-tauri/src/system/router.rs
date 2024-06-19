@@ -1,6 +1,6 @@
-use crate::state::AppState;
-use crate::state::FrontendOp;
+use crate::state::{AppState, FrontendOp};
 
+use crate::engine::EngineProvider;
 use crate::system::git::{configure_user, install};
 use crate::system::logs::{get_logs, open_system_logs_folder};
 use axum::extract::State;
@@ -10,13 +10,15 @@ use axum::Router;
 use ethos_core::types::config::UnrealVerSelDiagResponse;
 use ethos_core::types::errors::CoreError;
 use std::fs;
-use std::sync::Arc;
 use tracing::{debug, info};
 
 use super::unreal::check_unreal_file_association;
 use super::update::{get_latest_version, run_update};
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/show-ui", post(show_ui))
         .route("/git/configure", post(configure_user))
@@ -29,23 +31,28 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
             "/diagnostics/unrealversionselector",
             get(get_unrealversionselector_diags),
         )
-        .with_state(shared_state)
 }
 
 async fn status() -> String {
     String::from("OK")
 }
 
-async fn show_ui(State(state): State<Arc<AppState>>) {
+async fn show_ui<T>(State(state): State<AppState<T>>)
+where
+    T: EngineProvider,
+{
     state
         .frontend_op_tx
         .send(FrontendOp::ShowUI)
         .expect("show UI failed somehow");
 }
 
-async fn get_unrealversionselector_diags(
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<UnrealVerSelDiagResponse>, CoreError> {
+async fn get_unrealversionselector_diags<T>(
+    State(_state): State<AppState<T>>,
+) -> Result<Json<UnrealVerSelDiagResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     info!("Checking UnrealVersionSelector.exe and .uproject file association");
     // Check for the existence of UnrealVersionSelector
     let (valid_version_selector, version_selector_msg) = {

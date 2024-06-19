@@ -1,9 +1,9 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::{extract::State, Json};
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::Lock;
 use ethos_core::types::locks::VerifyLocksResponse;
@@ -12,9 +12,12 @@ use crate::state::AppState;
 use crate::system::unreal::CanUseCommandlet;
 use crate::system::unreal::OFPANameCache;
 
-pub async fn verify_locks_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<VerifyLocksResponse>, CoreError> {
+pub async fn verify_locks_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<VerifyLocksResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let mut response_data: VerifyLocksResponse = match state.git().verify_locks().await {
         Ok(output) => output,
         Err(e) => {
