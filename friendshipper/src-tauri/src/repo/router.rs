@@ -1,12 +1,14 @@
-use std::sync::Arc;
-
+use crate::engine::EngineProvider;
 use axum::routing::{get, post};
 use axum::Router;
 
 use crate::repo::operations;
 use crate::state::AppState;
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/clone", post(operations::clone_handler))
         .route("/diff", get(operations::diff_handler))
@@ -33,7 +35,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
-        .route("/revert", post(operations::revert_files_handler))
+        .route("/revert", post(operations::revert_files_handler::<T>))
         .route("/locks/verify", get(operations::verify_locks_handler))
         .route("/locks/lock", post(operations::acquire_locks_handler))
         .route("/locks/unlock", post(operations::release_locks_handler))
@@ -42,5 +44,4 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/gh/pulls", get(operations::gh::get_pull_requests))
         .route("/gh/pulls/:id", get(operations::gh::get_pull_request))
         .route("/gh/user", get(operations::gh::get_user))
-        .with_state(shared_state)
 }

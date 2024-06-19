@@ -1,9 +1,8 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::Task;
@@ -47,9 +46,12 @@ impl DiffOp {
     }
 }
 
-pub async fn diff_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<DiffResponse>, CoreError> {
+pub async fn diff_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<DiffResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let diff_op = DiffOp {
         repo_status: state.repo_status.clone(),
         repo_path: state.app_config.read().repo_path.clone(),

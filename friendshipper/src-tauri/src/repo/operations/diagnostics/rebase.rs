@@ -1,11 +1,11 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::extract::State;
-use axum::{debug_handler, Json};
+use axum::Json;
 use tracing::info;
 
+use crate::engine::EngineProvider;
 use ethos_core::operations::RebaseOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::RebaseStatusResponse;
@@ -13,8 +13,10 @@ use ethos_core::worker::TaskSequence;
 
 use crate::state::AppState;
 
-#[debug_handler]
-pub async fn rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn rebase_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
@@ -31,10 +33,12 @@ pub async fn rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), Co
     Ok(())
 }
 
-#[debug_handler]
-pub async fn rebase_status_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<RebaseStatusResponse>, CoreError> {
+pub async fn rebase_status_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<RebaseStatusResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let repo_path = PathBuf::from(state.app_config.read().repo_path.clone());
 
     let rebase_merge_path = repo_path.join(".git/rebase-merge");
@@ -46,8 +50,10 @@ pub async fn rebase_status_handler(
     }))
 }
 
-#[debug_handler]
-pub async fn remediate_rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+pub async fn remediate_rebase_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     if state.git().abort_rebase().await.is_ok() {
         info!("Rebase aborted successfully");
 

@@ -93,7 +93,7 @@ export const getPullRequests = async (limit: number): Promise<GitHubPullRequest[
 
 export const syncLatest = async (): Promise<void> => invoke('sync_latest');
 
-export const openUproject = async (): Promise<void> => invoke('open_uproject');
+export const openProject = async (): Promise<void> => invoke('open_project');
 
 export const generateSln = async (): Promise<void> => invoke('generate_sln');
 

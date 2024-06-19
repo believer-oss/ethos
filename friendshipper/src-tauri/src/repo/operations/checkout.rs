@@ -1,8 +1,7 @@
-use std::sync::Arc;
-
 use axum::extract::State;
-use axum::{async_trait, debug_handler, Json};
+use axum::{async_trait, Json};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
@@ -29,10 +28,12 @@ impl Task for CheckoutOp {
     }
 }
 
-#[debug_handler]
-pub async fn checkout_trunk_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<String>, CoreError> {
+pub async fn checkout_trunk_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
     // Block on any other fetch-like operations in the queue
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);

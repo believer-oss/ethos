@@ -1,17 +1,19 @@
 use std::fs;
 use std::io::Write;
-use std::sync::Arc;
+use std::path::Path;
 
 use anyhow::Result;
 use axum::{middleware, Router};
 
+use crate::engine::EngineProvider;
+use crate::state::AppState;
 use ethos_core::middleware::nonce;
 use ethos_core::middleware::nonce::NONCE;
-use state::AppState;
 
 pub mod auth;
 pub mod builds;
 pub mod config;
+pub mod engine;
 pub mod ludos;
 pub mod obs;
 pub mod playtests;
@@ -29,9 +31,12 @@ pub static KEYRING_USER: &str = "github_pat";
 pub static DEFAULT_ENGINE_OWNER: &str = "believerco";
 pub static DEFAULT_ENGINE_REPO: &str = "unrealengine";
 
-pub fn router(shared_state: Arc<AppState>) -> Result<Router> {
+pub fn router<T>(log_path: &Path) -> Result<Router<AppState<T>>>
+where
+    T: EngineProvider,
+{
     // get data path as parent of the log path
-    let data_path = shared_state.log_path.parent().unwrap().to_path_buf();
+    let data_path = log_path.parent().unwrap().to_path_buf();
 
     // write nonce to file
     let mut file = fs::OpenOptions::new()
@@ -44,16 +49,16 @@ pub fn router(shared_state: Arc<AppState>) -> Result<Router> {
     file.write_all(NONCE.as_bytes())?;
 
     Ok(Router::new()
-        .nest("/auth", auth::router(shared_state.clone()))
-        .nest("/builds", builds::router(shared_state.clone()))
-        .nest("/config", config::router(shared_state.clone()))
-        .nest("/ludos", ludos::router(shared_state.clone()))
-        .nest("/obs", obs::router(shared_state.clone()))
-        .nest("/playtests", playtests::router(shared_state.clone()))
-        .nest("/project", repo::project::router(shared_state.clone()))
-        .nest("/repo", repo::router(shared_state.clone()))
-        .nest("/servers", servers::router(shared_state.clone()))
-        .nest("/system", system::router(shared_state))
+        .nest("/auth", auth::router())
+        .nest("/builds", builds::router())
+        .nest("/config", config::router())
+        .nest("/ludos", ludos::router())
+        .nest("/obs", obs::router())
+        .nest("/playtests", playtests::router())
+        .nest("/project", repo::project::router())
+        .nest("/repo", repo::router())
+        .nest("/servers", servers::router())
+        .nest("/system", system::router())
         .route_layer(middleware::from_fn(move |headers, req, next| {
             nonce::nonce(headers, req, next, NONCE.as_str())
         })))

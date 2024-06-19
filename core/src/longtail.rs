@@ -3,7 +3,6 @@ use core::cmp::Ordering;
 use std::os::unix::prelude::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-use std::process::Child;
 use std::time::SystemTime;
 use std::{
     env,
@@ -331,38 +330,6 @@ impl Longtail {
         }
 
         Ok(())
-    }
-
-    pub fn launch(
-        path: PathBuf,
-        ip: &str,
-        port: i32,
-        netimgui_port: i32,
-        player_name: &str,
-    ) -> Result<Option<Child>> {
-        if cfg!(windows) {
-            // Find the first executable in the passed path that ends with Client
-            for file in path.read_dir().context("Could not read launch directory")? {
-                let file = file.context("Invalid file")?;
-                let name = file.file_name();
-                let name = name.to_str().context("Invalid launch filename")?;
-                if name.ends_with("Client.exe") {
-                    let child = Command::new(file.path())
-                        .arg(format!("{}:{}", ip, port))
-                        .arg(format!("-NetImguiClientPort={}", netimgui_port))
-                        .arg(format!("-PlayerName={}", player_name))
-                        .spawn()
-                        .context("Failed to spawn {file.path}")?;
-                    return Ok(Some(child));
-                }
-            }
-
-            // If we didn't find an acceptable client, Error
-            return Err(anyhow!("No client found in path!"));
-        } else {
-            info!("Launch: {}:{}", ip, port);
-        }
-        Ok(None)
     }
 
     pub fn new() -> Self {

@@ -202,7 +202,7 @@ fn main() {
             stop_gameserver_log_tail,
             sync_client,
             sync_latest,
-            open_uproject,
+            open_project,
             terminate_server,
             unassign_user_from_playtest,
             update_playtest,

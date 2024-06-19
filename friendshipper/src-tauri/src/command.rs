@@ -801,10 +801,10 @@ pub async fn delete_playtest(
 
 // Project
 #[tauri::command]
-pub async fn open_uproject(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn open_project(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     state
         .client
-        .post(format!("{}/project/open-uproject", state.server_url))
+        .post(format!("{}/project/open-project", state.server_url))
         .send()
         .await?;
     Ok(())

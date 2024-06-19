@@ -1,11 +1,11 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::{debug_handler, Json};
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{CommitFileInfo, ShowCommitFilesResponse};
 
@@ -21,11 +21,13 @@ pub struct ShowCommitFilesParams {
     stash: bool,
 }
 
-#[debug_handler]
-pub async fn show_commit_files(
-    State(state): State<Arc<AppState>>,
+pub async fn show_commit_files<T>(
+    State(state): State<AppState<T>>,
     params: Query<ShowCommitFilesParams>,
-) -> Result<Json<ShowCommitFilesResponse>, CoreError> {
+) -> Result<Json<ShowCommitFilesResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let args = if params.stash {
         vec![
             "stash",

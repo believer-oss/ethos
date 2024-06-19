@@ -17,7 +17,7 @@
 	import { onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { get } from 'svelte/store';
-	import { generateSln, getMergeQueue, getRepoStatus, openUproject, syncLatest } from '$lib/repo';
+	import { generateSln, getMergeQueue, getRepoStatus, openProject, syncLatest } from '$lib/repo';
 	import type {
 		ArtifactEntry,
 		GameServerResult,
@@ -131,7 +131,7 @@
 				await generateSln();
 			} else if ($appConfig.openUprojectAfterSync === true) {
 				progressModalText = 'Launching Unreal Engine';
-				await openUproject();
+				await openProject();
 			}
 
 			await emit('success', 'Sync complete!');

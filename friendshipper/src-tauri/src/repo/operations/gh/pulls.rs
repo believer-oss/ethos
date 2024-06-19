@@ -1,20 +1,22 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use axum::extract::{Path, Query, State};
-use axum::{debug_handler, Json};
+use axum::Json;
 use serde::Deserialize;
 
+use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::pulls::get_pull_request::GetPullRequestRepositoryPullRequest;
 use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
 
 use crate::state::AppState;
 
-pub async fn get_pull_request(
-    State(state): State<Arc<AppState>>,
+pub async fn get_pull_request<T>(
+    State(state): State<AppState<T>>,
     Path(id): Path<i64>,
-) -> Result<Json<GetPullRequestRepositoryPullRequest>, CoreError> {
+) -> Result<Json<GetPullRequestRepositoryPullRequest>, CoreError>
+where
+    T: EngineProvider,
+{
     let owner: String;
     let repo: String;
     {
@@ -40,11 +42,13 @@ pub struct GetPullRequestsParams {
     limit: i64,
 }
 
-#[debug_handler]
-pub async fn get_pull_requests(
-    State(state): State<Arc<AppState>>,
+pub async fn get_pull_requests<T>(
+    State(state): State<AppState<T>>,
     params: Query<GetPullRequestsParams>,
-) -> Result<Json<Vec<GetPullRequestsRepositoryPullRequestsNodes>>, CoreError> {
+) -> Result<Json<Vec<GetPullRequestsRepositoryPullRequestsNodes>>, CoreError>
+where
+    T: EngineProvider,
+{
     let owner: String;
     let repo: String;
     {

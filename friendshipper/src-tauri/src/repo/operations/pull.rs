@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
-use axum::{async_trait, debug_handler, extract::State, Json};
+use axum::{async_trait, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info};
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
@@ -30,7 +30,7 @@ use crate::system::unreal;
 use super::{DownloadDllsOp, RepoStatusRef, StatusOp};
 
 #[derive(Clone)]
-pub struct PullOp {
+pub struct PullOp<T> {
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
     pub ofpa_cache: unreal::OFPANameCacheRef,
@@ -41,14 +41,16 @@ pub struct PullOp {
     pub storage: ArtifactStorage,
     pub git_client: git::Git,
     pub github_client: Option<GraphQLClient>,
+    pub engine: T,
 }
 
 #[async_trait]
-impl Task for PullOp {
+impl<T> Task for PullOp<T>
+where
+    T: EngineProvider,
+{
     async fn execute(&self) -> anyhow::Result<()> {
-        if unreal::is_editor_process_running(&self.git_client.repo_path) {
-            return Err(anyhow!("Cannot sync while Unreal Editor is running."));
-        }
+        self.engine.check_ready_to_sync_repo().await?;
 
         {
             let status_op = {
@@ -233,6 +235,7 @@ impl Task for PullOp {
                         tx: self.longtail_tx.clone(),
                         aws_client: self.aws_client.clone(),
                         artifact_prefix,
+                        engine: self.engine.clone(),
                     };
                     download_op.execute().await?
                 }
@@ -309,10 +312,12 @@ impl Task for PullOp {
     }
 }
 
-#[debug_handler]
-pub async fn pull_handler(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<PullResponse>, CoreError> {
+pub async fn pull_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<PullResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     let storage = match state.storage.read().clone() {
@@ -335,6 +340,7 @@ pub async fn pull_handler(
         storage,
         git_client: state.git(),
         github_client: state.github_client.read().clone(),
+        engine: state.engine.clone(),
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();

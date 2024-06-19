@@ -1,8 +1,8 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf};
 
 use anyhow::anyhow;
 use axum::routing::post;
-use axum::{debug_handler, extract::State, routing::get, Json, Router};
+use axum::{extract::State, routing::get, Json, Router};
 use tracing::info;
 
 use ethos_core::clients::github::GraphQLClient;
@@ -14,29 +14,36 @@ use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::CloneRequest;
 use ethos_core::AWSClient;
 
+use crate::engine::EngineProvider;
 use crate::repo::operations::{clone_handler, download_dlls_handler, update_engine_handler};
 use crate::state::AppState;
 use crate::{APP_NAME, KEYRING_USER};
 
-pub fn router(shared_state: Arc<AppState>) -> Router {
+pub fn router<T>() -> Router<AppState<T>>
+where
+    T: EngineProvider,
+{
     Router::new()
         .route("/", get(get_config).post(update_config))
         .route("/repo", post(update_repo_path).get(get_repo_config))
         .route("/dynamic", get(get_dynamic_config))
         .route("/projects", get(get_project_config))
         .route("/reset", post(reset_config))
-        .with_state(shared_state)
 }
 
-async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<AppConfig>, CoreError> {
+async fn get_config<T>(State(state): State<AppState<T>>) -> Result<Json<AppConfig>, CoreError>
+where
+    T: EngineProvider,
+{
     let config = state.app_config.read().clone();
 
     Ok(Json(config))
 }
 
-async fn get_repo_config(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<RepoConfig>, CoreError> {
+async fn get_repo_config<T>(State(state): State<AppState<T>>) -> Result<Json<RepoConfig>, CoreError>
+where
+    T: EngineProvider,
+{
     let config = state.repo_config.read();
 
     if config.trunk_branch.is_empty() {
@@ -53,24 +60,32 @@ async fn get_repo_config(
     }))
 }
 
-async fn get_project_config(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<ProjectConfig>>, CoreError> {
+async fn get_project_config<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<Vec<ProjectConfig>>, CoreError>
+where
+    T: EngineProvider,
+{
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     Ok(Json(kube_client.get_project_configs().await?))
 }
 
-async fn get_dynamic_config(State(state): State<Arc<AppState>>) -> Json<DynamicConfig> {
+async fn get_dynamic_config<T>(State(state): State<AppState<T>>) -> Json<DynamicConfig>
+where
+    T: EngineProvider,
+{
     let config = state.dynamic_config.read().clone();
     Json(config)
 }
 
-#[debug_handler]
-async fn update_config(
-    State(state): State<Arc<AppState>>,
+async fn update_config<T>(
+    State(state): State<AppState<T>>,
     Json(payload): Json<AppConfig>,
-) -> Result<String, CoreError> {
+) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
     let mut payload = payload;
 
     info!("Updating config with payload: {:?}", payload);
@@ -229,7 +244,10 @@ async fn update_config(
     Ok("ok".to_string())
 }
 
-async fn update_repo_path(State(state): State<Arc<AppState>>, payload: String) {
+async fn update_repo_path<T>(State(state): State<AppState<T>>, payload: String)
+where
+    T: EngineProvider,
+{
     if payload.is_empty() {
         state.send_notification("Repo path cannot be empty.");
 
@@ -251,12 +269,18 @@ async fn update_repo_path(State(state): State<Arc<AppState>>, payload: String) {
     save_config_to_file(state, "Repo path successfully updated.");
 }
 
-async fn reset_config(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
+async fn reset_config<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     // delete file at config path
     fs::remove_file(&state.config_file).map_err(|e| CoreError(anyhow!(e)))
 }
 
-fn save_config_to_file(state: Arc<AppState>, log_msg: &str) {
+fn save_config_to_file<T>(state: AppState<T>, log_msg: &str)
+where
+    T: EngineProvider,
+{
     let file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)

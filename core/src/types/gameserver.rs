@@ -25,7 +25,7 @@ pub struct GameServerStatus {
     pub netimgui_port: i32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GameServerResults {
     pub name: String,

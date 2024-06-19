@@ -25,6 +25,7 @@ use ethos_core::storage::{ArtifactStorage, StorageSchemaVersion};
 use ethos_core::types::config::{AppConfig, DynamicConfig, RepoConfig};
 use ethos_core::worker::RepoWorker;
 use ethos_core::AWSClient;
+use friendshipper::engine::{EngineProvider, UnrealEngineProvider};
 #[cfg(windows)]
 use friendshipper::repo::CREATE_NO_WINDOW;
 use friendshipper::state::AppState;
@@ -51,14 +52,20 @@ fn build_uproject_path(repo_path: &Path) -> PathBuf {
     repo_path.join(cwd).join("friendshipper-tests.uproject")
 }
 
-pub struct TestServer {
-    pub state: Arc<AppState>,
+pub struct TestServer<T> {
+    pub state: AppState<T>,
     exit_tx: Option<Sender<()>>,
     server_thread: Option<JoinHandle<()>>,
 }
 
-impl TestServer {
-    pub fn new(state: Arc<AppState>, exit_tx: Sender<()>) -> Self {
+impl<T> TestServer<T>
+where
+    T: EngineProvider,
+{
+    pub fn new(state: AppState<T>, exit_tx: Sender<()>) -> Self
+    where
+        T: EngineProvider,
+    {
         Self {
             state,
             exit_tx: Some(exit_tx),
@@ -66,16 +73,22 @@ impl TestServer {
         }
     }
 
-    pub async fn start(&mut self, exit_rx: Receiver<()>) {
-        let app = friendshipper::router(self.state.clone()).unwrap().layer(
-            TraceLayer::new_for_http()
-                .on_request(|request: &Request<Body>, _span: &Span| {
-                    info!("Request: {} {}", request.method(), request.uri().path(),);
-                })
-                .on_response(|response: &Response, _latency: Duration, _span: &Span| {
-                    info!("Response: {} {:?}", response.status(), response.body());
-                }),
-        );
+    pub async fn start(&mut self, exit_rx: Receiver<()>)
+    where
+        T: EngineProvider,
+    {
+        let app = friendshipper::router(&self.state.log_path)
+            .unwrap()
+            .with_state(self.state.clone())
+            .layer(
+                TraceLayer::new_for_http()
+                    .on_request(|request: &Request<Body>, _span: &Span| {
+                        info!("Request: {} {}", request.method(), request.uri().path(),);
+                    })
+                    .on_response(|response: &Response, _latency: Duration, _span: &Span| {
+                        info!("Response: {} {:?}", response.status(), response.body());
+                    }),
+            );
 
         let address = String::from("127.0.0.1:8585");
 
@@ -350,7 +363,9 @@ async fn initialize_test_repo() {
     }
 }
 
-pub async fn setup(schema_version: StorageSchemaVersion) -> anyhow::Result<TestServer> {
+pub async fn setup(
+    schema_version: StorageSchemaVersion,
+) -> anyhow::Result<TestServer<UnrealEngineProvider>> {
     info!("Setting up test server");
     initialize_test_repo().await;
 
@@ -470,8 +485,6 @@ pub async fn setup(schema_version: StorageSchemaVersion) -> anyhow::Result<TestS
         "[testing module] longtail update done. exe path: {:?}",
         &state.longtail.exec_path
     );
-
-    let state = Arc::new(state);
 
     let mut server = TestServer::new(state, exit_tx);
 

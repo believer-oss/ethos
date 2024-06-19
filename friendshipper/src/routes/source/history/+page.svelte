@@ -15,7 +15,7 @@
 	import {
 		getAllCommits,
 		syncLatest,
-		openUproject,
+		openProject,
 		generateSln,
 		openSln,
 		forceDownloadDlls,
@@ -58,7 +58,7 @@
 				await generateSln();
 			} else if ($appConfig.openUprojectAfterSync === true) {
 				asyncModalText = 'Launching Unreal Engine';
-				await openUproject();
+				await openProject();
 			}
 
 			await emit('success', 'Sync complete!');
@@ -73,7 +73,7 @@
 		try {
 			inAsyncOperation = true;
 			asyncModalText = 'Launching Unreal Engine';
-			await openUproject();
+			await openProject();
 		} catch (e) {
 			await emit('error', e);
 		}

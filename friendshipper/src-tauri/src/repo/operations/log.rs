@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
 
+use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::operations::{LogOp, LogResponse};
 use ethos_core::types::errors::CoreError;
@@ -31,10 +30,13 @@ fn default_limit() -> usize {
     10
 }
 
-pub async fn log_handler(
-    State(state): State<Arc<AppState>>,
+pub async fn log_handler<T>(
+    State(state): State<AppState<T>>,
     params: Query<LogParams>,
-) -> Result<Json<LogResponse>, CoreError> {
+) -> Result<Json<LogResponse>, CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     // Make sure we wait for any queued updates

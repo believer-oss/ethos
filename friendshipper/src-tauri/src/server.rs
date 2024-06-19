@@ -23,6 +23,7 @@ use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig};
 use ethos_core::worker::{RepoWorker, TaskSequence};
 
+use crate::engine::UnrealEngineProvider;
 use crate::repo::operations::InstallGitHooksOp;
 use crate::state::FrontendOp;
 use crate::APP_NAME;
@@ -109,25 +110,23 @@ impl Server {
             };
 
             startup_tx.send("Initializing application state".to_string())?;
-            let shared_state = Arc::new(
-                AppState::new(
-                    app_config.clone(),
-                    repo_config.clone(),
-                    Arc::new(RwLock::new(dynamic_config.clone())),
-                    config_file,
-                    storage,
-                    self.longtail_tx.clone(),
-                    op_tx.clone(),
-                    self.notification_tx.clone(),
-                    self.frontend_op_tx.clone(),
-                    VERSION.to_string(),
-                    None,
-                    self.log_path.clone(),
-                    self.git_tx.clone(),
-                    self.gameserver_log_tx.clone(),
-                )
-                .await?,
-            );
+            let shared_state: AppState<UnrealEngineProvider> = AppState::new(
+                app_config.clone(),
+                repo_config.clone(),
+                Arc::new(RwLock::new(dynamic_config.clone())),
+                config_file,
+                storage,
+                self.longtail_tx.clone(),
+                op_tx.clone(),
+                self.notification_tx.clone(),
+                self.frontend_op_tx.clone(),
+                VERSION.to_string(),
+                None,
+                self.log_path.clone(),
+                self.git_tx.clone(),
+                self.gameserver_log_tx.clone(),
+            )
+            .await?;
 
             // install git hooks
             {
@@ -168,7 +167,8 @@ impl Server {
                 }
             }
 
-            let app = crate::router(shared_state.clone())?
+            let app = crate::router(&shared_state.log_path)?
+                .with_state(shared_state.clone())
                 .layer(axum::middleware::from_fn(uri_passthrough))
                 .layer(
                 TraceLayer::new_for_http()
