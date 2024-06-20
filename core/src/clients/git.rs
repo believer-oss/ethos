@@ -184,7 +184,10 @@ impl Git {
         let mut args = vec!["pull"];
         match pull_strategy {
             PullStrategy::Rebase => args.push("--rebase"),
-            PullStrategy::FFOnly => args.push("--ff-only"),
+            PullStrategy::FFOnly => {
+                args.push("--ff-only");
+                args.push("--no-rebase");
+            }
         }
 
         match stash_strategy {
