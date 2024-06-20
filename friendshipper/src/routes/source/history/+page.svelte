@@ -37,8 +37,12 @@
 
 	const refresh = async () => {
 		loading = true;
-		repoStatus.set(await getRepoStatus());
-		commits.set(await getAllCommits());
+		try {
+			repoStatus.set(await getRepoStatus());
+			commits.set(await getAllCommits());
+		} catch (e) {
+			await emit('error', e);
+		}
 		loading = false;
 	};
 
