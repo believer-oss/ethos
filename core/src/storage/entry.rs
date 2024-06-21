@@ -206,7 +206,7 @@ impl ArtifactEntry {
         storage: &ArtifactStorage,
     ) -> Result<Self, CoreError> {
         let commit = self.commit.clone();
-        let path = storage.resolve_path(config)?;
+        let path = storage.resolve_path(config);
         // This only works for V1 schema
         Ok(Self::new(format!(
             "{}{}.json",

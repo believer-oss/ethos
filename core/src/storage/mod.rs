@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tracing::error;
 
 pub use crate::storage::config::ArtifactBuildConfig;
 pub use crate::storage::config::ArtifactConfig;
@@ -24,11 +25,14 @@ pub mod s3;
 // Trait implementing artifact lookup different storage providers
 #[async_trait]
 pub trait ArtifactProvider: std::fmt::Debug + Send + Sync {
+    fn get_method_prefix(&self) -> MethodPrefix;
+
     // Pulls the artifact listing for the given path from the provider
     async fn get_artifact_list(
         &self,
         path: &str,
     ) -> Result<(MethodPrefix, Vec<ArtifactEntry>), CoreError>;
+
     // Get a single artifact matching the given prefix, erroring if there is more than one match
     async fn get_artifact_by_prefix(&self, prefix: &str) -> Result<String, CoreError>;
 }
@@ -75,7 +79,7 @@ impl ArtifactStorage {
         artifact_config: ArtifactConfig,
         short_sha: &str,
     ) -> Result<String, CoreError> {
-        let path = self.resolve_path(&artifact_config)?;
+        let path = self.resolve_path(&artifact_config);
 
         self.provider
             .get_artifact_by_prefix(&format!("{}{}", path, short_sha))
@@ -84,24 +88,33 @@ impl ArtifactStorage {
 
     // Use the provider to get an artifact listing by constructing the lookup path.
     pub async fn artifact_list(&self, artifact_config: ArtifactConfig) -> ArtifactList {
-        let (method_prefix, entries) = self
+        let artifact_list_result = self
             .provider
-            .get_artifact_list(&self.resolve_path(&artifact_config).unwrap())
-            .await
-            .unwrap();
-        let mut list = ArtifactList::new(artifact_config, method_prefix);
-        list.entries = entries;
-        list.sort_by_last_modified();
-        list
+            .get_artifact_list(&self.resolve_path(&artifact_config))
+            .await;
+
+        match artifact_list_result {
+            Err(e) => {
+                let method_prefix: MethodPrefix = self.provider.get_method_prefix();
+                error!("Caught error retrieving artifact list with artifact config {:?} and method prefix {:?}. {}", artifact_config, method_prefix, e);
+                ArtifactList::new(artifact_config, method_prefix)
+            }
+            Ok((method_prefix, entries)) => {
+                let mut list = ArtifactList::new(artifact_config, method_prefix);
+                list.entries = entries;
+                list.sort_by_last_modified();
+                list
+            }
+        }
     }
 
-    fn resolve_path(&self, artifact_config: &ArtifactConfig) -> Result<String> {
+    fn resolve_path(&self, artifact_config: &ArtifactConfig) -> String {
         match &self.schema_version {
             StorageSchemaVersion::V1 => Self::resolve_path_v1(artifact_config),
         }
     }
     // This is the v1 path resolver with full support for the new enums
-    fn resolve_path_v1(artifact_config: &ArtifactConfig) -> Result<String> {
+    fn resolve_path_v1(artifact_config: &ArtifactConfig) -> String {
         let path = format!(
             "v1/{}/{}/{}/{}/",
             artifact_config.project,
@@ -109,7 +122,7 @@ impl ArtifactStorage {
             artifact_config.platform.to_path_string(),
             artifact_config.artifact_build_config.to_path_string(),
         );
-        Ok(path)
+        path
     }
 }
 
@@ -126,7 +139,7 @@ mod test {
             Platform::Win64,
         );
         assert_eq!(
-            ArtifactStorage::resolve_path_v1(&ac).unwrap(),
+            ArtifactStorage::resolve_path_v1(&ac),
             "v1/believerco-gameprototypemp/client/win64/development/"
         );
 
@@ -138,7 +151,7 @@ mod test {
         );
 
         assert_eq!(
-            ArtifactStorage::resolve_path_v1(&ac).unwrap(),
+            ArtifactStorage::resolve_path_v1(&ac),
             "v1/believerco-gameprototypemp/engine/win64/development/"
         );
     }

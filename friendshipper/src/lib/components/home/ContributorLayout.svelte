@@ -23,6 +23,7 @@
 		GameServerResult,
 		MergeQueue,
 		MergeQueueEntry,
+		Commit,
 		Playtest,
 		SyncClientRequest
 	} from '$lib/types';
@@ -209,7 +210,7 @@
 		}
 	};
 
-	const getCommitMessage = (commit): string => {
+	const getCommitMessage = (commit: Commit): string => {
 		if (commit != null) {
 			if (commit.message != null) {
 				const trimmed: string = commit.message.split('\n')[0];
@@ -219,6 +220,18 @@
 			}
 		}
 		return 'No message';
+	};
+
+	const getCommitAuthor = (commit: Commit): string => {
+		if (commit != null) {
+			if (commit.author != null) {
+				if (commit.author.name != null) {
+					return commit.author.name;
+				}
+			}
+		}
+
+		return '';
 	};
 
 	onMount(() => {
@@ -365,7 +378,7 @@
 										{getCommitMessage(node.headCommit)}
 									</TableBodyCell>
 									<TableBodyCell class="p-2 text-center"
-										>{node.headCommit.author.name}</TableBodyCell
+										>{getCommitAuthor(node.headCommit)}</TableBodyCell
 									>
 									<TableBodyCell class="p-2 text-center"
 										>{new Date(node.enqueuedAt).toLocaleString()}</TableBodyCell
