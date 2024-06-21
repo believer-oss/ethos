@@ -91,7 +91,12 @@ pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     if let Ok(path) = current_binary(&Env::default()) {
         match Command::new(path).spawn() {
             Ok(_) => {
-                info!("Spawned new process. Waiting to be restarted");
+                info!("Spawned new process. Waiting to restart.");
+
+                // wait a second
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+                std::process::exit(0);
             }
             Err(e) => error!("Error restarting: {}", e),
         }
