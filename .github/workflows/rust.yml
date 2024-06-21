@@ -67,7 +67,7 @@ jobs:
         with:
           files: |
             ${{ matrix.app }}/**/*
-            ethos-core/**/*
+            core/**/*
             Cargo.lock
 
       - name: Install ubuntu dependencies
@@ -149,7 +149,7 @@ jobs:
         with:
           files: |
             ${{ matrix.app }}/**/*
-            ethos-core/**/*
+            core/**/*
             Cargo.lock
 
       - name: set up rust toolchain
