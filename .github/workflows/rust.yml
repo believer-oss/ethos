@@ -189,6 +189,7 @@ jobs:
         run: |
           dir target/release
           mv target/release/${{ matrix.app }}.exe ${{ matrix.app }}.exe
+          mv target/release/bundle/msi/*.msi .
 
       - name: Release
         uses: softprops/action-gh-release@v1
@@ -198,3 +199,4 @@ jobs:
         with:
           files: |
             ${{ matrix.app }}.exe
+            *.msi

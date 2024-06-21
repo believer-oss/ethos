@@ -43,7 +43,7 @@
 			}
 		},
 		"bundle": {
-			"active": false,
+			"active": true,
 			"category": "DeveloperTool",
 			"copyright": "",
 			"deb": {
@@ -68,7 +68,7 @@
 			},
 			"resources": [],
 			"shortDescription": "",
-			"targets": "all",
+			"targets": ["msi"],
 			"windows": {
 				"certificateThumbprint": null,
 				"digestAlgorithm": "sha256",
