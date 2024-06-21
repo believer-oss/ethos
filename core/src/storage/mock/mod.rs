@@ -20,6 +20,10 @@ impl MockArtifactProvider {
 
 #[async_trait]
 impl ArtifactProvider for MockArtifactProvider {
+    fn get_method_prefix(&self) -> MethodPrefix {
+        "file://".into()
+    }
+
     async fn get_artifact_by_prefix(&self, prefix: &str) -> Result<String, CoreError> {
         // TODO: Send back an actual longtail .json file to test with.
         match prefix.contains("fail") {
@@ -112,7 +116,7 @@ impl ArtifactProvider for MockArtifactProvider {
                 fake_entries.push(ArtifactEntry::new(format!("{}{}", path, "test/file/4")));
             }
         }
-        Ok(("file://".into(), fake_entries))
+        Ok((self.get_method_prefix(), fake_entries))
     }
 }
 

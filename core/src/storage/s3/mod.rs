@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use aws_sdk_s3::Client;
+use tracing::warn;
 
 use crate::storage::{entry::ArtifactEntry, list::MethodPrefix, ArtifactProvider};
 use crate::types::errors::CoreError;
@@ -24,6 +25,10 @@ impl S3ArtifactProvider {
 
 #[async_trait]
 impl ArtifactProvider for S3ArtifactProvider {
+    fn get_method_prefix(&self) -> MethodPrefix {
+        format!("s3://{}/", self.s3_bucket.clone()).into()
+    }
+
     async fn get_artifact_by_prefix(&self, prefix: &str) -> Result<String, CoreError> {
         self.aws_client.check_config().await?;
         let client = Client::new(&self.aws_client.get_sdk_config().await);
@@ -75,7 +80,7 @@ impl ArtifactProvider for S3ArtifactProvider {
 
         while let Some(resp) = paginator.next().await {
             if resp.is_err() {
-                println!("Error getting list of objects from S3: [{:?}", resp);
+                warn!("Error getting list of objects from S3: [{:?}", resp);
                 return Err(CoreError::from(anyhow!(
                     "Error getting list of objects from S3"
                 )));
@@ -87,10 +92,7 @@ impl ArtifactProvider for S3ArtifactProvider {
         }
 
         entry_list.sort_by(|a, b| b.last_modified.partial_cmp(&a.last_modified).unwrap());
-        Ok((
-            format!("s3://{}/", self.s3_bucket.clone()).into(),
-            entry_list,
-        ))
+        Ok((self.get_method_prefix(), entry_list))
     }
 }
 
