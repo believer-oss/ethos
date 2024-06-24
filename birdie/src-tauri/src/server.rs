@@ -54,7 +54,7 @@ impl Server {
 
         if let (Some(config_file), Some(config)) = self.initialize_app_config()? {
             let app_config = Arc::new(RwLock::new(config.clone()));
-            let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()));
+            let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
 
             // start the operation worker
             startup_tx.send("Starting operation worker".to_string())?;

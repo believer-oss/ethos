@@ -53,6 +53,9 @@ export interface RepoConfig {
 	uprojectPath: string;
 	trunkBranch: string;
 	gitHooksPath: string;
+	commitRegex?: string;
+	commitSample?: string;
+	commitDocsUrl?: string;
 }
 
 // Kubernetes API types

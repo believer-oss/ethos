@@ -42,11 +42,7 @@ async fn get_repo_config(
             .into());
     }
 
-    Ok(Json(RepoConfig {
-        uproject_path: config.uproject_path.clone(),
-        trunk_branch: config.trunk_branch.clone(),
-        git_hooks_path: config.git_hooks_path.clone(),
-    }))
+    Ok(Json(config.clone()))
 }
 
 #[debug_handler]
@@ -175,12 +171,12 @@ async fn update_config(
         lock.initialized = true;
     }
 
-    save_config_to_file(state, "Preferences successfully saved!");
+    save_config_to_file(state, "Preferences successfully saved!")?;
 
     Ok("ok".to_string())
 }
 
-fn save_config_to_file(state: Arc<AppState>, log_msg: &str) {
+fn save_config_to_file(state: Arc<AppState>, log_msg: &str) -> Result<(), CoreError> {
     let file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)
@@ -188,7 +184,7 @@ fn save_config_to_file(state: Arc<AppState>, log_msg: &str) {
         .unwrap();
 
     let mut config = state.app_config.read().clone();
-    let repo_config = config.initialize_repo_config();
+    let repo_config = config.initialize_repo_config()?;
 
     // Get rid of the PAT
     config.github_pat = None;
@@ -201,4 +197,6 @@ fn save_config_to_file(state: Arc<AppState>, log_msg: &str) {
     serde_yaml::to_writer(file, &config).unwrap();
 
     info!("{}", log_msg);
+
+    Ok(())
 }

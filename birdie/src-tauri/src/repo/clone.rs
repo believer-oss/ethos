@@ -89,7 +89,7 @@ pub async fn clone_handler(
     {
         // We need to force a read of the in-repo configuration file.
         let config = state.app_config.read();
-        let repo_config = config.initialize_repo_config();
+        let repo_config = config.initialize_repo_config()?;
 
         let mut lock = state.repo_config.write();
         *lock = repo_config.clone();

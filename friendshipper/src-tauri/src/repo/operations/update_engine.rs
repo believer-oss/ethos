@@ -256,7 +256,7 @@ where
                 .unwrap();
 
             let mut config = state.app_config.read().clone();
-            let repo_config = config.initialize_repo_config();
+            let repo_config = config.initialize_repo_config()?;
 
             // Get rid of the PAT
             config.github_pat = None;

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use config::Config;
@@ -148,27 +148,27 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    pub fn initialize_repo_config(&self) -> RepoConfig {
+    pub fn initialize_repo_config(&self) -> Result<RepoConfig> {
         if self.repo_path.is_empty() {
-            return Default::default();
+            return Ok(Default::default());
         }
 
         let config_file = PathBuf::from(self.repo_path.clone()).join("friendshipper.yaml");
 
         if !config_file.exists() {
-            return Default::default();
+            return Ok(Default::default());
         }
 
         let settings = Config::builder()
             .add_source(config::File::with_name(config_file.to_str().unwrap()))
-            .set_default("trunkBranch", "main")
-            .unwrap()
-            .build()
-            .unwrap();
+            .set_default("trunkBranch", "main")?
+            .build()?;
 
         // TODO: We'll need some better error handling here. Because the config file is stored
         // in the project repo itself, all users are impacted by bad config being committed to it.
-        settings.try_deserialize::<RepoConfig>().unwrap()
+        settings
+            .try_deserialize::<RepoConfig>()
+            .map_err(|e| anyhow!(e))
     }
 
     pub fn get_uproject_path(&self, repo_config: &RepoConfig) -> PathBuf {
@@ -242,6 +242,27 @@ pub struct RepoConfig {
 
     #[serde(default, rename = "gitHooksPath")]
     pub git_hooks_path: Option<String>,
+
+    #[serde(
+        default,
+        rename = "commitRegex",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commit_regex: Option<String>,
+
+    #[serde(
+        default,
+        rename = "commitSample",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commit_sample: Option<String>,
+
+    #[serde(
+        default,
+        rename = "commitDocsUrl",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commit_docs_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -260,6 +281,9 @@ impl Default for RepoConfig {
             uproject_path: String::default(),
             trunk_branch: "main".to_string(),
             git_hooks_path: None,
+            commit_regex: None,
+            commit_sample: None,
+            commit_docs_url: None,
         }
     }
 }
