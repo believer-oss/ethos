@@ -435,6 +435,7 @@ pub async fn setup(
             .unwrap(),
         trunk_branch: "main".to_string(),
         git_hooks_path: None,
+        ..Default::default()
     }));
 
     info!("Created app state. Creating artifact storage.");

@@ -66,16 +66,34 @@
 	let snapshots: Snapshot[] = [];
 
 	$: activeQuickSubmitPull = pulls.find((pull) => pull.headRefName === $repoStatus?.branch);
-	$: canSubmit =
-		$selectedFiles.length > 0 &&
-		get(commitMessage) !== '' &&
-		!loading &&
-		activeQuickSubmitPull === undefined &&
-		$repoConfig?.trunkBranch === $repoStatus?.branch;
-
 	void listen('preferences-closed', () => {
 		preferencesOpen = false;
 	});
+
+	const validateCommitMessage = (message: string): boolean => {
+		if (!message) {
+			return true;
+		}
+
+		if (!$repoConfig?.commitRegex) {
+			return true;
+		}
+
+		const firstLine = message.split('\n')[0];
+
+		const regex = new RegExp($repoConfig.commitRegex);
+		return regex.test(firstLine);
+	};
+
+	$: commitMessageValid = validateCommitMessage($commitMessage);
+
+	$: canSubmit =
+		$selectedFiles.length > 0 &&
+		get(commitMessage) !== '' &&
+		commitMessageValid &&
+		!loading &&
+		activeQuickSubmitPull === undefined &&
+		$repoConfig?.trunkBranch === $repoStatus?.branch;
 
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
@@ -418,6 +436,28 @@
 					bind:value={$commitMessage}
 					class="text-white bg-secondary-800 dark:bg-space-950 min-h-[4rem] h-full border-gray-400"
 				/>
+				{#if !commitMessageValid}
+					<div class="p-1 bg-secondary-800 dark:bg-space-950">
+						<p class="text-red-500 text-center text-sm">
+							Your message is missing the appropriate format.
+
+							{#if $repoConfig?.commitSample}
+								<br />Example commit:
+								<code class="text-white p-0.5 bg-secondary-800 dark:bg-space-950"
+									>{$repoConfig.commitSample}</code
+								>
+							{/if}
+						</p>
+						{#if $repoConfig?.commitDocsUrl}
+							<Button
+								size="xs"
+								class="w-full my-1"
+								color="primary"
+								on:click={() => open($repoConfig?.commitDocsUrl)}>Learn More</Button
+							>
+						{/if}
+					</div>
+				{/if}
 				<div class="flex flex-row w-full align-middle justify-end">
 					<ButtonGroup class="space-x-px">
 						<Button

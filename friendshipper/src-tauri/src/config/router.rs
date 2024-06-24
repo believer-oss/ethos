@@ -25,7 +25,7 @@ where
 {
     Router::new()
         .route("/", get(get_config).post(update_config))
-        .route("/repo", post(update_repo_path).get(get_repo_config))
+        .route("/repo", get(get_repo_config))
         .route("/dynamic", get(get_dynamic_config))
         .route("/projects", get(get_project_config))
         .route("/reset", post(reset_config))
@@ -53,11 +53,7 @@ where
             .into());
     }
 
-    Ok(Json(RepoConfig {
-        uproject_path: config.uproject_path.clone(),
-        trunk_branch: config.trunk_branch.clone(),
-        git_hooks_path: config.git_hooks_path.clone(),
-    }))
+    Ok(Json(config.clone()))
 }
 
 async fn get_project_config<T>(
@@ -239,34 +235,9 @@ where
         lock.initialized = true;
     }
 
-    save_config_to_file(state, "Preferences successfully saved!");
+    save_config_to_file(state, "Preferences successfully saved!")?;
 
     Ok("ok".to_string())
-}
-
-async fn update_repo_path<T>(State(state): State<AppState<T>>, payload: String)
-where
-    T: EngineProvider,
-{
-    if payload.is_empty() {
-        state.send_notification("Repo path cannot be empty.");
-
-        return;
-    }
-
-    let git_dir = PathBuf::from(payload.clone()).join(".git");
-    if !git_dir.exists() {
-        state.send_notification("Provided path is not a Git repository. Please try again.");
-
-        return;
-    }
-
-    {
-        let mut lock = state.app_config.write();
-        lock.repo_path = payload;
-    }
-
-    save_config_to_file(state, "Repo path successfully updated.");
 }
 
 async fn reset_config<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
@@ -277,7 +248,7 @@ where
     fs::remove_file(&state.config_file).map_err(|e| CoreError(anyhow!(e)))
 }
 
-fn save_config_to_file<T>(state: AppState<T>, log_msg: &str)
+fn save_config_to_file<T>(state: AppState<T>, log_msg: &str) -> Result<(), CoreError>
 where
     T: EngineProvider,
 {
@@ -288,7 +259,7 @@ where
         .unwrap();
 
     let mut config = state.app_config.read().clone();
-    let repo_config = config.initialize_repo_config();
+    let repo_config = config.initialize_repo_config()?;
 
     // Get rid of the PAT
     config.github_pat = None;
@@ -304,4 +275,6 @@ where
     serde_yaml::to_writer(file, &config).unwrap();
 
     info!("{}", log_msg);
+
+    Ok(())
 }
