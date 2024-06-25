@@ -4,11 +4,8 @@
 	import { RotateOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { CommitTable, ProgressModal } from '@ethos/core';
-	import { getAllCommits, syncLatest, getRepoStatus, showCommitFiles, cloneRepo } from '$lib/repo';
-	import { appConfig, commits, latestLocalCommit, repoStatus } from '$lib/stores';
-
-	import { runSetEnv, syncTools } from '$lib/tools';
-	import { getAppConfig } from '$lib/config';
+	import { getAllCommits, syncLatest, getRepoStatus, showCommitFiles } from '$lib/repo';
+	import { commits, latestLocalCommit, repoStatus } from '$lib/stores';
 
 	let loading = false;
 	let inAsyncOperation = false;
@@ -35,28 +32,29 @@
 		inAsyncOperation = false;
 	};
 
-	const handleSyncToolsClicked = async () => {
-		try {
-			inAsyncOperation = true;
-			asyncModalText = 'Pulling tools with git';
-
-			try {
-				$appConfig = await getAppConfig();
-			} catch (e) {
-				await emit('error', e);
-			}
-
-			const didSync: boolean = await syncTools();
-			if (!didSync && $appConfig.toolsPath && $appConfig.toolsUrl) {
-				await cloneRepo({ url: $appConfig.toolsUrl, path: $appConfig.toolsPath });
-				await runSetEnv();
-			}
-		} catch (e) {
-			await emit('error', e);
-		}
-
-		inAsyncOperation = false;
-	};
+	// TODO: Waiting for micah kinzelman to return to add button
+	// const handleSyncToolsClicked = async () => {
+	//     try {
+	//         inAsyncOperation = true;
+	//         asyncModalText = 'Pulling tools with git';
+	//
+	//         try {
+	//             $appConfig = await getAppConfig();
+	//         } catch (e) {
+	//             await emit('error', e);
+	//         }
+	//
+	//         const didSync: boolean = await syncTools();
+	//         if (!didSync && $appConfig.toolsPath && $appConfig.toolsUrl) {
+	//             await cloneRepo({url: $appConfig.toolsUrl, path: $appConfig.toolsPath});
+	//             await runSetEnv();
+	//         }
+	//     } catch (e) {
+	//         await emit('error', e);
+	//     }
+	//
+	//     inAsyncOperation = false;
+	// };
 
 	const refreshAndWait = async () => {
 		await refresh();
@@ -93,15 +91,6 @@
 		>
 			<RotateOutline class="w-3 h-3 mr-2" />
 			Sync
-		</Button>
-		<Button
-			size="xs"
-			color="primary"
-			disabled={inAsyncOperation}
-			on:click={async () => handleSyncToolsClicked()}
-		>
-			<RotateOutline class="w-3 h-3 mr-2" />
-			Tools
 		</Button>
 	</ButtonGroup>
 </div>
