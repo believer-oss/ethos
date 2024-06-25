@@ -145,12 +145,14 @@ fn main() {
             revert_files,
             restart,
             run_update,
+            run_set_env,
             show_commit_files,
             submit,
             sync_latest,
             unlock_files,
             update_metadata,
             update_metadata_class,
+            sync_tools,
             verify_locks
         ])
         .setup(move |app| {

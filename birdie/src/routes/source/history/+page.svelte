@@ -22,6 +22,7 @@
 		try {
 			inAsyncOperation = true;
 			asyncModalText = 'Pulling latest with git';
+
 			await syncLatest();
 			await refresh();
 		} catch (e) {
@@ -30,6 +31,30 @@
 
 		inAsyncOperation = false;
 	};
+
+	// TODO: Waiting for micah kinzelman to return to add button
+	// const handleSyncToolsClicked = async () => {
+	//     try {
+	//         inAsyncOperation = true;
+	//         asyncModalText = 'Pulling tools with git';
+	//
+	//         try {
+	//             $appConfig = await getAppConfig();
+	//         } catch (e) {
+	//             await emit('error', e);
+	//         }
+	//
+	//         const didSync: boolean = await syncTools();
+	//         if (!didSync && $appConfig.toolsPath && $appConfig.toolsUrl) {
+	//             await cloneRepo({url: $appConfig.toolsUrl, path: $appConfig.toolsPath});
+	//             await runSetEnv();
+	//         }
+	//     } catch (e) {
+	//         await emit('error', e);
+	//     }
+	//
+	//     inAsyncOperation = false;
+	// };
 
 	const refreshAndWait = async () => {
 		await refresh();
