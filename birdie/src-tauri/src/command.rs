@@ -297,3 +297,19 @@ pub async fn sync_tools(state: tauri::State<'_, State>) -> Result<bool, TauriErr
     let did_sync: bool = matches!(res_text.unwrap().as_str(), "OK");
     Ok(did_sync)
 }
+
+#[tauri::command]
+pub async fn run_set_env(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/tools/setenv", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(())
+}
