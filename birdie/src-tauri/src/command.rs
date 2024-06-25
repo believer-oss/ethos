@@ -278,3 +278,22 @@ pub async fn update_metadata(
 
     Ok(res.json().await?)
 }
+
+#[tauri::command]
+pub async fn sync_tools(state: tauri::State<'_, State>) -> Result<bool, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/tools/sync", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    let res_text = res.text().await;
+
+    let did_sync: bool = matches!(res_text.unwrap().as_str(), "OK");
+    Ok(did_sync)
+}

@@ -151,6 +151,7 @@ fn main() {
             unlock_files,
             update_metadata,
             update_metadata_class,
+            sync_tools,
             verify_locks
         ])
         .setup(move |app| {

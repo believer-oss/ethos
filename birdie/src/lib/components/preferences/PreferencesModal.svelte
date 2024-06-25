@@ -28,6 +28,15 @@
 		});
 	};
 
+	const openToolsFolder = async () => {
+		localAppConfig.toolsPath = await open({
+			directory: true,
+			multiple: false,
+			defaultPath: localAppConfig.toolsPath || '.',
+			title: 'Select game repository folder'
+		});
+	};
+
 	const onApplyClicked = async () => {
 		// show the progress modal if the repo URL has changed
 		const shouldShowProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
@@ -128,6 +137,28 @@
 				<Tooltip class="text-sm" placement="bottom">
 					Copy and paste your GitHub Personal Access Token (PAT) here.
 				</Tooltip>
+
+				<div class="rounded-lg border border-white mt-4">
+					<div class="mt-2 mb-2 ml-2 mr-2">
+						<Label>Tools Path</Label>
+						<div class="flex gap-1 mb-2">
+							<Button class="h-8 gap-2" on:click={openToolsFolder}><FolderOpenSolid />Browse</Button
+							>
+							<Input class="h-8" bind:value={localAppConfig.toolsPath} />
+						</div>
+
+						<Label class="text-white">Tools URL</Label>
+						<div class="flex gap-1 mb-2">
+							<Input
+								class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+								bind:value={localAppConfig.toolsUrl}
+							/>
+						</div>
+						<Tooltip class="text-sm" placement="bottom">
+							Specified URL should be a git URL ending in <code>.git</code>.
+						</Tooltip>
+					</div>
+				</div>
 			</div>
 		</div>
 	</div>
