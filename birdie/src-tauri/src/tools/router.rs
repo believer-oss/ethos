@@ -25,6 +25,7 @@ async fn sync_tools(State(state): State<Arc<AppState>>) -> Result<String, CoreEr
     let mut did_sync: String = "Fail".to_string();
     let dir_exists = Path::new(&tools_path).exists();
     let dir_empty = Path::new(&tools_path).read_dir()?.next().is_none();
+    // If there's no directory or an empty directory we need to clone instead
     if dir_exists && !dir_empty {
         let repo_buf = PathBuf::from(tools_path);
         let git_client: git::Git = git::Git::new(repo_buf, state.git_tx.clone());
