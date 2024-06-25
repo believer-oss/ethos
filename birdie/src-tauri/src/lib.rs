@@ -12,6 +12,7 @@ use crate::state::AppState;
 
 mod config;
 pub mod metadata;
+pub mod tools;
 pub mod repo;
 pub mod server;
 mod state;
@@ -41,6 +42,7 @@ pub fn router(shared_state: Arc<AppState>) -> Result<Router> {
     Ok(Router::new()
         .nest("/repo", repo::router(shared_state.clone()))
         .nest("/metadata", metadata::router(shared_state.clone()))
+        .nest("/tools", tools::router(shared_state.clone()))
         .nest("/system", system::router(shared_state.clone()))
         .nest("/config", config::router(shared_state))
         .route_layer(middleware::from_fn(move |headers, req, next| {

@@ -59,6 +59,12 @@ pub struct AppConfig {
     #[serde(default, rename = "repoUrl", alias = "repo_url")]
     pub repo_url: String,
 
+    #[serde(default, rename = "toolsPath", alias = "tools_path")]
+    pub tools_path: String,
+
+    #[serde(default, rename = "toolsUrl", alias = "tools_url")]
+    pub tools_url: String,
+
     #[serde(default, rename = "userDisplayName", alias = "user_display_name")]
     pub user_display_name: String,
 
@@ -130,6 +136,8 @@ impl AppConfig {
         AppConfig {
             repo_path: Default::default(),
             repo_url: Default::default(),
+            tools_path: Default::default(),
+            tools_url: Default::default(),
             user_display_name: Default::default(),
             game_client_download_symbols: false,
             pull_dlls: true,

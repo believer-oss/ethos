@@ -15,6 +15,8 @@ export interface DynamicConfig {
 export interface AppConfig {
 	repoPath: string;
 	repoUrl: string;
+	toolsPath: string;
+	toolsUrl: string;
 	userDisplayName: string;
 	pullDlls: boolean;
 	openUprojectAfterSync: boolean;
