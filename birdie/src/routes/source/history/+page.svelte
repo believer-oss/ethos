@@ -7,7 +7,7 @@
 	import { getAllCommits, syncLatest, getRepoStatus, showCommitFiles, cloneRepo } from '$lib/repo';
 	import { appConfig, commits, latestLocalCommit, repoStatus } from '$lib/stores';
 
-	import { syncTools } from '$lib/tools';
+	import { runSetEnv, syncTools } from '$lib/tools';
 	import { getAppConfig } from '$lib/config';
 
 	let loading = false;
@@ -49,6 +49,7 @@
 			const didSync: boolean = await syncTools();
 			if (!didSync && $appConfig.toolsPath && $appConfig.toolsUrl) {
 				await cloneRepo({ url: $appConfig.toolsUrl, path: $appConfig.toolsPath });
+				await runSetEnv();
 			}
 		} catch (e) {
 			await emit('error', e);
