@@ -145,6 +145,7 @@ fn main() {
             revert_files,
             restart,
             run_update,
+            run_set_env,
             show_commit_files,
             submit,
             sync_latest,
