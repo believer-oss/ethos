@@ -2051,6 +2051,7 @@ dependencies = [
  "fs_extra",
  "graphql_client",
  "json-patch",
+ "k8s-openapi",
  "keyring",
  "lazy_static",
  "log",

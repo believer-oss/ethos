@@ -87,6 +87,26 @@
 		const url = `friendshipper://launch/${server.name}`;
 		void navigator.clipboard.writeText(url);
 	};
+
+	const getAgeString = (creationTimestamp: string): string => {
+		const date = new Date(creationTimestamp);
+		const now = new Date();
+		const diff = now.getTime() - date.getTime();
+		const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+		const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+		const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+		const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+		if (days > 0) {
+			return `${days}d ${hours}h`;
+		}
+		if (hours > 0) {
+			return `${hours}h ${minutes}m`;
+		}
+		if (minutes > 0) {
+			return `${minutes}m ${seconds}s`;
+		}
+		return `${seconds}s`;
+	};
 </script>
 
 <Table color="custom" striped={true} divClass="w-full h-full overflow-x-hidden overflow-y-auto">
@@ -94,6 +114,7 @@
 		<TableHead class="text-center border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 			<TableHeadCell class="">Name</TableHeadCell>
 			<TableHeadCell class="">Version</TableHeadCell>
+			<TableHeadCell class="">Age</TableHeadCell>
 			<TableHeadCell class="" />
 		</TableHead>
 	{/if}
@@ -111,12 +132,16 @@
 						? 'bg-secondary-700 dark:bg-space-900'
 						: 'bg-secondary-800 dark:bg-space-950'}"
 				>
-					<TableBodyCell class="py-2 text-xs"
+					<TableBodyCell class="py-2 w-64 max-w-[16rem] text-xs"
 						>{formatServerName(server.displayName || server.name)}</TableBodyCell
 					>
 					<TableBodyCell
-						class="py-2 w-16 max-w-[4rem] break-normal overflow-ellipsis whitespace-nowrap text-xs"
-						>{server.version.substring(0, 8)}</TableBodyCell
+						class="py-2 w-28 max-w-[7rem] break-normal overflow-ellipsis whitespace-nowrap text-xs"
+						><code>{server.version.substring(0, 8)}</code></TableBodyCell
+					>
+					<TableBodyCell
+						class="py-2 w-24 max-w-[6rem] break-normal overflow-ellipsis whitespace-nowrap text-xs text-center"
+						>{getAgeString(server.creationTimestamp)}</TableBodyCell
 					>
 					<TableBodyCell class="py-2 flex gap-2 justify-end">
 						<Button

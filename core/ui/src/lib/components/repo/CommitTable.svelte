@@ -93,7 +93,7 @@
 						? 'font-bold'
 						: 'font-light'}"
 				>
-					{commit.sha}</TableBodyCell
+					<code>{commit.sha}</code></TableBodyCell
 				>
 				<TableBodyCell
 					id="sha-{commit.sha}"
