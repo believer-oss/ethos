@@ -65,7 +65,6 @@
 	let loadingSnapshots = false;
 	let snapshots: Snapshot[] = [];
 
-	$: activeQuickSubmitPull = pulls.find((pull) => pull.headRefName === $repoStatus?.branch);
 	void listen('preferences-closed', () => {
 		preferencesOpen = false;
 	});
@@ -87,13 +86,7 @@
 
 	$: commitMessageValid = validateCommitMessage($commitMessage);
 
-	$: canSubmit =
-		$selectedFiles.length > 0 &&
-		get(commitMessage) !== '' &&
-		commitMessageValid &&
-		!loading &&
-		activeQuickSubmitPull === undefined &&
-		$repoConfig?.trunkBranch === $repoStatus?.branch;
+	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
 
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
@@ -631,9 +624,7 @@
 		This will open a pull request on GitHub and automatically merge it, putting your changes into the
 		merge queue. Because of this, you may need to wait for other builds in the merge queue to finish
 		before your changes will appear on
-		<span class="font-mono text-primary-400">main</span>.<br /><br />
-		You may only <span class="text-primary-400">Quick Submit</span> when on
-		<span class="text-primary-400">main</span>.
+		<span class="font-mono text-primary-400">main</span>.<br />
 	</p>
 </Tooltip>
 

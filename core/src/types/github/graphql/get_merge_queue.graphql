@@ -12,11 +12,18 @@ query GetMergeQueue($owner: String!, $name: String!) {
                         author {
                             __typename
                             name
+                            user {
+                                login
+                            }
                         }
                         message
                     }
                     enqueuedAt
                     state
+                    pullRequest {
+                        id
+                        title
+                    }
                 }
 
             }
