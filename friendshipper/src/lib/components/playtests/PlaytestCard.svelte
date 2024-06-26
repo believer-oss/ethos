@@ -154,7 +154,7 @@
 		<div class="flex items-center gap-2">
 			<span class="text-center text-sm font-bold"
 				>version: <span class="text-primary-400 font-normal"
-					>{playtest.spec.version.substring(0, 8)}</span
+					><code>{playtest.spec.version.substring(0, 8)}</code></span
 				>
 			</span>
 			<span class="text-center font-bold text-sm"

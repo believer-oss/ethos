@@ -130,7 +130,7 @@
 			class="text-sm text-center w-24 text-primary-400 dark:text-primary-400 hover:underline flex-none"
 			href={commit.compareUrl}
 			target="_blank"
-			rel="noopener noreferrer">{commit.commit.substring(0, 8)}</a
+			rel="noopener noreferrer"><code>{commit.commit.substring(0, 8)}</code></a
 		>
 		<p
 			class="text-xs text-left w-80 text-primary-400 dark:text-primary-400 text-ellipsis whitespace-nowrap overflow-hidden flex-auto"
