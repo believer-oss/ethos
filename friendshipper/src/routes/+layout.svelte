@@ -67,6 +67,7 @@
 		getAllCommits,
 		getRepoStatus,
 		verifyLocks,
+		SkipFetch,
 		SkipDllCheck,
 		SkipOfpaTranslation
 	} from '$lib/repo';
@@ -223,7 +224,7 @@
 					const [repoConfigResponse, repoStatusResponse, commitsResponse, locksResponse] =
 						await Promise.all([
 							getRepoConfig(),
-							getRepoStatus(SkipDllCheck.False, SkipOfpaTranslation.True),
+							getRepoStatus(SkipFetch.True, SkipDllCheck.False, SkipOfpaTranslation.True),
 							getAllCommits(),
 							verifyLocks()
 						]);

@@ -17,7 +17,7 @@
 	import { onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { get } from 'svelte/store';
-	import { generateSln, getMergeQueue, getRepoStatus, openProject, syncLatest } from '$lib/repo';
+	import { generateSln, getMergeQueue, openProject, syncLatest, getRepoStatus } from '$lib/repo';
 	import type {
 		ArtifactEntry,
 		GameServerResult,
@@ -51,30 +51,30 @@
 		try {
 			loadingPlaytests = true;
 			$playtests = await getPlaytests();
-			loadingPlaytests = false;
 		} catch (e) {
 			await emit('error', e);
 		}
+		loadingPlaytests = false;
 	};
 
 	const refreshRepo = async () => {
 		try {
 			loadingRepoStatus = true;
 			$repoStatus = await getRepoStatus();
-			loadingRepoStatus = false;
 		} catch (e) {
 			await emit('error', e);
 		}
+		loadingRepoStatus = false;
 	};
 
 	const refreshMergeQueue = async () => {
 		try {
 			loadingMergeQueue = true;
 			mergeQueue = await getMergeQueue();
-			loadingMergeQueue = false;
 		} catch (e) {
 			await emit('error', e);
 		}
+		loadingMergeQueue = false;
 	};
 
 	const refresh = async () => {
@@ -238,7 +238,7 @@
 		void refresh();
 
 		const interval = setInterval(() => {
-			void refresh();
+			void refreshMergeQueue();
 		}, 10000);
 
 		return () => clearInterval(interval);
