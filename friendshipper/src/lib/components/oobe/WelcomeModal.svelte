@@ -14,6 +14,7 @@
 		forceDownloadDlls,
 		forceDownloadEngine,
 		getRepoStatus,
+		SkipFetch,
 		SkipDllCheck,
 		SkipOfpaTranslation
 	} from '$lib/repo';
@@ -167,7 +168,11 @@
 
 			// force update of repo status
 			message = 'Updating repo status...';
-			$repoStatus = await getRepoStatus(SkipDllCheck.False, SkipOfpaTranslation.True);
+			$repoStatus = await getRepoStatus(
+				SkipFetch.False,
+				SkipDllCheck.False,
+				SkipOfpaTranslation.True
+			);
 
 			// run initial fetch of DLLs - it may be worth moving this and the engine fetch
 			// to the clone endpoint on the backend

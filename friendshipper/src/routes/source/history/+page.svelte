@@ -8,7 +8,6 @@
 		Dropdown,
 		DropdownItem
 	} from 'flowbite-svelte';
-	import { onMount } from 'svelte';
 	import { ChevronDownOutline, RefreshOutline, FileCodeSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { CommitTable, ProgressModal } from '@ethos/core';
@@ -168,18 +167,6 @@
 	const refreshAndWait = async () => {
 		await refresh();
 	};
-
-	onMount(() => {
-		void refresh();
-
-		const interval = setInterval(() => {
-			void refresh();
-		}, 30000);
-
-		return () => {
-			clearInterval(interval);
-		};
-	});
 </script>
 
 <div class="flex items-center justify-between gap-2">

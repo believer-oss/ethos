@@ -19,13 +19,19 @@
 		Tooltip
 	} from 'flowbite-svelte';
 	import { LinkOutline, QuestionCircleOutline, RefreshOutline } from 'flowbite-svelte-icons';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/shell';
 	import { sendNotification } from '@tauri-apps/api/notification';
 	import { type CommitFileInfo, ModifiedFilesCard, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
-	import type { GitHubPullRequest, PushRequest, RevertFilesRequest, Snapshot } from '$lib/types';
+	import type {
+		GitHubPullRequest,
+		PushRequest,
+		RevertFilesRequest,
+		Snapshot,
+		RepoStatus
+	} from '$lib/types';
 	import {
 		deleteSnapshot,
 		getCommitFileTextClass,
@@ -84,6 +90,14 @@
 		return regex.test(firstLine);
 	};
 
+	const unsubscribeRepoStatus = repoStatus.subscribe((inRepoStatus: RepoStatus) => {
+		$selectedFiles = $selectedFiles.filter(
+			(file) =>
+				inRepoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
+				inRepoStatus?.untrackedFiles.some((f) => f.path === file.path)
+		);
+	});
+
 	$: commitMessageValid = validateCommitMessage($commitMessage);
 
 	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
@@ -106,13 +120,6 @@
 		} catch (e) {
 			await emit('error', e);
 		}
-
-		// clear selected files if they no longer exist
-		$selectedFiles = $selectedFiles.filter(
-			(file) =>
-				$repoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
-				$repoStatus?.untrackedFiles.some((f) => f.path === file.path)
-		);
 
 		if (triggerLoading) {
 			loading = false;
@@ -267,8 +274,6 @@
 		try {
 			await quickSubmit(req);
 
-			$repoStatus = await getRepoStatus();
-
 			$commitMessage = '';
 			$selectedFiles = [];
 			selectAll = false;
@@ -362,7 +367,6 @@
 
 		const interval = setInterval(() => {
 			if (!quickSubmitting) {
-				void refreshFiles(true);
 				void refreshSnapshots();
 			}
 		}, 10000);
@@ -381,6 +385,10 @@
 			clearInterval(interval);
 			clearInterval(pullsInterval);
 		};
+	});
+
+	onDestroy(() => {
+		unsubscribeRepoStatus();
 	});
 </script>
 
