@@ -1,7 +1,9 @@
 use crate::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use crate::types::github::merge_queue::{get_merge_queue, GetMergeQueue};
+use crate::types::github::pulls::dequeue_pull_request;
 use crate::types::github::pulls::get_pull_request::GetPullRequestRepositoryPullRequest;
 use crate::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
+use crate::types::github::pulls::DequeuePullRequest;
 use crate::types::github::pulls::{
     enqueue_pull_request, get_pull_request, get_pull_request_id, get_pull_requests,
     is_branch_pr_open, EnqueuePullRequest, GetPullRequest, GetPullRequestId, GetPullRequests,
@@ -168,6 +170,19 @@ impl GraphQLClient {
         {
             Ok(_) => Ok(()),
             Err(e) => Err(anyhow!("Error enqueuing PR: {}", e)),
+        }
+    }
+
+    pub async fn dequeue_pull_request(&self, id: String) -> Result<()> {
+        match post_graphql::<DequeuePullRequest, _>(
+            &self.client,
+            GITHUB_GRAPHQL_URL,
+            dequeue_pull_request::Variables { id },
+        )
+        .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow!("Error dequeueing PR: {}", e)),
         }
     }
 

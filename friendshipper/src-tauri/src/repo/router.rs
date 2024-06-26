@@ -14,7 +14,6 @@ where
         .route("/diff", get(operations::diff_handler))
         .route("/log", get(operations::log_handler))
         .route("/pull", post(operations::pull_handler))
-        .route("/push", post(operations::push_handler))
         .route("/show", get(operations::show_commit_files))
         .route(
             "/snapshots",

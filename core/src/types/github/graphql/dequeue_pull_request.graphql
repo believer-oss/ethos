@@ -1,0 +1,5 @@
+mutation DequeuePullRequest($id: ID!) {
+    dequeuePullRequest(input: {id: $id}) {
+        clientMutationId
+    }
+}

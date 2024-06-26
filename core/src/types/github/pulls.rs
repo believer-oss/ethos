@@ -40,6 +40,14 @@ pub struct EnqueuePullRequest;
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/types/github/graphql/schema.graphql",
+    query_path = "src/types/github/graphql/dequeue_pull_request.graphql",
+    response_derives = "Debug"
+)]
+pub struct DequeuePullRequest;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/types/github/graphql/schema.graphql",
     query_path = "src/types/github/graphql/is_branch_pr_open.graphql",
     response_derives = "Debug"
 )]

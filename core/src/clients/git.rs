@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, Utc};
+use lazy_static::lazy_static;
 use parking_lot::RwLock;
+use regex::Regex;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
@@ -15,6 +17,12 @@ use crate::types::locks::VerifyLocksResponse;
 use crate::types::repo::{File, Snapshot};
 
 static SNAPSHOT_MESSAGE: &str = "ethos-core snapshot";
+
+lazy_static! {
+    static ref WORKTREE_DIR_REGEX: Regex = Regex::new(r"^worktree (.+)").unwrap();
+    static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
+    static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
+}
 
 #[cfg(windows)]
 use crate::CREATE_NO_WINDOW;
@@ -74,6 +82,12 @@ pub enum PullStashStrategy {
     None,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LfsMode {
+    Inflated,
+    Stubs,
+}
+
 #[derive(Clone, Debug)]
 pub struct Git {
     pub repo_path: PathBuf,
@@ -85,6 +99,14 @@ pub struct Opts<'a> {
     pub ignored_errors: &'a [&'a str],
     pub should_log_stdout: bool,
     pub return_complete_error: bool,
+    pub lfs_mode: LfsMode,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct WorktreeInfo {
+    pub directory: PathBuf,
+    pub sha: String,
+    pub branch: Option<String>, // if None, it is detached
 }
 
 impl Default for Opts<'_> {
@@ -93,6 +115,7 @@ impl Default for Opts<'_> {
             ignored_errors: &[],
             should_log_stdout: true,
             return_complete_error: false,
+            lfs_mode: LfsMode::Inflated,
         }
     }
 }
@@ -103,6 +126,7 @@ impl Opts<'_> {
             ignored_errors,
             should_log_stdout: true,
             return_complete_error: false,
+            lfs_mode: LfsMode::Inflated,
         }
     }
 
@@ -111,6 +135,7 @@ impl Opts<'_> {
             ignored_errors: &[],
             should_log_stdout: false,
             return_complete_error: false,
+            lfs_mode: LfsMode::Inflated,
         }
     }
 
@@ -119,11 +144,17 @@ impl Opts<'_> {
             ignored_errors: &[],
             should_log_stdout: true,
             return_complete_error: true,
+            lfs_mode: LfsMode::Inflated,
         }
     }
 
     pub fn with_complete_error(mut self) -> Self {
         self.return_complete_error = true;
+        self
+    }
+
+    pub fn with_lfs_stubs(mut self) -> Self {
+        self.lfs_mode = LfsMode::Stubs;
         self
     }
 }
@@ -463,6 +494,48 @@ impl Git {
         self.run(&["rebase", "--quit"], Opts::default()).await
     }
 
+    // sample output of: git worktree list --porcelain
+    // worktree D:/repos/fellowship
+    // HEAD 6ca1438e074b664470df54319cd6272a4d4d565d
+    // branch refs/heads/f11r-rjd-test3
+    //
+    // worktree D:/repos/fellowship-wt
+    // HEAD b09777a82eaa707f722bcf0d2566b6104f43bc11
+    // detached
+    pub async fn list_worktrees(&self) -> anyhow::Result<Vec<WorktreeInfo>> {
+        let output = self
+            .run_and_collect_output(
+                &["worktree", "list", "--porcelain"],
+                Opts {
+                    ignored_errors: &[],
+                    should_log_stdout: false,
+                    return_complete_error: true,
+                    lfs_mode: LfsMode::Stubs,
+                },
+            )
+            .await?;
+
+        let mut entries: Vec<WorktreeInfo> = vec![];
+        let mut info = WorktreeInfo::default();
+        for line in output.lines() {
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(caps) = WORKTREE_DIR_REGEX.captures(line) {
+                info.directory = caps[1].to_string().into();
+            } else if let Some(caps) = WORKTREE_SHA_REGEX.captures(line) {
+                info.sha = caps[1].to_string();
+            } else if let Some(caps) = WORKTREE_BRANCH_REGEX.captures(line) {
+                info.branch = caps.get(2).map(|m| m.as_str().to_string());
+                entries.push(info.clone());
+                info = WorktreeInfo::default();
+            }
+        }
+
+        Ok(entries)
+    }
+
     pub async fn run_and_collect_output<'a>(
         &self,
         args: &[&str],
@@ -506,6 +579,10 @@ impl Git {
 
         // disable clone protection
         cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+
+        if opts.lfs_mode == LfsMode::Stubs {
+            cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
+        }
 
         if !&self.repo_path.as_os_str().is_empty() {
             // if the first arg is clone, set current dir to the parent, then canonicalize
