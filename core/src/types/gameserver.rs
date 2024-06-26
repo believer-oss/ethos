@@ -1,3 +1,4 @@
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use kube_derive::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,7 @@ pub struct GameServerStatus {
     pub netimgui_port: i32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameServerResults {
     pub name: String,
@@ -34,6 +35,7 @@ pub struct GameServerResults {
     pub port: i32,
     pub netimgui_port: i32,
     pub version: String,
+    pub creation_timestamp: Time,
 }
 
 impl GameServerResults {

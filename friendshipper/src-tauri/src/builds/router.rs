@@ -4,7 +4,8 @@ use anyhow::Context;
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
@@ -204,6 +205,7 @@ where
             name: "".to_string(),
             display_name: "".to_string(),
             version: "".to_string(),
+            creation_timestamp: Time(Utc::now()),
 
             // these fields matter
             ip: Some(launch_options.ip),

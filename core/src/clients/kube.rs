@@ -254,6 +254,7 @@ impl KubeClient {
                         port,
                         netimgui_port,
                         version: i.spec.version.clone(),
+                        creation_timestamp: i.metadata.creation_timestamp.clone().unwrap(),
                     }
                 })
                 .collect::<Vec<GameServerResults>>()),

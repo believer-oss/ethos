@@ -50,10 +50,14 @@ where
     match servers {
         Ok(servers) => {
             // Don't pass back the server until it's been assigned an IP
-            let servers = servers
+            let mut servers = servers
                 .into_iter()
                 .filter(|server| server.ip.is_some())
                 .collect::<Vec<_>>();
+
+            // Sort by creation timestamp, newest first
+            servers.sort_by(|a, b| b.creation_timestamp.cmp(&a.creation_timestamp));
+
             Ok(Json(servers))
         }
         Err(e) => {
@@ -180,6 +184,7 @@ where
                 port: status.port,
                 netimgui_port: status.netimgui_port,
                 version: server.spec.version.clone(),
+                creation_timestamp: server.metadata.creation_timestamp.unwrap(),
             })),
             None => Err(CoreError::from(anyhow!("Server is not ready yet"))),
         },

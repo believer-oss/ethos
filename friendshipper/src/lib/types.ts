@@ -106,6 +106,7 @@ export interface GameServerResult {
 	port: number;
 	netimguiPort: number;
 	version: string;
+	creationTimestamp: string;
 }
 
 export interface LaunchRequest {
