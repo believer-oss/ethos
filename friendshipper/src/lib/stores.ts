@@ -4,6 +4,7 @@ import type {
 	AppConfig,
 	ArtifactEntry,
 	ArtifactListResponse,
+	CommitMessage,
 	CommitWorkflowInfo,
 	DynamicConfig,
 	Nullable,
@@ -26,7 +27,7 @@ export const builds = writable(<ArtifactListResponse>{});
 export const appConfig = writable(<AppConfig>{});
 export const repoConfig = writable(<Nullable<RepoConfig>>null);
 export const commits = writable(<Commit[]>[]);
-export const commitMessage = writable('');
+export const commitMessage = writable(<string | CommitMessage>'');
 export const selectedFiles = writable(<ModifiedFile[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const workflows = writable(<CommitWorkflowInfo[]>[]);

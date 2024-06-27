@@ -162,6 +162,7 @@ impl AppConfig {
         let settings = Config::builder()
             .add_source(config::File::with_name(config_file.to_str().unwrap()))
             .set_default("trunkBranch", "main")?
+            .set_default("useConventionalCommits", false)?
             .build()?;
 
         // TODO: We'll need some better error handling here. Because the config file is stored
@@ -191,7 +192,7 @@ impl AppConfig {
         .into()
     }
 
-    pub fn load_engine_path_from_repo(&self, repo_config: &RepoConfig) -> anyhow::Result<PathBuf> {
+    pub fn load_engine_path_from_repo(&self, repo_config: &RepoConfig) -> Result<PathBuf> {
         let project_path = self.get_uproject_path(repo_config);
         let uproject = UProject::load(&project_path)?;
         Ok(self.get_engine_path(&uproject))
@@ -243,26 +244,18 @@ pub struct RepoConfig {
     #[serde(default, rename = "gitHooksPath")]
     pub git_hooks_path: Option<String>,
 
-    #[serde(
-        default,
-        rename = "commitRegex",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub commit_regex: Option<String>,
+    #[serde(default, rename = "useConventionalCommits")]
+    pub use_conventional_commits: bool,
+
+    #[serde(default, rename = "conventionalCommitsAllowedTypes")]
+    pub conventional_commits_allowed_types: Vec<String>,
 
     #[serde(
         default,
-        rename = "commitSample",
+        rename = "commitGuidelinesUrl",
         skip_serializing_if = "Option::is_none"
     )]
-    pub commit_sample: Option<String>,
-
-    #[serde(
-        default,
-        rename = "commitDocsUrl",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub commit_docs_url: Option<String>,
+    pub commit_guidelines_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -281,9 +274,18 @@ impl Default for RepoConfig {
             uproject_path: String::default(),
             trunk_branch: "main".to_string(),
             git_hooks_path: None,
-            commit_regex: None,
-            commit_sample: None,
-            commit_docs_url: None,
+            commit_guidelines_url: None,
+            use_conventional_commits: false,
+            conventional_commits_allowed_types: vec![
+                "feat".to_string(),
+                "fix".to_string(),
+                "docs".to_string(),
+                "style".to_string(),
+                "refactor".to_string(),
+                "perf".to_string(),
+                "test".to_string(),
+                "chore".to_string(),
+            ],
         }
     }
 }
@@ -320,7 +322,7 @@ pub struct UProject {
 }
 
 impl UProject {
-    pub fn load(uproject_path: &Path) -> anyhow::Result<UProject, anyhow::Error> {
+    pub fn load(uproject_path: &Path) -> Result<UProject, anyhow::Error> {
         let data: String = match fs::read_to_string(uproject_path) {
             Ok(s) => s,
             Err(e) => bail!("Failed to read UProject file {:?}: {}", uproject_path, e),
@@ -342,7 +344,7 @@ impl UProject {
         CUSTOM_ENGINE_ASSOCIATION_REGEX.is_match(&self.engine_association)
     }
 
-    pub fn get_custom_engine_sha(&self) -> anyhow::Result<String> {
+    pub fn get_custom_engine_sha(&self) -> Result<String> {
         let captures = CUSTOM_ENGINE_ASSOCIATION_REGEX
             .captures(&self.engine_association)
             .unwrap();

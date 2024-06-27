@@ -53,9 +53,9 @@ export interface RepoConfig {
 	uprojectPath: string;
 	trunkBranch: string;
 	gitHooksPath: string;
-	commitRegex?: string;
-	commitSample?: string;
-	commitDocsUrl?: string;
+	commitGuidelinesUrl?: string;
+	useConventionalCommits: boolean;
+	conventionalCommitsAllowedTypes: string[];
 }
 
 // Kubernetes API types
@@ -195,6 +195,12 @@ export interface CommitAuthor {
 
 export interface Commit {
 	author: CommitAuthor;
+	message: string;
+}
+
+export interface CommitMessage {
+	type: string;
+	scope: string;
 	message: string;
 }
 
