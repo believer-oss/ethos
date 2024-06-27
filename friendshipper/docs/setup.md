@@ -12,7 +12,7 @@ Friendshipper currently relies on:
     - [f11r-operator](https://github.com/believer-os/f11r-operator) is a Kubernetes operator that stores GameServers and Playtests as custom resources. Friendshipper creates these resources directly against the Kubernetes API.
   - SSO is the _only_ authentication method supported by Friendshipper currently
 - Unreal Engine 5
-  - Friendshipper provdes a mechanism for downloading new versions of your studio's source-built engine, but these mechanisms assume the project's engine is Unreal.
+  - Friendshipper provides a mechanism for downloading new versions of your studio's source-built engine, but these mechanisms assume the project's engine is Unreal.
   - Friendshipper launches game servers with command line arguments that assume an Unreal Engine format.
 - GitHub
   - Friendshipper uses GitHub's merge queue feature for submitting work. Currently, your repo must have merge queue enabled.
