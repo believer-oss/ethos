@@ -4,8 +4,10 @@
 		Button,
 		ButtonGroup,
 		Card,
+		Input,
 		Label,
 		Modal,
+		Select,
 		Spinner,
 		TabItem,
 		Table,
@@ -19,18 +21,19 @@
 		Tooltip
 	} from 'flowbite-svelte';
 	import { LinkOutline, QuestionCircleOutline, RefreshOutline } from 'flowbite-svelte-icons';
-	import { onMount, onDestroy } from 'svelte';
-	import { emit, listen } from '@tauri-apps/api/event';
+	import { onDestroy, onMount } from 'svelte';
+	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/shell';
 	import { sendNotification } from '@tauri-apps/api/notification';
 	import { type CommitFileInfo, ModifiedFilesCard, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import type {
 		GitHubPullRequest,
+		Nullable,
 		PushRequest,
+		RepoStatus,
 		RevertFilesRequest,
-		Snapshot,
-		RepoStatus
+		Snapshot
 	} from '$lib/types';
 	import {
 		deleteSnapshot,
@@ -60,6 +63,12 @@
 	let promptForPAT = false;
 	let preferencesOpen = false;
 
+	// commit inputs
+	let tempCommitType = '';
+	let tempCommitScope = '';
+	let tempCommitMessage = '';
+	let commitMessageValid = false;
+
 	// commit file details
 	let expandedCommit = '';
 	let loadingCommitFiles = false;
@@ -71,34 +80,22 @@
 	let loadingSnapshots = false;
 	let snapshots: Snapshot[] = [];
 
-	void listen('preferences-closed', () => {
-		preferencesOpen = false;
-	});
-
-	const validateCommitMessage = (message: string): boolean => {
-		if (!message) {
-			return true;
+	const validateCommitMessage = (): boolean => {
+		const message = get(commitMessage);
+		if (typeof message === 'string') {
+			return message !== '';
 		}
 
-		if (!$repoConfig?.commitRegex) {
-			return true;
-		}
-
-		const firstLine = message.split('\n')[0];
-
-		const regex = new RegExp($repoConfig.commitRegex);
-		return regex.test(firstLine);
+		return message.type !== '' && message.scope !== '' && message.message !== '';
 	};
 
-	const unsubscribeRepoStatus = repoStatus.subscribe((inRepoStatus: RepoStatus) => {
+	const unsubscribeRepoStatus = repoStatus.subscribe((inRepoStatus: Nullable<RepoStatus>) => {
 		$selectedFiles = $selectedFiles.filter(
 			(file) =>
 				inRepoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
 				inRepoStatus?.untrackedFiles.some((f) => f.path === file.path)
 		);
 	});
-
-	$: commitMessageValid = validateCommitMessage($commitMessage);
 
 	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
 
@@ -266,8 +263,13 @@
 
 		await refreshFiles(false);
 
+		const message = get(commitMessage);
+
 		const req: PushRequest = {
-			commitMessage: $commitMessage,
+			commitMessage:
+				typeof message === 'string'
+					? message
+					: `${message.type}(${message.scope}): ${message.message}`,
 			files: $selectedFiles.map((file) => file.path)
 		};
 
@@ -357,6 +359,15 @@
 		void refreshFiles(true);
 		void refreshSnapshots();
 
+		const currentCommitMessage = get(commitMessage);
+		if (typeof currentCommitMessage === 'string') {
+			tempCommitMessage = currentCommitMessage;
+		} else {
+			tempCommitType = currentCommitMessage.type;
+			tempCommitScope = currentCommitMessage.scope;
+			tempCommitMessage = currentCommitMessage.message;
+		}
+
 		if ($appConfig.githubPAT === '') {
 			if (!preferencesOpen) {
 				promptForPAT = true;
@@ -431,34 +442,85 @@
 			class="w-full p-4 sm:p-4 max-w-full h-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 		>
 			<div class="flex flex-col w-full h-full gap-2">
-				<Label for="commit-message" class="mb-2 text-white">Commit Message</Label>
-				<Textarea
-					id="commit-message"
-					bind:value={$commitMessage}
-					class="text-white bg-secondary-800 dark:bg-space-950 min-h-[4rem] h-full border-gray-400"
-				/>
-				{#if !commitMessageValid}
-					<div class="p-1 bg-secondary-800 dark:bg-space-950">
-						<p class="text-red-500 text-center text-sm">
-							Your message is missing the appropriate format.
-
-							{#if $repoConfig?.commitSample}
-								<br />Example commit:
-								<code class="text-white p-0.5 bg-secondary-800 dark:bg-space-950"
-									>{$repoConfig.commitSample}</code
-								>
-							{/if}
-						</p>
-						{#if $repoConfig?.commitDocsUrl}
-							<Button
-								size="xs"
-								class="w-full my-1"
-								color="primary"
-								on:click={() => open($repoConfig?.commitDocsUrl)}>Learn More</Button
-							>
-						{/if}
+				<div
+					class="flex gap-2 w-full items-center"
+					class:justify-between={$repoConfig?.commitGuidelinesUrl}
+				>
+					<Label for="commit-message" class="text-white w-full">Commit Message</Label>
+					{#if $repoConfig?.commitGuidelinesUrl}
+						<div class="flex flex-row w-full align-middle justify-end">
+							<ButtonGroup class="space-x-px">
+								<Button
+									outline
+									size="xs"
+									color="primary"
+									class="py-1"
+									on:click={async () => {
+										if ($repoConfig?.commitGuidelinesUrl) {
+											await open($repoConfig.commitGuidelinesUrl);
+										}
+									}}
+									>Commit Guidelines
+									<LinkOutline class="w-6 pl-2 align-middle" />
+								</Button>
+							</ButtonGroup>
+						</div>
+					{/if}
+				</div>
+				{#if $repoConfig?.useConventionalCommits}
+					<div class="flex gap-2 w-full">
+						<Select
+							bind:value={tempCommitType}
+							placeholder="Choose commit type"
+							on:input={() => {
+								$commitMessage = {
+									type: tempCommitType,
+									scope: tempCommitScope,
+									message: tempCommitMessage
+								};
+								commitMessageValid = validateCommitMessage();
+							}}
+							class="text-white bg-secondary-800 dark:bg-space-950"
+						>
+							{#each $repoConfig?.conventionalCommitsAllowedTypes as type}
+								<option value={type}>{type}</option>
+							{/each}
+						</Select>
+						<Input
+							type="text"
+							bind:value={tempCommitScope}
+							on:input={() => {
+								commitMessageValid = validateCommitMessage();
+								$commitMessage = {
+									type: tempCommitType,
+									scope: tempCommitScope,
+									message: tempCommitMessage
+								};
+							}}
+							class="text-white bg-secondary-800 dark:bg-space-950"
+							placeholder="Scope (required)"
+						/>
 					</div>
 				{/if}
+				<Textarea
+					id="commit-message"
+					placeholder="Message (required)"
+					bind:value={tempCommitMessage}
+					on:input={() => {
+						if ($repoConfig?.useConventionalCommits) {
+							$commitMessage = {
+								type: tempCommitType,
+								scope: tempCommitScope,
+								message: tempCommitMessage
+							};
+						} else {
+							$commitMessage = tempCommitMessage;
+						}
+
+						commitMessageValid = validateCommitMessage();
+					}}
+					class="text-white bg-secondary-800 dark:bg-space-950 min-h-[4rem] h-full border-gray-400"
+				/>
 				<div class="flex flex-row w-full align-middle justify-end">
 					<ButtonGroup class="space-x-px">
 						<Button
@@ -632,7 +694,9 @@
 		This will open a pull request on GitHub and automatically merge it, putting your changes into the
 		merge queue. Because of this, you may need to wait for other builds in the merge queue to finish
 		before your changes will appear on
-		<span class="font-mono text-primary-400">main</span>.<br />
+		<span class="font-mono text-primary-400">main</span>.<br /><br />
+		You may only <span class="text-primary-400">Quick Submit</span> when on
+		<span class="text-primary-400">main</span>.
 	</p>
 </Tooltip>
 
