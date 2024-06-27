@@ -27,4 +27,8 @@ Friendshipper assumes particular configuration settings across your infrastructu
 
 ### AWS
 
+WIP
+
 #### SSO
+
+WIP
