@@ -277,6 +277,11 @@
 			await quickSubmit(req);
 
 			$commitMessage = '';
+
+			tempCommitType = '';
+			tempCommitScope = '';
+			tempCommitMessage = '';
+
 			$selectedFiles = [];
 			selectAll = false;
 
