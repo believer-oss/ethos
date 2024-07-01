@@ -30,6 +30,7 @@
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
 	import { restart } from '$lib/system';
+	import { resetRepo } from '$lib/repo';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -138,6 +139,18 @@
 		try {
 			await resetLongtail();
 		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const handleResetRepo = async () => {
+		try {
+			await resetRepo();
+
+			showModal = false;
+			await emit('success', 'Repo reset to main.');
+		} catch (e) {
+			showModal = false;
 			await emit('error', e);
 		}
 	};
@@ -561,6 +574,17 @@
 					<span class="text-xs text-gray-300 font-mono w-3/4">In case of emergency...</span>
 				</div>
 				<div class="flex flex-col gap-2 text-white">
+					<div class="flex gap-2 items-center">
+						<Button
+							outline
+							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+							on:click={handleResetRepo}
+							>Reset Repo to Main
+						</Button>
+						<span class="w-full"
+							>Hard reset to <code>main</code> (will revert all local changes)</span
+						>
+					</div>
 					<div class="flex gap-2 items-center">
 						<Button
 							outline

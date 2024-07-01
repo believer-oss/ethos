@@ -328,7 +328,7 @@ impl Task for SubmitOp {
                 )
                 .await?;
 
-            worktree_path
+            worktree_path.clone()
         };
 
         let worktree_branch = format!("{}-wt", f11r_branch);

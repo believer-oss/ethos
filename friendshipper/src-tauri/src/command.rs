@@ -213,6 +213,22 @@ pub async fn reset_longtail(state: tauri::State<'_, State>) -> Result<(), TauriE
     Ok(())
 }
 
+#[tauri::command]
+pub async fn reset_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/reset", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        error!("Error resetting repo: {}", err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 // Argo
 #[tauri::command]
 pub async fn get_workflows(
