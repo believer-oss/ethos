@@ -234,6 +234,18 @@ impl Git {
         self.run(&["push", "origin", branch], Opts::default()).await
     }
 
+    pub async fn hard_reset(&self, branch: &str) -> anyhow::Result<()> {
+        // if .git/index.lock exists, wait for it to be gone
+        let index_lock_path = self.repo_path.join(".git/index.lock");
+        while index_lock_path.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        self.run(&["reset", "--hard"], Opts::default()).await?;
+        self.run(&["clean", "-fd"], Opts::default()).await?;
+        self.run(&["checkout", branch], Opts::default()).await
+    }
+
     pub async fn checkout(&self, branch_or_commit: &str) -> anyhow::Result<()> {
         self.run(&["checkout", branch_or_commit], Opts::default())
             .await

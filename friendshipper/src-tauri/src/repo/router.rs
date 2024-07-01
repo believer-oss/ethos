@@ -34,6 +34,7 @@ where
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
+        .route("/reset", post(operations::reset_repo))
         .route("/revert", post(operations::revert_files_handler::<T>))
         .route("/locks/verify", get(operations::verify_locks_handler))
         .route("/locks/lock", post(operations::acquire_locks_handler))
