@@ -4,11 +4,12 @@ use axum::{async_trait, Json};
 use octocrab::models::pulls::MergeableState;
 use octocrab::Octocrab;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
+use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
 use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
@@ -198,10 +199,9 @@ impl Task for SubmitOp {
                     .dequeue_pull_request(id.to_string())
                     .await;
                 if let Err(e) = res {
-                    tracing::warn!(
+                    warn!(
                         "Failed to cancel existing pull request {}. Reason: {}",
-                        id,
-                        e
+                        id, e
                     );
                     needs_new_pr = true;
                 }
@@ -446,7 +446,7 @@ where
     };
 
     let submit_op = SubmitOp {
-        files: request.files,
+        files: request.files.clone(),
         commit_message: request.commit_message.clone(),
 
         app_config: state.app_config.clone(),
@@ -465,10 +465,28 @@ where
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(submit_op));
 
+    // save a snapshot before submitting
+    let git_client = state.git();
+    let snapshot = git_client
+        .save_snapshot(request.files, SaveSnapshotIndexOption::KeepIndex)
+        .await?;
+    let current_branch = git_client.current_branch().await?;
+
     state.operation_tx.send(sequence).await?;
 
     match rx.await {
-        Ok(Some(e)) => return Err(CoreError(e)),
+        Ok(Some(e)) => {
+            // attempt to reset to original branch and restore snapshot
+            let modified_files = state.repo_status.read().clone().modified_files;
+            git_client.hard_reset(&current_branch).await?;
+            git_client
+                .restore_snapshot(&snapshot.commit, modified_files.0)
+                .await?;
+
+            warn!("Failed to submit, but we've attempted to restore the previous state.");
+
+            return Err(CoreError(e));
+        }
         Ok(None) => {}
         Err(e) => return Err(e.into()),
     }
