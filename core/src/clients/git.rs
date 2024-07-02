@@ -234,12 +234,16 @@ impl Git {
         self.run(&["push", "origin", branch], Opts::default()).await
     }
 
-    pub async fn hard_reset(&self, branch: &str) -> anyhow::Result<()> {
-        // if .git/index.lock exists, wait for it to be gone
+    pub async fn wait_for_lock(&self) {
         let index_lock_path = self.repo_path.join(".git/index.lock");
         while index_lock_path.exists() {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+    }
+
+    pub async fn hard_reset(&self, branch: &str) -> anyhow::Result<()> {
+        // if .git/index.lock exists, wait for it to be gone
+        self.wait_for_lock().await;
 
         self.run(&["reset", "--hard"], Opts::default()).await?;
         self.run(&["clean", "-fd"], Opts::default()).await?;
@@ -323,6 +327,8 @@ impl Git {
         paths: Vec<String>,
         keep_index: SaveSnapshotIndexOption,
     ) -> anyhow::Result<Snapshot> {
+        self.wait_for_lock().await;
+
         let mut args = vec!["add", "--"];
         for path in &paths {
             args.push(path);
