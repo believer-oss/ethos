@@ -130,6 +130,8 @@ export const fixRebase = async (): Promise<void> => invoke('fix_rebase');
 
 export const rebase = async (): Promise<void> => invoke('rebase');
 
+export const resetRepo = async (): Promise<void> => invoke('reset_repo');
+
 export const showCommitFiles = async (
 	commit: string,
 	stash: boolean = false

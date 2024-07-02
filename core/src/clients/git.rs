@@ -234,6 +234,18 @@ impl Git {
         self.run(&["push", "origin", branch], Opts::default()).await
     }
 
+    pub async fn hard_reset(&self, branch: &str) -> anyhow::Result<()> {
+        // if .git/index.lock exists, wait for it to be gone
+        let index_lock_path = self.repo_path.join(".git/index.lock");
+        while index_lock_path.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        self.run(&["reset", "--hard"], Opts::default()).await?;
+        self.run(&["clean", "-fd"], Opts::default()).await?;
+        self.run(&["checkout", branch], Opts::default()).await
+    }
+
     pub async fn checkout(&self, branch_or_commit: &str) -> anyhow::Result<()> {
         self.run(&["checkout", branch_or_commit], Opts::default())
             .await
@@ -310,7 +322,7 @@ impl Git {
         &self,
         paths: Vec<String>,
         keep_index: SaveSnapshotIndexOption,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Snapshot> {
         let mut args = vec!["add", "--"];
         for path in &paths {
             args.push(path);
@@ -330,6 +342,9 @@ impl Git {
 
         let snapshots = self.list_snapshots().await?;
 
+        let first = snapshots.first();
+        assert!(first.is_some(), "Failed to get snapshot");
+
         // if there are more than 10, `git stash drop` each one after the 10th
         if snapshots.len() > 10 {
             for snapshot in snapshots.iter().skip(10) {
@@ -343,7 +358,10 @@ impl Git {
             args.push(path);
         }
 
-        self.run(&args, Opts::default()).await
+        self.run(&args, Opts::default()).await?;
+
+        // We can unwrap because we asserted earlier
+        Ok(first.unwrap().clone())
     }
 
     pub async fn delete_snapshot(&self, commit: &str) -> anyhow::Result<()> {
