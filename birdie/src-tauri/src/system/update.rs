@@ -23,6 +23,8 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
     let token = state.app_config.read().ensure_github_pat()?;
     let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
 
+    let app_name = APP_NAME.to_lowercase();
+
     let releases = octocrab
         .repos(REPO_OWNER, REPO_NAME)
         .releases()
@@ -30,28 +32,53 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
         .send()
         .await?;
 
-    let latest: Option<String> = releases
+    let mut latest = releases
         .into_iter()
         .filter_map(|release| {
             if release.draft || release.prerelease {
                 return None;
             }
 
+            // if release doesn't match the format app_name-vX.Y.Z, skip it
+            if !release.tag_name.starts_with(&format!("{}-v", app_name)) {
+                return None;
+            }
+
+            // get semver
+            let version = release
+                .tag_name
+                .strip_prefix(&format!("{}-v", app_name))
+                .unwrap();
+            if semver::Version::parse(version).is_err() {
+                return None;
+            }
+
             let tag_name = release.tag_name.clone();
-            if release.tag_name.starts_with(APP_NAME)
-                && release
-                    .assets
-                    .iter()
-                    .any(|asset| asset.name == format!("{}{}", APP_NAME, BIN_SUFFIX))
+            if release
+                .assets
+                .iter()
+                .any(|asset| asset.name == format!("{}{}", &app_name, BIN_SUFFIX))
             {
                 return Some(tag_name);
             }
 
             None
         })
-        .next();
+        .collect::<Vec<String>>();
 
-    match latest {
+    // sort by semver
+    latest.sort_by(|a, b| {
+        // we can unwrap because we asserted this format earlier
+        let a = a.strip_prefix(&format!("{}-v", &app_name)).unwrap();
+        let b = b.strip_prefix(&format!("{}-v", &app_name)).unwrap();
+        let a = semver::Version::parse(a).unwrap();
+        let b = semver::Version::parse(b).unwrap();
+
+        // reverse it
+        b.cmp(&a)
+    });
+
+    match latest.first() {
         Some(latest) => Ok(latest
             .strip_prefix(&format!("{}-v", APP_NAME))
             .unwrap()
