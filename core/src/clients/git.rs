@@ -322,7 +322,7 @@ impl Git {
         &self,
         paths: Vec<String>,
         keep_index: SaveSnapshotIndexOption,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Snapshot> {
         let mut args = vec!["add", "--"];
         for path in &paths {
             args.push(path);
@@ -342,6 +342,9 @@ impl Git {
 
         let snapshots = self.list_snapshots().await?;
 
+        let first = snapshots.first();
+        assert!(first.is_some(), "Failed to get snapshot");
+
         // if there are more than 10, `git stash drop` each one after the 10th
         if snapshots.len() > 10 {
             for snapshot in snapshots.iter().skip(10) {
@@ -355,7 +358,10 @@ impl Git {
             args.push(path);
         }
 
-        self.run(&args, Opts::default()).await
+        self.run(&args, Opts::default()).await?;
+
+        // We can unwrap because we asserted earlier
+        Ok(first.unwrap().clone())
     }
 
     pub async fn delete_snapshot(&self, commit: &str) -> anyhow::Result<()> {
