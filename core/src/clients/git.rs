@@ -330,7 +330,13 @@ impl Git {
 
         self.run(&args, Opts::default()).await?;
 
-        let mut stash_args = vec!["stash", "push", "-m", SNAPSHOT_MESSAGE];
+        let mut stash_args = vec![
+            "stash",
+            "push",
+            "--include-untracked",
+            "--message",
+            SNAPSHOT_MESSAGE,
+        ];
         if keep_index == SaveSnapshotIndexOption::KeepIndex {
             stash_args.push("--keep-index");
         }
