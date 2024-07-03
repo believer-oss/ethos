@@ -1,15 +1,16 @@
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
+use directories_next::ProjectDirs;
 use octocrab::models::pulls::MergeableState;
 use octocrab::Octocrab;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
 use crate::engine::EngineProvider;
+use crate::APP_NAME;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
 use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
@@ -145,21 +146,54 @@ impl Task for GitHubSubmitOp {
 impl Task for SubmitOp {
     async fn execute(&self) -> anyhow::Result<()> {
         // save a snapshot before submitting
-        let snapshot = self
-            .git_client
-            .save_snapshot(self.files.clone(), SaveSnapshotIndexOption::KeepIndex)
-            .await?;
+        // make sure we have a temp dir for copying our files
+        let proj_dirs =
+            ProjectDirs::from("", "", APP_NAME).ok_or(anyhow!("Failed to get project dirs"))?;
+
+        let mut stash_path = proj_dirs.data_dir().to_path_buf();
+        stash_path.push(".stash");
+
+        // reset the stash path, delete and recreate
+        if stash_path.exists() {
+            std::fs::remove_dir_all(&stash_path)?;
+        }
+
+        std::fs::create_dir_all(&stash_path)?;
+
         let current_branch = self.git_client.current_branch().await?;
+
+        // identify files that were deleted in the request
+        let (stashed_files, deleted_files): (Vec<String>, Vec<String>) =
+            self.files.iter().cloned().partition(|file| {
+                // build path from repo path
+                let path = self.git_client.repo_path.join(file);
+                // check if the file exists
+                path.exists()
+            });
+
+        // for each file, copy it to the stash
+        for file in &stashed_files {
+            let src = self.git_client.repo_path.join(file.clone());
+            let dest = stash_path.join(file);
+
+            std::fs::create_dir_all(dest.parent().unwrap())?;
+            std::fs::copy(src, dest)?;
+        }
 
         match self.execute_internal().await {
             Ok(_) => Ok(()),
             Err(e) => {
                 // attempt to reset to original branch and restore snapshot
-                let modified_files = self.repo_status.read().clone().modified_files;
-                self.git_client.hard_reset(&current_branch).await?;
-                self.git_client
-                    .restore_snapshot(&snapshot.commit, modified_files.0)
-                    .await?;
+                // if this fails for any reason, we should simply log, then return the original error
+                let _ = self
+                    .recover(stash_path, &current_branch, stashed_files, deleted_files)
+                    .await
+                    .map_err(|err| {
+                        warn!(
+                            "Failed to recover from error during submit operation: {}",
+                            err
+                        );
+                    });
 
                 Err(e)
             }
@@ -307,14 +341,12 @@ impl SubmitOp {
                 }
             }
 
-            // commit op uses status to ensure there are staged files to commit, so our status
-            // needs to be up-to-date
-            status_op.execute().await?;
-
+            // We can skip the status check because we know for a fact that there are staged files
             let commit_op = CommitOp {
                 message: self.commit_message.clone(),
                 repo_status: self.repo_status.clone(),
                 git_client: self.git_client.clone(),
+                skip_status_check: true,
             };
 
             commit_op.execute().await?;
@@ -438,6 +470,34 @@ impl SubmitOp {
                 };
 
                 gh_op.execute().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn recover(
+        &self,
+        stash_path: PathBuf,
+        target_branch: &str,
+        stashed_files: Vec<String>,
+        deleted_files: Vec<String>,
+    ) -> anyhow::Result<()> {
+        self.git_client.hard_reset(target_branch).await?;
+
+        // for any stashed files, copy them back
+        for file in stashed_files {
+            let src = stash_path.join(&file);
+            let dest = self.git_client.repo_path.join(&file);
+
+            std::fs::copy(src, dest)?;
+        }
+
+        // for any deleted files, we should ensure they are deleted
+        for file in deleted_files {
+            let path = self.git_client.repo_path.join(file);
+            if path.exists() {
+                std::fs::remove_file(path)?;
             }
         }
 

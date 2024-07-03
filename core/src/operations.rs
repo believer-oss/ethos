@@ -16,12 +16,13 @@ pub struct CommitOp {
     pub message: String,
     pub repo_status: RepoStatusRef,
     pub git_client: git::Git,
+    pub skip_status_check: bool,
 }
 
 #[async_trait]
 impl Task for CommitOp {
     async fn execute(&self) -> anyhow::Result<()> {
-        {
+        if !self.skip_status_check {
             let repo_status = self.repo_status.read();
             if !repo_status.has_staged_changes {
                 return Ok(());

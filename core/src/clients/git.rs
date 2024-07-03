@@ -289,7 +289,6 @@ impl Git {
             .lines()
             .filter_map(|line| {
                 if !line.contains(SNAPSHOT_MESSAGE) {
-                    info!("Skipping line due to wrong message: {}", line);
                     return None;
                 }
 
