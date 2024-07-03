@@ -329,6 +329,12 @@ impl Git {
     ) -> anyhow::Result<Snapshot> {
         self.wait_for_lock().await;
 
+        // filter out any deleted files
+        let paths: Vec<String> = paths
+            .into_iter()
+            .filter(|path| self.repo_path.join(path).exists())
+            .collect();
+
         let mut args = vec!["add", "--"];
         for path in &paths {
             args.push(path);

@@ -286,6 +286,7 @@
 			selectAll = false;
 
 			await refreshPulls();
+			await refreshFiles(true);
 
 			await emit('success', 'Pull request opened!');
 		} catch (e) {
