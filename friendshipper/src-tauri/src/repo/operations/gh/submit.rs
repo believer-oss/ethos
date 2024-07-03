@@ -144,6 +144,35 @@ impl Task for GitHubSubmitOp {
 #[async_trait]
 impl Task for SubmitOp {
     async fn execute(&self) -> anyhow::Result<()> {
+        // save a snapshot before submitting
+        let snapshot = self
+            .git_client
+            .save_snapshot(self.files.clone(), SaveSnapshotIndexOption::KeepIndex)
+            .await?;
+        let current_branch = self.git_client.current_branch().await?;
+
+        match self.execute_internal().await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // attempt to reset to original branch and restore snapshot
+                let modified_files = self.repo_status.read().clone().modified_files;
+                self.git_client.hard_reset(&current_branch).await?;
+                self.git_client
+                    .restore_snapshot(&snapshot.commit, modified_files.0)
+                    .await?;
+
+                Err(e)
+            }
+        }
+    }
+
+    fn get_name(&self) -> String {
+        "SubmitOp".to_string()
+    }
+}
+
+impl SubmitOp {
+    pub async fn execute_internal(&self) -> anyhow::Result<()> {
         let base_branch = self.repo_config.read().trunk_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
         let mut f11r_branch = {
@@ -414,10 +443,6 @@ impl Task for SubmitOp {
 
         Ok(())
     }
-
-    fn get_name(&self) -> String {
-        "SubmitOp".to_string()
-    }
 }
 
 pub async fn submit_handler<T>(
@@ -465,26 +490,10 @@ where
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(submit_op));
 
-    // save a snapshot before submitting
-    let git_client = state.git();
-    let snapshot = git_client
-        .save_snapshot(request.files, SaveSnapshotIndexOption::KeepIndex)
-        .await?;
-    let current_branch = git_client.current_branch().await?;
-
     state.operation_tx.send(sequence).await?;
 
     match rx.await {
         Ok(Some(e)) => {
-            // attempt to reset to original branch and restore snapshot
-            let modified_files = state.repo_status.read().clone().modified_files;
-            git_client.hard_reset(&current_branch).await?;
-            git_client
-                .restore_snapshot(&snapshot.commit, modified_files.0)
-                .await?;
-
-            warn!("Failed to submit, but we've attempted to restore the previous state.");
-
             return Err(CoreError(e));
         }
         Ok(None) => {}
