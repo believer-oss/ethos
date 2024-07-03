@@ -146,6 +146,7 @@ pub async fn push_handler(
         message: request.commit_message,
         repo_status: state.repo_status.clone(),
         git_client: state.git(),
+        skip_status_check: false,
     };
 
     sequence.push(Box::new(commit_op));
