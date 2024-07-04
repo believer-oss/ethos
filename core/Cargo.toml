@@ -79,3 +79,4 @@ futures = "0.3.29"
 toml = "0.8.8"
 async-trait = "0.1"
 windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+walkdir = "2.5.0"

@@ -9,6 +9,7 @@ use axum::{debug_handler, Json};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as TokioRwLock;
 use tracing::warn;
+use walkdir::WalkDir;
 
 use ethos_core::clients::git;
 use ethos_core::clients::git::Opts;
@@ -105,6 +106,12 @@ pub async fn lock_files(
     State(state): State<Arc<AppState>>,
     Json(request): Json<LockRequest>,
 ) -> Result<Json<LockResponse>, CoreError> {
+    // repopulate lock cache
+    {
+        let mut lock_cache = state.lock_cache.write().await;
+        lock_cache.populate_cache().await?;
+    }
+
     let resp = internal_lock_handler(state.clone(), request.clone(), LockOperation::Lock).await?;
 
     let repo_path = PathBuf::from(state.app_config.read().repo_path.clone());
@@ -135,6 +142,12 @@ pub async fn unlock_files(
     State(state): State<Arc<AppState>>,
     Json(request): Json<LockRequest>,
 ) -> Result<Json<LockResponse>, CoreError> {
+    // repopulate lock cache
+    {
+        let mut lock_cache = state.lock_cache.write().await;
+        lock_cache.populate_cache().await?;
+    }
+
     let resp = internal_lock_handler(state.clone(), request.clone(), LockOperation::Unlock).await?;
 
     let repo_path = PathBuf::from(state.app_config.read().repo_path.clone());
@@ -166,10 +179,54 @@ async fn internal_lock_handler(
 ) -> Result<Json<LockResponse>, CoreError> {
     let github_pat = state.app_config.read().ensure_github_pat()?;
 
+    // make a new vec of paths
+    // for each path in self.paths, if path is a directory, add all files in the directory recursively to the vec
+    // if path is a file, add the file to the vec
+    let git_client = state.git();
+    let repo_path = git_client
+        .repo_path
+        .to_str()
+        .expect("was the git client passed an invalid repo path?");
+    let mut paths = vec![];
+    for path in &request.paths {
+        let full_path = std::path::Path::new(repo_path).join(path);
+        if full_path.is_dir() {
+            for entry in WalkDir::new(full_path) {
+                let entry = entry?;
+                if entry.file_type().is_file() {
+                    // remove repo dir from path
+                    let entry = entry.path().strip_prefix(repo_path)?;
+                    paths.push(entry.to_string_lossy().to_string().replace("\\", "/"));
+                }
+            }
+        } else {
+            paths.push(path.to_string());
+        }
+    }
+
+    // if we're locking, retain any paths that are unlocked
+    // if we're unlocking, retain any paths that are locked by us
+    {
+        let lock_cache = state.lock_cache.read().await;
+        paths.retain(|path| {
+            if let Some(entry) = lock_cache.get(path) {
+                // Unlocking and ours
+                if op == LockOperation::Unlock {
+                    return entry.ours;
+                }
+
+                false
+            } else {
+                // Locking and unlocked
+                op == LockOperation::Lock
+            }
+        });
+    }
+
     let lock_op = {
         LockOp {
             git_client: state.git(),
-            paths: request.paths,
+            paths,
             op,
             github_pat,
             force: request.force,

@@ -17,7 +17,7 @@
 	import { onMount, tick } from 'svelte';
 	import { CheckSolid, CloseSolid, EditOutline, FolderSolid } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
-	import { CommitTable, ProgressModal } from '@ethos/core';
+	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import {
 		downloadLFSFiles,
@@ -30,7 +30,6 @@
 		verifyLocks
 	} from '$lib/repo';
 	import {
-		type Commit,
 		type DirectoryMetadata,
 		FileType,
 		type LFSFile,
@@ -130,7 +129,17 @@
 		loadingFileHistory = false;
 	};
 
-	const handleFileToggled = (selected: LFSFile) => {
+	const selectFile = async (file: LFSFile) => {
+		selectedFile = file;
+
+		await handleShowFileHistory();
+	};
+
+	const handleFileToggled = async (selected: LFSFile) => {
+		if (selected.fileType === FileType.File) {
+			await selectFile(selected);
+		}
+
 		// if ctrl is held, select or unselect everything in between
 		if (shiftHeld) {
 			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
@@ -237,6 +246,8 @@
 	};
 
 	const handleDownloadSelectedFiles = async () => {
+		loading = true;
+
 		if (selectedFiles.length === 0) return;
 
 		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
@@ -248,6 +259,46 @@
 		} catch (e) {
 			await emit('error', e);
 		}
+
+		loading = false;
+	};
+
+	const handleLockSelectedFiles = async () => {
+		loading = true;
+		if (selectedFiles.length === 0) return;
+
+		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+
+		try {
+			await lockFiles(paths);
+
+			$locks = await verifyLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		await refreshFiles();
+
+		loading = false;
+	};
+
+	const handleUnlockSelectedFiles = async () => {
+		loading = true;
+		if (selectedFiles.length === 0) return;
+
+		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+
+		try {
+			await unlockFiles(paths, false);
+
+			$locks = await verifyLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		await refreshFiles();
+
+		loading = false;
 	};
 
 	const goHome = async () => {
@@ -271,12 +322,6 @@
 		selectedFile = null;
 		selectedFiles = [];
 		await refreshFiles();
-	};
-
-	const selectFile = async (file: LFSFile) => {
-		selectedFile = file;
-
-		await handleShowFileHistory();
 	};
 
 	const lockSelectedFile = async () => {
@@ -463,8 +508,8 @@
 											<Checkbox
 												class="!p-1.5 mr-0"
 												checked={selectedFiles.some((selected) => selected.name === file.name)}
-												on:change={() => {
-													handleFileToggled(file);
+												on:change={async () => {
+													await handleFileToggled(file);
 												}}
 											/>
 										</TableBodyCell>
@@ -502,10 +547,16 @@
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
 			{#if selectedFiles.length > 0}
 				<Card
-					class="w-full p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
+					class="w-full flex flex-col gap-2 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
 				>
-					<Button class="w-full" on:click={handleDownloadSelectedFiles}
+					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
 						>Download Selected Files</Button
+					>
+					<Button class="w-full" disabled={loading} on:click={handleLockSelectedFiles}
+						>Lock Selected Files</Button
+					>
+					<Button class="w-full" disabled={loading} on:click={handleUnlockSelectedFiles}
+						>Unlock Selected Files</Button
 					>
 				</Card>
 			{/if}
