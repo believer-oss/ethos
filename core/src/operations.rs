@@ -164,7 +164,7 @@ impl Task for RebaseOp {
         let remote_branch = self.repo_status.read().remote_branch.clone();
         let args: Vec<&str> = vec!["rebase", &remote_branch];
 
-        self.git_client.run(&args, git::Opts::default()).await?;
+        self.git_client.run(&args, Opts::default()).await?;
 
         Ok(())
     }
@@ -202,12 +202,8 @@ impl LockOp {
             bail!("You must set your Github PAT in Preferences to interact with locks.");
         }
 
-        let server_url = RepoConfig::read_lfs_url(
-            self.git_client
-                .repo_path
-                .to_str()
-                .expect("was the git client passed an invalid repo path?"),
-        )?;
+        let repo_path = self.git_client.repo_path.to_str().unwrap().to_string();
+        let server_url = RepoConfig::read_lfs_url(&repo_path)?;
         let endpoint = match self.op {
             LockOperation::Lock => "locks/batch/lock",
             LockOperation::Unlock => "locks/batch/unlock",
@@ -257,7 +253,7 @@ impl LockOp {
                 args.push("--force");
             }
             args.push(path);
-            self.git_client.run(&args, git::Opts::default()).await?;
+            self.git_client.run(&args, Opts::default()).await?;
         }
 
         Ok(LockResponse::default())

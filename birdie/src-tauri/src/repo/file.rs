@@ -129,9 +129,7 @@ pub async fn get_files(
                     None => entry.file_name().to_string_lossy().to_string(),
                 };
 
-                info!("looking up lock_info for: {}", full_path);
                 let lock_info = lock_cache.get(&full_path).cloned();
-                info!("lock_info: {:?}", lock_info);
 
                 Some(File {
                     name: entry.file_name().to_string_lossy().to_string(),

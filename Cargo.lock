@@ -1895,6 +1895,7 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "urlencoding",
+ "walkdir",
  "which",
  "windows 0.56.0",
 ]
