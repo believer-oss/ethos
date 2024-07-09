@@ -10,11 +10,26 @@
 		UserRemoveOutline
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
-	import type { Group, GroupStatus, Playtest } from '$lib/types';
+	import { type Nullable, ProgressModal } from '@ethos/core';
+	import type {
+		ArtifactEntry,
+		GameServerResult,
+		Group,
+		GroupStatus,
+		Playtest,
+		SyncClientRequest
+	} from '$lib/types';
 	import Countdown from '$lib/components/playtests/Countdown.svelte';
-	import { assignUserToGroup, getPlaytests, unassignUserFromPlaytest } from '$lib/playtests';
-	import { appConfig, dynamicConfig, playtests } from '$lib/stores';
+	import {
+		assignUserToGroup,
+		getPlaytestGroupForUser,
+		getPlaytests,
+		unassignUserFromPlaytest
+	} from '$lib/playtests';
+	import { appConfig, builds, dynamicConfig, playtests } from '$lib/stores';
 	import { openUrl } from '$lib/utils';
+	import { getBuilds, syncClient } from '$lib/builds';
+	import { getServers } from '$lib/gameServers';
 
 	export let playtest: Playtest;
 	export let handleEditPlaytest: ((playtest: Playtest | null) => void) | null = null;
@@ -23,6 +38,8 @@
 	export let loading: boolean;
 
 	let countdownFinished = false;
+	let syncing = false;
+	let progressModalText = '';
 
 	// if the start time changes, reset the countdown
 	$: playtest.spec.startTime, (countdownFinished = false);
@@ -63,6 +80,56 @@
 
 		playtests.set(await getPlaytests());
 		loading = false;
+	};
+
+	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
+		if (!entry) {
+			return;
+		}
+
+		syncing = true;
+		progressModalText = 'Syncing client...';
+		const req: SyncClientRequest = {
+			artifactEntry: entry,
+			methodPrefix: $builds.methodPrefix,
+			launchOptions: {
+				ip: server.ip,
+				port: server.port,
+				netimguiPort: server.netimguiPort
+			}
+		};
+
+		try {
+			await syncClient(req);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		syncing = false;
+	};
+
+	const shouldShowLaunchButton = (): boolean => {
+		const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
+		return !!(playtestAssignment && playtestAssignment.serverRef);
+	};
+
+	const handleSyncAndLaunch = async () => {
+		const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
+		if (playtestAssignment && playtestAssignment.serverRef) {
+			const project = playtest.metadata.annotations['believer.dev/project'];
+			const entry = await getBuilds(250, project).then((a) =>
+				a.entries.find((b) => b.commit === playtest.spec.version)
+			);
+
+			const updatedServers = await getServers(playtest.spec.version);
+			const playtestServer = updatedServers.find(
+				(s) => s.name === playtestAssignment.serverRef?.name
+			);
+
+			if (playtestServer && entry) {
+				await handleSyncClient(entry, playtestServer);
+			}
+		}
 	};
 
 	// If the group has the current user in it, color the text lime green
@@ -130,6 +197,13 @@
 				>
 					🎲 Join random group
 				</Button>
+				{#key playtest}
+					{#if shouldShowLaunchButton()}
+						<Button size="xs" class="text-xs py-1" color="primary" on:click={handleSyncAndLaunch}
+							>Sync & Launch</Button
+						>
+					{/if}
+				{/key}
 			</ButtonGroup>
 		</div>
 
@@ -289,3 +363,5 @@
 		<span>{getPlaytestStartString(playtest)}</span>
 	</div>
 </Tooltip>
+
+<ProgressModal title={progressModalText} bind:showModal={syncing} />

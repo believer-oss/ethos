@@ -24,7 +24,6 @@
 		MergeQueue,
 		MergeQueueEntry,
 		Commit,
-		Playtest,
 		SyncClientRequest
 	} from '$lib/types';
 	import PlaytestCard from '$lib/components/playtests/PlaytestCard.svelte';
@@ -169,25 +168,6 @@
 		syncing = false;
 	};
 
-	const isPlaytestJoinable = (playtest: Nullable<Playtest>): boolean => {
-		if (!playtest) {
-			return false;
-		}
-
-		const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
-		if (!playtestAssignment) {
-			return false;
-		}
-
-		if (!playtestAssignment.serverRef) {
-			return false;
-		}
-
-		return true;
-	};
-
-	$: enableLaunch = isPlaytestJoinable($nextPlaytest);
-
 	const handleSyncAndLaunch = async () => {
 		const playtest = get(nextPlaytest);
 		if (playtest) {
@@ -265,21 +245,7 @@
 					</Button>
 				</div>
 
-				<Card
-					class="w-full h-full p-0 sm:p-0 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none overflow-y-hidden"
-				>
-					<PlaytestCard playtest={$nextPlaytest} bind:loading={loadingPlaytests} compact />
-					{#if getPlaytestGroupForUser(get(nextPlaytest), $appConfig.userDisplayName) !== null}
-						<div class="flex justify-end gap-2 px-4 pb-4">
-							<Button
-								color="primary"
-								class="w-full"
-								disabled={!enableLaunch}
-								on:click={handleSyncAndLaunch}>Sync & Launch</Button
-							>
-						</div>
-					{/if}
-				</Card>
+				<PlaytestCard playtest={$nextPlaytest} bind:loading={loadingPlaytests} compact />
 			</div>
 		{:else}
 			<div class="flex gap-2 items-center">
