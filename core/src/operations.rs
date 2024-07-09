@@ -9,7 +9,9 @@ use anyhow::bail;
 use async_trait::async_trait;
 use chrono::DateTime;
 use reqwest::StatusCode;
-use tracing::{debug, error, info};
+use std::env;
+use std::path::PathBuf;
+use tracing::{debug, error, info, warn};
 
 #[derive(Clone)]
 pub struct CommitOp {
@@ -203,7 +205,13 @@ impl LockOp {
         }
 
         let repo_path = self.git_client.repo_path.to_str().unwrap().to_string();
-        let server_url = RepoConfig::read_lfs_url(&repo_path)?;
+        let lfs_config = RepoConfig::read_lfs_config(&repo_path)?;
+
+        let server_url = match lfs_config.lfs.url {
+            Some(url) => url,
+            None => bail!(".lfsconfig is not configured with a url"),
+        };
+
         let endpoint = match self.op {
             LockOperation::Lock => "locks/batch/lock",
             LockOperation::Unlock => "locks/batch/unlock",
@@ -223,10 +231,62 @@ impl LockOp {
             .send()
             .await?;
 
-        // try falling back to git lfs if the batch endpoint isn't available for our LFS server
         let status = response.status();
         if status.is_success() {
             let lock_response = response.json::<LockResponse>().await?;
+
+            // update file readonly flag for requested paths as appropriate
+            // See the GIT_LFS_SET_LOCKABLE_READONLY section at https://www.mankier.com/5/git-lfs-config#List_of_Options-Other_settings
+            let mut should_set_read_flag = true; // this flag defaults to true if it is left unspecified
+
+            match env::var("GIT_LFS_SET_LOCKABLE_READONLY") {
+                Ok(env_str) => {
+                    if let Ok(env_bool) = git::parse_bool_string(&env_str) {
+                        should_set_read_flag = env_bool;
+                    }
+                }
+                Err(_) => {
+                    let output = self
+                        .git_client
+                        .run_and_collect_output(
+                            &["config", "--get", "lfs.setlockablereadonly"],
+                            git::Opts::default(),
+                        )
+                        .await;
+
+                    if let Ok(output) = output {
+                        if let Ok(bool_str) = git::parse_bool_string(&output) {
+                            should_set_read_flag = bool_str;
+                        }
+                    }
+                }
+            }
+
+            if should_set_read_flag {
+                let set_readonly = self.op != LockOperation::Lock;
+                for path in &self.paths {
+                    if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
+                        let mut absolute_path = PathBuf::from(&repo_path);
+                        absolute_path.push(path);
+
+                        if let Ok(metadata) = std::fs::metadata(&absolute_path) {
+                            let mut perms = metadata.permissions().clone();
+                            if perms.readonly() != set_readonly {
+                                perms.set_readonly(set_readonly);
+
+                                if let Err(e) = std::fs::set_permissions(&absolute_path, perms) {
+                                    let operation_str = if set_readonly { "set" } else { "clear" };
+                                    warn!(
+                                        "Failed to {} readonly flag for file {:?}: {}",
+                                        operation_str, &absolute_path, e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             return Ok(lock_response);
         } else if status == StatusCode::NOT_FOUND {
             info!(
@@ -239,6 +299,7 @@ impl LockOp {
             bail!("Failed lock request. Check log for details.");
         }
 
+        // try falling back to git lfs if the batch endpoint isn't available for our LFS server
         let lfs_op = match self.op {
             LockOperation::Lock => "lock",
             LockOperation::Unlock => "unlock",
