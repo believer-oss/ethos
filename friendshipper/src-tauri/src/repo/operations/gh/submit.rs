@@ -394,16 +394,16 @@ impl SubmitOp {
 
         let worktree_branch = format!("{}-wt", f11r_branch);
 
+        let mut git_client_worktree = self.git_client.clone();
+        git_client_worktree.repo_path.clone_from(&worktree_path);
+
+        // To make the worktree as cheap as possible, we need to make sure no LFS files are checked out and
+        // they remain stubs
+        let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
+
         // resolve changes with latest main and push up to the remote
         {
-            let mut git_client_worktree = self.git_client.clone();
-            git_client_worktree.repo_path.clone_from(&worktree_path);
-
             let worktree_prev_branch = git_client_worktree.current_branch().await?;
-
-            // To make the worktree as cheap as possible, we need to make sure no LFS files are checked out and
-            // they remain stubs
-            let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
 
             // delete the worktree branch if it exists - we need to make one that matches the state of
             // f11r_branch exactly, and the old worktree branch will likely have changes from main mixed
@@ -472,6 +472,14 @@ impl SubmitOp {
                 gh_op.execute().await?;
             }
         }
+
+        // cleanup worktree branch
+        _ = git_client_worktree
+            .run(&["checkout", "--detach"], git_opts_lfs_stubs)
+            .await;
+        _ = git_client_worktree
+            .delete_branch(&worktree_branch, git::BranchType::Local)
+            .await;
 
         Ok(())
     }
