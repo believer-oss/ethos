@@ -259,13 +259,14 @@ pub struct RepoConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct LfsConfigFile {
-    lfs: LfsConfig,
+pub struct LfsConfigFile {
+    pub lfs: LfsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct LfsConfig {
-    url: Option<String>,
+pub struct LfsConfig {
+    pub url: Option<String>,
+    pub setlockablereadonly: Option<bool>,
 }
 
 impl Default for RepoConfig {
@@ -301,17 +302,17 @@ impl RepoConfig {
         }
     }
 
-    pub fn read_lfs_url(repo_path: &str) -> Result<String, anyhow::Error> {
+    pub fn read_lfs_config(repo_path: &str) -> Result<LfsConfigFile, anyhow::Error> {
         let lfs_config_path = PathBuf::from(repo_path).join(".lfsconfig");
         let lfs_config_bytes = fs::read(lfs_config_path)?;
 
-        let config: LfsConfigFile =
+        let mut config: LfsConfigFile =
             toml::from_str(std::str::from_utf8(lfs_config_bytes.as_slice())?)?;
-        let url = match config.lfs.url {
-            Some(url) => url,
-            None => bail!(".lfsconfig is not configured with a url"),
-        };
-        Ok(url.trim_end_matches('/').to_string())
+        config.lfs.url = config
+            .lfs
+            .url
+            .map(|url| url.trim_end_matches('/').to_string());
+        Ok(config)
     }
 }
 

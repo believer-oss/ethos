@@ -159,6 +159,16 @@ impl Opts<'_> {
     }
 }
 
+pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
+    if bool_str == "true" || bool_str == "yes" || bool_str == "1" {
+        return Ok(true);
+    } else if bool_str == "false" || bool_str == "no" || bool_str == "0" {
+        return Ok(false);
+    }
+
+    bail!("Unable to parse string")
+}
+
 impl Git {
     pub fn new(repo_path: PathBuf, tx: std::sync::mpsc::Sender<String>) -> Git {
         Git { repo_path, tx }
