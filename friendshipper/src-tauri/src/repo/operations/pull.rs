@@ -25,7 +25,6 @@ use crate::config::RepoConfigRef;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::repo::operations::UpdateEngineOp;
 use crate::state::AppState;
-use crate::system::unreal;
 
 use super::{DownloadDllsOp, RepoStatusRef, StatusOp};
 
@@ -33,7 +32,6 @@ use super::{DownloadDllsOp, RepoStatusRef, StatusOp};
 pub struct PullOp<T> {
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
-    pub ofpa_cache: unreal::OFPANameCacheRef,
     pub repo_status: RepoStatusRef,
     pub longtail: Longtail,
     pub longtail_tx: Sender<LongtailMsg>,
@@ -58,7 +56,7 @@ where
                     repo_status: self.repo_status.clone(),
                     app_config: self.app_config.clone(),
                     repo_config: self.repo_config.clone(),
-                    ofpa_cache: self.ofpa_cache.clone(),
+                    engine: self.engine.clone(),
                     git_client: self.git_client.clone(),
                     aws_client: self.aws_client.clone(),
                     storage: self.storage.clone(),
@@ -120,7 +118,7 @@ where
                     StatusOp {
                         repo_status: self.repo_status.clone(),
                         repo_config: self.repo_config.clone(),
-                        ofpa_cache: self.ofpa_cache.clone(),
+                        engine: self.engine.clone(),
                         app_config: self.app_config.clone(),
                         git_client: self.git_client.clone(),
                         aws_client: self.aws_client.clone(),
@@ -138,7 +136,7 @@ where
             let status_op = StatusOp {
                 repo_status: self.repo_status.clone(),
                 repo_config: self.repo_config.clone(),
-                ofpa_cache: self.ofpa_cache.clone(),
+                engine: self.engine.clone(),
                 app_config: self.app_config.clone(),
                 git_client: self.git_client.clone(),
                 aws_client: self.aws_client.clone(),
@@ -202,7 +200,7 @@ where
                     repo_status: self.repo_status.clone(),
                     app_config: self.app_config.clone(),
                     repo_config: self.repo_config.clone(),
-                    ofpa_cache: self.ofpa_cache.clone(),
+                    engine: self.engine.clone(),
                     git_client: self.git_client.clone(),
                     aws_client: self.aws_client.clone(),
                     storage: self.storage.clone(),
@@ -332,7 +330,6 @@ where
     let pull_op = PullOp {
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
-        ofpa_cache: state.ofpa_cache.clone(),
         repo_status: state.repo_status.clone(),
         longtail: state.longtail.clone(),
         longtail_tx: state.longtail_tx.clone(),

@@ -1,15 +1,21 @@
+use crate::engine;
+use crate::engine::unreal::ofpa::OFPANameCache;
+use crate::engine::unreal::ofpa::OFPANameCacheRef;
 use crate::engine::EngineProvider;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use ethos_core::types::config::{AppConfig, RepoConfig};
+use ethos_core::types::config::AppConfig;
+use ethos_core::types::config::RepoConfig;
 use ethos_core::types::gameserver::GameServerResults;
+use std::path::Path;
 use std::path::PathBuf;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
 
 #[derive(Clone)]
 pub struct UnrealEngineProvider {
-    repo_path: PathBuf,
-    uproject_path: PathBuf,
+    pub repo_path: PathBuf,
+    pub uproject_path: PathBuf,
+    pub ofpa_cache: OFPANameCacheRef,
 }
 
 #[async_trait]
@@ -18,6 +24,7 @@ impl EngineProvider for UnrealEngineProvider {
         Self {
             repo_path: PathBuf::from(app_config.repo_path),
             uproject_path: PathBuf::from(repo_config.uproject_path),
+            ofpa_cache: std::sync::Arc::new(parking_lot::RwLock::new(OFPANameCache::new())),
         }
     }
 
@@ -71,6 +78,15 @@ impl EngineProvider for UnrealEngineProvider {
         }
 
         bail!("No client found in path!");
+    }
+
+    async fn get_asset_display_names(
+        &self,
+        communication: engine::provider::CommunicationType,
+        engine_path: &Path,
+        asset_names: &[String],
+    ) -> Vec<String> {
+        OFPANameCache::get_names(self.clone(), communication, engine_path, asset_names).await
     }
 }
 
