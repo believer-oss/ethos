@@ -22,7 +22,6 @@ use ethos_core::AWSClient;
 
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::repo::RepoStatusRef;
-use crate::system::unreal::OFPANameCache;
 
 pub enum FrontendOp {
     ShowUI,
@@ -35,8 +34,6 @@ pub struct AppState<T> {
     pub dynamic_config: DynamicConfigRef,
     pub config_file: PathBuf,
     pub storage: Arc<RwLock<Option<ArtifactStorage>>>,
-
-    pub ofpa_cache: Arc<RwLock<OFPANameCache>>,
 
     pub repo_status: RepoStatusRef,
 
@@ -161,7 +158,6 @@ where
             dynamic_config,
             config_file,
             storage: Arc::new(RwLock::new(storage)),
-            ofpa_cache: Arc::new(RwLock::new(OFPANameCache::new())),
             repo_status,
             longtail,
             longtail_tx,

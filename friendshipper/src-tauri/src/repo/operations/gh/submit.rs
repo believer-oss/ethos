@@ -24,7 +24,6 @@ use ethos_core::AWSClient;
 use crate::repo::operations::{PushRequest, StatusOp};
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
-use crate::system::unreal;
 
 #[derive(Clone)]
 pub struct GitHubSubmitOp {
@@ -37,13 +36,16 @@ pub struct GitHubSubmitOp {
 }
 
 #[derive(Clone)]
-pub struct SubmitOp {
+pub struct SubmitOp<T>
+where
+    T: EngineProvider,
+{
     pub files: Vec<String>,
     pub commit_message: String,
 
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
-    pub ofpa_cache: unreal::OFPANameCacheRef,
+    pub engine: T,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
     pub repo_status: RepoStatusRef,
@@ -143,7 +145,10 @@ impl Task for GitHubSubmitOp {
 //    c. Push changes to the remote
 // 7. Trigger PR via github
 #[async_trait]
-impl Task for SubmitOp {
+impl<T> Task for SubmitOp<T>
+where
+    T: EngineProvider,
+{
     async fn execute(&self) -> anyhow::Result<()> {
         // save a snapshot before submitting
         // make sure we have a temp dir for copying our files
@@ -205,7 +210,10 @@ impl Task for SubmitOp {
     }
 }
 
-impl SubmitOp {
+impl<T> SubmitOp<T>
+where
+    T: EngineProvider,
+{
     pub async fn execute_internal(&self) -> anyhow::Result<()> {
         let base_branch = self.repo_config.read().trunk_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
@@ -292,7 +300,7 @@ impl SubmitOp {
             repo_status: self.repo_status.clone(),
             app_config: self.app_config.clone(),
             repo_config: self.repo_config.clone(),
-            ofpa_cache: self.ofpa_cache.clone(),
+            engine: self.engine.clone(),
             git_client: self.git_client.clone(),
             aws_client: self.aws_client.clone(),
             storage: self.storage.clone(),
@@ -544,7 +552,7 @@ where
 
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
-        ofpa_cache: state.ofpa_cache.clone(),
+        engine: state.engine.clone(),
         aws_client,
         storage,
         repo_status: state.repo_status.clone(),

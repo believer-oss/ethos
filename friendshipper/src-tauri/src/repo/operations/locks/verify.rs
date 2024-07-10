@@ -1,16 +1,12 @@
-use std::path::PathBuf;
-
 use anyhow::anyhow;
 use axum::{extract::State, Json};
 
+use crate::engine;
 use crate::engine::EngineProvider;
+use crate::state::AppState;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::Lock;
 use ethos_core::types::locks::VerifyLocksResponse;
-
-use crate::state::AppState;
-use crate::system::unreal::CanUseCommandlet;
-use crate::system::unreal::OFPANameCache;
 
 pub async fn verify_locks_handler<T>(
     State(state): State<AppState<T>>,
@@ -42,26 +38,20 @@ where
     combined_paths.append(&mut ours_paths);
     combined_paths.append(&mut theirs_paths);
 
-    let repo_path = state.app_config.read().repo_path.clone();
-    let uproject_path = state
-        .app_config
-        .read()
-        .get_uproject_path(&state.repo_config.read());
     let engine_path = state
         .app_config
         .read()
         .load_engine_path_from_repo(&state.repo_config.read())
         .unwrap_or_default();
 
-    let ofpa_names = OFPANameCache::get_names(
-        state.ofpa_cache.clone(),
-        &PathBuf::from(repo_path),
-        &uproject_path,
-        &engine_path,
-        &combined_paths,
-        CanUseCommandlet::FallbackOnly,
-    )
-    .await;
+    let display_names = state
+        .engine
+        .get_asset_display_names(
+            engine::CommunicationType::OfflineFallback,
+            &engine_path,
+            &combined_paths,
+        )
+        .await;
 
     #[allow(clippy::needless_range_loop)]
     for i in 0..combined_paths.len() {
@@ -73,8 +63,8 @@ where
             vec_index = i - ours_len;
             &mut response_data.theirs
         };
-        if !ofpa_names.is_empty() {
-            vec[vec_index].display_name = Some(ofpa_names[i].clone());
+        if !display_names.is_empty() {
+            vec[vec_index].display_name = Some(display_names[i].clone());
         }
     }
 
