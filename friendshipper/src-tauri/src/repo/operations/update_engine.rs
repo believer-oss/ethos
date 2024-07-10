@@ -223,7 +223,7 @@ where
         //  and no files are found at that path (or doesn't exist)
         // THEN:
         //      force their config to the new default
-        let mut old_default_engine_path = LocalDownloadPath::default().to_path_buf();
+        let mut old_default_engine_path = LocalDownloadPath::new(crate::APP_NAME).to_path_buf();
         old_default_engine_path.push("engine_prebuilt");
         let engine_path = state.app_config.read().engine_prebuilt_path.clone();
         if engine_path == old_default_engine_path.to_string_lossy()

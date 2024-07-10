@@ -37,8 +37,9 @@ pub fn send_msg(tx: &Sender<LongtailMsg>, msg: LongtailMsg) {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Longtail {
+    pub app_name: String,
     pub exec_path: Option<PathBuf>,
     pub download_path: LocalDownloadPath,
 }
@@ -86,6 +87,16 @@ impl FileCacheData {
 }
 
 impl Longtail {
+    pub fn new(app_name: &str) -> Self {
+        let exec_path = Longtail::find_exec(app_name);
+
+        Longtail {
+            exec_path,
+            app_name: app_name.to_string(),
+            download_path: LocalDownloadPath::new(app_name),
+        }
+    }
+
     // Per-platform executable names, defaulting to a renamed 'longtail' binary
     fn get_longtail_exec_name() -> String {
         match std::env::consts::OS {
@@ -110,13 +121,13 @@ impl Longtail {
     }
 
     // Search for the longtail executable in our download dir or the user's path
-    fn find_exec() -> Option<PathBuf> {
+    fn find_exec(app_name: &str) -> Option<PathBuf> {
         let exe_name = Longtail::get_longtail_exec_name();
 
         // Try to find the executable in the project data path, and if that fails
         // check the current exe directory.
         let mut exe_path: Option<PathBuf>;
-        if let Some(proj_dirs) = ProjectDirs::from("", "", crate::APP_NAME) {
+        if let Some(proj_dirs) = ProjectDirs::from("", "", app_name) {
             exe_path = Some(proj_dirs.data_dir().to_path_buf());
         } else {
             exe_path = env::current_exe().ok().or(None);
@@ -137,7 +148,7 @@ impl Longtail {
 
     // Wrapper for find_exec to update the struct
     pub fn update_exec(&mut self) -> Result<()> {
-        match Longtail::find_exec() {
+        match Self::find_exec(&self.app_name) {
             Some(path) => self.exec_path = Some(path),
             None => {
                 return Err(anyhow!("Could not find longtail executable!"));
@@ -150,7 +161,7 @@ impl Longtail {
     pub fn get_longtail(&self, tx: Sender<LongtailMsg>) -> Result<()> {
         // First try to use the data_dir, and if we can't use the curent exe's path
         let mut exe_path: PathBuf;
-        if let Some(proj_dirs) = ProjectDirs::from("", "", crate::APP_NAME) {
+        if let Some(proj_dirs) = ProjectDirs::from("", "", &self.app_name) {
             exe_path = proj_dirs.data_dir().to_path_buf();
         } else {
             exe_path = env::current_exe().context("Could not find current path!!!")?;
@@ -330,15 +341,6 @@ impl Longtail {
         }
 
         Ok(())
-    }
-
-    pub fn new() -> Self {
-        let exec_path = Longtail::find_exec();
-
-        Longtail {
-            exec_path,
-            ..Default::default()
-        }
     }
 
     pub fn msg_to_string(msg: LongtailMsg) -> String {

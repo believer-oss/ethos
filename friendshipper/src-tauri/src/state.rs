@@ -79,7 +79,7 @@ where
         git_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
     ) -> Result<Self> {
-        let mut longtail = Longtail::new();
+        let mut longtail = Longtail::new(crate::APP_NAME);
 
         debug!("Checking longtail");
         if longtail.exec_path.is_none() && longtail.update_exec().is_err() {
