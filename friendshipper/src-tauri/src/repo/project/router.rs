@@ -102,7 +102,13 @@ where
     if solution.generate {
         info!("generating project files for UProject: {:?}", uproject);
 
+        #[cfg(target_os = "windows")]
         let build_bat_path: PathBuf = engine_path.join("Engine/Build/BatchFiles/Build.bat");
+        #[cfg(target_os = "macos")]
+        let build_bat_path = engine_path.join("Engine/Build/BatchFiles/Mac/Build.sh");
+        #[cfg(target_os = "linux")]
+        let build_bat_path = engine_path.join("Engine/Build/BatchFiles/Linux/Build.sh");
+
         let mut cmd = Command::new(build_bat_path);
 
         cmd.arg("-projectfiles")
