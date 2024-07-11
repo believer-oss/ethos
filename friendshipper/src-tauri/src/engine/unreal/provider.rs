@@ -9,7 +9,9 @@ use ethos_core::types::config::RepoConfig;
 use ethos_core::types::gameserver::GameServerResults;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::SystemTime;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use tracing::warn;
 
 #[derive(Clone)]
 pub struct UnrealEngineProvider {
@@ -25,6 +27,22 @@ impl EngineProvider for UnrealEngineProvider {
             repo_path: PathBuf::from(app_config.repo_path),
             uproject_path: PathBuf::from(repo_config.uproject_path),
             ofpa_cache: std::sync::Arc::new(parking_lot::RwLock::new(OFPANameCache::new())),
+        }
+    }
+
+    async fn load_caches(&mut self) {
+        let now = SystemTime::now();
+
+        let mut ofpa_cache = self.ofpa_cache.write();
+        if let Err(e) = ofpa_cache.load_cache() {
+            warn!("Failed to load OFPA cache: {}", e);
+        }
+
+        if let Ok(elapsed) = now.elapsed() {
+            let elapsed_secs = elapsed.as_secs_f32();
+            if elapsed_secs > 0.1 {
+                warn!("Took {} seconds to load the OFPA name cache", elapsed_secs);
+            }
         }
     }
 

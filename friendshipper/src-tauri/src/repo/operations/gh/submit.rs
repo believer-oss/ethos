@@ -306,7 +306,7 @@ where
             storage: self.storage.clone(),
             skip_fetch: true,
             skip_dll_check: true,
-            skip_ofpa_translation: true,
+            allow_offline_communication: true,
         };
 
         // commit changes

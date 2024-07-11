@@ -55,7 +55,7 @@ where
                 storage: state.storage.read().clone().unwrap(),
                 skip_fetch: false,
                 skip_dll_check: false,
-                skip_ofpa_translation: false,
+                allow_offline_communication: false,
             }
         };
 

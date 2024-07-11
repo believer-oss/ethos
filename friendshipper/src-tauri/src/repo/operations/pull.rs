@@ -62,7 +62,7 @@ where
                     storage: self.storage.clone(),
                     skip_fetch: false,
                     skip_dll_check: false,
-                    skip_ofpa_translation: false,
+                    allow_offline_communication: false,
                 }
             };
 
@@ -125,7 +125,7 @@ where
                         storage: self.storage.clone(),
                         skip_fetch: true,
                         skip_dll_check: false,
-                        skip_ofpa_translation: false,
+                        allow_offline_communication: false,
                     }
                 };
 
@@ -143,7 +143,7 @@ where
                 storage: self.storage.clone(),
                 skip_fetch: true,
                 skip_dll_check: false,
-                skip_ofpa_translation: false,
+                allow_offline_communication: false,
             };
 
             status_op.execute().await?;
@@ -206,7 +206,7 @@ where
                     storage: self.storage.clone(),
                     skip_fetch: true,
                     skip_dll_check: false,
-                    skip_ofpa_translation: false,
+                    allow_offline_communication: false,
                 }
             };
 

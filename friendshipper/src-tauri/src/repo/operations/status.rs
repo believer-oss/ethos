@@ -71,7 +71,7 @@ where
     pub storage: ArtifactStorage,
     pub skip_fetch: bool,
     pub skip_dll_check: bool,
-    pub skip_ofpa_translation: bool,
+    pub allow_offline_communication: bool,
 }
 
 #[async_trait]
@@ -171,13 +171,18 @@ where
         }
 
         // get display names if available for OFPA
-        if !self.skip_ofpa_translation {
+        {
             info!("StatusOp: fetching OFPA filenames...");
 
             let mut combined_files = status.modified_files.0.clone();
             combined_files.append(&mut status.untracked_files.0.clone());
 
-            self.update_filelist_display_names(&mut combined_files)
+            let communication = if self.allow_offline_communication {
+                engine::CommunicationType::OfflineFallback
+            } else {
+                engine::CommunicationType::IpcOnly
+            };
+            self.update_filelist_display_names(communication, &mut combined_files)
                 .await;
 
             let num_modified = status.modified_files.0.len();
@@ -377,7 +382,11 @@ where
         Ok(())
     }
 
-    pub async fn update_filelist_display_names(&self, files: &mut [File]) {
+    pub async fn update_filelist_display_names(
+        &self,
+        communication: engine::CommunicationType,
+        files: &mut [File],
+    ) {
         let filenames: Vec<String> = files.iter().map(|v| v.path.clone()).collect();
 
         let engine_path = self
@@ -388,11 +397,7 @@ where
 
         let asset_names: Vec<String> = self
             .engine
-            .get_asset_display_names(
-                engine::CommunicationType::OfflineFallback,
-                &engine_path,
-                &filenames,
-            )
+            .get_asset_display_names(communication, &engine_path, &filenames)
             .await;
 
         // OFPANameCache::get_names(
@@ -445,7 +450,7 @@ pub struct StatusParams {
     #[serde(default)]
     pub skip_dll_check: bool,
     #[serde(default)]
-    pub skip_ofpa_translation: bool,
+    pub allow_offline_communication: bool,
 }
 
 pub async fn status_handler<T>(
@@ -477,7 +482,7 @@ where
             storage,
             skip_fetch: params.skip_fetch,
             skip_dll_check: params.skip_dll_check,
-            skip_ofpa_translation: params.skip_ofpa_translation,
+            allow_offline_communication: params.allow_offline_communication,
         }
     };
 

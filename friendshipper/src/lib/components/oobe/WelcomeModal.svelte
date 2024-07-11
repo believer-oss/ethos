@@ -16,7 +16,7 @@
 		getRepoStatus,
 		SkipFetch,
 		SkipDllCheck,
-		SkipOfpaTranslation
+		AllowOfflineCommunication
 	} from '$lib/repo';
 
 	enum Page {
@@ -171,7 +171,7 @@
 			$repoStatus = await getRepoStatus(
 				SkipFetch.False,
 				SkipDllCheck.False,
-				SkipOfpaTranslation.True
+				AllowOfflineCommunication.True
 			);
 
 			// run initial fetch of DLLs - it may be worth moving this and the engine fetch

@@ -19,6 +19,9 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
     /// Creates a new provider from app and repo config
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self;
 
+    /// Loads any internal caches the provider needs from disk
+    async fn load_caches(&mut self);
+
     /// Checks if the engine is in a state where many files can be synced.
     /// For example, if the Unreal editor is running, we should not sync, so this function
     /// should return an error.
