@@ -1,5 +1,6 @@
 use crate::engine::CommunicationType;
 use crate::engine::UnrealEngineProvider;
+use directories_next::ProjectDirs;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
@@ -7,10 +8,14 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
+use std::time::SystemTime;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -51,16 +56,29 @@ struct OFPAFriendlyNamesResponse {
     names: Vec<OFPAFriendlyNamesResponseItem>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct TranslatedName {
+    name: String,
+    last_used_timestamp: SystemTime,
+}
+
 #[derive(Debug)]
 pub struct OFPANameCache {
-    pub path_to_name_map: HashMap<String, String>,
-    pub cmd_request_id: RwLock<u32>,
+    path_to_name_map: HashMap<String, TranslatedName>,
+    cmd_request_id: RwLock<u32>,
 }
 
 impl Default for OFPANameCache {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn get_cache_file_path() -> PathBuf {
+    let proj_dirs = ProjectDirs::from("", "", crate::APP_NAME).expect("Unable to get project dirs");
+    let mut path = proj_dirs.data_dir().to_path_buf();
+    path.push("ofpa_cache.bin");
+    path
 }
 
 impl OFPANameCache {
@@ -76,13 +94,54 @@ impl OFPANameCache {
             || path.contains("Content/__ExternalObjects__/")
     }
 
-    fn add_name(&mut self, file: &str, asset_name: &str) {
+    fn add_name(&mut self, file: &str, asset_name: &str, timestamp: SystemTime) {
         let mut display_name = asset_name.to_string();
         if let Some(caps) = OFPA_PATH_REGEX.captures(file) {
             let path_to_map = &caps[1];
             display_name = format!("Content/{}/{}", path_to_map, asset_name);
         }
-        _ = self.path_to_name_map.insert(file.to_string(), display_name);
+        _ = self.path_to_name_map.insert(
+            file.to_string(),
+            TranslatedName {
+                name: display_name,
+                last_used_timestamp: timestamp,
+            },
+        );
+    }
+
+    pub fn load_cache(&mut self) -> anyhow::Result<()> {
+        assert_eq!(self.path_to_name_map.len(), 0); // should only be calling this function on startup
+
+        let path: PathBuf = get_cache_file_path();
+        if let Ok(cache_file) = File::open(path) {
+            let mut reader = BufReader::new(cache_file);
+            let mut deserializer = rmp_serde::Deserializer::new(&mut reader);
+            self.path_to_name_map =
+                HashMap::<String, TranslatedName>::deserialize(&mut deserializer)?;
+        }
+
+        Ok(())
+    }
+
+    fn save_cache(&mut self) -> anyhow::Result<()> {
+        // evict any entries older than 1 week - this ensures only relevant entries
+        // keep getting saved out so the cache doesn't get too big
+        let now = SystemTime::now();
+        let week = Duration::from_secs(60 * 60 * 24 * 7);
+        self.path_to_name_map.retain(|_path, name| {
+            let elapsed = now
+                .duration_since(name.last_used_timestamp)
+                .unwrap_or_default();
+            elapsed < week
+        });
+
+        let path: PathBuf = get_cache_file_path();
+        let cache_file = File::create(path)?;
+        let mut writer = BufWriter::new(cache_file);
+        let mut serializer = rmp_serde::Serializer::new(&mut writer);
+        self.path_to_name_map.serialize(&mut serializer)?;
+
+        Ok(())
     }
 
     // NOTE: we take the OFPANameCache by the Arc<RwLock> ref because we don't want to hold the lock
@@ -94,6 +153,7 @@ impl OFPANameCache {
         paths: &[String],
     ) -> Vec<String> {
         let is_editor_running = provider.is_editor_process_running();
+        let now = SystemTime::now();
 
         let mut paths_to_request: Vec<String> = Vec::with_capacity(paths.len());
         {
@@ -101,9 +161,10 @@ impl OFPANameCache {
             for path in paths {
                 let neeeds_translate = Self::path_needs_translate(path);
                 // If the editor is running, the user could have changed the name of the asset, so attempt to fetch an updated
-                // name for it. If the editor is closed, the last name we have in the cache is probably good enough since we
-                // run status updates pretty often.
+                // name for it if a refresh is desired. If the editor is closed, the last name we have in the cache is probably
+                //  good enough since we run status updates pretty often.
                 let needs_request = is_editor_running || !cache.path_to_name_map.contains_key(path);
+
                 if neeeds_translate && needs_request {
                     paths_to_request.push(path.clone())
                 }
@@ -138,7 +199,7 @@ impl OFPANameCache {
                                 let mut cache = provider.ofpa_cache.write();
                                 for item in data.names {
                                     if item.error.is_empty() {
-                                        cache.add_name(&item.file_path, &item.asset_name);
+                                        cache.add_name(&item.file_path, &item.asset_name, now);
                                     } else {
                                         debug!(
                                             "Error translating file path {}: {}",
@@ -247,7 +308,7 @@ impl OFPANameCache {
                                         {
                                             let file = &caps[1];
                                             let name = &caps[2];
-                                            cache.add_name(file, name);
+                                            cache.add_name(file, name, now);
                                         }
                                         if let Some(caps) =
                                             OFPA_FRIENDLYNAME_ERROR_REGEX.captures(line)
@@ -280,20 +341,30 @@ impl OFPANameCache {
             }
         }
 
-        let cache = provider.ofpa_cache.read();
+        {
+            let mut names = vec![];
+            let mut cache = provider.ofpa_cache.write();
 
-        let mut names = vec![];
-        for path in paths {
-            if Self::path_needs_translate(path) {
-                let name = match cache.path_to_name_map.get(path) {
-                    Some(path) => path.clone(),
-                    None => String::new(),
-                };
-                names.push(name);
-            } else {
-                names.push(String::new());
+            for path in paths {
+                if Self::path_needs_translate(path) {
+                    let name = match cache.path_to_name_map.get_mut(path) {
+                        Some(name) => {
+                            name.last_used_timestamp = now;
+                            name.name.clone()
+                        }
+                        None => String::new(),
+                    };
+                    names.push(name);
+                } else {
+                    names.push(String::new());
+                }
             }
+
+            if let Err(e) = cache.save_cache() {
+                warn!("Failed to save OFPA cache: {}", e);
+            }
+
+            names
         }
-        names
     }
 }

@@ -47,7 +47,7 @@ where
     let display_names = state
         .engine
         .get_asset_display_names(
-            engine::CommunicationType::OfflineFallback,
+            engine::CommunicationType::IpcOnly,
             &engine_path,
             &combined_paths,
         )

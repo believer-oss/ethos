@@ -149,7 +149,8 @@ where
             config.selected_artifact_project = selected_artifact_project;
         }
 
-        let engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());
+        let mut engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());
+        engine.load_caches().await;
 
         debug!("AppState preparation complete.");
         Ok(Self {

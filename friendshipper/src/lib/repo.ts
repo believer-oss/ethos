@@ -62,7 +62,7 @@ export enum SkipDllCheck {
 	True = 1
 }
 
-export enum SkipOfpaTranslation {
+export enum AllowOfflineCommunication {
 	False = 0,
 	True = 1
 }
@@ -70,12 +70,13 @@ export enum SkipOfpaTranslation {
 export const getRepoStatus = async (
 	shouldSkipFetch: SkipFetch = SkipFetch.False,
 	shouldSkipDllCheck: SkipDllCheck = SkipDllCheck.False,
-	shouldSkipOfpaTranslation: SkipOfpaTranslation = SkipOfpaTranslation.False
+	shouldAllowOfflineCommunication: AllowOfflineCommunication = AllowOfflineCommunication.False
 ): Promise<RepoStatus> => {
 	const skipFetch: boolean = shouldSkipFetch === SkipFetch.True;
 	const skipDllCheck: boolean = shouldSkipDllCheck === SkipDllCheck.True;
-	const skipOfpaTranslation: boolean = shouldSkipOfpaTranslation === SkipOfpaTranslation.True;
-	return invoke('get_repo_status', { skipFetch, skipDllCheck, skipOfpaTranslation });
+	const allowOfflineCommunication: boolean =
+		shouldAllowOfflineCommunication === AllowOfflineCommunication.True;
+	return invoke('get_repo_status', { skipFetch, skipDllCheck, allowOfflineCommunication });
 };
 
 export const submit = async (req: PushRequest): Promise<void> => invoke('submit', { req });

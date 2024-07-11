@@ -69,7 +69,7 @@
 		verifyLocks,
 		SkipFetch,
 		SkipDllCheck,
-		SkipOfpaTranslation
+		AllowOfflineCommunication
 	} from '$lib/repo';
 	import { getLatestVersion, openSystemLogsFolder, restart, runUpdate } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
@@ -224,7 +224,7 @@
 					const [repoConfigResponse, repoStatusResponse, commitsResponse, locksResponse] =
 						await Promise.all([
 							getRepoConfig(),
-							getRepoStatus(SkipFetch.True, SkipDllCheck.False, SkipOfpaTranslation.True),
+							getRepoStatus(SkipFetch.True, SkipDllCheck.False, AllowOfflineCommunication.True),
 							getAllCommits(),
 							verifyLocks()
 						]);
