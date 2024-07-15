@@ -22,7 +22,6 @@ use ethos_core::AWSClient;
 
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::repo::RepoStatusRef;
-use crate::system::unreal::OFPANameCache;
 
 pub enum FrontendOp {
     ShowUI,
@@ -35,8 +34,6 @@ pub struct AppState<T> {
     pub dynamic_config: DynamicConfigRef,
     pub config_file: PathBuf,
     pub storage: Arc<RwLock<Option<ArtifactStorage>>>,
-
-    pub ofpa_cache: Arc<RwLock<OFPANameCache>>,
 
     pub repo_status: RepoStatusRef,
 
@@ -82,7 +79,7 @@ where
         git_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
     ) -> Result<Self> {
-        let mut longtail = Longtail::new();
+        let mut longtail = Longtail::new(crate::APP_NAME);
 
         debug!("Checking longtail");
         if longtail.exec_path.is_none() && longtail.update_exec().is_err() {
@@ -152,7 +149,8 @@ where
             config.selected_artifact_project = selected_artifact_project;
         }
 
-        let engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());
+        let mut engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());
+        engine.load_caches().await;
 
         debug!("AppState preparation complete.");
         Ok(Self {
@@ -161,7 +159,6 @@ where
             dynamic_config,
             config_file,
             storage: Arc::new(RwLock::new(storage)),
-            ofpa_cache: Arc::new(RwLock::new(OFPANameCache::new())),
             repo_status,
             longtail,
             longtail_tx,

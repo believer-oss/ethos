@@ -13,7 +13,6 @@ pub mod types;
 pub mod utils;
 pub mod worker;
 
-const APP_NAME: &str = "Friendshipper";
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub static ETHOS_APP_NAME: &str = "ethos";

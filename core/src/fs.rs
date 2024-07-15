@@ -20,9 +20,9 @@ impl std::ops::Deref for LocalDownloadPath {
     }
 }
 
-impl Default for LocalDownloadPath {
-    fn default() -> Self {
-        if let Some(proj_dirs) = ProjectDirs::from("", "", crate::APP_NAME) {
+impl LocalDownloadPath {
+    pub fn new(app_name: &str) -> Self {
+        if let Some(proj_dirs) = ProjectDirs::from("", "", app_name) {
             return LocalDownloadPath(proj_dirs.data_dir().to_path_buf());
         };
         // Fallback path off of root, since we don't know where we are?

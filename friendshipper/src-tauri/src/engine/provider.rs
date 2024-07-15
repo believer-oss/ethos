@@ -2,15 +2,25 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use ethos_core::types::config::{AppConfig, RepoConfig};
 use ethos_core::types::gameserver::GameServerResults;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use tracing::info;
+
+#[derive(Eq, PartialEq)]
+pub enum CommunicationType {
+    IpcOnly, // Only interprocess communication is allowed in this case, for example a HTTP request, pipes, etc.
+    OfflineFallback, // Tries IPC first, but falls back to an offline approach if the host engine process isn't running, which can be much slower than IPC
+}
 
 /// EngineProvider trait
 #[async_trait]
 pub trait EngineProvider: Clone + Send + Sync + 'static {
     /// Creates a new provider from app and repo config
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self;
+
+    /// Loads any internal caches the provider needs from disk
+    async fn load_caches(&mut self);
 
     /// Checks if the engine is in a state where many files can be synced.
     /// For example, if the Unreal editor is running, we should not sync, so this function
@@ -48,4 +58,13 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
         }
         Ok(None)
     }
+
+    // Generates a parallel array to the passed-in asset_names slice with display names. Empty strings may be
+    // present if a display name wasn't able to be determined.
+    async fn get_asset_display_names(
+        &self,
+        communication: CommunicationType,
+        engine_path: &Path,
+        asset_paths: &[String],
+    ) -> Vec<String>;
 }

@@ -1,17 +1,14 @@
-use std::path::PathBuf;
-
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
+use crate::engine;
 use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{CommitFileInfo, ShowCommitFilesResponse};
 
 use crate::state::AppState;
-use crate::system::unreal::CanUseCommandlet;
-use crate::system::unreal::OFPANameCache;
 
 #[derive(Deserialize, Serialize)]
 pub struct ShowCommitFilesParams {
@@ -66,31 +63,25 @@ where
 
     let file_paths: Vec<String> = files.iter().map(|v| v.file.clone()).collect();
 
-    let repo_path = state.app_config.read().repo_path.clone();
-    let uproject_path = state
-        .app_config
-        .read()
-        .get_uproject_path(&state.repo_config.read());
     let engine_path = state
         .app_config
         .read()
         .load_engine_path_from_repo(&state.repo_config.read())
         .unwrap_or_default();
 
-    let ofpa_names = OFPANameCache::get_names(
-        state.ofpa_cache.clone(),
-        &PathBuf::from(repo_path),
-        &uproject_path,
-        &engine_path,
-        &file_paths,
-        CanUseCommandlet::Never,
-    )
-    .await;
+    let display_names = state
+        .engine
+        .get_asset_display_names(
+            engine::CommunicationType::IpcOnly,
+            &engine_path,
+            &file_paths,
+        )
+        .await;
 
-    assert_eq!(files.len(), ofpa_names.len());
+    assert_eq!(files.len(), display_names.len());
 
     for i in 0..files.len() {
-        files[i].display_name.clone_from(&ofpa_names[i]);
+        files[i].display_name.clone_from(&display_names[i]);
     }
 
     Ok(Json(files))

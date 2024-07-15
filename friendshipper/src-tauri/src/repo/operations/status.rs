@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::str;
 use std::sync::Arc;
 
@@ -9,7 +8,9 @@ use parking_lot::RwLock;
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
+use crate::engine;
 use crate::engine::EngineProvider;
+use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::storage::{
@@ -22,11 +23,6 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{File, RepoStatus};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
-
-use crate::state::AppState;
-use crate::system::unreal::CanUseCommandlet;
-use crate::system::unreal::OFPANameCache;
-use crate::system::unreal::OFPANameCacheRef;
 
 pub type RepoStatusRef = Arc<RwLock<RepoStatus>>;
 
@@ -62,21 +58,27 @@ From there: octal file mode at HEAD, octal file mode in index, octal file mode i
 */
 
 #[derive(Clone)]
-pub struct StatusOp {
+pub struct StatusOp<T>
+where
+    T: EngineProvider,
+{
     pub git_client: git::Git,
     pub repo_status: RepoStatusRef,
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
-    pub ofpa_cache: OFPANameCacheRef,
+    pub engine: T,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
     pub skip_fetch: bool,
     pub skip_dll_check: bool,
-    pub skip_ofpa_translation: bool,
+    pub allow_offline_communication: bool,
 }
 
 #[async_trait]
-impl Task for StatusOp {
+impl<T> Task for StatusOp<T>
+where
+    T: EngineProvider,
+{
     async fn execute(&self) -> anyhow::Result<()> {
         let _ = self.run().await?;
 
@@ -88,7 +90,10 @@ impl Task for StatusOp {
     }
 }
 
-impl StatusOp {
+impl<T> StatusOp<T>
+where
+    T: EngineProvider,
+{
     pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
         if !self.skip_fetch {
             info!("Fetching latest for {:?}", self.git_client.repo_path);
@@ -166,13 +171,18 @@ impl StatusOp {
         }
 
         // get display names if available for OFPA
-        if !self.skip_ofpa_translation {
+        {
             info!("StatusOp: fetching OFPA filenames...");
 
             let mut combined_files = status.modified_files.0.clone();
             combined_files.append(&mut status.untracked_files.0.clone());
 
-            self.update_filelist_display_names(&mut combined_files)
+            let communication = if self.allow_offline_communication {
+                engine::CommunicationType::OfflineFallback
+            } else {
+                engine::CommunicationType::IpcOnly
+            };
+            self.update_filelist_display_names(communication, &mut combined_files)
                 .await;
 
             let num_modified = status.modified_files.0.len();
@@ -302,22 +312,6 @@ impl StatusOp {
             .collect::<Vec<_>>()
     }
 
-    fn find_dll_commit(files: &ArtifactList, long_shas: &str, context: &str) -> String {
-        for sha in long_shas.lines() {
-            let sha = sha.replace('"', "");
-            debug!("checking sha {} against s3 entries...", sha);
-            if files.iter().any(|entry| entry.key.0.contains(&sha)) {
-                return sha.to_string();
-            }
-        }
-
-        warn!(
-            "Failed to find editor binaries matching any commits for context {}",
-            context
-        );
-        String::new()
-    }
-
     async fn find_dll_archive_url_info(&self, status: &mut RepoStatus) -> anyhow::Result<()> {
         debug!("parsing remote URL for repo id");
 
@@ -378,8 +372,8 @@ impl StatusOp {
             .await
             .unwrap_or(String::new());
 
-        let dll_commit_local = Self::find_dll_commit(builds, &local_commit_shas, "local");
-        let dll_commit_remote = Self::find_dll_commit(builds, &remote_commit_shas, "remote");
+        let dll_commit_local = find_dll_commit(builds, &local_commit_shas, "local");
+        let dll_commit_remote = find_dll_commit(builds, &remote_commit_shas, "remote");
 
         status.origin_has_new_dlls = dll_commit_local != dll_commit_remote;
         status.dll_commit_local = dll_commit_local;
@@ -388,31 +382,33 @@ impl StatusOp {
         Ok(())
     }
 
-    pub async fn update_filelist_display_names(&self, files: &mut [File]) {
+    pub async fn update_filelist_display_names(
+        &self,
+        communication: engine::CommunicationType,
+        files: &mut [File],
+    ) {
         let filenames: Vec<String> = files.iter().map(|v| v.path.clone()).collect();
 
-        let asset_names: Vec<String> = {
-            let repo_path = self.app_config.read().repo_path.clone();
-            let uproject_path = self
-                .app_config
-                .read()
-                .get_uproject_path(&self.repo_config.read());
-            let engine_path = self
-                .app_config
-                .read()
-                .load_engine_path_from_repo(&self.repo_config.read())
-                .unwrap_or_default();
+        let engine_path = self
+            .app_config
+            .read()
+            .load_engine_path_from_repo(&self.repo_config.read())
+            .unwrap_or_default();
 
-            OFPANameCache::get_names(
-                self.ofpa_cache.clone(),
-                &PathBuf::from(repo_path),
-                &uproject_path,
-                &engine_path,
-                &filenames,
-                CanUseCommandlet::FallbackOnly,
-            )
-            .await
-        };
+        let asset_names: Vec<String> = self
+            .engine
+            .get_asset_display_names(communication, &engine_path, &filenames)
+            .await;
+
+        // OFPANameCache::get_names(
+        //     self.ofpa_cache.clone(),
+        //     &PathBuf::from(repo_path),
+        //     &uproject_path,
+        //     &engine_path,
+        //     &filenames,
+        //     CanUseCommandlet::FallbackOnly,
+        // )
+        // .await
 
         assert_eq!(files.len(), asset_names.len());
 
@@ -430,6 +426,22 @@ impl StatusOp {
     }
 }
 
+fn find_dll_commit(files: &ArtifactList, long_shas: &str, context: &str) -> String {
+    for sha in long_shas.lines() {
+        let sha = sha.replace('"', "");
+        debug!("checking sha {} against s3 entries...", sha);
+        if files.iter().any(|entry| entry.key.0.contains(&sha)) {
+            return sha.to_string();
+        }
+    }
+
+    warn!(
+        "Failed to find editor binaries matching any commits for context {}",
+        context
+    );
+    String::new()
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusParams {
@@ -438,7 +450,7 @@ pub struct StatusParams {
     #[serde(default)]
     pub skip_dll_check: bool,
     #[serde(default)]
-    pub skip_ofpa_translation: bool,
+    pub allow_offline_communication: bool,
 }
 
 pub async fn status_handler<T>(
@@ -464,13 +476,13 @@ where
             repo_status: state.repo_status.clone(),
             app_config: state.app_config.clone(),
             repo_config: state.repo_config.clone(),
-            ofpa_cache: state.ofpa_cache.clone(),
+            engine: state.engine.clone(),
             git_client: state.git(),
             aws_client: aws_client.clone(),
             storage,
             skip_fetch: params.skip_fetch,
             skip_dll_check: params.skip_dll_check,
-            skip_ofpa_translation: params.skip_ofpa_translation,
+            allow_offline_communication: params.allow_offline_communication,
         }
     };
 
@@ -537,7 +549,7 @@ mod tests {
         .join("\n");
 
         println!("{:?}", long_shas);
-        let sha = StatusOp::find_dll_commit(&list, &long_shas, "test");
+        let sha = find_dll_commit(&list, &long_shas, "test");
         assert_eq!(sha, "9c351d7dacd6c412f55a825d77727761d9c1268b");
     }
 }

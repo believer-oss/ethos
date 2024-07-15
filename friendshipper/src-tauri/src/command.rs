@@ -389,13 +389,13 @@ pub async fn get_repo_status(
     state: tauri::State<'_, State>,
     skip_fetch: bool,
     skip_dll_check: bool,
-    skip_ofpa_translation: bool,
+    allow_offline_communication: bool,
 ) -> Result<RepoStatus, TauriError> {
     let res = state
         .client
         .get(format!(
-            "{}/repo/status?skip_fetch={}&skipDllCheck={}&skipOfpaTranslation={}",
-            state.server_url, skip_fetch, skip_dll_check, skip_ofpa_translation
+            "{}/repo/status?skip_fetch={}&skipDllCheck={}&allowOfflineCommunication={}",
+            state.server_url, skip_fetch, skip_dll_check, allow_offline_communication
         ))
         .send()
         .await?;

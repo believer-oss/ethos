@@ -29,6 +29,7 @@ use friendshipper::engine::{EngineProvider, UnrealEngineProvider};
 #[cfg(windows)]
 use friendshipper::repo::CREATE_NO_WINDOW;
 use friendshipper::state::AppState;
+use friendshipper::APP_NAME;
 
 static ACCESS_KEY: &str = match option_env!("ACCESS_KEY") {
     Some(v) => v,
@@ -371,13 +372,15 @@ pub async fn setup(
 
     info!("Initialized test repo. Setting up app config.");
     let repo_path = TEST_DIR.join("test-local");
-    let app_config = Arc::new(RwLock::new(AppConfig {
-        user_display_name: "test_user".to_string(),
-        repo_path: repo_path.to_str().unwrap().to_string(),
-        pull_dlls: false,
-        open_uproject_after_sync: false,
-        ..Default::default()
-    }));
+
+    let app_config = {
+        let mut config = AppConfig::new(APP_NAME);
+        config.user_display_name = "test_user".to_string();
+        config.repo_path = repo_path.to_str().unwrap().to_string();
+        config.pull_dlls = false;
+        config.open_uproject_after_sync = false;
+        Arc::new(RwLock::new(config))
+    };
 
     let config_file = TEST_DIR.join("config.yaml");
 
