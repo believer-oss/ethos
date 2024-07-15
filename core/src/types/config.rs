@@ -115,12 +115,19 @@ pub struct AppConfig {
     pub initialized: bool,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        #[cfg(target_os = "windows")]
-        let mut engine_prebuilt_path = PathBuf::from("C:\\");
-        #[cfg(not(target_os = "windows"))]
-        let mut engine_prebuilt_path = LocalDownloadPath::default().to_path_buf();
+impl AppConfig {
+    pub fn new(app_name: &str) -> Self {
+        let mut engine_prebuilt_path = 'blk: {
+            #[cfg(target_os = "windows")]
+            {
+                _ = app_name;
+                break 'blk PathBuf::from("C:\\");
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            break 'blk LocalDownloadPath::new(app_name).to_path_buf();
+        };
+
         engine_prebuilt_path.push("f11r_engine_prebuilt");
         AppConfig {
             repo_path: Default::default(),
@@ -145,9 +152,7 @@ impl Default for AppConfig {
             initialized: false,
         }
     }
-}
 
-impl AppConfig {
     pub fn initialize_repo_config(&self) -> Result<RepoConfig> {
         if self.repo_path.is_empty() {
             return Ok(Default::default());

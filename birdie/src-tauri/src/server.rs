@@ -190,7 +190,7 @@ impl Server {
                     }
                 };
 
-                match serde_yaml::to_writer(file, &AppConfig::default()) {
+                match serde_yaml::to_writer(file, &AppConfig::new(crate::APP_NAME)) {
                     Ok(_) => {
                         info!("Initialized config file at {}", &config_file_str);
                     }
@@ -200,7 +200,7 @@ impl Server {
                 }
             }
 
-            let default_config: AppConfig = Default::default();
+            let default_config: AppConfig = AppConfig::new(crate::APP_NAME);
 
             let builder = Config::builder()
                 .add_source(config::File::with_name(config_file_str))
