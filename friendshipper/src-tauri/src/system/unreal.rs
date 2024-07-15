@@ -1,8 +1,9 @@
-use anyhow::bail;
 use ethos_core::types::config::UProject;
 use std::path::Path;
-use std::path::PathBuf;
 use tracing::info;
+
+#[cfg(windows)]
+use std::path::PathBuf;
 
 pub fn update_engine_association_registry(
     engine_path: &Path,
@@ -60,7 +61,7 @@ pub fn update_engine_association_registry(
             &new_uproject.engine_association,
             &engine_path.clone().into_os_string().into_string().unwrap(),
         ) {
-            bail!(
+            anyhow::bail!(
                 "Failed to set engine association {} to {} in registry: {}",
                 new_uproject.engine_association,
                 engine_path.display(),
