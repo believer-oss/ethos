@@ -206,6 +206,7 @@
 		<Label class="space-y-2 text-xs text-white">
 			<span>Project</span>
 			<Select
+				disabled={mode === ModalState.Editing}
 				value={project}
 				size="sm"
 				name="project"
