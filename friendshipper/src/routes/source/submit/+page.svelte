@@ -278,7 +278,7 @@
 
 			$commitMessage = '';
 
-			tempCommitType = '';
+			// note that we don't reset tempCommitType because the UI already has a value selected
 			tempCommitScope = '';
 			tempCommitMessage = '';
 
@@ -478,7 +478,7 @@
 						<Select
 							bind:value={tempCommitType}
 							placeholder="Choose commit type"
-							on:input={() => {
+							on:change={() => {
 								$commitMessage = {
 									type: tempCommitType,
 									scope: tempCommitScope,
@@ -495,13 +495,13 @@
 						<Input
 							type="text"
 							bind:value={tempCommitScope}
-							on:input={() => {
-								commitMessageValid = validateCommitMessage();
+							on:keyup={() => {
 								$commitMessage = {
 									type: tempCommitType,
 									scope: tempCommitScope,
 									message: tempCommitMessage
 								};
+								commitMessageValid = validateCommitMessage();
 							}}
 							class="text-white bg-secondary-800 dark:bg-space-950"
 							placeholder="Scope (required)"
@@ -512,7 +512,7 @@
 					id="commit-message"
 					placeholder="Message (required)"
 					bind:value={tempCommitMessage}
-					on:input={() => {
+					on:keyup={() => {
 						if ($repoConfig?.useConventionalCommits) {
 							$commitMessage = {
 								type: tempCommitType,
