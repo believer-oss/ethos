@@ -51,14 +51,20 @@
 	$: sortedOurs = derived(locks, ($locks) => $locks.ours.sort(sortLocksFunc), []);
 	$: sortedTheirs = derived(locks, ($locks) => $locks.theirs.sort(sortLocksFunc), []);
 
-	$: filteredOurs = $sortedOurs.filter((item) =>
-		item.path.toLowerCase().includes(searchTerm.toLowerCase())
-	);
-	$: filteredTheirs = $sortedTheirs.filter(
-		(item) =>
-			item.path.toLowerCase().includes(searchTerm.toLowerCase()) ||
-			item.owner?.name.toLowerCase().includes(searchTerm.toLowerCase())
-	);
+	$: filteredOurs = $sortedOurs.filter((item): boolean => {
+		const search = searchTerm.toLowerCase();
+		return (
+			item.path.toLowerCase().includes(search) || item.display_name.toLowerCase().includes(search)
+		);
+	});
+	$: filteredTheirs = $sortedTheirs.filter((item): boolean => {
+		const search = searchTerm.toLowerCase();
+		return (
+			item.path.toLowerCase().includes(search) ||
+			item.display_name.toLowerCase().includes(search) ||
+			item.owner?.name.toLowerCase().includes(search)
+		);
+	});
 	$: unmodifiedLockedFiles = $sortedOurs.filter(
 		(lock) => !$allModifiedFiles.find((file) => file.path === lock.path)
 	);
