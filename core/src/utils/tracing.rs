@@ -61,7 +61,7 @@ pub struct TraceOnRequest;
 impl<B> OnRequest<B> for TraceOnRequest {
     fn on_request(&mut self, _request: &Request<B>, _span: &Span) {
         tracing::event!(
-            tracing::Level::INFO,
+            tracing::Level::DEBUG,
             "request started"
         );
     }
@@ -73,7 +73,7 @@ pub struct TraceOnResponse;
 impl<B> OnResponse<B> for TraceOnResponse {
     fn on_response(self, response: &Response<B>, latency: Duration, span: &Span) {
         tracing::event!(
-            tracing::Level::INFO,
+            tracing::Level::DEBUG,
             duration = latency.as_micros(),
             "response produced"
         );
@@ -95,7 +95,7 @@ pub struct TraceOnBodyChunk;
 impl<B> OnBodyChunk<B> for TraceOnBodyChunk {
     fn on_body_chunk(&mut self, _chunk: &B, latency: Duration, _span: &Span) {
         tracing::event!(
-            tracing::Level::INFO,
+            tracing::Level::DEBUG,
             duration = latency.as_micros(),
             "response body chunk sent"
         );
@@ -108,7 +108,7 @@ pub struct TraceOnEos;
 impl OnEos for TraceOnEos {
     fn on_eos(self, trailers: Option<&HeaderMap>, stream_duration: Duration, _span: &Span) {
         tracing::event!(
-            tracing::Level::INFO,
+            tracing::Level::DEBUG,
             duration = stream_duration.as_micros(),
             trailers = ?trailers,
             "response stream ended"
@@ -125,7 +125,7 @@ where
 {
     fn on_failure(&mut self, _failure: T, _latency: Duration, _span: &Span) {
         tracing::event!(
-            tracing::Level::INFO,
+            tracing::Level::DEBUG,
             "request failure"
         );
     }
