@@ -5,7 +5,7 @@ use directories_next::ProjectDirs;
 use octocrab::models::pulls::MergeableState;
 use octocrab::Octocrab;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 
 use crate::engine::EngineProvider;
 use crate::APP_NAME;
@@ -59,6 +59,7 @@ const SUBMIT_PREFIX: &str = "[quick submit]";
 
 #[async_trait]
 impl Task for GitHubSubmitOp {
+    #[instrument(name = "GitHubSubmitOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let octocrab = Octocrab::builder()
             .personal_token(self.token.clone())
@@ -149,6 +150,7 @@ impl<T> Task for SubmitOp<T>
 where
     T: EngineProvider,
 {
+    #[instrument(name = "SubmitOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         // save a snapshot before submitting
         // make sure we have a temp dir for copying our files
@@ -214,6 +216,7 @@ impl<T> SubmitOp<T>
 where
     T: EngineProvider,
 {
+    #[instrument(name = "SubmitOp::execute_internal", skip(self))]
     pub async fn execute_internal(&self) -> anyhow::Result<()> {
         let base_branch = self.repo_config.read().trunk_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
@@ -492,6 +495,7 @@ where
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn recover(
         &self,
         stash_path: PathBuf,
@@ -521,6 +525,7 @@ where
     }
 }
 
+#[instrument(skip(state))]
 pub async fn submit_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<PushRequest>,

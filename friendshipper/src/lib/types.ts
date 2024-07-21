@@ -284,7 +284,7 @@ export interface Snapshot {
 export interface LogEvent {
 	timestamp: string;
 	level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-	fields: Record<string, string>;
+	fields: Record<string, string | number>;
 	target: string;
 }
 

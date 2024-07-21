@@ -11,7 +11,7 @@ use chrono::DateTime;
 use reqwest::StatusCode;
 use std::env;
 use std::path::PathBuf;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Clone)]
 pub struct CommitOp {
@@ -23,6 +23,7 @@ pub struct CommitOp {
 
 #[async_trait]
 impl Task for CommitOp {
+    #[instrument(name = "CommitOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         if !self.skip_status_check {
             let repo_status = self.repo_status.read();
@@ -54,6 +55,7 @@ pub struct LogOp {
 
 #[async_trait]
 impl Task for LogOp {
+    #[instrument(name = "LogOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let _ = self.run().await?;
 
@@ -66,6 +68,7 @@ impl Task for LogOp {
 }
 
 impl LogOp {
+    #[instrument(name = "LogOp::run", skip(self))]
     pub async fn run(&self) -> anyhow::Result<LogResponse> {
         let git_ref = match self.use_remote {
             true => self.repo_status.read().remote_branch.clone(),
@@ -108,6 +111,7 @@ pub struct AddOp {
 
 #[async_trait]
 impl Task for AddOp {
+    #[instrument(name = "AddOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let mut args = vec!["add"];
 
@@ -135,6 +139,7 @@ pub struct RestoreOp {
 
 #[async_trait]
 impl Task for RestoreOp {
+    #[instrument(name = "RestoreOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let mut args = vec!["restore", "--staged"];
 
@@ -162,6 +167,7 @@ pub struct RebaseOp {
 
 #[async_trait]
 impl Task for RebaseOp {
+    #[instrument(name = "RebaseOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let remote_branch = self.repo_status.read().remote_branch.clone();
         let args: Vec<&str> = vec!["rebase", &remote_branch];
@@ -187,6 +193,7 @@ pub struct LockOp {
 
 #[async_trait]
 impl Task for LockOp {
+    #[instrument(name = "LockOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let _ = self.run().await?;
 
@@ -199,6 +206,7 @@ impl Task for LockOp {
 }
 
 impl LockOp {
+    #[instrument(name = "LockOp::run", skip(self))]
     pub async fn run(&self) -> anyhow::Result<LockResponse> {
         if self.github_pat.is_empty() {
             bail!("You must set your Github PAT in Preferences to interact with locks.");

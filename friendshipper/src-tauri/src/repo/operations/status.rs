@@ -79,6 +79,7 @@ impl<T> Task for StatusOp<T>
 where
     T: EngineProvider,
 {
+    #[instrument(name = "StatusOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         let _ = self.run().await?;
 
@@ -94,7 +95,7 @@ impl<T> StatusOp<T>
 where
     T: EngineProvider,
 {
-    #[instrument]
+    #[instrument(name = "StatusOp::run", skip_all)]
     pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
         if !self.skip_fetch {
             info!("Fetching latest for {:?}", self.git_client.repo_path);
@@ -384,7 +385,7 @@ where
         Ok(())
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn update_filelist_display_names(
         &self,
         communication: engine::CommunicationType,

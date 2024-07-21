@@ -1,7 +1,7 @@
 use crate::types::config::AppConfigRef;
 use async_trait::async_trait;
 use tokio::sync::mpsc::Receiver;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument, span};
 
 #[async_trait]
 pub trait Task {
@@ -22,10 +22,17 @@ impl Task for NoOp {
     }
 }
 
-#[derive(Default)]
 pub struct TaskSequence {
     pub tasks: Vec<Box<dyn Task + Send + Sync>>,
     pub completion_tx: Option<tokio::sync::oneshot::Sender<Option<anyhow::Error>>>,
+
+    span: tracing::Span,
+}
+
+impl Default for TaskSequence {
+    fn default() -> Self {
+        TaskSequence::new()
+    }
 }
 
 impl TaskSequence {
@@ -33,6 +40,7 @@ impl TaskSequence {
         TaskSequence {
             tasks: Vec::new(),
             completion_tx: None,
+            span: span!(tracing::Level::INFO, "TaskSequence"),
         }
     }
 
@@ -71,8 +79,9 @@ impl RepoWorker {
             }
 
             let mut err: Option<anyhow::Error> = None;
+            let span = sequence.span.clone();
             for task in sequence.tasks {
-                match self.run_task(task).await {
+                match self.run_task(task, &span).await {
                     Ok(_) => {}
                     Err(e) => {
                         error!("caught error running task: {}", &e);
@@ -88,7 +97,8 @@ impl RepoWorker {
         }
     }
 
-    async fn run_task(&self, op: Box<dyn Task + Send + Sync>) -> anyhow::Result<()> {
+    #[instrument(parent = _span, skip_all)]
+    async fn run_task(&self, op: Box<dyn Task + Send + Sync>, _span: &tracing::Span) -> anyhow::Result<()> {
         info!("Running: {:?}", op.get_name());
         match op.execute().await {
             Ok(_) => {}

@@ -25,7 +25,7 @@ lazy_static = { workspace = true }
 log = { workspace = true }
 open = { workspace = true }
 opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true, feathres = ["http-proto", "reqwest-client"] }
+opentelemetry-otlp = { workspace = true, features = ["http-proto", "reqwest-client"] }
 opentelemetry_sdk = { workspace = true }
 parking_lot = { workspace = true }
 reqwest = { workspace = true }

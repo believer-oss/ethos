@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{extract::State, Json};
-use tracing::info;
+use tracing::{info, instrument};
 
 use crate::engine::EngineProvider;
 use ethos_core::operations::LockOp;
@@ -10,6 +10,7 @@ use ethos_core::types::repo::LockRequest;
 
 use crate::state::AppState;
 
+#[instrument(skip(state, request))]
 pub async fn acquire_locks_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<LockRequest>,
@@ -22,6 +23,7 @@ where
     internal_lock_handler(state, request, LockOperation::Lock).await
 }
 
+#[instrument(skip(state, request))]
 pub async fn release_locks_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<LockRequest>,
@@ -34,6 +36,7 @@ where
     internal_lock_handler(state, request, LockOperation::Unlock).await
 }
 
+#[instrument(skip(state))]
 async fn internal_lock_handler<T>(
     state: AppState<T>,
     request: LockRequest,

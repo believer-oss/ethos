@@ -4,7 +4,7 @@ use std::sync::mpsc::Sender;
 use anyhow::{anyhow, bail};
 use axum::{async_trait, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 
 use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
@@ -47,7 +47,9 @@ impl<T> Task for PullOp<T>
 where
     T: EngineProvider,
 {
+    #[instrument(name = "PullOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
+        info!("Pulling repo");
         self.engine.check_ready_to_sync_repo().await?;
 
         {
@@ -310,6 +312,7 @@ where
     }
 }
 
+#[instrument(skip(state))]
 pub async fn pull_handler<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<PullResponse>, CoreError>

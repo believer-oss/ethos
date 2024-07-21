@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{extract::State, Json};
-
+use tracing::instrument;
 use crate::engine;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
@@ -8,6 +8,7 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::Lock;
 use ethos_core::types::locks::VerifyLocksResponse;
 
+#[instrument(skip(state))]
 pub async fn verify_locks_handler<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<VerifyLocksResponse>, CoreError>

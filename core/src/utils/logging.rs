@@ -7,7 +7,7 @@ use opentelemetry_sdk::trace::{Tracer};
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{EnvFilter, Registry, reload};
-use tracing_subscriber::layer::{SubscriberExt};
+use tracing_subscriber::layer::{Layered, SubscriberExt};
 use tracing_subscriber::reload::Handle;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -15,9 +15,7 @@ pub const OTEL_TRACER_PROTOCOL: opentelemetry_otlp::Protocol = opentelemetry_otl
 pub const OTEL_TRACER_TIMEOUT: Duration = Duration::from_secs(10);
 pub const ETHOS_TRACE_EVENT_TARGET: &str = "ethos::trace";
 
-// Type mismatch [E0308]expected `OtelReloadHandle`, but found `Handle<Option<Filtered<OpenTelemetryLayer<Layered<EnvFilter, Registry, Registry>, Tracer>, FilterFn<fn(&Metadata) -> bool>, Layered<EnvFilter, Registry, Registry>>>, Layered<EnvFilter, Registry, Registry>>`
-
-pub type OtelReloadHandle = Handle<Option<OpenTelemetryLayer<Registry, Tracer>>, Registry>;
+pub type OtelReloadHandle = Handle<Option<OpenTelemetryLayer<Layered<EnvFilter, Registry, Registry>, Tracer>>, Layered<EnvFilter, Registry, Registry>>;
 pub fn init(prefix: &str, app: &str) -> anyhow::Result<(PathBuf, OtelReloadHandle)> {
     // OpenTelemetry
     let otel_layer = match env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
@@ -62,16 +60,15 @@ pub fn init(prefix: &str, app: &str) -> anyhow::Result<(PathBuf, OtelReloadHandl
         .rotation(tracing_appender::rolling::Rotation::HOURLY)
         .build(log_path.clone())
         .expect("file appender should build");
-    let (file_appender, _file_appender_guard) = tracing_appender::non_blocking(file_appender);
     let file_appender_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_writer(file_appender);
 
     // Registry
     tracing_subscriber::registry()
+        .with(env_filter)
         .with(otel_layer)
         .with(stdout_log)
-        .with(env_filter)
         .with(file_appender_layer)
         .init();
 
