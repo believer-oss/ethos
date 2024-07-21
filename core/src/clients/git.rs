@@ -10,7 +10,7 @@ use regex::Regex;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 
 use crate::types::errors::CoreError;
 use crate::types::locks::VerifyLocksResponse;
@@ -452,7 +452,7 @@ impl Git {
             &args,
             Opts::new_with_ignored(&["remote ref does not exist"]),
         )
-        .await
+            .await
     }
 
     pub async fn verify_locks(&self) -> anyhow::Result<VerifyLocksResponse> {
@@ -478,7 +478,7 @@ impl Git {
                     &["lfs", "locks", "--verify", "--json"],
                     Opts::new_without_logs(),
                 )
-                .await?
+                    .await?
             }
         };
 
@@ -497,7 +497,7 @@ impl Git {
             ],
             Opts::new_without_logs(),
         )
-        .await
+            .await
     }
 
     pub async fn version(&self) -> anyhow::Result<String> {
@@ -510,7 +510,7 @@ impl Git {
             &["status", "--porcelain", "-uall", "--branch"],
             Opts::new_without_logs(),
         )
-        .await
+            .await
     }
 
     pub async fn current_branch(&self) -> anyhow::Result<String> {
@@ -581,6 +581,7 @@ impl Git {
         Ok(entries)
     }
 
+    #[instrument(name = "git::run_and_collect_output")]
     pub async fn run_and_collect_output<'a>(
         &self,
         args: &[&str],
@@ -598,6 +599,7 @@ impl Git {
         }
     }
 
+    #[instrument(name = "git::run")]
     pub async fn run<'a>(&self, args: &[&str], opts: Opts<'a>) -> anyhow::Result<()> {
         let res = self
             .run_and_collect_output_internal(args, opts, &mut None)
@@ -611,6 +613,7 @@ impl Git {
         }
     }
 
+    #[instrument(name = "git::run_and_collect_output_internal", err)]
     async fn run_and_collect_output_internal<'a>(
         &self,
         args: &[&str],

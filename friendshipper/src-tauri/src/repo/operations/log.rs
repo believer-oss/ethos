@@ -1,8 +1,8 @@
 use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::Json;
-use serde::Deserialize;
-
+use serde::{Deserialize, Serialize};
+use tracing::instrument;
 use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::operations::{LogOp, LogResponse};
@@ -13,7 +13,8 @@ use crate::state::AppState;
 
 use super::StatusOp;
 
-#[derive(Default, Deserialize)]
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LogParams {
     #[serde(default = "default_limit")]
     pub limit: usize,
@@ -30,6 +31,7 @@ fn default_limit() -> usize {
     10
 }
 
+#[instrument(skip(state))]
 pub async fn log_handler<T>(
     State(state): State<AppState<T>>,
     params: Query<LogParams>,

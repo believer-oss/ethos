@@ -7,7 +7,7 @@ use axum::async_trait;
 use axum::extract::State;
 use ethos_core::fs::LocalDownloadPath;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::info;
+use tracing::{info, instrument};
 use tracing::warn;
 
 use ethos_core::clients::aws::ensure_aws_client;
@@ -44,6 +44,7 @@ pub struct UpdateEngineOp {
 
 #[async_trait]
 impl Task for UpdateEngineOp {
+    #[instrument(name = "UpdateEngineOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         // If there's no match we assume it's using an Epic distribution of the engine build so we don't have any work to do
         if self.new_uproject.is_custom_engine() {
@@ -180,6 +181,7 @@ impl Task for UpdateEngineOp {
     }
 }
 
+#[instrument(skip(state))]
 pub async fn update_engine_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
 where
     T: EngineProvider,
@@ -228,11 +230,11 @@ where
         let engine_path = state.app_config.read().engine_prebuilt_path.clone();
         if engine_path == old_default_engine_path.to_string_lossy()
             && (!PathBuf::from(&engine_path).exists()
-                || PathBuf::from(&engine_path)
-                    .read_dir()
-                    .unwrap()
-                    .next()
-                    .is_none())
+            || PathBuf::from(&engine_path)
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_none())
         {
             warn!(
                 "Detected old engine path at {:?}, no files found. Forcing new default engine path.",

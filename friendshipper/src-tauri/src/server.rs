@@ -6,7 +6,6 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
-use ethos_core::middleware::uri::{uri_passthrough};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
@@ -168,7 +167,6 @@ impl Server {
 
             let app = crate::router(&shared_state.log_path)?
                 .with_state(shared_state.clone())
-                .layer(axum::middleware::from_fn(uri_passthrough))
                 .layer(ethos_core::utils::tracing::new_tracing_layer(APP_NAME.to_lowercase()));
 
             let address = format!("127.0.0.1:{}", self.port);

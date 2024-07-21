@@ -39,7 +39,7 @@ where
         let log_entry: LogEntry = match serde_json::from_str(&line) {
             Ok(log_entry) => log_entry,
             Err(e) => {
-                error!("Error parsing log entry: {:?}", e);
+                error!("Error parsing log entry: {:?}, line: {}", e, line.as_str());
                 return Err(anyhow!("Error parsing log entry: {:?}", e).into());
             }
         };

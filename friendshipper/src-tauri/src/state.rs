@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::trace::config;
+use opentelemetry_sdk::trace::{config, Sampler};
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender as MPSCSender;
 use tokio::sync::RwLock as TokioRwLock;
@@ -235,7 +235,7 @@ where
                             opentelemetry::KeyValue::new("service.version", self.version.clone()),
                             opentelemetry::KeyValue::new("user", username.to_string()),
                         ]),
-                    ))
+                    ).with_sampler(Sampler::AlwaysOn))
                     .with_exporter(
                         opentelemetry_otlp::new_exporter()
                             .http()
