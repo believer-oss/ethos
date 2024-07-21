@@ -6,7 +6,7 @@ use axum::extract::Query;
 use axum::{async_trait, extract::State, Json};
 use parking_lot::RwLock;
 use serde::Deserialize;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine;
 use crate::engine::EngineProvider;
@@ -57,7 +57,7 @@ Third column is always N... unless it's a submodule.
 From there: octal file mode at HEAD, octal file mode in index, octal file mode in worktree, object name in HEAD, object name in index, file path
 */
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StatusOp<T>
 where
     T: EngineProvider,
@@ -94,6 +94,7 @@ impl<T> StatusOp<T>
 where
     T: EngineProvider,
 {
+    #[instrument]
     pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
         if !self.skip_fetch {
             info!("Fetching latest for {:?}", self.git_client.repo_path);
@@ -312,6 +313,7 @@ where
             .collect::<Vec<_>>()
     }
 
+    #[instrument(skip_all)]
     async fn find_dll_archive_url_info(&self, status: &mut RepoStatus) -> anyhow::Result<()> {
         debug!("parsing remote URL for repo id");
 
@@ -382,6 +384,7 @@ where
         Ok(())
     }
 
+    #[instrument]
     pub async fn update_filelist_display_names(
         &self,
         communication: engine::CommunicationType,
@@ -426,6 +429,7 @@ where
     }
 }
 
+#[instrument]
 fn find_dll_commit(files: &ArtifactList, long_shas: &str, context: &str) -> String {
     for sha in long_shas.lines() {
         let sha = sha.replace('"', "");
@@ -546,7 +550,7 @@ mod tests {
             "2123456789abcde0123456789abcde0123456789",
             "3123456789abcde0123456789abcde0123456789",
         ]
-        .join("\n");
+            .join("\n");
 
         println!("{:?}", long_shas);
         let sha = find_dll_commit(&list, &long_shas, "test");

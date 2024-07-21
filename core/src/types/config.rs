@@ -117,16 +117,14 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn new(app_name: &str) -> Self {
-        let mut engine_prebuilt_path = 'blk: {
-            #[cfg(target_os = "windows")]
-            {
-                _ = app_name;
-                break 'blk PathBuf::from("C:\\");
-            }
-
-            #[cfg(not(target_os = "windows"))]
-            break 'blk LocalDownloadPath::new(app_name).to_path_buf();
+        #[cfg(target_os = "windows")]
+        let mut engine_prebuilt_path = {
+            _ = app_name;
+            PathBuf::from("C:\\")
         };
+
+        #[cfg(not(target_os = "windows"))]
+        let mut engine_prebuilt_path = LocalDownloadPath::new(app_name).to_path_buf();
 
         engine_prebuilt_path.push("f11r_engine_prebuilt");
         AppConfig {
@@ -194,7 +192,7 @@ impl AppConfig {
             "C:/Program Files/Epic Games/UE_{}",
             uproject.engine_association
         )
-        .into()
+            .into()
     }
 
     pub fn load_engine_path_from_repo(&self, repo_config: &RepoConfig) -> Result<PathBuf> {
@@ -218,7 +216,7 @@ impl AppConfig {
             None => Err(anyhow!(
                 "GitHub PAT is not configured. Please configure it in the settings.".to_string()
             )
-            .into()),
+                .into()),
         }
     }
 }
@@ -382,6 +380,18 @@ pub struct DynamicConfig {
 
     #[serde(default)]
     pub ludos_access_secret: String,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_endpoint")]
+    pub otlp_endpoint: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_auth_header")]
+    pub otlp_auth_header: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loki_endpoint: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loki_auth_header: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

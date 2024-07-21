@@ -65,7 +65,7 @@ fn force_window_to_front(window: Window) {
 }
 
 fn main() {
-    let log_path = match logging::init(VERSION, APP_NAME) {
+    let (log_path, _otel_reload_handle) = match logging::init(VERSION, APP_NAME) {
         Ok(path) => path,
         Err(e) => {
             error!("Failed to initialize logging: {:?}", e);

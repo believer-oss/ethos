@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use http::Request;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::auth::sso::{AccessToken, DeviceClient, SsoAccessTokenProvider, TokenExpiredError};
 use crate::storage::entry::ArtifactEntry;
@@ -269,7 +269,7 @@ impl AWSClient {
                 sso_config.config.clone(),
                 self.config.clone().unwrap(),
             )
-            .await
+                .await
             {
                 Ok(shared_config) => {
                     match shared_config.credentials_provider() {
@@ -423,6 +423,7 @@ impl AWSClient {
     }
 
     // Ported from: https://github.com/awslabs/aws-sdk-rust/issues/980#issuecomment-1859340980
+    #[instrument(skip_all)]
     pub async fn generate_k8s_token<'a>(&self, cluster_name: &str) -> Result<String> {
         let credentials = self.get_credentials().await;
         let expiration = credentials.expiry();
@@ -462,7 +463,7 @@ impl AWSClient {
             signable_request,
             &aws_sigv4::http_request::SigningParams::V4(signing_params),
         )?
-        .into_parts();
+            .into_parts();
 
         // We create a fake request here to create the signed URL
         let mut fake_req = Request::builder()
@@ -479,6 +480,7 @@ impl AWSClient {
         ))
     }
 
+    #[instrument]
     pub async fn eks_k8s_cluster_info(
         &self,
         cluster_name: &str,
@@ -528,6 +530,7 @@ impl AWSClient {
         img.is_ok()
     }
 
+    #[instrument]
     fn restore_token(config: AWSConfig) -> Result<AccessToken> {
         let token_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_TOKEN)?;
         let token = token_entry.get_password()?;
@@ -563,6 +566,7 @@ impl AWSClient {
         })
     }
 
+    #[instrument]
     fn store_token(token: AccessToken) -> Result<()> {
         let stored_token = StoredAccessToken {
             access_token: token.access_token,

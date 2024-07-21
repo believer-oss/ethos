@@ -83,7 +83,7 @@ fn main() {
         let _ = tauri_plugin_deep_link::set_identifier("com.believer.friendshipper");
     }
 
-    let log_path = match logging::init(VERSION, APP_NAME) {
+    let (log_path, otel_reload_handle) = match logging::init(VERSION, APP_NAME) {
         Ok(path) => path,
         Err(e) => {
             error!("Failed to initialize logging: {:?}", e);
@@ -321,6 +321,7 @@ fn main() {
                     server_log_path,
                     git_tx.clone(),
                     gameserver_log_tx.clone(),
+                    otel_reload_handle,
                 );
 
                 match server.run(startup_tx, shutdown_rx).await {

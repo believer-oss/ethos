@@ -17,7 +17,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 
 use crate::clients::argo::ArgoClient;
 use crate::types::argo::workflow::Workflow;
@@ -127,6 +127,7 @@ impl KubeClient {
         })
     }
 
+    #[instrument(skip_all)]
     pub async fn kubeconfig(&self) -> Result<kube::Config, CoreError> {
         self.aws_creds.check_config().await?;
 
@@ -137,7 +138,7 @@ impl KubeClient {
         let mut expired = false;
         {
             let lock = self.kubeconfig.read().await;
-            info!(
+            debug!(
                 "Checking expires_at:[{:?}] >= now:[{:?}]",
                 lock.expires_at, now
             );
@@ -162,6 +163,7 @@ impl KubeClient {
         Ok(self.kubeconfig.read().await.kubeconfig.clone())
     }
 
+    #[instrument(skip(self))]
     pub async fn refresh_token(&self, retrying: bool) {
         info!(
             "Attempting to acquire lock on kubeconfig. Retry: {}",
@@ -222,6 +224,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn list_gameservers(
         &self,
         sha: Option<String>,
@@ -262,6 +265,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn create_gameserver_for_sha(
         &self,
         sha: String,
@@ -326,6 +330,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_gameserver(&self, name: &str) -> Result<GameServer, CoreError> {
         let client = Client::try_from(self.kubeconfig().await?).unwrap();
         let api: Api<GameServer> = Api::default_namespaced(client);
@@ -336,6 +341,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn delete_gameserver(&self, name: &str) -> Result<(), CoreError> {
         let params = DeleteParams::default();
 
@@ -348,6 +354,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_logs_for_gameserver(
         &self,
         name: &str,
@@ -369,12 +376,12 @@ impl KubeClient {
             Err(e) => {
                 if previous
                     && !e.to_string().contains(
-                        format!(
-                            "previous terminated container \"game-server\" in pod \"{}\" not found",
-                            &name
-                        )
-                        .as_str(),
+                    format!(
+                        "previous terminated container \"game-server\" in pod \"{}\" not found",
+                        &name
                     )
+                        .as_str(),
+                )
                 {
                     return Err(CoreError::from(self.handle_kube_error(e).await));
                 }
@@ -383,6 +390,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn tail_logs_for_gameserver(&self, name: &str) -> Result<(), CoreError> {
         let client = Client::try_from(self.kubeconfig().await?).unwrap();
         let api: Api<Pod> = Api::default_namespaced(client);
@@ -410,6 +418,7 @@ impl KubeClient {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub async fn stop_tail(&self) {
         let mut lock = self.log_tail_handle.write().await;
         if let Some(handle) = lock.take() {
@@ -417,6 +426,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_playtests(&self) -> Result<Vec<Playtest>, CoreError> {
         let client = Client::try_from(self.kubeconfig().await?)?;
         let api: Api<Playtest> = Api::default_namespaced(client);
@@ -438,6 +448,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn create_playtest(
         &self,
         input: CreatePlaytestRequest,
@@ -459,6 +470,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn update_playtest(
         &self,
         name: &str,
@@ -488,6 +500,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn delete_playtest(&self, name: &str) -> Result<(), CoreError> {
         let params = DeleteParams::default();
 
@@ -500,6 +513,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn assign_user_to_playtest(
         &self,
         playtest_name: &str,
@@ -540,7 +554,7 @@ impl KubeClient {
                                     "value": serde_json::to_value(users).unwrap()
                                 }
                             ]))
-                            .unwrap();
+                                .unwrap();
 
                             self.patch_playtest(playtest_name, json_patch).await?;
                         }
@@ -551,7 +565,7 @@ impl KubeClient {
                                     "value": serde_json::to_value(vec![user.to_string()]).unwrap()
                                 }
                             ]))
-                            .unwrap();
+                                .unwrap();
 
                             self.patch_playtest(playtest_name, json_patch).await?;
 
@@ -583,7 +597,7 @@ impl KubeClient {
                         "value": user
                     }
                 ]))
-                .unwrap();
+                    .unwrap();
 
                 // Initialize the array with a patch OP if necessary
                 if playtest.spec.users_to_auto_assign.is_none() {
@@ -594,7 +608,7 @@ impl KubeClient {
                             "path": "/spec/usersToAutoAssign",
                             "value": []
                         }))
-                        .unwrap(),
+                            .unwrap(),
                     );
                 }
 
@@ -605,6 +619,7 @@ impl KubeClient {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     pub async fn remove_user_from_playtest(
         &self,
         playtest_name: &str,
@@ -633,6 +648,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     async fn patch_playtest(&self, playtest_name: &str, patch: JsonPatch) -> Result<(), CoreError> {
         let client = Client::try_from(self.kubeconfig().await?)?;
         let api: Api<Playtest> = Api::default_namespaced(client);
@@ -646,6 +662,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_workflows(
         &self,
         selected_artifact_project: &str,
@@ -656,6 +673,7 @@ impl KubeClient {
         argo_client.get_workflows(selected_artifact_project).await
     }
 
+    #[instrument(skip(self))]
     pub async fn get_logs_for_workflow_node(
         &self,
         uid: &str,
@@ -667,6 +685,7 @@ impl KubeClient {
         argo_client.get_logs_for_workflow_node(uid, node_id).await
     }
 
+    #[instrument(skip(self))]
     pub async fn stop_workflow(&self, workflow: &str) -> Result<String, CoreError> {
         self.kubeconfig().await?;
 
@@ -674,6 +693,7 @@ impl KubeClient {
         argo_client.stop_workflow(workflow).await
     }
 
+    #[instrument(skip(self))]
     pub async fn get_project_configs(&self) -> Result<Vec<ProjectConfig>, CoreError> {
         // load configmap with name `projects` in `game-servers` namespace
         let client = Client::try_from(self.kubeconfig().await?)?;

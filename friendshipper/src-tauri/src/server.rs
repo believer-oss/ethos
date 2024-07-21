@@ -2,25 +2,20 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{bail, Result};
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use axum::response::Response;
 use config::Config;
 use directories_next::BaseDirs;
-use ethos_core::middleware::uri::{uri_passthrough, RequestUri};
+use ethos_core::middleware::uri::{uri_passthrough};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
-use tower_http::trace::TraceLayer;
-use tracing::{debug, info, warn};
-use tracing::{error, Span};
+use tracing::{debug, error, info};
 
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig};
+use ethos_core::utils::logging::OtelReloadHandle;
 use ethos_core::worker::{RepoWorker, TaskSequence};
 
 use crate::engine::UnrealEngineProvider;
@@ -37,6 +32,7 @@ pub struct Server {
     log_path: PathBuf,
     git_tx: STDSender<String>,
     gameserver_log_tx: STDSender<String>,
+    otel_reload_handle: OtelReloadHandle,
 }
 
 impl Server {
@@ -49,6 +45,7 @@ impl Server {
         log_path: PathBuf,
         git_tx: STDSender<String>,
         gameserver_log_tx: STDSender<String>,
+        otel_reload_handle: OtelReloadHandle,
     ) -> Self {
         Server {
             port,
@@ -58,6 +55,7 @@ impl Server {
             log_path,
             git_tx,
             gameserver_log_tx,
+            otel_reload_handle,
         }
     }
 
@@ -123,10 +121,11 @@ impl Server {
                 VERSION.to_string(),
                 None,
                 self.log_path.clone(),
+                self.otel_reload_handle.clone(),
                 self.git_tx.clone(),
                 self.gameserver_log_tx.clone(),
             )
-            .await?;
+                .await?;
 
             // install git hooks
             {
@@ -170,23 +169,7 @@ impl Server {
             let app = crate::router(&shared_state.log_path)?
                 .with_state(shared_state.clone())
                 .layer(axum::middleware::from_fn(uri_passthrough))
-                .layer(
-                TraceLayer::new_for_http()
-                    .on_request(|request: &Request<Body>, _span: &Span| {
-                        info!(method = %request.method(), path = %request.uri().path(), "request");
-                    })
-                    .on_response(|response: &Response, latency: Duration, _span: &Span| {
-                        let path = response.extensions().get::<RequestUri>().map(|r| r.0.path()).unwrap_or("unknown");
-                        match response.status() {
-                            StatusCode::OK => {
-                                info!(status = %response.status(), latency = ?latency, path, "response");
-                            }
-                            _ => {
-                                warn!(status = %response.status(), latency = ?latency, path, "response");
-                            }
-                        }
-                    }),
-            );
+                .layer(ethos_core::utils::tracing::new_tracing_layer(APP_NAME.to_lowercase()));
 
             let address = format!("127.0.0.1:{}", self.port);
 
