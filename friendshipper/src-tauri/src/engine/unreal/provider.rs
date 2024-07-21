@@ -20,6 +20,16 @@ pub struct UnrealEngineProvider {
     pub ofpa_cache: OFPANameCacheRef,
 }
 
+// impl debug skipping the cache
+impl std::fmt::Debug for UnrealEngineProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnrealEngineProvider")
+            .field("repo_path", &self.repo_path)
+            .field("uproject_path", &self.uproject_path)
+            .finish()
+    }
+}
+
 #[async_trait]
 impl EngineProvider for UnrealEngineProvider {
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self {

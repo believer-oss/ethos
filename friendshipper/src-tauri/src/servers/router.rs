@@ -8,7 +8,7 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use directories_next::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 
 use crate::engine::EngineProvider;
 use ethos_core::clients::kube::ensure_kube_client;
@@ -35,6 +35,7 @@ struct GetServersParams {
     commit: Option<String>,
 }
 
+#[instrument(skip(state))]
 async fn get_servers<T>(
     State(state): State<AppState<T>>,
     params: Query<GetServersParams>,
@@ -67,6 +68,7 @@ where
     }
 }
 
+#[instrument(skip(state))]
 async fn launch_server<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<LaunchRequest>,
@@ -97,6 +99,7 @@ pub struct DownloadLogsResponse {
     pub path: String,
 }
 
+#[instrument(skip(state))]
 async fn download_logs<T>(
     Path(name): Path<String>,
     State(state): State<AppState<T>>,
@@ -161,6 +164,7 @@ where
     )))
 }
 
+#[instrument(skip(state))]
 async fn get_server<T>(
     Path(name): Path<String>,
     State(state): State<AppState<T>>,
@@ -192,6 +196,7 @@ where
     }
 }
 
+#[instrument(skip(state))]
 async fn terminate_server<T>(
     Path(name): Path<String>,
     State(state): State<AppState<T>>,

@@ -24,6 +24,9 @@ keyring = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 open = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true, feathres = ["http-proto", "reqwest-client"] }
+opentelemetry_sdk = { workspace = true }
 parking_lot = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
@@ -42,6 +45,7 @@ tokio-stream = { workspace = true }
 tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
 urlencoding = { workspace = true }
 

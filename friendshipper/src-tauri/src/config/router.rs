@@ -90,7 +90,7 @@ where
         return Err(anyhow!(ConfigValidationError(
             "Display name cannot be empty.".to_string()
         ))
-        .into());
+            .into());
     }
 
     if current_config.selected_artifact_project.is_some() {
@@ -106,12 +106,12 @@ where
         if (payload.repo_url != current_config.repo_url
             && current_config.repo_path == payload.repo_path)
             || (payload.repo_path != current_config.repo_path
-                && current_config.repo_url == payload.repo_url)
+            && current_config.repo_url == payload.repo_url)
         {
             return Err(anyhow!(ConfigValidationError(
                 "Repo URL and Repo Path should change together".to_string()
             ))
-            .into());
+                .into());
         }
     }
 
@@ -131,7 +131,7 @@ where
                 APP_NAME.to_string(),
                 aws_config.clone(),
             )
-            .await?;
+                .await?;
 
             // update the aws config in the app state
             {
@@ -139,7 +139,8 @@ where
                 lock.aws_config = Some(aws_config.clone());
             }
 
-            state.replace_aws_client(new_aws_client).await?;
+            let username = state.app_config.read().user_display_name.clone();
+            state.replace_aws_client(new_aws_client, &username).await?;
         }
     }
 
@@ -188,7 +189,7 @@ where
                         "Error cloning repo: {}",
                         e
                     )))
-                    .into());
+                        .into());
                 }
             }
 
@@ -212,7 +213,7 @@ where
                             "Error creating GitHub client: {}",
                             e
                         )))
-                        .into());
+                            .into());
                     }
                 }
 
@@ -224,7 +225,7 @@ where
                 return Err(anyhow!(ConfigValidationError(
                     "GitHub Personal Access Token cannot be empty.".to_string()
                 ))
-                .into());
+                    .into());
             }
         }
     }

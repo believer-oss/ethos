@@ -2,6 +2,9 @@ use std::{path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::config;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender as MPSCSender;
 use tokio::sync::RwLock as TokioRwLock;
@@ -19,7 +22,7 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::RepoStatus;
 use ethos_core::worker::TaskSequence;
 use ethos_core::AWSClient;
-
+use ethos_core::utils::logging::{OTEL_TRACER_PROTOCOL, OTEL_TRACER_TIMEOUT, OtelReloadHandle};
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::repo::RepoStatusRef;
 
@@ -51,6 +54,7 @@ pub struct AppState<T> {
 
     pub version: String,
     pub log_path: PathBuf,
+    pub otel_reload_handle: OtelReloadHandle,
 
     pub gameserver_log_tx: STDSender<String>,
     pub git_tx: STDSender<String>,
@@ -76,6 +80,7 @@ where
         version: String,
         aws_client: Option<AWSClient>,
         log_path: PathBuf,
+        otel_reload_handle: OtelReloadHandle,
         git_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
     ) -> Result<Self> {
@@ -170,6 +175,7 @@ where
             github_client,
             version,
             log_path,
+            otel_reload_handle,
             git_tx,
             gameserver_log_tx: server_log_tx,
             engine,
@@ -193,7 +199,7 @@ where
             .expect("error forwarding git log");
     }
 
-    pub async fn replace_aws_client(&self, client: AWSClient) -> Result<(), CoreError> {
+    pub async fn replace_aws_client(&self, client: AWSClient, username: &str) -> Result<(), CoreError> {
         let mut aws_client = self.aws_client.write().await;
 
         info!("Replacing AWS client");
@@ -206,12 +212,49 @@ where
             *dynamic_config = new_dynamic_config.clone();
         }
 
+        // reload handle for otlp
+        if let Some(endpoint) = new_dynamic_config.otlp_endpoint {
+            let otel_reload_handle = self.otel_reload_handle.clone();
+            otel_reload_handle.modify(|otel_layer| {
+                // if there's an auth token, set OTEL_EXPORTER_OTLP_HEADERS appropriately
+                if let Some(token) = new_dynamic_config.otlp_auth_header {
+                    std::env::set_var(
+                        "OTEL_EXPORTER_OTLP_HEADERS",
+                        format!("Authorization={}", token),
+                    );
+                }
+
+                let tracer = opentelemetry_otlp::new_pipeline()
+                    .tracing()
+                    .with_trace_config(config().with_resource(
+                        Resource::new(vec![
+                            opentelemetry::KeyValue::new(
+                                "service.name",
+                                crate::APP_NAME.to_string().to_lowercase(),
+                            ),
+                            opentelemetry::KeyValue::new("service.version", self.version.clone()),
+                            opentelemetry::KeyValue::new("user", username.to_string()),
+                        ]),
+                    ))
+                    .with_exporter(
+                        opentelemetry_otlp::new_exporter()
+                            .http()
+                            .with_protocol(OTEL_TRACER_PROTOCOL)
+                            .with_endpoint(endpoint)
+                            .with_timeout(OTEL_TRACER_TIMEOUT),
+                    )
+                    .install_batch(opentelemetry_sdk::runtime::Tokio)
+                    .expect("otel tracing pipeline should install");
+                *otel_layer = Some(tracing_opentelemetry::layer().with_tracer(tracer));
+            })?;
+        }
+
         let new_kube_client = KubeClient::new(
             &client.clone(),
             new_dynamic_config.kubernetes_cluster_name,
             Some(self.gameserver_log_tx.clone()),
         )
-        .await?;
+            .await?;
 
         let project = new_kube_client.default_project();
 

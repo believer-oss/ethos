@@ -105,7 +105,7 @@ impl Longtail {
             "windows" => "longtail-win32-x64.exe",
             _ => "longtail",
         }
-        .to_string()
+            .to_string()
     }
 
     // Build the URL to download longtail from
@@ -351,13 +351,11 @@ impl Longtail {
             }
             LongtailMsg::ExecEvt(s) => {
                 debug!("Exec: {}", s);
-                format!("Executing: {}", s);
-                s
+                format!("Executing: {}", s)
             }
             LongtailMsg::ErrEvt(s) => {
                 debug!("Err: {}", s);
-                format!("ERROR: {}", s);
-                s
+                format!("ERROR: {}", s)
             }
             LongtailMsg::DoneLtDlEvt => {
                 debug!("Done downloading longtail");

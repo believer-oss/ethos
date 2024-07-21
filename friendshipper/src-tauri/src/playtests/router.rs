@@ -1,7 +1,7 @@
 use axum::extract::{Path, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-
+use tracing::instrument;
 use crate::engine::EngineProvider;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::types::errors::CoreError;
@@ -23,6 +23,7 @@ where
         .route("/unassign", post(unassign_user))
 }
 
+#[instrument(skip(state))]
 async fn get_playtests<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<GetPlaytestsResponse>, CoreError>
@@ -35,6 +36,7 @@ where
     Ok(Json(playtests))
 }
 
+#[instrument(skip(state))]
 async fn create_playtest<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<CreatePlaytestRequest>,
@@ -48,6 +50,7 @@ where
     Ok(Json(playtest))
 }
 
+#[instrument(skip(state))]
 async fn update_playtest<T>(
     Path(name): Path<String>,
     State(state): State<AppState<T>>,
@@ -62,6 +65,7 @@ where
     Ok(Json(playtest))
 }
 
+#[instrument(skip(state))]
 async fn delete_playtest<T>(
     Path(name): Path<String>,
     State(state): State<AppState<T>>,
@@ -75,6 +79,7 @@ where
     Ok(())
 }
 
+#[instrument(skip(state))]
 async fn assign_user<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<AssignUserRequest>,
@@ -90,6 +95,7 @@ where
     Ok(())
 }
 
+#[instrument(skip(state))]
 async fn unassign_user<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<UnassignUserRequest>,

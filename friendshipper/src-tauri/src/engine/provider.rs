@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use ethos_core::types::config::{AppConfig, RepoConfig};
@@ -7,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use tracing::info;
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum CommunicationType {
     IpcOnly, // Only interprocess communication is allowed in this case, for example a HTTP request, pipes, etc.
     OfflineFallback, // Tries IPC first, but falls back to an offline approach if the host engine process isn't running, which can be much slower than IPC
@@ -15,7 +16,7 @@ pub enum CommunicationType {
 
 /// EngineProvider trait
 #[async_trait]
-pub trait EngineProvider: Clone + Send + Sync + 'static {
+pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
     /// Creates a new provider from app and repo config
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self;
 
