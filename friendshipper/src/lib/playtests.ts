@@ -1,11 +1,7 @@
 import { invoke } from '@tauri-apps/api/tauri';
 import type { AssignUserRequest, GroupStatus, Nullable, Playtest, PlaytestSpec } from '$lib/types';
 
-export const getPlaytests = async (): Promise<Playtest[]> => {
-	const playtests: Playtest[] = await invoke('get_playtests');
-	playtests.sort((a, b) => Date.parse(a.spec.startTime) - Date.parse(b.spec.startTime));
-	return playtests;
-};
+export const getPlaytests = async (): Promise<Playtest[]> => invoke('get_playtests');
 
 export enum ModalState {
 	Creating,
