@@ -496,9 +496,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "1.41.0"
+version = "1.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "605ea81e6d88d9afdfb16369e809c037e1b08c937452ee475eaa72c4233d9685"
+checksum = "558bbcec8db82a1a8af1610afcb3b10d00652d25ad366a0558eecdff2400a1d1"
 dependencies = [
  "ahash 0.8.11",
  "aws-credential-types",
@@ -2086,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.4.0"
+version = "4.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
