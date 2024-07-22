@@ -526,9 +526,13 @@ impl Git {
             .to_string())
     }
 
-    pub async fn diff_filenames(&self, range: &str) -> anyhow::Result<String> {
-        self.run_and_collect_output(&["diff", "--name-only", range], Opts::new_without_logs())
-            .await
+    pub async fn diff_filenames(&self, range: &str) -> anyhow::Result<Vec<String>> {
+        let output = self
+            .run_and_collect_output(&["diff", "--name-only", range], Opts::new_without_logs())
+            .await?;
+        let mut result = output.lines().map(|s| s.to_string()).collect::<Vec<_>>();
+        result.dedup();
+        Ok(result)
     }
 
     pub async fn abort_rebase(&self) -> anyhow::Result<()> {
@@ -596,6 +600,16 @@ impl Git {
             }
             Ok(_) => Ok(output.unwrap()),
         }
+    }
+
+    pub async fn run_and_collect_output_into_lines<'a>(
+        &self,
+        args: &[&str],
+        opts: Opts<'a>,
+    ) -> anyhow::Result<Vec<String>> {
+        let output = self.run_and_collect_output(args, opts).await?;
+        let lines = output.lines().map(|s| s.to_string()).collect::<Vec<_>>();
+        Ok(lines)
     }
 
     pub async fn run<'a>(&self, args: &[&str], opts: Opts<'a>) -> anyhow::Result<()> {
