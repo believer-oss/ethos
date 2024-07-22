@@ -116,6 +116,10 @@ impl EngineProvider for UnrealEngineProvider {
     ) -> Vec<String> {
         OFPANameCache::get_names(self.clone(), communication, engine_path, asset_names).await
     }
+
+    fn is_lockable_file(&self, filepath: &str) -> bool {
+        filepath.ends_with(".uasset") || filepath.ends_with(".umap") || filepath.ends_with(".dll")
+    }
 }
 
 impl UnrealEngineProvider {
