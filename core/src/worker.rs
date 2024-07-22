@@ -98,7 +98,11 @@ impl RepoWorker {
     }
 
     #[instrument(parent = _span, skip_all)]
-    async fn run_task(&self, op: Box<dyn Task + Send + Sync>, _span: &tracing::Span) -> anyhow::Result<()> {
+    async fn run_task(
+        &self,
+        op: Box<dyn Task + Send + Sync>,
+        _span: &tracing::Span,
+    ) -> anyhow::Result<()> {
         info!("Running: {:?}", op.get_name());
         match op.execute().await {
             Ok(_) => {}

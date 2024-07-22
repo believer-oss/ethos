@@ -376,12 +376,12 @@ impl KubeClient {
             Err(e) => {
                 if previous
                     && !e.to_string().contains(
-                    format!(
-                        "previous terminated container \"game-server\" in pod \"{}\" not found",
-                        &name
-                    )
+                        format!(
+                            "previous terminated container \"game-server\" in pod \"{}\" not found",
+                            &name
+                        )
                         .as_str(),
-                )
+                    )
                 {
                     return Err(CoreError::from(self.handle_kube_error(e).await));
                 }
@@ -554,7 +554,7 @@ impl KubeClient {
                                     "value": serde_json::to_value(users).unwrap()
                                 }
                             ]))
-                                .unwrap();
+                            .unwrap();
 
                             self.patch_playtest(playtest_name, json_patch).await?;
                         }
@@ -565,7 +565,7 @@ impl KubeClient {
                                     "value": serde_json::to_value(vec![user.to_string()]).unwrap()
                                 }
                             ]))
-                                .unwrap();
+                            .unwrap();
 
                             self.patch_playtest(playtest_name, json_patch).await?;
 
@@ -597,7 +597,7 @@ impl KubeClient {
                         "value": user
                     }
                 ]))
-                    .unwrap();
+                .unwrap();
 
                 // Initialize the array with a patch OP if necessary
                 if playtest.spec.users_to_auto_assign.is_none() {
@@ -608,7 +608,7 @@ impl KubeClient {
                             "path": "/spec/usersToAutoAssign",
                             "value": []
                         }))
-                            .unwrap(),
+                        .unwrap(),
                     );
                 }
 

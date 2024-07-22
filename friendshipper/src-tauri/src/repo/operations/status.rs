@@ -551,7 +551,7 @@ mod tests {
             "2123456789abcde0123456789abcde0123456789",
             "3123456789abcde0123456789abcde0123456789",
         ]
-            .join("\n");
+        .join("\n");
 
         println!("{:?}", long_shas);
         let sha = find_dll_commit(&list, &long_shas, "test");

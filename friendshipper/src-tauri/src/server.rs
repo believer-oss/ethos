@@ -120,11 +120,11 @@ impl Server {
                 VERSION.to_string(),
                 None,
                 self.log_path.clone(),
-                self.otel_reload_handle.clone(),
+                Some(self.otel_reload_handle.clone()),
                 self.git_tx.clone(),
                 self.gameserver_log_tx.clone(),
             )
-                .await?;
+            .await?;
 
             // install git hooks
             {
@@ -167,7 +167,9 @@ impl Server {
 
             let app = crate::router(&shared_state.log_path)?
                 .with_state(shared_state.clone())
-                .layer(ethos_core::utils::tracing::new_tracing_layer(APP_NAME.to_lowercase()));
+                .layer(ethos_core::utils::tracing::new_tracing_layer(
+                    APP_NAME.to_lowercase(),
+                ));
 
             let address = format!("127.0.0.1:{}", self.port);
 

@@ -196,7 +196,7 @@ async fn internal_lock_handler(
                 if entry.file_type().is_file() {
                     // remove repo dir from path
                     let entry = entry.path().strip_prefix(repo_path)?;
-                    paths.push(entry.to_string_lossy().to_string().replace("\\", "/"));
+                    paths.push(entry.to_string_lossy().to_string().replace('\\', "/"));
                 }
             }
         } else {

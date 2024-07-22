@@ -1,18 +1,17 @@
+use crate::engine::EngineProvider;
 use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::Json;
-use serde::{Deserialize, Serialize};
-use tracing::instrument;
-use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::operations::{LogOp, LogResponse};
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{NoOp, TaskSequence};
+use serde::{Deserialize, Serialize};
+use tracing::instrument;
 
 use crate::state::AppState;
 
 use super::StatusOp;
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LogParams {

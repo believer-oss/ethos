@@ -7,8 +7,8 @@ use axum::async_trait;
 use axum::extract::State;
 use ethos_core::fs::LocalDownloadPath;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{info, instrument};
 use tracing::warn;
+use tracing::{info, instrument};
 
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
@@ -230,11 +230,11 @@ where
         let engine_path = state.app_config.read().engine_prebuilt_path.clone();
         if engine_path == old_default_engine_path.to_string_lossy()
             && (!PathBuf::from(&engine_path).exists()
-            || PathBuf::from(&engine_path)
-            .read_dir()
-            .unwrap()
-            .next()
-            .is_none())
+                || PathBuf::from(&engine_path)
+                    .read_dir()
+                    .unwrap()
+                    .next()
+                    .is_none())
         {
             warn!(
                 "Detected old engine path at {:?}, no files found. Forcing new default engine path.",
