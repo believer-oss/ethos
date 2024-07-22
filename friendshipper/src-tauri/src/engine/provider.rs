@@ -68,4 +68,6 @@ pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
         engine_path: &Path,
         asset_paths: &[String],
     ) -> Vec<String>;
+
+    fn is_lockable_file(&self, filepath: &str) -> bool;
 }

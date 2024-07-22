@@ -152,19 +152,33 @@ where
 {
     #[instrument(name = "SubmitOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
-        // abort if we are trying to submit any conflicted files
+        // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {
+            let locks = self.git_client.verify_locks().await?.ours;
+
             let conflicts = self.repo_status.read().conflicts.clone();
             let mut is_submitting_conflict = false;
+            let mut is_submitting_unlocked_asset = false;
             for file in self.files.iter() {
                 if conflicts.iter().any(|x| x == file) {
                     is_submitting_conflict = true;
                     tracing::error!("Trying to submit conflicted file {}", file);
                 }
+                if self.engine.is_lockable_file(file) && !locks.iter().any(|x| x.path == *file) {
+                    is_submitting_unlocked_asset = true;
+                    tracing::error!(
+                        "Trying to submit lockable asset, but no lock was held for it: {}",
+                        file
+                    );
+                }
             }
             if is_submitting_conflict {
-                tracing::error!("Failing submit due to trying to submit conflicted files");
                 anyhow::bail!("Submitting conflicted files is not allowed. Check the log for specific errors.");
+            }
+            if is_submitting_unlocked_asset {
+                anyhow::bail!(
+                    "Submitting unlocked assets is not allowed. Check the log for specific errors."
+                );
             }
         }
 

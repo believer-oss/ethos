@@ -247,14 +247,7 @@ where
         }
 
         info!("StatusOp: finding upstream modified files...");
-        let trunk_branch = self.repo_config.read().trunk_branch.clone();
-        status.modified_upstream = Self::get_modified_upstream(
-            &self.git_client,
-            &self.github_username,
-            &status.branch,
-            &trunk_branch,
-        )
-        .await?;
+        status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
 
         status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
         if !status.conflicts.is_empty() {
@@ -269,16 +262,11 @@ where
         Ok(status)
     }
 
-    async fn get_modified_upstream(
-        git_client: &git::Git,
-        github_username: &str,
-        branch: &str,
-        trunk_branch: &str,
-    ) -> Result<Vec<String>, anyhow::Error> {
-        let commit_range = format!("HEAD...origin/{}", trunk_branch);
+    async fn get_modified_upstream(&self, branch: &str) -> Result<Vec<String>, anyhow::Error> {
+        let commit_range = format!("HEAD...origin/{}", self.repo_config.read().trunk_branch);
 
         // check for files modified on the upstream trunk branch
-        let modified_upstream: Vec<String> = git_client.diff_filenames(&commit_range).await?;
+        let modified_upstream: Vec<String> = self.git_client.diff_filenames(&commit_range).await?;
 
         // if the user is on a quicksubmit branch, any conflicts with files modified by their own
         // user are most likely due to files they've already submitted and merged into trunk
@@ -287,11 +275,12 @@ where
             let args = &[
                 "log",
                 "--pretty=",
-                &format!("--committer={}", github_username),
+                &format!("--committer={}", self.github_username),
                 "--name-only",
                 &commit_range,
             ];
-            let mut files = git_client
+            let mut files = self
+                .git_client
                 .run_and_collect_output_into_lines(args, git::Opts::default())
                 .await?;
             files.dedup();
@@ -302,9 +291,7 @@ where
 
         let filtered = modified_upstream
             .iter()
-            .filter(|file| {
-                file.ends_with(".uasset") || file.ends_with(".umap") || file.ends_with(".dll")
-            })
+            .filter(|file| self.engine.is_lockable_file(file))
             .filter(|file| !user_modified_upstream.iter().any(|x| x == *file))
             .cloned()
             .collect::<Vec<_>>();
