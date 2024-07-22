@@ -424,7 +424,16 @@ impl KubeClient {
         let lp = ListParams::default();
 
         match api.list(&lp).await {
-            Ok(res) => Ok(res.items),
+            Ok(res) => {
+                // sort by creation timestamp
+                let mut items = res.items;
+                items.sort_by(|a, b| {
+                    b.metadata
+                        .creation_timestamp
+                        .cmp(&a.metadata.creation_timestamp)
+                });
+                Ok(items)
+            }
             Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
         }
     }
