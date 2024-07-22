@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::Json;
+use tracing::instrument;
 
 use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
@@ -8,6 +9,7 @@ use ethos_core::types::github::merge_queue::get_merge_queue::GetMergeQueueReposi
 
 use crate::state::AppState;
 
+#[instrument(skip(state))]
 pub async fn get_merge_queue<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<GetMergeQueueRepositoryMergeQueue>, CoreError>

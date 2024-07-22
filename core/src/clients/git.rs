@@ -590,6 +590,11 @@ impl Git {
         args: &[&str],
         opts: Opts<'a>,
     ) -> anyhow::Result<String> {
+        // assert we have at least one arg
+        if args.is_empty() {
+            bail!("No arguments provided to git command");
+        }
+
         let mut output = Some(String::new());
         let res = self
             .run_and_collect_output_internal(args, opts, &mut output)
@@ -607,12 +612,22 @@ impl Git {
         args: &[&str],
         opts: Opts<'a>,
     ) -> anyhow::Result<Vec<String>> {
+        // assert we have at least one arg
+        if args.is_empty() {
+            bail!("No arguments provided to git command");
+        }
+
         let output = self.run_and_collect_output(args, opts).await?;
         let lines = output.lines().map(|s| s.to_string()).collect::<Vec<_>>();
         Ok(lines)
     }
 
     pub async fn run<'a>(&self, args: &[&str], opts: Opts<'a>) -> anyhow::Result<()> {
+        // assert we have at least one arg
+        if args.is_empty() {
+            bail!("No arguments provided to git command");
+        }
+
         let res = self
             .run_and_collect_output_internal(args, opts, &mut None)
             .await;
@@ -625,7 +640,7 @@ impl Git {
         }
     }
 
-    #[instrument(name = "git command", err)]
+    #[instrument(err, fields(otel.name = format!("git {}", args[0]).as_str()))]
     async fn run_and_collect_output_internal<'a>(
         &self,
         args: &[&str],
