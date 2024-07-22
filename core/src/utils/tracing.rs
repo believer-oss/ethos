@@ -48,13 +48,16 @@ impl<B> MakeSpan<B> for TraceMakeSpan {
             .get::<MatchedPath>()
             .map(MatchedPath::as_str);
 
+        let otel_name = format!("{} {}", request.method(), matched_path.unwrap_or_default());
+
         let span = tracing::info_span!(
-            "HTTP request",
+            "",
             http.method = ?request.method(),
             http.path = matched_path,
             http.response.body.size = Empty,
             http.status_code = Empty,
             otel.kind = "client",
+            otel.name = otel_name,
             otel.status_code = "ok",
             otel.status_message = Empty,
             service.name = &self.app,

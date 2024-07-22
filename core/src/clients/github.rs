@@ -13,6 +13,7 @@ use crate::types::github::user::{get_username, GetUsername};
 use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
 use reqwest::Client;
+use tracing::instrument;
 
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
@@ -53,6 +54,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_pull_request_id(
         &self,
         owner: String,
@@ -82,6 +84,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_pull_request(
         &self,
         owner: String,
@@ -114,6 +117,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_pull_requests(
         &self,
         owner: String,
@@ -160,6 +164,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn enqueue_pull_request(&self, id: String) -> Result<()> {
         match post_graphql::<EnqueuePullRequest, _>(
             &self.client,
@@ -173,6 +178,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn dequeue_pull_request(&self, id: String) -> Result<()> {
         match post_graphql::<DequeuePullRequest, _>(
             &self.client,
@@ -186,6 +192,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn is_branch_pr_open(
         &self,
         owner: &str,
@@ -225,6 +232,7 @@ impl GraphQLClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn get_merge_queue(
         &self,
         owner: &str,
