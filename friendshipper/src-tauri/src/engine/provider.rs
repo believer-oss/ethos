@@ -1,8 +1,8 @@
-use std::fmt::Debug;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use ethos_core::types::config::{AppConfig, RepoConfig};
 use ethos_core::types::gameserver::GameServerResults;
+use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command};

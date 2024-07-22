@@ -1,13 +1,23 @@
-use std::time::Duration;
 use axum::extract::MatchedPath;
 use axum::http::{HeaderMap, Request, Response};
+use std::time::Duration;
 use tower_http::trace::{HttpMakeClassifier, MakeSpan, OnBodyChunk, OnFailure};
 use tower_http::trace::{OnEos, OnRequest, OnResponse, TraceLayer};
 use tracing::field::Empty;
 use tracing::Span;
 
 /// Creates a new [`TraceLayer`] that traces HTTP requests.
-pub fn new_tracing_layer(app: String) -> TraceLayer<HttpMakeClassifier, TraceMakeSpan, TraceOnRequest, TraceOnResponse, TraceOnBodyChunk, TraceOnEos, TraceOnFailure> {
+pub fn new_tracing_layer(
+    app: String,
+) -> TraceLayer<
+    HttpMakeClassifier,
+    TraceMakeSpan,
+    TraceOnRequest,
+    TraceOnResponse,
+    TraceOnBodyChunk,
+    TraceOnEos,
+    TraceOnFailure,
+> {
     opentelemetry::global::set_text_map_propagator(
         opentelemetry_sdk::propagation::TraceContextPropagator::new(),
     );
@@ -60,10 +70,7 @@ pub struct TraceOnRequest;
 
 impl<B> OnRequest<B> for TraceOnRequest {
     fn on_request(&mut self, _request: &Request<B>, _span: &Span) {
-        tracing::event!(
-            tracing::Level::DEBUG,
-            "request started"
-        );
+        tracing::event!(tracing::Level::DEBUG, "request started");
     }
 }
 
@@ -124,10 +131,7 @@ where
     T: std::fmt::Display,
 {
     fn on_failure(&mut self, _failure: T, _latency: Duration, _span: &Span) {
-        tracing::event!(
-            tracing::Level::DEBUG,
-            "request failure"
-        );
+        tracing::event!(tracing::Level::DEBUG, "request failure");
     }
 }
 

@@ -269,7 +269,7 @@ impl AWSClient {
                 sso_config.config.clone(),
                 self.config.clone().unwrap(),
             )
-                .await
+            .await
             {
                 Ok(shared_config) => {
                     match shared_config.credentials_provider() {
@@ -463,7 +463,7 @@ impl AWSClient {
             signable_request,
             &aws_sigv4::http_request::SigningParams::V4(signing_params),
         )?
-            .into_parts();
+        .into_parts();
 
         // We create a fake request here to create the signed URL
         let mut fake_req = Request::builder()

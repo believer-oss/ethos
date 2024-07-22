@@ -192,7 +192,7 @@ impl AppConfig {
             "C:/Program Files/Epic Games/UE_{}",
             uproject.engine_association
         )
-            .into()
+        .into()
     }
 
     pub fn load_engine_path_from_repo(&self, repo_config: &RepoConfig) -> Result<PathBuf> {
@@ -216,7 +216,7 @@ impl AppConfig {
             None => Err(anyhow!(
                 "GitHub PAT is not configured. Please configure it in the settings.".to_string()
             )
-                .into()),
+            .into()),
         }
     }
 }

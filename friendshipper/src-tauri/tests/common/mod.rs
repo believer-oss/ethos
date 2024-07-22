@@ -464,6 +464,7 @@ pub async fn setup(
         String::from("0.0.0"),
         Some(aws_client),
         PathBuf::from_str("test-path").unwrap(),
+        None,
         git_tx,
         gs_tx,
     )

@@ -1,14 +1,14 @@
+use crate::engine::EngineProvider;
 use axum::extract::{Path, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use tracing::instrument;
-use crate::engine::EngineProvider;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::playtests::{
     AssignUserRequest, CreatePlaytestRequest, GetPlaytestsResponse, Playtest, UnassignUserRequest,
     UpdatePlaytestRequest,
 };
+use tracing::instrument;
 
 use crate::state::AppState;
 

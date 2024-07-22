@@ -105,7 +105,7 @@ impl Longtail {
             "windows" => "longtail-win32-x64.exe",
             _ => "longtail",
         }
-            .to_string()
+        .to_string()
     }
 
     // Build the URL to download longtail from

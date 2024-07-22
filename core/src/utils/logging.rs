@@ -1,21 +1,25 @@
-use std::{env, fs};
-use std::path::PathBuf;
-use std::time::Duration;
 use directories_next::ProjectDirs;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::{Tracer};
+use opentelemetry_sdk::trace::Tracer;
+use std::path::PathBuf;
+use std::time::Duration;
+use std::{env, fs};
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{EnvFilter, Registry, reload};
 use tracing_subscriber::layer::{Layered, SubscriberExt};
 use tracing_subscriber::reload::Handle;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{reload, EnvFilter, Registry};
 
 pub const OTEL_TRACER_PROTOCOL: opentelemetry_otlp::Protocol = opentelemetry_otlp::Protocol::Grpc;
 pub const OTEL_TRACER_TIMEOUT: Duration = Duration::from_secs(10);
 pub const ETHOS_TRACE_EVENT_TARGET: &str = "ethos::trace";
 
-pub type OtelReloadHandle = Handle<Option<OpenTelemetryLayer<Layered<EnvFilter, Registry, Registry>, Tracer>>, Layered<EnvFilter, Registry, Registry>>;
+pub type OtelReloadHandle = Handle<
+    Option<OpenTelemetryLayer<Layered<EnvFilter, Registry, Registry>, Tracer>>,
+    Layered<EnvFilter, Registry, Registry>,
+>;
+
 pub fn init(prefix: &str, app: &str) -> anyhow::Result<(PathBuf, OtelReloadHandle)> {
     // OpenTelemetry
     let otel_layer = match env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
@@ -31,8 +35,7 @@ pub fn init(prefix: &str, app: &str) -> anyhow::Result<(PathBuf, OtelReloadHandl
                 )
                 .install_batch(opentelemetry_sdk::runtime::Tokio)
                 .expect("otel tracing pipeline should install");
-            let otel_layer = tracing_opentelemetry::layer()
-                .with_tracer(tracer);
+            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
             Some(otel_layer)
         }

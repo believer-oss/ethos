@@ -53,7 +53,7 @@ where
             APP_NAME.to_string(),
             aws_config,
         )
-            .await?;
+        .await?;
 
         let username = state.app_config.read().user_display_name.clone();
         state.replace_aws_client(new_aws_client, &username).await?;
