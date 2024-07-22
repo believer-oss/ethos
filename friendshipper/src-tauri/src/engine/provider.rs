@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use tracing::info;
+use tracing::{info, instrument};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommunicationType {
@@ -45,6 +45,7 @@ pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
     /// Given a path, finds the appropriate client executable to launch and returns its full path.
     fn find_client_executable(&self, path: PathBuf) -> Result<PathBuf>;
 
+    #[instrument(skip(self), err)]
     fn launch(&self, path: PathBuf, args: Vec<String>) -> Result<Option<Child>> {
         if cfg!(windows) {
             let exe = self.find_client_executable(path)?;
