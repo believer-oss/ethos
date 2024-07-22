@@ -152,6 +152,22 @@ where
 {
     #[instrument(name = "SubmitOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
+        // abort if we are trying to submit any conflicted files
+        {
+            let conflicts = self.repo_status.read().conflicts.clone();
+            let mut is_submitting_conflict = false;
+            for file in self.files.iter() {
+                if conflicts.iter().any(|x| x == file) {
+                    is_submitting_conflict = true;
+                    tracing::error!("Trying to submit conflicted file {}", file);
+                }
+            }
+            if is_submitting_conflict {
+                tracing::error!("Failing submit due to trying to submit conflicted files");
+                anyhow::bail!("Submitting conflicted files is not allowed. Check the log for specific errors.");
+            }
+        }
+
         // save a snapshot before submitting
         // make sure we have a temp dir for copying our files
         let proj_dirs =
@@ -305,6 +321,7 @@ where
             repo_config: self.repo_config.clone(),
             engine: self.engine.clone(),
             git_client: self.git_client.clone(),
+            github_username: self.github_client.username.clone(),
             aws_client: self.aws_client.clone(),
             storage: self.storage.clone(),
             skip_fetch: true,

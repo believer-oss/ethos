@@ -9,6 +9,7 @@ export enum ModifiedFileState {
 	Added = 'added',
 	Modified = 'modified',
 	Deleted = 'deleted',
+	Unmerged = 'unmerged',
 	Unknown = 'unknown'
 }
 

@@ -199,6 +199,13 @@ where
             .expect("error forwarding git log");
     }
 
+    pub fn github_username(&self) -> String {
+        self.github_client
+            .read()
+            .clone()
+            .map_or(String::default(), |x| x.username.clone())
+    }
+
     pub async fn replace_aws_client(
         &self,
         client: AWSClient,

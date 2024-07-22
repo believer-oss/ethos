@@ -148,6 +148,9 @@
 		if (file.workingState === 'D') {
 			return ModifiedFileState.Deleted;
 		}
+		if (file.workingState === 'U') {
+			return ModifiedFileState.Unmerged;
+		}
 
 		if (file.indexState === 'A') {
 			return ModifiedFileState.Added;
@@ -157,6 +160,9 @@
 		}
 		if (file.indexState === 'D') {
 			return ModifiedFileState.Deleted;
+		}
+		if (file.indexState === 'U') {
+			return ModifiedFileState.Unmerged;
 		}
 
 		return ModifiedFileState.Unknown;
@@ -243,6 +249,13 @@
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
 								>Deleted
+							</Tooltip>
+						{:else if getModifiedState(file) === ModifiedFileState.Unmerged}
+							<p class="w-4 h-4 mb-2 text-red-700">⚠️</p>
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="right"
+								>Unmerged: revert to resolve
 							</Tooltip>
 						{/if}
 					</TableBodyCell>
@@ -334,6 +347,13 @@
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
 							>Deleted
+						</Tooltip>
+					{:else if getModifiedState(file) === ModifiedFileState.Unmerged}
+						<p class="w-4 h-4 mb-2 text-red-700">⚠️</p>
+						<Tooltip
+							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+							placement="right"
+							>Unmerged
 						</Tooltip>
 					{/if}
 					<p class="font-bold {getFileTextClass(file)}">

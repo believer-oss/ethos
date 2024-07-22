@@ -50,22 +50,26 @@ where
     #[instrument(name = "PullOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
         info!("Pulling repo");
+        let github_username = self
+            .github_client
+            .clone()
+            .map_or(String::default(), |x| x.username.clone());
+
         self.engine.check_ready_to_sync_repo().await?;
 
         {
-            let status_op = {
-                StatusOp {
-                    repo_status: self.repo_status.clone(),
-                    app_config: self.app_config.clone(),
-                    repo_config: self.repo_config.clone(),
-                    engine: self.engine.clone(),
-                    git_client: self.git_client.clone(),
-                    aws_client: self.aws_client.clone(),
-                    storage: self.storage.clone(),
-                    skip_fetch: false,
-                    skip_dll_check: false,
-                    allow_offline_communication: false,
-                }
+            let status_op = StatusOp {
+                repo_status: self.repo_status.clone(),
+                app_config: self.app_config.clone(),
+                repo_config: self.repo_config.clone(),
+                engine: self.engine.clone(),
+                git_client: self.git_client.clone(),
+                github_username: github_username.clone(),
+                aws_client: self.aws_client.clone(),
+                storage: self.storage.clone(),
+                skip_fetch: false,
+                skip_dll_check: false,
+                allow_offline_communication: false,
             };
 
             status_op.execute().await?;
@@ -123,6 +127,7 @@ where
                         engine: self.engine.clone(),
                         app_config: self.app_config.clone(),
                         git_client: self.git_client.clone(),
+                        github_username: github_username.clone(),
                         aws_client: self.aws_client.clone(),
                         storage: self.storage.clone(),
                         skip_fetch: true,
@@ -141,6 +146,7 @@ where
                 engine: self.engine.clone(),
                 app_config: self.app_config.clone(),
                 git_client: self.git_client.clone(),
+                github_username: github_username.clone(),
                 aws_client: self.aws_client.clone(),
                 storage: self.storage.clone(),
                 skip_fetch: true,
@@ -204,6 +210,7 @@ where
                     repo_config: self.repo_config.clone(),
                     engine: self.engine.clone(),
                     git_client: self.git_client.clone(),
+                    github_username: github_username.clone(),
                     aws_client: self.aws_client.clone(),
                     storage: self.storage.clone(),
                     skip_fetch: true,

@@ -117,12 +117,7 @@ impl StatusOp {
         if status.commits_ahead > 0 {
             let range = format!("HEAD~{}...HEAD", status.commits_ahead);
 
-            let output = self.git_client.diff_filenames(&range).await?;
-            for line in output.lines() {
-                if !line.is_empty() {
-                    modified_committed.push(line.to_owned());
-                }
-            }
+            modified_committed = self.git_client.diff_filenames(&range).await?;
         }
 
         status.commit_head_origin = self
@@ -182,17 +177,8 @@ impl StatusOp {
         }
 
         // check files modified upstream
-        let mut modified_upstream: Vec<String> = vec![];
         let range = format!("HEAD...{}", status.remote_branch);
-
-        let output = self.git_client.diff_filenames(&range).await?;
-
-        for line in output.lines() {
-            if !line.is_empty() {
-                modified_upstream.push(line.to_owned());
-            }
-        }
-
+        let modified_upstream = self.git_client.diff_filenames(&range).await?;
         Ok(modified_upstream)
     }
 

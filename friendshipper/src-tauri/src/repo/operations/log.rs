@@ -45,19 +45,18 @@ where
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
     if params.update {
-        let status_op = {
-            StatusOp {
-                repo_status: state.repo_status.clone(),
-                app_config: state.app_config.clone(),
-                repo_config: state.repo_config.clone(),
-                engine: state.engine.clone(),
-                git_client: state.git(),
-                aws_client: aws_client.clone(),
-                storage: state.storage.read().clone().unwrap(),
-                skip_fetch: false,
-                skip_dll_check: false,
-                allow_offline_communication: false,
-            }
+        let status_op = StatusOp {
+            repo_status: state.repo_status.clone(),
+            app_config: state.app_config.clone(),
+            repo_config: state.repo_config.clone(),
+            engine: state.engine.clone(),
+            git_client: state.git(),
+            github_username: state.github_username(),
+            aws_client: aws_client.clone(),
+            storage: state.storage.read().clone().unwrap(),
+            skip_fetch: false,
+            skip_dll_check: false,
+            allow_offline_communication: false,
         };
 
         sequence.push(Box::new(status_op));

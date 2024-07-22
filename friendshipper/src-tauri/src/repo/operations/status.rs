@@ -10,6 +10,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine;
 use crate::engine::EngineProvider;
+use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
@@ -63,6 +64,7 @@ where
     T: EngineProvider,
 {
     pub git_client: git::Git,
+    pub github_username: String,
     pub repo_status: RepoStatusRef,
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
@@ -164,12 +166,7 @@ where
         if status.commits_ahead > 0 {
             let range = format!("HEAD~{}...HEAD", status.commits_ahead);
 
-            let output = self.git_client.diff_filenames(&range).await?;
-            for line in output.lines() {
-                if !line.is_empty() {
-                    modified_committed.push(line.to_owned());
-                }
-            }
+            modified_committed = self.git_client.diff_filenames(&range).await?;
         }
 
         // get display names if available for OFPA
@@ -250,7 +247,14 @@ where
         }
 
         info!("StatusOp: finding upstream modified files...");
-        status.modified_upstream = self.get_modified_upstream(&status).await?;
+        let trunk_branch = self.repo_config.read().trunk_branch.clone();
+        status.modified_upstream = Self::get_modified_upstream(
+            &self.git_client,
+            &self.github_username,
+            &status.branch,
+            &trunk_branch,
+        )
+        .await?;
 
         status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
         if !status.conflicts.is_empty() {
@@ -266,31 +270,42 @@ where
     }
 
     async fn get_modified_upstream(
-        &self,
-        status: &RepoStatus,
+        git_client: &git::Git,
+        github_username: &str,
+        branch: &str,
+        trunk_branch: &str,
     ) -> Result<Vec<String>, anyhow::Error> {
-        // no commits upstream, no changes
-        if status.commits_behind == 0 {
-            return Ok(vec![]);
-        }
+        let commit_range = format!("HEAD...origin/{}", trunk_branch);
 
-        // check files modified upstream
-        let mut modified_upstream: Vec<String> = vec![];
-        let range = format!("HEAD...{}", status.remote_branch);
+        // check for files modified on the upstream trunk branch
+        let modified_upstream: Vec<String> = git_client.diff_filenames(&commit_range).await?;
 
-        let output = self.git_client.diff_filenames(&range).await?;
-
-        for line in output.lines() {
-            if !line.is_empty() {
-                modified_upstream.push(line.to_owned());
-            }
-        }
+        // if the user is on a quicksubmit branch, any conflicts with files modified by their own
+        // user are most likely due to files they've already submitted and merged into trunk
+        // from an earlier quicksubmit, so filter those out to avoid blocking them
+        let user_modified_upstream: Vec<String> = if is_quicksubmit_branch(branch) {
+            let args = &[
+                "log",
+                "--pretty=",
+                &format!("--committer={}", github_username),
+                "--name-only",
+                &commit_range,
+            ];
+            let mut files = git_client
+                .run_and_collect_output_into_lines(args, git::Opts::default())
+                .await?;
+            files.dedup();
+            files
+        } else {
+            vec![]
+        };
 
         let filtered = modified_upstream
             .iter()
             .filter(|file| {
                 file.ends_with(".uasset") || file.ends_with(".umap") || file.ends_with(".dll")
             })
+            .filter(|file| !user_modified_upstream.iter().any(|x| x == *file))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -476,19 +491,18 @@ where
         }
     };
 
-    let status_op = {
-        StatusOp {
-            repo_status: state.repo_status.clone(),
-            app_config: state.app_config.clone(),
-            repo_config: state.repo_config.clone(),
-            engine: state.engine.clone(),
-            git_client: state.git(),
-            aws_client: aws_client.clone(),
-            storage,
-            skip_fetch: params.skip_fetch,
-            skip_dll_check: params.skip_dll_check,
-            allow_offline_communication: params.allow_offline_communication,
-        }
+    let status_op = StatusOp {
+        repo_status: state.repo_status.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        engine: state.engine.clone(),
+        git_client: state.git(),
+        github_username: state.github_username(),
+        aws_client: aws_client.clone(),
+        storage,
+        skip_fetch: params.skip_fetch,
+        skip_dll_check: params.skip_dll_check,
+        allow_offline_communication: params.allow_offline_communication,
     };
 
     // Make sure AWS credentials still valid
