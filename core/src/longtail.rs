@@ -18,7 +18,7 @@ use aws_credential_types::Credentials;
 use directories_next::ProjectDirs;
 use hex::FromHex;
 use sha2::{Digest, Sha256};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 use which::{which, which_in};
 
 use super::fs::LocalDownloadPath;
@@ -121,6 +121,7 @@ impl Longtail {
     }
 
     // Search for the longtail executable in our download dir or the user's path
+    #[instrument]
     fn find_exec(app_name: &str) -> Option<PathBuf> {
         let exe_name = Longtail::get_longtail_exec_name();
 
@@ -147,6 +148,7 @@ impl Longtail {
     }
 
     // Wrapper for find_exec to update the struct
+    #[instrument(err)]
     pub fn update_exec(&mut self) -> Result<()> {
         match Self::find_exec(&self.app_name) {
             Some(path) => self.exec_path = Some(path),
@@ -158,6 +160,7 @@ impl Longtail {
     }
 
     // Download the longtail executable and check it's hash
+    #[instrument(skip(tx), err)]
     pub fn get_longtail(&self, tx: Sender<LongtailMsg>) -> Result<()> {
         // First try to use the data_dir, and if we can't use the curent exe's path
         let mut exe_path: PathBuf;
@@ -219,6 +222,7 @@ impl Longtail {
     }
 
     // Get the current longtail executable version
+    #[instrument(skip(tx), err)]
     pub fn get_version(&self, tx: Sender<LongtailMsg>) -> Result<()> {
         let cmd = self.exec_path.clone().context("No exec path set")?;
 
@@ -231,6 +235,7 @@ impl Longtail {
     }
 
     // Use longtail 'get' to download a given archive
+    #[instrument(skip(cache, tx, credentials), err)]
     pub fn get_archive(
         &self,
         path: &Path,

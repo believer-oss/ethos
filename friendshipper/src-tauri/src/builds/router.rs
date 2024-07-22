@@ -7,7 +7,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
 use ethos_core::clients::argo::{
@@ -120,6 +120,7 @@ where
     )
 }
 
+#[instrument(skip(state))]
 async fn sync_client<T>(
     State(state): State<AppState<T>>,
     Json(payload): Json<SyncClientRequest>,
