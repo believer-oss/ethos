@@ -104,7 +104,7 @@
 				feedbackURL: data.feedbackURL
 			};
 
-			await updatePlaytest(playtest?.metadata.name, data.project, spec);
+			await updatePlaytest(playtest?.metadata.name, project, spec);
 		} else if (mode === ModalState.Creating) {
 			const spec: PlaytestSpec = {
 				displayName: data.name,
