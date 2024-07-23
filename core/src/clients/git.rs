@@ -736,30 +736,37 @@ impl Git {
         let status = git_proc.wait().await?;
 
         if !status.success() {
-            let mut failed = true;
-            let locked_lines = err_lines.read();
-            for line in &*locked_lines {
-                for err in opts.ignored_errors {
-                    if line.contains(*err) {
-                        failed = false;
+            // git config --get <blah> has empty output with a bad exit code if the variable is
+            // unset, so just handle that case gracefully here to avoid spamming logging with errors
+            let should_skip_error_logging =
+                args.len() >= 2 && args[0] == "config" && args[1] == "--get";
+
+            if !should_skip_error_logging {
+                let mut failed = true;
+                let locked_lines = err_lines.read();
+                for line in &*locked_lines {
+                    for err in opts.ignored_errors {
+                        if line.contains(*err) {
+                            failed = false;
+                            break;
+                        }
+                    }
+                    if !failed {
                         break;
                     }
                 }
-                if !failed {
-                    break;
+
+                if failed {
+                    let locked_lines = err_lines.read();
+                    let err_output: String = locked_lines.join("\n");
+                    error!("Failed to run: {}.\n{}", git_cmd_str, err_output);
+
+                    if opts.return_complete_error {
+                        bail!("Git command failed: {}", err_output);
+                    }
+
+                    bail!("Git command failed. Check the log for details.");
                 }
-            }
-
-            if failed {
-                let locked_lines = err_lines.read();
-                let err_output: String = locked_lines.join("\n");
-                error!("Failed to run: {}.\n{}", git_cmd_str, err_output);
-
-                if opts.return_complete_error {
-                    bail!("Git command failed: {}", err_output);
-                }
-
-                bail!("Git command failed. Check the log for details.");
             }
         }
 
