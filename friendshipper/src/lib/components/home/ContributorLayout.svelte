@@ -78,7 +78,8 @@
 
 	const refresh = async () => {
 		try {
-			await Promise.all([refreshPlaytests(), refreshRepo(), refreshMergeQueue()]);
+			// We don't need to refresh the repo because the root layout component will do that
+			await Promise.all([refreshPlaytests(), refreshMergeQueue()]);
 		} catch (e) {
 			await emit('error', e);
 		}

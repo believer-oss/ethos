@@ -83,6 +83,9 @@
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
 
+	// Refresh timer
+	let lastRefresh = new Date().getTime();
+
 	// Quick launch stuff
 	let quickLaunching = false;
 	let quickLaunchServerName = '';
@@ -111,7 +114,8 @@
 
 	$: activeUrl = $page.url.pathname;
 
-	const refreshInterval = 30 * 1000;
+	const refreshInterval = 60 * 1000;
+	const authRefreshInterval = 30 * 1000;
 
 	let loading = false;
 	const loadingText = 'Refreshing data...';
@@ -310,9 +314,15 @@
 
 			if ($appConfig.repoPath !== '') {
 				try {
-					commits.set(await getAllCommits());
-					locks.set(await verifyLocks());
-					repoStatus.set(await getRepoStatus());
+					// let's assume if the window isn't focused, someone is working in the editor
+					// which will also be attempting to run status updates
+					if (await appWindow.isFocused()) {
+						commits.set(await getAllCommits());
+						locks.set(await verifyLocks());
+						repoStatus.set(await getRepoStatus());
+
+						lastRefresh = new Date().getTime();
+					}
 				} catch (e) {
 					await emit('error', e);
 				}
@@ -334,16 +344,23 @@
 			loginRequired = await checkLoginRequired();
 		};
 
+		void appWindow.onFocusChanged((focused) => {
+			if (focused) {
+				const now = new Date().getTime();
+				if (now - lastRefresh > refreshInterval) {
+					void refresh();
+				}
+			}
+		});
+
 		initialize()
 			.then(() => {
-				void refresh();
-
 				const interval = setInterval(() => {
 					void refresh();
 				}, refreshInterval);
 				const authInterval = setInterval(() => {
 					void checkAuth();
-				}, refreshInterval);
+				}, authRefreshInterval);
 
 				showWelcomeModal = !get(appConfig).initialized;
 

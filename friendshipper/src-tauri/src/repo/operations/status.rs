@@ -14,6 +14,7 @@ use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
+use ethos_core::clients::git::ShouldPrune;
 use ethos_core::storage::{
     config::Project, ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList,
     ArtifactStorage, Platform,
@@ -101,9 +102,7 @@ where
     pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
         if !self.skip_fetch {
             info!("Fetching latest for {:?}", self.git_client.repo_path);
-            self.git_client
-                .run(&["fetch", "--prune"], git::Opts::default())
-                .await?;
+            self.git_client.fetch(ShouldPrune::Yes).await?;
         }
 
         info!("StatusOp: running git status...");
