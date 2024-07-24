@@ -227,16 +227,11 @@ pub async fn get_commits(
     state: tauri::State<'_, State>,
     limit: Option<u32>,
     remote: Option<bool>,
-    update: Option<bool>,
 ) -> Result<Vec<Commit>, TauriError> {
     let mut req = state.client.get(format!("{}/repo/log", state.server_url));
 
     if let Some(limit) = limit {
         req = req.query(&[("limit", limit)]);
-    }
-
-    if let Some(update) = update {
-        req = req.query(&[("update", update)]);
     }
 
     if let Some(remote) = remote {
