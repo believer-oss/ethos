@@ -10,6 +10,7 @@ use tracing::{info, instrument};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommunicationType {
+    None, // Only in-memory cache lookups are allowed - use for situations where high performance is desired
     IpcOnly, // Only interprocess communication is allowed in this case, for example a HTTP request, pipes, etc.
     OfflineFallback, // Tries IPC first, but falls back to an offline approach if the host engine process isn't running, which can be much slower than IPC
 }

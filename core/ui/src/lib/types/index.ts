@@ -1,2 +1,8 @@
 export { type Nullable } from './util.js';
-export { type ModifiedFile, ModifiedFileState, type Commit, type CommitFileInfo } from './repo.js';
+export {
+	ModifiedFileState,
+	SubmitStatus,
+	type ModifiedFile,
+	type Commit,
+	type CommitFileInfo
+} from './repo.js';

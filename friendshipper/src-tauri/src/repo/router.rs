@@ -36,7 +36,6 @@ where
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
         .route("/reset", post(operations::reset_repo))
         .route("/revert", post(operations::revert_files_handler::<T>))
-        .route("/locks/verify", get(operations::verify_locks_handler))
         .route("/locks/lock", post(operations::acquire_locks_handler))
         .route("/locks/unlock", post(operations::release_locks_handler))
         .route("/gh/queue", get(operations::gh::get_merge_queue))

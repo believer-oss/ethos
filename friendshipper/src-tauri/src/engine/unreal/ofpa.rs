@@ -160,12 +160,13 @@ impl OFPANameCache {
             let cache = provider.ofpa_cache.read();
             for path in paths {
                 let neeeds_translate = Self::path_needs_translate(path);
+                let can_request = communication != CommunicationType::None;
                 // If the editor is running, the user could have changed the name of the asset, so attempt to fetch an updated
                 // name for it if a refresh is desired. If the editor is closed, the last name we have in the cache is probably
                 //  good enough since we run status updates pretty often.
                 let needs_request = is_editor_running || !cache.path_to_name_map.contains_key(path);
 
-                if neeeds_translate && needs_request {
+                if neeeds_translate && can_request && needs_request {
                     paths_to_request.push(path.clone())
                 }
             }

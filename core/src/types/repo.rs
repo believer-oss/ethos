@@ -1,16 +1,69 @@
+use crate::types::locks::Lock;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum SubmitStatus {
+    #[default]
+    Ok,
+    CheckoutRequired,
+    CheckedOutByOtherUser,
+    Unmerged,
+    Conflicted,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FileState {
+    #[default]
+    Unknown,
+    Added,
+    Modified,
+    Deleted,
+    Unmerged,
+}
+
+impl FileState {
+    fn parse(index_state: &str, working_state: &str) -> FileState {
+        if working_state == "?" {
+            return FileState::Added;
+        }
+        if working_state == "M" {
+            return FileState::Modified;
+        }
+        if working_state == "D" {
+            return FileState::Deleted;
+        }
+
+        if working_state == "U" {
+            return FileState::Unmerged;
+        }
+
+        if index_state == "A" {
+            return FileState::Added;
+        }
+        if index_state == "M" {
+            return FileState::Modified;
+        }
+        if index_state == "D" {
+            return FileState::Deleted;
+        }
+        if index_state == "U" {
+            return FileState::Unmerged;
+        }
+
+        FileState::Unknown
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct File {
     pub path: String,
-
-    #[serde(rename = "displayName")]
     pub display_name: String,
-    #[serde(rename = "indexState")]
-    pub index_state: String,
-    #[serde(rename = "workingState")]
-    pub working_state: String,
+    pub state: FileState,
+    pub is_staged: bool,
+    pub locked_by: String,
+    pub submit_status: SubmitStatus,
 }
 
 impl File {
@@ -28,6 +81,7 @@ impl File {
             Some(c) => c.to_string().trim().to_owned(),
             None => String::new(),
         };
+        let state = FileState::parse(&index_state, &working_state);
 
         // skip the space
         chars.next();
@@ -39,8 +93,10 @@ impl File {
         Self {
             path,
             display_name: String::new(),
-            index_state,
-            working_state,
+            state,
+            is_staged: !index_state.is_empty(),
+            locked_by: String::new(),
+            submit_status: SubmitStatus::Ok,
         }
     }
 }
@@ -111,6 +167,11 @@ pub struct RepoStatus {
     pub conflicts: Vec<String>,
 
     pub modified_upstream: Vec<String>,
+
+    // locks
+    pub lock_user: String,
+    pub locks_ours: Vec<Lock>,
+    pub locks_theirs: Vec<Lock>,
 }
 
 impl RepoStatus {
@@ -136,6 +197,9 @@ impl RepoStatus {
             conflict_upstream: false,
             conflicts: vec![],
             modified_upstream: vec![],
+            lock_user: String::new(),
+            locks_ours: vec![],
+            locks_theirs: vec![],
         }
     }
 
@@ -288,8 +352,7 @@ mod tests {
     fn test_parse_file_untracked() {
         let file = File::from_status_line("?? test/test.dll");
 
-        assert_eq!(file.index_state, "?");
-        assert_eq!(file.working_state, "?");
+        assert_eq!(file.state, FileState::Added);
         assert_eq!(file.path, "test/test.dll");
     }
 
@@ -297,8 +360,7 @@ mod tests {
     fn test_parse_file_staged() {
         let file = File::from_status_line("A  test-foo/test-foo.dll");
 
-        assert_eq!(file.index_state, "A");
-        assert_eq!(file.working_state, "");
+        assert_eq!(file.state, FileState::Added);
         assert_eq!(file.path, "test-foo/test-foo.dll");
     }
 
@@ -306,8 +368,7 @@ mod tests {
     fn test_parse_file_unstaged() {
         let file = File::from_status_line(" M test-bar/test-bar.png");
 
-        assert_eq!(file.index_state, "");
-        assert_eq!(file.working_state, "M");
+        assert_eq!(file.state, FileState::Modified);
         assert_eq!(file.path, "test-bar/test-bar.png");
     }
 }

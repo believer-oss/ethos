@@ -9,7 +9,6 @@ use ethos_core::types::config::{DynamicConfig, UnrealVerSelDiagResponse};
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
 use ethos_core::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
-use ethos_core::types::locks::VerifyLocksResponse;
 use ethos_core::types::playtests::{
     AssignUserRequest, CreatePlaytestRequest, Playtest, UnassignUserRequest, UpdatePlaytestRequest,
 };
@@ -553,25 +552,6 @@ pub async fn get_merge_queue(
     let res = state
         .client
         .get(format!("{}/repo/gh/queue", state.server_url))
-        .send()
-        .await?;
-
-    if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
-    }
-
-    Ok(res.json().await?)
-}
-
-// Locks
-#[tauri::command]
-pub async fn verify_locks(
-    state: tauri::State<'_, State>,
-) -> Result<VerifyLocksResponse, TauriError> {
-    let res = state
-        .client
-        .get(format!("{}/repo/locks/verify", state.server_url))
         .send()
         .await?;
 
