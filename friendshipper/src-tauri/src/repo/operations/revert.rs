@@ -1,20 +1,20 @@
-use std::fs;
-
 use anyhow::bail;
 use axum::extract::State;
 use axum::{async_trait, Json};
+use std::fs;
+use std::io::Write;
 use tokio::sync::oneshot::error::RecvError;
+use tracing::error;
 use tracing::info;
 
 use crate::engine::EngineProvider;
+use crate::state::AppState;
 use ethos_core::clients::git;
 use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::ForceUnlock;
 use ethos_core::types::repo::RevertFilesRequest;
 use ethos_core::worker::{Task, TaskSequence};
-
-use crate::state::AppState;
 
 use super::{File, RepoStatusRef};
 
@@ -39,20 +39,101 @@ where
             bail!("no files provided");
         }
 
-        let branch = self.repo_status.read().branch.clone();
-        let mut args: Vec<&str> = vec!["checkout", &branch, "--"];
-
-        for file in &self.files {
-            args.push(file);
+        let mut num_chars = 0;
+        for f in self.files.iter() {
+            num_chars += f.len();
         }
 
-        self.git_client.run(&args, git::Opts::default()).await?;
+        let branch = self.repo_status.read().branch.clone();
+
+        // windows command line length limit is 8191, so if we're close to that, checking using a file instead
+        if num_chars > 8000 {
+            match self.revert_with_listfile(&branch).await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    error!(
+                        "Revert files with listfile failed, falling back to chunked batches: {}",
+                        e
+                    )
+                }
+            }
+        }
+
+        for chunk in self.files.chunks(50) {
+            let mut args: Vec<&str> = vec!["checkout", &branch, "--"];
+            for file in chunk {
+                args.push(file);
+            }
+            self.git_client.run(&args, git::Opts::default()).await?;
+        }
 
         Ok(())
     }
 
-    fn get_name(&self) -> String {
-        String::from("RepoRevertFiles")
+    fn get_name(&self) -> std::string::String {
+        "RevertFilesOp".to_string()
+    }
+}
+
+impl<T> RevertFilesOp<T>
+where
+    T: EngineProvider,
+{
+    async fn revert_with_listfile(&self, branch: &str) -> anyhow::Result<()> {
+        let mut listfile_path = std::env::temp_dir();
+        listfile_path.push("Friendshipper");
+
+        if !listfile_path.exists() {
+            if let Err(e) = std::fs::create_dir(&listfile_path) {
+                bail!(
+                    "Failed to create directory for storing temp file: {:?}. Reason: {}",
+                    listfile_path,
+                    e
+                );
+            }
+        }
+
+        listfile_path.push("revert_files.txt");
+
+        match std::fs::File::create(&listfile_path) {
+            Err(e) => {
+                bail!(
+                    "Failed to create listfile '{:?}' for RevertFilesOp: {}",
+                    listfile_path,
+                    e
+                );
+            }
+            Ok(file) => {
+                let mut writer = std::io::BufWriter::new(file);
+                for path in &self.files {
+                    if let Err(e) = writeln!(writer, "{}", &path) {
+                        bail!(
+                            "Failed to write '{}' to file {:?}: {}",
+                            path,
+                            listfile_path,
+                            e
+                        );
+                    }
+                }
+                match writer.flush() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        bail!(
+                            "Failed to write listfile '{:?}' for RevertFilesOp: {}",
+                            listfile_path,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        let pathspec_arg = format!("--pathspec-from-file={}", listfile_path.to_string_lossy());
+        let args: Vec<&str> = vec!["checkout", &branch, &pathspec_arg];
+
+        self.git_client.run(&args, git::Opts::default()).await?;
+
+        Ok(())
     }
 }
 
@@ -114,18 +195,14 @@ where
     }
 
     if !modified.is_empty() {
-        for chunk in modified.chunks(50) {
-            let op = {
-                RevertFilesOp {
-                    git_client: state.git(),
-                    repo_status: state.repo_status.clone(),
-                    files: chunk.iter().map(|f| f.path.clone()).collect(),
-                    engine: state.engine.clone(),
-                }
-            };
+        let op = RevertFilesOp {
+            git_client: state.git(),
+            repo_status: state.repo_status.clone(),
+            files: modified.iter().map(|f| f.path.clone()).collect(),
+            engine: state.engine.clone(),
+        };
 
-            sequence.push(Box::new(op));
-        }
+        sequence.push(Box::new(op));
     }
 
     // unlock reverted files
