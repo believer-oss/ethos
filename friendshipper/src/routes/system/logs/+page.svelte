@@ -112,8 +112,10 @@
 			<TableBody>
 				{#each filteredItems as log}
 					<TableBodyRow class="text-left border-b-0 p-2 bg-secondary-700 dark:bg-space-900">
-						<TableBodyCell class="p-2 py-1 w-52">
-							<p class="text-sm text-gray-300 dark:text-gray-300">{log.timestamp}</p>
+						<TableBodyCell class="p-2 py-1">
+							<p class="text-sm text-gray-300 dark:text-gray-300">
+								{new Date(log.timestamp).toLocaleString()}
+							</p>
 						</TableBodyCell>
 						<TableBodyCell class="text-left border-b-0 p-2 py-1 w-20">
 							<p class="text-sm text-primary-400 dark:text-primary-400">
