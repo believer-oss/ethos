@@ -15,7 +15,14 @@
 		TableBodyRow
 	} from 'flowbite-svelte';
 	import { onMount, tick } from 'svelte';
-	import { CheckSolid, CloseSolid, EditOutline, FolderSolid } from 'flowbite-svelte-icons';
+	import {
+		CheckSolid,
+		CloseSolid,
+		EditOutline,
+		FileCheckOutline,
+		FileCheckSolid,
+		FolderSolid
+	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
@@ -463,22 +470,24 @@
 			<BreadcrumbItem
 				homeClass="inline-flex items-center text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-400"
 				home
-				><Button
+			>
+				<Button
 					outline
 					size="xs"
 					class="mx-0 py-1 dark:focus-within:ring-0"
-					on:click={async () => goHome()}>/</Button
-				></BreadcrumbItem
-			>
+					on:click={async () => goHome()}
+					>/
+				</Button>
+			</BreadcrumbItem>
 			{#each ancestry as path, i}
-				<BreadcrumbItem spanClass="text-sm font-medium text-gray-500 dark:text-gray-400"
-					><Button
+				<BreadcrumbItem spanClass="text-sm font-medium text-gray-500 dark:text-gray-400">
+					<Button
 						outline
 						size="xs"
 						class="py-1 mx-0 dark:focus-within:ring-0"
 						on:click={async () => goBack(i)}>{path}</Button
-					></BreadcrumbItem
-				>
+					>
+				</BreadcrumbItem>
 			{/each}
 		</Breadcrumb>
 	</div>
@@ -521,7 +530,9 @@
 													class="flex justify-start items-center py-0.5 pl-2 border-0 w-full"
 													on:click={async () => {
 														await setCurrentRoot(file.name);
-													}}><FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
+													}}
+												>
+													<FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
 												>
 											{:else}
 												<div class="flex gap-2 items-center justify-start w-full">
@@ -530,6 +541,11 @@
 														class="justify-start border-0 py-0.5 pl-2 rounded-md w-full"
 														on:click={() => selectFile(file)}
 													>
+														{#if file.lfsState === LocalFileLFSState.Local}
+															<FileCheckSolid class="w-4 h-4 text-green-500" />
+														{:else}
+															<FileCheckOutline class="w-4 h-4 text-gray-500" />
+														{/if}
 														<div class="w-3 mr-3">{file.locked ? '🔒' : ''}</div>
 														{file.name}
 													</Button>
@@ -550,14 +566,14 @@
 					class="w-full flex flex-col gap-2 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
 				>
 					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
-						>Download Selected Files</Button
-					>
+						>Download Selected Files
+					</Button>
 					<Button class="w-full" disabled={loading} on:click={handleLockSelectedFiles}
-						>Lock Selected Files</Button
-					>
+						>Lock Selected Files
+					</Button>
 					<Button class="w-full" disabled={loading} on:click={handleUnlockSelectedFiles}
-						>Unlock Selected Files</Button
-					>
+						>Unlock Selected Files
+					</Button>
 				</Card>
 			{/if}
 			<Card
@@ -578,23 +594,27 @@
 								disabled={updatingDirectoryClass}
 								size="xs"
 								class="my-1"
-								on:click={saveDirectoryClass}><CheckSolid class="w-4 h-4" /></Button
+								on:click={saveDirectoryClass}
 							>
+								<CheckSolid class="w-4 h-4" />
+							</Button>
 							<Button
 								disabled={updatingDirectoryClass}
 								size="xs"
 								class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
-								on:click={cancelEditDirectoryClass}><CloseSolid class="w-4 h-4" /></Button
+								on:click={cancelEditDirectoryClass}
 							>
+								<CloseSolid class="w-4 h-4" />
+							</Button>
 						</div>
 					{:else}
 						<div class="flex gap-2">
 							<code class="dark:bg-secondary-700 px-2 py-1 w-32 text-center text-white"
 								>{selectedDirectoryClass}</code
 							>
-							<Button size="xs" on:click={handleEditDirectoryClass}
-								><EditOutline class="w-4 h-4" /></Button
-							>
+							<Button size="xs" on:click={handleEditDirectoryClass}>
+								<EditOutline class="w-4 h-4" />
+							</Button>
 						</div>
 					{/if}
 				</div>
