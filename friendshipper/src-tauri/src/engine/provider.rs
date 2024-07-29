@@ -33,6 +33,8 @@ pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
     /// For example, if the engine is Unreal, this function should open the .uproject file in the editor.
     async fn open_project(&self) -> Result<()>;
 
+    fn get_default_content_subdir(&self) -> String;
+
     /// Create arguments to launch the game client locally
     /// This assumes everything we need comes from self, the app config, the repo config,
     /// and a Game Server's networking info.

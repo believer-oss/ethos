@@ -310,6 +310,14 @@ fn main() {
                 }
             });
 
+            let (refresh_tx, refresh_rx) = std::sync::mpsc::channel::<()>();
+            let refresh_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                while refresh_rx.recv().is_ok() {
+                    refresh_handle.emit_all("git-refresh", "").unwrap();
+                }
+            });
+
             let server_log_path = log_path.clone();
             tauri::async_runtime::spawn(async move {
                 let server = friendshipper::server::Server::new(
@@ -323,7 +331,7 @@ fn main() {
                     otel_reload_handle,
                 );
 
-                match server.run(startup_tx, shutdown_rx).await {
+                match server.run(startup_tx, refresh_tx, shutdown_rx).await {
                     Ok(_) => {}
                     Err(e) => {
                         error!("Server error: {:?}", e);
