@@ -78,6 +78,10 @@ impl EngineProvider for UnrealEngineProvider {
         Ok(())
     }
 
+    fn get_default_content_subdir(&self) -> String {
+        "Content".to_string()
+    }
+
     fn create_launch_args(
         &self,
         app_config: AppConfig,

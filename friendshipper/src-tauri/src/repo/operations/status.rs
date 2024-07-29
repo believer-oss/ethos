@@ -109,7 +109,7 @@ where
         }
 
         info!("StatusOp: running git status...");
-        let status_output = self.git_client.status().await?;
+        let status_output = self.git_client.status(vec![]).await?;
         let status_lines = status_output.lines().collect::<Vec<_>>();
 
         info!("StatusOp: parsing status state...");
@@ -133,23 +133,7 @@ where
         }
 
         for line in status_lines {
-            if line.starts_with("##") {
-                status.parse_branch_string(line);
-
-                continue;
-            }
-
-            let file = File::from_status_line(line);
-
-            if file.is_staged {
-                status.has_staged_changes = true;
-            }
-
-            if file.state == FileState::Added {
-                status.untracked_files.0.push(file);
-            } else {
-                status.modified_files.0.push(file);
-            }
+            status.parse_file_line(line);
         }
 
         if status.detached_head {

@@ -159,6 +159,11 @@
 		updating = false;
 	};
 
+	const refreshRepo = async () => {
+		repoStatus.set(await getRepoStatus());
+		void emit('success', 'Files refreshed!');
+	};
+
 	/* eslint-disable no-await-in-loop */
 	const initialize = async () => {
 		initialized = false;
@@ -387,6 +392,10 @@
 
 	void listen('startup-message', (e) => {
 		startupMessage = e.payload as string;
+	});
+
+	void listen('git-refresh', () => {
+		void refreshRepo();
 	});
 
 	void listen('login-status', (e) => {

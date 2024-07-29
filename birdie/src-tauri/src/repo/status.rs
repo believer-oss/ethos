@@ -80,7 +80,7 @@ impl StatusOp {
                 .await?;
         }
 
-        let output = self.git_client.status().await?;
+        let output = self.git_client.status(vec![]).await?;
 
         let mut status = RepoStatus::new();
 

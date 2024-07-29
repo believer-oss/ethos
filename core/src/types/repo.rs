@@ -2,7 +2,7 @@ use crate::types::locks::Lock;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SubmitStatus {
     #[default]
     Ok,
@@ -55,7 +55,7 @@ impl FileState {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
     pub path: String,
@@ -200,6 +200,28 @@ impl RepoStatus {
             lock_user: String::new(),
             locks_ours: vec![],
             locks_theirs: vec![],
+        }
+    }
+
+    pub fn parse_file_line(&mut self, line: &str) {
+        if line.starts_with("##") {
+            self.parse_branch_string(line);
+
+            return;
+        }
+
+        let file = File::from_status_line(line);
+
+        if file.is_staged {
+            self.has_staged_changes = true;
+        }
+
+        if file.state == FileState::Added {
+            if !self.untracked_files.contains(&file.path) {
+                self.untracked_files.0.push(file);
+            }
+        } else if !self.modified_files.contains(&file.path) {
+            self.modified_files.0.push(file);
         }
     }
 
