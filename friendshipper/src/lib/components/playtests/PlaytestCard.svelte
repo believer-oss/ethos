@@ -173,9 +173,35 @@
 >
 	<div class="flex items-center justify-between gap-2 mb-1">
 		<div class="flex items-center gap-2">
-			<h5 class="text-2xl font-light tracking-tight text-primary-400">
-				{playtest.spec.displayName}
-			</h5>
+			<div class="flex items-center gap-1 text-2xl font-light tracking-tight text-primary-400">
+				<span>{playtest.spec.displayName}</span>
+				{#if compact}
+					<span class="text-xs">{countdownFinished ? '🟢' : '🟡'}</span>
+					<Tooltip
+						class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+						placement="top"
+					>
+						<div class="flex items-center gap-2">
+							<!-- If the playtest's start time changes, reset the countdown -->
+							{#key playtest.spec.startTime}
+								{#if countdownFinished}
+									<span class="text-lime-500">Playtest in progress!</span>
+								{:else}
+									<Countdown
+										from={playtest.spec.startTime}
+										onFinished={handleCountdownFinished}
+										let:remaining
+									>
+										<span id={`countdown-${getPlaytestQuerySelector(playtest)}`}
+											>Playtest starts in {remaining.string}</span
+										>
+									</Countdown>
+								{/if}
+							{/key}
+						</div>
+					</Tooltip>
+				{/if}
+			</div>
 			<ButtonGroup class="space-x-px">
 				{#if handleEditPlaytest !== null}
 					<Button
@@ -206,23 +232,23 @@
 				{/key}
 			</ButtonGroup>
 		</div>
-
-		<!-- If the playtest's start time changes, reset the countdown -->
-		{#key playtest.spec.startTime}
-			{#if countdownFinished}
-				<span class="text-lime-500">Playtest in progress!</span>
-			{:else}
-				<Countdown
-					from={playtest.spec.startTime}
-					onFinished={handleCountdownFinished}
-					let:remaining
-				>
-					<span id={`countdown-${getPlaytestQuerySelector(playtest)}`}
-						>Playtest starts in {remaining.string}</span
+		<div class:hidden={compact}>
+			{#key playtest.spec.startTime}
+				{#if countdownFinished}
+					<span class="text-lime-500">Playtest in progress!</span>
+				{:else}
+					<Countdown
+						from={playtest.spec.startTime}
+						onFinished={handleCountdownFinished}
+						let:remaining
 					>
-				</Countdown>
-			{/if}
-		{/key}
+						<span id={`countdown-${getPlaytestQuerySelector(playtest)}`}
+							>Playtest starts in {remaining.string}</span
+						>
+					</Countdown>
+				{/if}
+			{/key}
+		</div>
 	</div>
 	<div class="flex items-center justify-between gap-2 mb-4">
 		<div class="flex items-center gap-2">
