@@ -38,10 +38,12 @@
 	import { getPlaytestGroupForUser, getPlaytests } from '$lib/playtests';
 	import { getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
+	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 
 	let loadingMergeQueue = false;
 	let loadingPlaytests = false;
 	let loadingRepoStatus = false;
+	let openingProject = false;
 	let mergeQueue: Nullable<MergeQueue> = null;
 	let syncing = false;
 	let progressModalText = '';
@@ -141,6 +143,18 @@
 		}
 
 		syncing = false;
+	};
+
+	const handleOpenUprojectClicked = async () => {
+		try {
+			openingProject = true;
+			progressModalText = 'Launching Unreal Engine';
+			await openProject();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		openingProject = false;
 	};
 
 	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
@@ -293,12 +307,23 @@
 							</p>
 						</div>
 					</div>
-					<ButtonGroup size="xs" class="space-x-px mt-4 w-full">
-						<Button color="primary" class="w-full" on:click={handleSyncClicked}>Sync</Button>
-						<Button color="primary" href="/source/submit" class="w-full"
-							>Submit<LinkOutline class="ml-4 w-4 h-4l" /></Button
+					<div class="flex flex-col gap-2">
+						<ButtonGroup size="xs" class="space-x-px mt-4 w-full">
+							<Button color="primary" class="w-full" on:click={handleSyncClicked}>Sync</Button>
+							<Button color="primary" href="/source/submit" class="w-full"
+								>Submit<LinkOutline class="ml-4 w-4 h-4l" /></Button
+							>
+						</ButtonGroup>
+						<Button
+							disabled={openingProject}
+							size="xs"
+							color="primary"
+							on:click={async () => handleOpenUprojectClicked()}
 						>
-					</ButtonGroup>
+							<UnrealEngineLogoNoCircle class="w-3 h-3 mr-2" />
+							Open Editor
+						</Button>
+					</div>
 				</div>
 			</Card>
 		</div>
