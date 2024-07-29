@@ -15,16 +15,16 @@
 	} from 'flowbite-svelte';
 	import {
 		CloseCircleSolid,
-		FileOutline,
+		PenSolid,
 		FolderOpenOutline,
 		InfoCircleSolid,
-		PlusOutline
+		PlusOutline,
+		FileCopySolid
 	} from 'flowbite-svelte-icons';
-	import { type ModifiedFile, ModifiedFileState } from '$lib/types/index.js';
+	import { ModifiedFileState, SubmitStatus, type ModifiedFile } from '$lib/types/index.js';
 
 	export let disabled: boolean;
 	export let modifiedFiles: ModifiedFile[];
-	export let conflicts: string[];
 	export let selectedFiles: ModifiedFile[];
 	export let onSaveSnapshot: () => Promise<void> = async () => {};
 	export let snapshotsEnabled = true;
@@ -97,6 +97,7 @@
 			selectedFiles = selectedFiles.filter((item) => item.path !== selectedFile.path);
 		}
 	};
+
 	const handleSelectAllFiles = (e: Event) => {
 		if ((e.target as HTMLInputElement).checked) {
 			selectAll = true;
@@ -108,24 +109,24 @@
 	};
 
 	const getFileTextClass = (file: ModifiedFile): string => {
-		if (file.workingState === '?') {
-			return 'text-lime-500 dark:text-lime-500';
-		}
-		if (file.workingState === 'M') {
-			return 'text-yellow-300 dark:text-yellow-300';
-		}
-		if (file.workingState === 'D') {
+		if (file.submitStatus !== SubmitStatus.Ok) {
 			return 'text-red-700 dark:text-red-700';
 		}
 
-		if (file.indexState === 'A') {
+		if (file.state === ModifiedFileState.Added) {
 			return 'text-lime-500 dark:text-lime-500';
 		}
-		if (file.indexState === 'M') {
+		if (file.state === ModifiedFileState.Modified) {
 			return 'text-yellow-300 dark:text-yellow-300';
 		}
-		if (file.indexState === 'D') {
+		if (file.state === ModifiedFileState.Deleted) {
+			return 'text-yellow-300 dark:text-gray-300';
+		}
+		if (file.state === ModifiedFileState.Unmerged) {
 			return 'text-red-700 dark:text-red-700';
+		}
+		if (file.state === ModifiedFileState.Unknown) {
+			return 'text-lime-500 dark:text-yellow-300';
 		}
 
 		return '';
@@ -138,34 +139,19 @@
 		return file.displayName;
 	};
 
-	const getModifiedState = (file: ModifiedFile): ModifiedFileState => {
-		if (file.workingState === '?') {
-			return ModifiedFileState.Added;
-		}
-		if (file.workingState === 'M') {
-			return ModifiedFileState.Modified;
-		}
-		if (file.workingState === 'D') {
-			return ModifiedFileState.Deleted;
-		}
-		if (file.workingState === 'U') {
-			return ModifiedFileState.Unmerged;
+	const getFileTooltip = (file: ModifiedFile): string => {
+		let tooltip = '';
+		if (file.submitStatus === SubmitStatus.CheckedOutByOtherUser) {
+			tooltip = ': Unable to submit - checked out by other user';
+		} else if (file.submitStatus === SubmitStatus.CheckoutRequired) {
+			tooltip = ': Unable to submit - checkout required';
+		} else if (file.submitStatus === SubmitStatus.Unmerged) {
+			tooltip = ': Unable to submit - unmerged file requires a revert';
+		} else if (file.submitStatus === SubmitStatus.Conflicted) {
+			tooltip = ': Unable to submit - conflicted file requires a revert';
 		}
 
-		if (file.indexState === 'A') {
-			return ModifiedFileState.Added;
-		}
-		if (file.indexState === 'M') {
-			return ModifiedFileState.Modified;
-		}
-		if (file.indexState === 'D') {
-			return ModifiedFileState.Deleted;
-		}
-		if (file.indexState === 'U') {
-			return ModifiedFileState.Unmerged;
-		}
-
-		return ModifiedFileState.Unknown;
+		return file.state + tooltip;
 	};
 </script>
 
@@ -210,6 +196,7 @@
 				</Tooltip>
 			</TableHeadCell>
 			<TableHeadCell class="p-1" />
+			<TableHeadCell class="p-1">Checked Out</TableHeadCell>
 			<TableHeadCell class="p-1">File</TableHeadCell>
 		</TableHead>
 		<TableBody>
@@ -229,35 +216,38 @@
 						/>
 					</TableBodyCell>
 					<TableBodyCell tdClass="p-1 w-8">
-						{#if getModifiedState(file) === ModifiedFileState.Added}
+						{#if file.state === ModifiedFileState.Added}
 							<PlusOutline class="w-4 h-4 text-lime-500" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
-								>Added
+								>{getFileTooltip(file)}
 							</Tooltip>
-						{:else if getModifiedState(file) === ModifiedFileState.Modified}
-							<FileOutline class="w-4 h-4 text-yellow-300" />
+						{:else if file.state === ModifiedFileState.Modified}
+							<PenSolid class="w-4 h-4 text-yellow-300" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
-								>Modified
+								>{getFileTooltip(file)}
 							</Tooltip>
-						{:else if getModifiedState(file) === ModifiedFileState.Deleted}
+						{:else if file.state === ModifiedFileState.Deleted}
 							<CloseCircleSolid class="w-4 h-4 text-red-700" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
-								>Deleted
+								>{getFileTooltip(file)}
 							</Tooltip>
-						{:else if getModifiedState(file) === ModifiedFileState.Unmerged}
-							<p class="w-4 h-4 mb-2 text-red-700">⚠️</p>
+						{:else if file.state === ModifiedFileState.Unmerged}
+							<FileCopySolid class="w-4 h-4 text-red-700" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="right"
-								>Unmerged: revert to resolve
+								>{getFileTooltip(file)}
 							</Tooltip>
 						{/if}
+					</TableBodyCell>
+					<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
+						{file.lockedBy}
 					</TableBodyCell>
 					<TableBodyCell class="p-1 flex gap-1 items-center h-full whitespace-nowrap font-medium">
 						<Button
@@ -268,10 +258,10 @@
 						>
 							<FolderOpenOutline class="w-4 h-4" />
 						</Button>
-						{#if conflicts.includes(file.path)}
-							<span> 🔥 </span>
+						{#if file.submitStatus !== SubmitStatus.Ok}
+							<span> ⚠️ </span>
 							<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
-								CONFLICT!!!
+								{getFileTooltip(file)}
 							</Tooltip>
 						{/if}
 						<Button
@@ -327,33 +317,33 @@
 		>
 			{#each selectedFiles as file}
 				<div class="flex gap-2 items-center">
-					{#if getModifiedState(file) === ModifiedFileState.Added}
+					{#if file.state === ModifiedFileState.Added}
 						<PlusOutline class="w-4 h-4 text-lime-500" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
-							>Added
+							>{getFileTooltip(file)}
 						</Tooltip>
-					{:else if getModifiedState(file) === ModifiedFileState.Modified}
-						<FileOutline class="w-4 h-4 text-yellow-300" />
+					{:else if file.state === ModifiedFileState.Modified}
+						<PenSolid class="w-4 h-4 text-yellow-300" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
-							>Modified
+							>{getFileTooltip(file)}
 						</Tooltip>
-					{:else if getModifiedState(file) === ModifiedFileState.Deleted}
+					{:else if file.state === ModifiedFileState.Deleted}
 						<CloseCircleSolid class="w-4 h-4 text-red-700" />
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
-							>Deleted
+							>{getFileTooltip(file)}
 						</Tooltip>
-					{:else if getModifiedState(file) === ModifiedFileState.Unmerged}
+					{:else if file.state === ModifiedFileState.Unmerged}
 						<p class="w-4 h-4 mb-2 text-red-700">⚠️</p>
 						<Tooltip
 							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 							placement="right"
-							>Unmerged
+							>{getFileTooltip(file)}
 						</Tooltip>
 					{/if}
 					<p class="font-bold {getFileTextClass(file)}">

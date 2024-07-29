@@ -1,16 +1,26 @@
+export enum ModifiedFileState {
+	Added = 'Added',
+	Modified = 'Modified',
+	Deleted = 'Deleted',
+	Unmerged = 'Unmerged',
+	Unknown = 'Unknown'
+}
+
+export enum SubmitStatus {
+	Ok = 'Ok',
+	CheckoutRequired = 'CheckoutRequired',
+	CheckedOutByOtherUser = 'CheckedOutByOtherUser',
+	Unmerged = 'Unmerged',
+	Conflicted = 'Conflicted'
+}
+
 export interface ModifiedFile {
 	path: string;
 	displayName: string;
-	indexState: string;
-	workingState: string;
-}
-
-export enum ModifiedFileState {
-	Added = 'added',
-	Modified = 'modified',
-	Deleted = 'deleted',
-	Unmerged = 'unmerged',
-	Unknown = 'unknown'
+	state: ModifiedFileState;
+	isStaged: boolean;
+	lockedBy: string;
+	submitStatus: SubmitStatus;
 }
 
 export interface Commit {

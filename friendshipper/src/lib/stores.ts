@@ -11,8 +11,7 @@ import type {
 	Playtest,
 	ProjectConfig,
 	RepoConfig,
-	RepoStatus,
-	VerifyLocksResponse
+	RepoStatus
 } from '$lib/types';
 import { getPlaytestGroupForUser } from '$lib/playtests';
 
@@ -34,11 +33,6 @@ export const workflows = writable(<CommitWorkflowInfo[]>[]);
 export const engineWorkflows = writable(<CommitWorkflowInfo[]>[]);
 export const onboardingInProgress = writable(false);
 
-export const locks = writable(<VerifyLocksResponse>{
-	ours: [],
-	theirs: [],
-	nextCursor: null
-});
 export const nextPlaytest = derived([playtests, appConfig], ([$playtests, $appConfig]) => {
 	if ($playtests.length > 0) {
 		const nextAssigned = $playtests.find(
@@ -114,11 +108,12 @@ export const builtCommits = derived(builds, ($builds) => {
 	return [];
 });
 
-export const allModifiedFiles = derived(repoStatus, ($repoStatus) => {
+export const allModifiedFiles = derived(repoStatus, ($repoStatus): ModifiedFile[] => {
 	const untracked = $repoStatus?.untrackedFiles ?? [];
 	const modified = $repoStatus?.modifiedFiles ?? [];
 
 	const all: ModifiedFile[] = [...untracked, ...modified];
+
 	all.sort((a, b) => {
 		const aName = a.displayName === '' ? a.path : a.displayName;
 		const bName = b.displayName === '' ? b.path : b.displayName;

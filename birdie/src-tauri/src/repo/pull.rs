@@ -26,6 +26,7 @@ pub struct PullOp {
     #[allow(dead_code)]
     pub trunk_branch: String,
     pub git_client: git::Git,
+    pub github_username: String,
 }
 
 #[async_trait]
@@ -37,6 +38,7 @@ impl Task for PullOp {
                     repo_status: self.repo_status.clone(),
                     git_client: self.git_client.clone(),
                     skip_fetch: false,
+                    github_username: self.github_username.clone(),
                 }
             };
 
@@ -67,6 +69,7 @@ impl Task for PullOp {
                     repo_status: self.repo_status.clone(),
                     git_client: self.git_client.clone(),
                     skip_fetch: true,
+                    github_username: self.github_username.clone(),
                 }
             };
 
@@ -92,6 +95,7 @@ pub async fn pull_handler(
         repo_status: state.repo_status.clone(),
         trunk_branch: state.repo_config.read().trunk_branch.clone(),
         git_client: state.git(),
+        github_username: state.github_username(),
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();

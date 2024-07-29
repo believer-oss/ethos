@@ -16,11 +16,10 @@
 	} from 'flowbite-svelte';
 	import { derived } from 'svelte/store';
 	import { emit } from '@tauri-apps/api/event';
-	import { onMount } from 'svelte';
 	import { RefreshOutline } from 'flowbite-svelte-icons';
 	import type { Lock } from '$lib/types';
-	import { releaseLocks, verifyLocks } from '$lib/repo';
-	import { allModifiedFiles, locks } from '$lib/stores';
+	import { releaseLocks, getRepoStatus } from '$lib/repo';
+	import { allModifiedFiles, repoStatus } from '$lib/stores';
 
 	let loading = false;
 	let selectedForRelease: string[] = [];
@@ -48,8 +47,16 @@
 		return aName < bName ? -1 : 1;
 	};
 
-	$: sortedOurs = derived(locks, ($locks) => $locks.ours.sort(sortLocksFunc), []);
-	$: sortedTheirs = derived(locks, ($locks) => $locks.theirs.sort(sortLocksFunc), []);
+	$: sortedOurs = derived(
+		repoStatus,
+		($repoStatus) => $repoStatus.locksOurs.sort(sortLocksFunc),
+		[]
+	);
+	$: sortedTheirs = derived(
+		repoStatus,
+		($repoStatus) => $repoStatus.locksTheirs.sort(sortLocksFunc),
+		[]
+	);
 
 	$: filteredOurs = $sortedOurs.filter((item): boolean => {
 		const search = searchTerm.toLowerCase();
@@ -119,7 +126,7 @@
 	const refreshLocks = async () => {
 		loading = true;
 		try {
-			$locks = await verifyLocks();
+			repoStatus.set(await getRepoStatus());
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -161,10 +168,6 @@
 		const date = new Date(locked_at);
 		return date.toLocaleString();
 	};
-
-	onMount(() => {
-		void refreshLocks();
-	});
 </script>
 
 <div class="flex items-center justify-between gap-2">
@@ -283,7 +286,7 @@
 	>
 		<h3 class="text-primary-400 text-xl pb-2">Other Locks</h3>
 		<Table color="custom" class="mt-3" striped>
-			<TableHead class="text-left border-b-0 p-2 bg-secondary-800">
+			<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 				<TableHeadCell class="!p-2">
 					<Checkbox disabled={!allowReleaseOtherLocks} on:change={handleReleaseAllTheirs} />
 				</TableHeadCell>
@@ -295,8 +298,8 @@
 				{#each filteredTheirs as lock, index}
 					<TableBodyRow
 						class="text-left border-b-0 p-2 {index % 2 === 0
-							? 'bg-secondary-700'
-							: 'bg-secondary-800'}"
+							? 'bg-secondary-700 dark:bg-space-900'
+							: 'bg-secondary-800 dark:bg-space-950'}"
 					>
 						<TableBodyCell class="!p-2">
 							<Checkbox

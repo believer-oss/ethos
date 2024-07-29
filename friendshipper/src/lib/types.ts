@@ -187,6 +187,9 @@ export interface RepoStatus {
 	conflicts: string[];
 	modifiedUpstream: string[];
 	lastPullRequest?: PullRequestStatus;
+	lockUser: string;
+	locksOurs: Lock[];
+	locksTheirs: Lock[];
 }
 
 export interface CommitAuthor {
@@ -262,12 +265,6 @@ export interface Lock {
 	locked_at: string;
 	owner: Nullable<LockOwnerInfo>;
 	display_name: Nullable<string>;
-}
-
-export interface VerifyLocksResponse {
-	ours: Lock[];
-	theirs: Lock[];
-	nextCursor: Nullable<string>;
 }
 
 export interface RebaseStatusResponse {

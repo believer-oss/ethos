@@ -8,8 +8,7 @@ import type {
 	RebaseStatusResponse,
 	RepoStatus,
 	RevertFilesRequest,
-	Snapshot,
-	VerifyLocksResponse
+	Snapshot
 } from '$lib/types';
 
 export const getCommits = async (
@@ -118,8 +117,6 @@ export const syncEngineCommitWithUproject = async (): Promise<string> =>
 
 export const syncUprojectWithEngineCommit = async (): Promise<string> =>
 	invoke('sync_uproject_commit_with_engine');
-
-export const verifyLocks = async (): Promise<VerifyLocksResponse> => invoke('verify_locks');
 
 export const releaseLocks = async (paths: string[], force: boolean): Promise<void> =>
 	invoke('release_locks', { paths, force });

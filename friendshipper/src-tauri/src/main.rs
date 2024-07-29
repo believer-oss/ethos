@@ -208,7 +208,6 @@ fn main() {
             unassign_user_from_playtest,
             update_playtest,
             verify_build,
-            verify_locks,
             wipe_client_data,
         ])
         .setup(move |app| {

@@ -4,7 +4,7 @@ pub use diff::{diff_handler, DiffOp};
 pub use download_dlls::{download_dlls_handler, DownloadDllsOp};
 use ethos_core::types::repo::{File, PushRequest};
 pub use install_git_hooks::{install_git_hooks_handler, InstallGitHooksOp};
-pub use locks::{acquire_locks_handler, release_locks_handler, verify_locks_handler};
+pub use locks::{acquire_locks_handler, release_locks_handler};
 pub use log::log_handler;
 pub use pull::{pull_handler, PullOp};
 pub use reset::reset_repo;
