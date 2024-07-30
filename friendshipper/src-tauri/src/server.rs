@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,6 +76,8 @@ impl Server {
 
         startup_tx.send("Initializing application config".to_string())?;
 
+        let pause_file_watcher = Arc::new(AtomicBool::new(false));
+
         if let (Some(config_file), Some(config)) = self.initialize_app_config()? {
             let app_config = Arc::new(RwLock::new(config.clone()));
             let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
@@ -81,7 +85,7 @@ impl Server {
             // start the operation worker
             startup_tx.send("Starting operation worker".to_string())?;
             let (op_tx, op_rx) = mpsc::channel(32);
-            let mut worker = RepoWorker::new(app_config.clone(), op_rx);
+            let mut worker = RepoWorker::new(app_config.clone(), op_rx, pause_file_watcher.clone());
             tokio::spawn(async move {
                 worker.run().await;
             });
@@ -136,8 +140,12 @@ impl Server {
             // start file watcher
             let watcher_status = shared_state.repo_status.clone();
             let watcher_git = shared_state.git().clone();
-            let mut debouncer =
-                self.create_file_watcher(watcher_status, watcher_git, refresh_tx)?;
+            let mut debouncer = self.create_file_watcher(
+                watcher_status,
+                watcher_git,
+                pause_file_watcher.clone(),
+                refresh_tx,
+            )?;
 
             let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
                 .join(shared_state.engine.get_default_content_subdir());
@@ -221,6 +229,7 @@ impl Server {
         &self,
         status: RepoStatusRef,
         git_client: Git,
+        pause_rx: Arc<AtomicBool>,
         refresh_tx: STDSender<()>,
     ) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, CoreError> {
         new_debouncer(
@@ -233,9 +242,15 @@ impl Server {
                         .iter()
                         .flat_map(|e| e.paths.iter())
                         .filter(|p| p.is_file())
-                        .collect::<std::collections::HashSet<_>>();
+                        .collect::<HashSet<_>>();
 
                     {
+                        // if we're paused, return
+                        if pause_rx.load(std::sync::atomic::Ordering::Relaxed) {
+                            debug!("File watcher paused, skipping this event");
+                            return;
+                        }
+
                         let mut status = status.write();
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()

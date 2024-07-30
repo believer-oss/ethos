@@ -56,10 +56,12 @@ impl Server {
             let app_config = Arc::new(RwLock::new(config.clone()));
             let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
 
+            let pause_file_watcher = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
             // start the operation worker
             startup_tx.send("Starting operation worker".to_string())?;
             let (op_tx, op_rx) = mpsc::channel(32);
-            let mut worker = RepoWorker::new(app_config.clone(), op_rx);
+            let mut worker = RepoWorker::new(app_config.clone(), op_rx, pause_file_watcher);
             tokio::spawn(async move {
                 worker.run().await;
             });

@@ -394,10 +394,12 @@ pub async fn setup(
     info!("Created AWS client. Creating notification channel.");
     let (notification_tx, notification_rx) = std::sync::mpsc::channel();
 
+    let pause_file_watcher = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // start the operation worker
     info!("Starting operation worker");
     let (op_tx, op_rx) = mpsc::channel(32);
-    let mut worker = RepoWorker::new(app_config.clone(), op_rx);
+    let mut worker = RepoWorker::new(app_config.clone(), op_rx, pause_file_watcher);
     tokio::spawn(async move {
         worker.run().await;
     });

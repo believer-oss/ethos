@@ -1,5 +1,7 @@
 use crate::types::config::AppConfigRef;
 use async_trait::async_trait;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tracing::{debug, error, info, instrument, span};
 
@@ -60,11 +62,20 @@ impl TaskSequence {
 pub struct RepoWorker {
     config: AppConfigRef,
     queue: Receiver<TaskSequence>,
+    pause_file_watcher: Arc<AtomicBool>,
 }
 
 impl RepoWorker {
-    pub fn new(config: AppConfigRef, tx: Receiver<TaskSequence>) -> Self {
-        RepoWorker { config, queue: tx }
+    pub fn new(
+        config: AppConfigRef,
+        tx: Receiver<TaskSequence>,
+        pause_file_watcher: Arc<AtomicBool>,
+    ) -> Self {
+        RepoWorker {
+            config,
+            queue: tx,
+            pause_file_watcher,
+        }
     }
 
     // For running git tasks that could take a while, like pulling or pushing.
@@ -80,6 +91,9 @@ impl RepoWorker {
 
             let mut err: Option<anyhow::Error> = None;
             let span = sequence.span.clone();
+
+            self.pause_file_watcher
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             for task in sequence.tasks {
                 match self.run_task(task, &span).await {
                     Ok(_) => {}
@@ -90,6 +104,8 @@ impl RepoWorker {
                     }
                 }
             }
+            self.pause_file_watcher
+                .store(false, std::sync::atomic::Ordering::Relaxed);
 
             if sequence.completion_tx.is_some() {
                 let _ = sequence.completion_tx.unwrap().send(err);
