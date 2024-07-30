@@ -4,8 +4,8 @@ use axum::{async_trait, Json};
 use std::fs;
 use std::io::Write;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::error;
 use tracing::info;
+use tracing::{error, instrument};
 
 use crate::engine::EngineProvider;
 use crate::state::AppState;
@@ -32,6 +32,7 @@ impl<T> Task for RevertFilesOp<T>
 where
     T: EngineProvider,
 {
+    #[instrument(skip(self), name = "RevertOp::execute", fields(files = ?self.files))]
     async fn execute(&self) -> anyhow::Result<()> {
         self.engine.check_ready_to_sync_repo().await?;
 
@@ -70,7 +71,7 @@ where
         Ok(())
     }
 
-    fn get_name(&self) -> std::string::String {
+    fn get_name(&self) -> String {
         "RevertFilesOp".to_string()
     }
 }
@@ -84,7 +85,7 @@ where
         listfile_path.push("Friendshipper");
 
         if !listfile_path.exists() {
-            if let Err(e) = std::fs::create_dir(&listfile_path) {
+            if let Err(e) = fs::create_dir(&listfile_path) {
                 bail!(
                     "Failed to create directory for storing temp file: {:?}. Reason: {}",
                     listfile_path,
@@ -95,7 +96,7 @@ where
 
         listfile_path.push("revert_files.txt");
 
-        match std::fs::File::create(&listfile_path) {
+        match fs::File::create(&listfile_path) {
             Err(e) => {
                 bail!(
                     "Failed to create listfile '{:?}' for RevertFilesOp: {}",
@@ -137,6 +138,7 @@ where
     }
 }
 
+#[instrument(skip(state))]
 pub async fn revert_files_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<RevertFilesRequest>,
