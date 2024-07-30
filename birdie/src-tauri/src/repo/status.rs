@@ -10,6 +10,8 @@ use tracing::{error, info, warn};
 
 use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
+use ethos_core::types::repo::FileState;
+use ethos_core::types::repo::SubmitStatus;
 use ethos_core::types::repo::{File, RepoStatus};
 use ethos_core::worker::{Task, TaskSequence};
 
@@ -53,6 +55,7 @@ pub struct StatusOp {
     pub git_client: git::Git,
     pub repo_status: RepoStatusRef,
     pub skip_fetch: bool,
+    pub github_username: String,
 }
 
 #[async_trait]
@@ -77,7 +80,7 @@ impl StatusOp {
                 .await?;
         }
 
-        let output = self.git_client.status().await?;
+        let output = self.git_client.status(vec![]).await?;
 
         let mut status = RepoStatus::new();
 
@@ -90,15 +93,11 @@ impl StatusOp {
 
             let file = File::from_status_line(line);
 
-            if !file.index_state.is_empty() && !status.has_staged_changes {
+            if file.is_staged {
                 status.has_staged_changes = true;
             }
 
-            if !file.working_state.is_empty() && !status.has_local_changes {
-                status.has_local_changes = true;
-            }
-
-            if file.index_state == "?" && file.working_state == "?" {
+            if file.state == FileState::Added {
                 status.untracked_files.0.push(file);
             } else {
                 status.modified_files.0.push(file);
@@ -118,6 +117,14 @@ impl StatusOp {
             let range = format!("HEAD~{}...HEAD", status.commits_ahead);
 
             modified_committed = self.git_client.diff_filenames(&range).await?;
+        }
+
+        {
+            info!("StatusOp: getting locks");
+            status.lock_user.clone_from(&self.github_username);
+            let locks = self.git_client.verify_locks().await?;
+            status.locks_ours = locks.ours;
+            status.locks_theirs = locks.theirs;
         }
 
         status.commit_head_origin = self
@@ -155,11 +162,31 @@ impl StatusOp {
                 .to_string();
         }
 
-        status.modified_upstream = self.get_modified_upstream(&status).await?;
+        {
+            info!("StatusOp: finding upstream modified files...");
+            status.modified_upstream = self.get_modified_upstream(&status).await?;
 
-        status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
-        if !status.conflicts.is_empty() {
-            status.conflict_upstream = true;
+            status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
+            if !status.conflicts.is_empty() {
+                status.conflict_upstream = true;
+            }
+        }
+
+        {
+            info!("Updating file submit status");
+
+            let update_files_submit_status = |files: &mut [File]| {
+                for file in files.iter_mut() {
+                    if file.state == FileState::Unmerged {
+                        file.submit_status = SubmitStatus::Unmerged;
+                    } else if status.conflicts.iter().any(|x| *x == file.path) {
+                        file.submit_status = SubmitStatus::Conflicted;
+                    }
+                }
+            };
+
+            update_files_submit_status(&mut status.untracked_files.0);
+            update_files_submit_status(&mut status.modified_files.0);
         }
 
         let mut repo_status = self.repo_status.write();
@@ -221,6 +248,7 @@ pub async fn status_handler(
             repo_status: state.repo_status.clone(),
             git_client: state.git(),
             skip_fetch: params.skip_fetch,
+            github_username: state.github_username(),
         }
     };
 

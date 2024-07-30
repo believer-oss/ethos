@@ -10,6 +10,7 @@ use tracing::{info, instrument};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommunicationType {
+    None, // Only in-memory cache lookups are allowed - use for situations where high performance is desired
     IpcOnly, // Only interprocess communication is allowed in this case, for example a HTTP request, pipes, etc.
     OfflineFallback, // Tries IPC first, but falls back to an offline approach if the host engine process isn't running, which can be much slower than IPC
 }
@@ -31,6 +32,8 @@ pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
     /// Opens the project in the engine's editor
     /// For example, if the engine is Unreal, this function should open the .uproject file in the editor.
     async fn open_project(&self) -> Result<()>;
+
+    fn get_default_content_subdir(&self) -> String;
 
     /// Create arguments to launch the game client locally
     /// This assumes everything we need comes from self, the app config, the repo config,

@@ -48,7 +48,6 @@
 		commits,
 		dynamicConfig,
 		engineWorkflows,
-		locks,
 		onboardingInProgress,
 		playtests,
 		projectConfigs,
@@ -66,7 +65,6 @@
 	import {
 		getAllCommits,
 		getRepoStatus,
-		verifyLocks,
 		SkipFetch,
 		SkipDllCheck,
 		AllowOfflineCommunication
@@ -161,6 +159,11 @@
 		updating = false;
 	};
 
+	const refreshRepo = async () => {
+		repoStatus.set(await getRepoStatus());
+		void emit('success', 'Files refreshed!');
+	};
+
 	/* eslint-disable no-await-in-loop */
 	const initialize = async () => {
 		initialized = false;
@@ -225,18 +228,15 @@
 				}
 
 				if ($appConfig.repoPath !== '') {
-					const [repoConfigResponse, repoStatusResponse, commitsResponse, locksResponse] =
-						await Promise.all([
-							getRepoConfig(),
-							getRepoStatus(SkipFetch.True, SkipDllCheck.False, AllowOfflineCommunication.True),
-							getAllCommits(),
-							verifyLocks()
-						]);
+					const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
+						getRepoConfig(),
+						getRepoStatus(SkipFetch.True, SkipDllCheck.False, AllowOfflineCommunication.True),
+						getAllCommits()
+					]);
 
 					repoConfig.set(repoConfigResponse);
 					repoStatus.set(repoStatusResponse);
 					commits.set(commitsResponse);
-					locks.set(locksResponse);
 				}
 
 				loadingBuilds = true;
@@ -318,7 +318,6 @@
 					// which will also be attempting to run status updates
 					if (await appWindow.isFocused()) {
 						commits.set(await getAllCommits());
-						locks.set(await verifyLocks());
 						repoStatus.set(await getRepoStatus());
 
 						lastRefresh = new Date().getTime();
@@ -393,6 +392,10 @@
 
 	void listen('startup-message', (e) => {
 		startupMessage = e.payload as string;
+	});
+
+	void listen('git-refresh', () => {
+		void refreshRepo();
 	});
 
 	void listen('login-status', (e) => {
@@ -666,12 +669,12 @@
 								>
 									<svelte:fragment slot="subtext">
 										<span
-											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$locks
-												.ours.length > 0
+											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$repoStatus
+												?.locksOurs.length > 0
 												? 'bg-primary-600 dark:bg-primary-600'
 												: 'bg-gray-500 dark:bg-gray-500'}"
 										>
-											{$locks.ours.length}
+											{$repoStatus?.locksOurs.length}
 										</span>
 									</svelte:fragment>
 								</SidebarItem>

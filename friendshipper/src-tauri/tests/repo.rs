@@ -3,6 +3,7 @@ use tokio::{fs, io::AsyncWriteExt};
 use tracing::info;
 
 use ethos_core::middleware::nonce::{NONCE, NONCE_HEADER};
+use ethos_core::types::repo::FileState;
 use ethos_core::types::repo::{PushRequest, RepoStatus};
 
 mod common;
@@ -70,8 +71,7 @@ async fn test_new_file_workflow() -> Result<(), Box<dyn std::error::Error>> {
 
     // ??
     let file_info = status.untracked_files.into_iter().next().unwrap();
-    assert_eq!(file_info.working_state, String::from("?"));
-    assert_eq!(file_info.index_state, String::from("?"));
+    assert_eq!(file_info.state, FileState::Added);
 
     // add file
     common::add_file("test.txt").await;
@@ -90,8 +90,7 @@ async fn test_new_file_workflow() -> Result<(), Box<dyn std::error::Error>> {
 
     // A
     let file_info = status.modified_files.into_iter().next().unwrap();
-    assert_eq!(file_info.working_state, String::from(""));
-    assert_eq!(file_info.index_state, String::from("A"));
+    assert_eq!(file_info.state, FileState::Added);
 
     // commit
     common::commit("test commit").await;

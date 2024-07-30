@@ -7,7 +7,11 @@ use octocrab::Octocrab;
 use std::path::PathBuf;
 use tracing::{info, instrument, warn};
 
+use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
+use crate::repo::operations::{PushRequest, StatusOp};
+use crate::repo::RepoStatusRef;
+use crate::state::AppState;
 use crate::APP_NAME;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
@@ -18,12 +22,10 @@ use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
+use ethos_core::types::repo::File;
+use ethos_core::types::repo::SubmitStatus;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
-
-use crate::repo::operations::{PushRequest, StatusOp};
-use crate::repo::RepoStatusRef;
-use crate::state::AppState;
 
 #[derive(Clone)]
 pub struct GitHubSubmitOp {
@@ -154,31 +156,60 @@ where
     async fn execute(&self) -> anyhow::Result<()> {
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {
-            let locks = self.git_client.verify_locks().await?.ours;
+            let repo_status = self.repo_status.read().clone();
+            let mut unsubmittable_files: Vec<File> = vec![];
 
-            let conflicts = self.repo_status.read().conflicts.clone();
-            let mut is_submitting_conflict = false;
-            let mut is_submitting_unlocked_asset = false;
             for file in self.files.iter() {
-                if conflicts.iter().any(|x| x == file) {
-                    is_submitting_conflict = true;
-                    tracing::error!("Trying to submit conflicted file {}", file);
-                }
-                if self.engine.is_lockable_file(file) && !locks.iter().any(|x| x.path == *file) {
-                    is_submitting_unlocked_asset = true;
-                    tracing::error!(
-                        "Trying to submit lockable asset, but no lock was held for it: {}",
-                        file
-                    );
+                let mut all_modified_iter = repo_status
+                    .modified_files
+                    .0
+                    .iter()
+                    .chain(repo_status.untracked_files.0.iter());
+                if let Some(file) = all_modified_iter.find(|x| x.path == *file) {
+                    match file.submit_status {
+                        SubmitStatus::Ok => {}
+                        _ => unsubmittable_files.push(file.clone()),
+                    }
                 }
             }
-            if is_submitting_conflict {
-                anyhow::bail!("Submitting conflicted files is not allowed. Check the log for specific errors.");
-            }
-            if is_submitting_unlocked_asset {
-                anyhow::bail!(
-                    "Submitting unlocked assets is not allowed. Check the log for specific errors."
-                );
+
+            if !unsubmittable_files.is_empty() {
+                let engine_path = self
+                    .app_config
+                    .read()
+                    .load_engine_path_from_repo(&self.repo_config.read())
+                    .unwrap_or_default();
+                let unsubmittable_file_paths: Vec<String> =
+                    unsubmittable_files.iter().map(|x| x.path.clone()).collect();
+
+                let unsubmittable_display_names = self
+                    .engine
+                    .get_asset_display_names(
+                        CommunicationType::None,
+                        &engine_path,
+                        &unsubmittable_file_paths,
+                    )
+                    .await;
+
+                for (file, display_name) in unsubmittable_files
+                    .iter()
+                    .zip(unsubmittable_display_names.iter())
+                {
+                    let name_formatted: String = if display_name.is_empty() {
+                        file.path.clone()
+                    } else {
+                        format!("{} ({})", display_name, file.path)
+                    };
+                    let reason = match file.submit_status {
+                        SubmitStatus::Ok => panic!("should have been filtered out by above code"),
+                        SubmitStatus::CheckoutRequired => "This file is an asset and must be checked out (locked) before submitting",
+                        SubmitStatus::CheckedOutByOtherUser => "This file is an asset and must be checked out (locked) before submitting, but it is locked by another user",
+                        SubmitStatus::Unmerged => "This file is unmerged and must be reverted to continue",
+                        SubmitStatus::Conflicted => "A newer version of this file exists; this file must be reverted to continue",
+                    };
+                    tracing::error!("{}: {}", reason, name_formatted);
+                }
+                anyhow::bail!("Some files are not allowed to be submitted. Check the log for specific errors.");
             }
         }
 
@@ -361,7 +392,7 @@ where
                 let repo_status = self.repo_status.read();
                 let modified = repo_status.modified_files.clone();
                 for file in modified.into_iter() {
-                    if !file.index_state.is_empty() {
+                    if file.is_staged {
                         staged_files.push(file.path.clone());
                     }
                 }

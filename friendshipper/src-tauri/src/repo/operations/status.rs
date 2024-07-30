@@ -22,6 +22,9 @@ use ethos_core::storage::{
 use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::errors::CoreError;
+use ethos_core::types::locks::Lock;
+use ethos_core::types::repo::FileState;
+use ethos_core::types::repo::SubmitStatus;
 use ethos_core::types::repo::{File, RepoStatus};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
@@ -106,7 +109,7 @@ where
         }
 
         info!("StatusOp: running git status...");
-        let status_output = self.git_client.status().await?;
+        let status_output = self.git_client.status(vec![]).await?;
         let status_lines = status_output.lines().collect::<Vec<_>>();
 
         info!("StatusOp: parsing status state...");
@@ -130,27 +133,7 @@ where
         }
 
         for line in status_lines {
-            if line.starts_with("##") {
-                status.parse_branch_string(line);
-
-                continue;
-            }
-
-            let file = File::from_status_line(line);
-
-            if !file.index_state.is_empty() && !status.has_staged_changes {
-                status.has_staged_changes = true;
-            }
-
-            if !file.working_state.is_empty() && !status.has_local_changes {
-                status.has_local_changes = true;
-            }
-
-            if file.index_state == "?" && file.working_state == "?" {
-                status.untracked_files.0.push(file);
-            } else {
-                status.modified_files.0.push(file);
-            }
+            status.parse_file_line(line);
         }
 
         if status.detached_head {
@@ -168,74 +151,132 @@ where
             modified_committed = self.git_client.diff_filenames(&range).await?;
         }
 
-        // get display names if available for OFPA
         {
-            info!("StatusOp: fetching OFPA filenames...");
+            info!("StatusOp: getting locks");
+            status.lock_user.clone_from(&self.github_username);
+            let locks = self.git_client.verify_locks().await?;
+            status.locks_ours = locks.ours;
+            status.locks_theirs = locks.theirs;
+        }
 
-            let mut combined_files = status.modified_files.0.clone();
-            combined_files.append(&mut status.untracked_files.0.clone());
+        // get display names if available
+        {
+            info!("StatusOp: fetching asset display names...");
+
+            // combine all the requested names into a single batch - this will avoid multiple potentially slow requests
+            let mut all_filenames: Vec<String> = vec![];
+            for file in status.modified_files.0.iter() {
+                all_filenames.push(file.path.clone());
+            }
+            for file in status.untracked_files.0.iter() {
+                all_filenames.push(file.path.clone());
+            }
+            for lock in status.locks_ours.iter() {
+                all_filenames.push(lock.path.clone());
+            }
+            for lock in status.locks_theirs.iter() {
+                all_filenames.push(lock.path.clone());
+            }
 
             let communication = if self.allow_offline_communication {
                 engine::CommunicationType::OfflineFallback
             } else {
                 engine::CommunicationType::IpcOnly
             };
-            self.update_filelist_display_names(communication, &mut combined_files)
+
+            let engine_path = self
+                .app_config
+                .read()
+                .load_engine_path_from_repo(&self.repo_config.read())
+                .unwrap_or_default();
+
+            let mut display_names: Vec<String> = self
+                .engine
+                .get_asset_display_names(communication, &engine_path, &all_filenames)
                 .await;
 
-            let num_modified = status.modified_files.0.len();
+            assert_eq!(all_filenames.len(), display_names.len());
 
-            status.modified_files.0 = combined_files[0..num_modified].to_vec();
-            status.untracked_files.0 = combined_files[num_modified..].to_vec();
+            let (names_modified, remaining_names) =
+                display_names.split_at_mut(status.modified_files.0.len());
+            let (names_untracked, remaining_names) =
+                remaining_names.split_at_mut(status.untracked_files.0.len());
+            let (names_locks_ours, names_locks_theirs) =
+                remaining_names.split_at_mut(status.locks_ours.len());
+
+            assert_eq!(names_modified.len(), status.modified_files.0.len());
+            assert_eq!(names_untracked.len(), status.untracked_files.0.len());
+            assert_eq!(names_locks_ours.len(), status.locks_ours.len());
+            assert_eq!(names_locks_theirs.len(), status.locks_theirs.len());
+
+            let update_files = |files: &mut Vec<File>, names: &mut [String]| {
+                for (file, name) in files.iter_mut().zip(names.iter_mut()) {
+                    file.display_name.clone_from(name);
+                }
+            };
+
+            update_files(&mut status.modified_files.0, names_modified);
+            update_files(&mut status.untracked_files.0, names_untracked);
+
+            let update_locks = |locks: &mut Vec<Lock>, names: &mut [String]| {
+                for (lock, name) in locks.iter_mut().zip(names.iter_mut()) {
+                    lock.display_name = Some(name.to_string());
+                }
+            };
+
+            update_locks(&mut status.locks_ours, names_locks_ours);
+            update_locks(&mut status.locks_theirs, names_locks_theirs);
         }
 
-        info!("StatusOp: checking HEAD SHA and remote URL info...");
-
-        status.commit_head_origin = self
-            .git_client
-            .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
-            .await?;
-
-        let remote_url = match self
-            .git_client
-            .run_and_collect_output(
-                &["config", "--get", "remote.origin.url"],
-                git::Opts::default(),
-            )
-            .await
         {
-            Ok(url) => url,
-            Err(_) => {
-                return Err(anyhow!("Failed to get remote URL for repo"));
+            info!("StatusOp: checking HEAD SHA and remote URL info...");
+
+            status.commit_head_origin = self
+                .git_client
+                .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
+                .await?;
+
+            let remote_url = match self
+                .git_client
+                .run_and_collect_output(
+                    &["config", "--get", "remote.origin.url"],
+                    git::Opts::default(),
+                )
+                .await
+            {
+                Ok(url) => url,
+                Err(_) => {
+                    return Err(anyhow!("Failed to get remote URL for repo"));
+                }
+            };
+
+            // https://github.com/owner/repository.git
+            let parts = remote_url.split('/');
+            if parts.count() < 4 {
+                status.repo_owner = "".to_string();
+                status.repo_name = "".to_string();
+            } else {
+                status.repo_owner = remote_url.split('/').nth(3).unwrap().to_string();
+                status.repo_name = remote_url
+                    .split('/')
+                    .nth(4)
+                    .unwrap()
+                    .trim_end()
+                    .trim_end_matches(".git")
+                    .to_string();
             }
-        };
 
-        // https://github.com/owner/repository.git
-        let parts = remote_url.split('/');
-        if parts.count() < 4 {
-            status.repo_owner = "".to_string();
-            status.repo_name = "".to_string();
-        } else {
-            status.repo_owner = remote_url.split('/').nth(3).unwrap().to_string();
-            status.repo_name = remote_url
-                .split('/')
-                .nth(4)
-                .unwrap()
-                .trim_end()
-                .trim_end_matches(".git")
-                .to_string();
-        }
-
-        // Since we aren't likely to have much contention on this lock, it's likely
-        // cheaper to write than to read and then sometimes write.
-        let new_selected_artifact_project = format!(
-            "{}-{}",
-            status.repo_owner.to_lowercase(),
-            status.repo_name.to_lowercase()
-        );
-        {
-            let mut app_config = self.app_config.write();
-            app_config.selected_artifact_project = Some(new_selected_artifact_project);
+            // Since we aren't likely to have much contention on this lock, it's likely
+            // cheaper to write than to read and then sometimes write.
+            let new_selected_artifact_project = format!(
+                "{}-{}",
+                status.repo_owner.to_lowercase(),
+                status.repo_name.to_lowercase()
+            );
+            {
+                let mut app_config = self.app_config.write();
+                app_config.selected_artifact_project = Some(new_selected_artifact_project);
+            }
         }
 
         if !self.skip_dll_check {
@@ -245,18 +286,45 @@ where
             status.pull_dlls = pull_dlls;
         }
 
-        info!("StatusOp: finding upstream modified files...");
-        status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
+        {
+            info!("StatusOp: finding upstream modified files...");
+            status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
 
-        status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
-        if !status.conflicts.is_empty() {
-            status.conflict_upstream = true;
+            status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
+            if !status.conflicts.is_empty() {
+                status.conflict_upstream = true;
+            }
+        }
+
+        {
+            info!("Updating file submit status");
+
+            let update_files_submit_status = |files: &mut [File]| {
+                for file in files.iter_mut() {
+                    if file.state == FileState::Unmerged {
+                        file.submit_status = SubmitStatus::Unmerged;
+                    } else if status.conflicts.iter().any(|x| *x == file.path) {
+                        file.submit_status = SubmitStatus::Conflicted;
+                    } else if self.engine.is_lockable_file(&file.path) {
+                        if let Some(lock) = status.locks_theirs.iter().find(|x| x.path == file.path)
+                        {
+                            file.submit_status = SubmitStatus::CheckedOutByOtherUser;
+                            file.locked_by = lock.owner.clone().map(|x| x.name).unwrap_or_default();
+                        } else if status.locks_ours.iter().any(|x| x.path == file.path) {
+                            file.locked_by.clone_from(&self.github_username);
+                        } else {
+                            file.submit_status = SubmitStatus::CheckoutRequired;
+                        }
+                    }
+                }
+            };
+
+            update_files_submit_status(&mut status.untracked_files.0);
+            update_files_submit_status(&mut status.modified_files.0);
         }
 
         let mut repo_status = self.repo_status.write();
         *repo_status = status.clone();
-
-        info!("StatusOp: done.");
 
         Ok(status)
     }
@@ -404,16 +472,6 @@ where
             .engine
             .get_asset_display_names(communication, &engine_path, &filenames)
             .await;
-
-        // OFPANameCache::get_names(
-        //     self.ofpa_cache.clone(),
-        //     &PathBuf::from(repo_path),
-        //     &uproject_path,
-        //     &engine_path,
-        //     &filenames,
-        //     CanUseCommandlet::FallbackOnly,
-        // )
-        // .await
 
         assert_eq!(files.len(), asset_names.len());
 

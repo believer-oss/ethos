@@ -2,10 +2,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
+use ethos_core::clients::git::Git;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
@@ -14,10 +18,12 @@ use tracing::{debug, error, info};
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig};
+use ethos_core::types::errors::CoreError;
+use ethos_core::types::repo::RepoStatusRef;
 use ethos_core::utils::logging::OtelReloadHandle;
 use ethos_core::worker::{RepoWorker, TaskSequence};
 
-use crate::engine::UnrealEngineProvider;
+use crate::engine::{EngineProvider, UnrealEngineProvider};
 use crate::repo::operations::InstallGitHooksOp;
 use crate::state::FrontendOp;
 use crate::APP_NAME;
@@ -61,8 +67,9 @@ impl Server {
     pub async fn run(
         &self,
         startup_tx: STDSender<String>,
+        refresh_tx: STDSender<()>,
         shutdown_rx: mpsc::Receiver<()>,
-    ) -> Result<()> {
+    ) -> Result<(), CoreError> {
         let mut shutdown_rx = shutdown_rx;
 
         startup_tx.send("Initializing application config".to_string())?;
@@ -125,6 +132,21 @@ impl Server {
                 self.gameserver_log_tx.clone(),
             )
             .await?;
+
+            // start file watcher
+            let watcher_status = shared_state.repo_status.clone();
+            let watcher_git = shared_state.git().clone();
+            let mut debouncer =
+                self.create_file_watcher(watcher_status, watcher_git, refresh_tx)?;
+
+            let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
+                .join(shared_state.engine.get_default_content_subdir());
+            debouncer
+                .watcher()
+                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
+            debouncer
+                .cache()
+                .add_root(content_dir.as_path(), RecursiveMode::Recursive);
 
             // install git hooks
             {
@@ -195,6 +217,66 @@ impl Server {
         Ok(())
     }
 
+    fn create_file_watcher(
+        &self,
+        status: RepoStatusRef,
+        git_client: Git,
+        refresh_tx: STDSender<()>,
+    ) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, CoreError> {
+        new_debouncer(
+            Duration::from_secs(2),
+            None,
+            move |result: DebounceEventResult| {
+                if let Ok(event) = result {
+                    // get unique paths in events
+                    let modified = event
+                        .iter()
+                        .flat_map(|e| e.paths.iter())
+                        .filter(|p| p.is_file())
+                        .collect::<std::collections::HashSet<_>>();
+
+                    {
+                        let mut status = status.write();
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        match rt.block_on(async {
+                            git_client
+                                .status(
+                                    modified
+                                        .iter()
+                                        .map(|p| {
+                                            p.strip_prefix(&git_client.repo_path)
+                                                .unwrap()
+                                                .to_str()
+                                                .unwrap()
+                                                .to_string()
+                                        })
+                                        .collect(),
+                                )
+                                .await
+                        }) {
+                            Ok(output) => {
+                                for line in output.lines() {
+                                    status.parse_file_line(line);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to get git status: {}", e);
+                            }
+                        }
+                    }
+
+                    if refresh_tx.send(()).is_err() {
+                        error!("Failed to send refresh message");
+                    }
+                }
+            },
+        )
+        .map_err(CoreError::from)
+    }
+
     fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<AppConfig>)> {
         if let Some(base_dirs) = BaseDirs::new() {
             let config_dir = base_dirs.config_dir().join(APP_NAME);
@@ -229,7 +311,7 @@ impl Server {
                     }
                 };
 
-                match serde_yaml::to_writer(file, &AppConfig::new(crate::APP_NAME)) {
+                match serde_yaml::to_writer(file, &AppConfig::new(APP_NAME)) {
                     Ok(_) => {
                         info!("Initialized config file at {}", &config_file_str);
                     }
@@ -239,7 +321,7 @@ impl Server {
                 }
             }
 
-            let default_config: AppConfig = AppConfig::new(crate::APP_NAME);
+            let default_config: AppConfig = AppConfig::new(APP_NAME);
 
             let builder = Config::builder()
                 .add_source(config::File::with_name(config_file_str))

@@ -142,7 +142,6 @@
 			disabled={loading}
 			bind:selectedFiles={$selectedFiles}
 			bind:selectAll
-			conflicts={$repoStatus?.conflicts ?? []}
 			onOpenDirectory={handleOpenDirectory}
 			modifiedFiles={$allModifiedFiles}
 			onRevertFiles={handleRevertFiles}

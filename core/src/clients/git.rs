@@ -505,12 +505,19 @@ impl Git {
             .await
     }
 
-    pub async fn status(&self) -> anyhow::Result<String> {
-        self.run_and_collect_output(
-            &["status", "--porcelain", "-uall", "--branch"],
-            Opts::new_without_logs(),
-        )
-        .await
+    pub async fn status(&self, paths: Vec<String>) -> anyhow::Result<String> {
+        let mut args = vec!["status", "--porcelain", "-uall", "--branch"];
+
+        if !paths.is_empty() {
+            args.push("--");
+
+            paths.iter().for_each(|path| {
+                args.push(path);
+            });
+        }
+
+        self.run_and_collect_output(&args, Opts::new_without_logs())
+            .await
     }
 
     pub async fn current_branch(&self) -> anyhow::Result<String> {

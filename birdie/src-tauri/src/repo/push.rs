@@ -73,7 +73,7 @@ pub async fn push_handler(
         let repo_status = state.repo_status.read();
         let modified = repo_status.modified_files.clone();
         for file in modified.into_iter() {
-            if !file.index_state.is_empty() {
+            if file.is_staged {
                 staged_files.push(file.path.clone());
             }
         }
@@ -101,6 +101,7 @@ pub async fn push_handler(
         repo_status: state.repo_status.clone(),
         git_client: state.git(),
         skip_fetch: false,
+        github_username: state.github_username(),
     };
 
     // block on the status update - we need to check for conflicts
@@ -137,6 +138,7 @@ pub async fn push_handler(
             repo_status: state.repo_status.clone(),
             trunk_branch: state.repo_config.read().trunk_branch.clone(),
             git_client: state.git(),
+            github_username: state.github_username(),
         };
 
         sequence.push(Box::new(task));

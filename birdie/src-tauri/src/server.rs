@@ -92,12 +92,11 @@ impl Server {
                     }
 
                     startup_tx.send("Fetching initial repo status".to_string())?;
-                    let status_op = {
-                        StatusOp {
-                            repo_status: shared_state.repo_status.clone(),
-                            git_client: shared_state.git(),
-                            skip_fetch: false,
-                        }
+                    let status_op = StatusOp {
+                        repo_status: shared_state.repo_status.clone(),
+                        git_client: shared_state.git(),
+                        skip_fetch: false,
+                        github_username: shared_state.github_username(),
                     };
 
                     let res: Result<RepoStatus, anyhow::Error> = status_op.run().await;
