@@ -45,7 +45,8 @@
 		restoreSnapshot,
 		revertFiles,
 		saveSnapshot,
-		showCommitFiles
+		showCommitFiles,
+		checkoutTrunk
 	} from '$lib/repo';
 	import {
 		allModifiedFiles,
@@ -361,6 +362,19 @@
 		return 'bg-primary-500 dark:bg-primary-500';
 	};
 
+	const handleCheckoutTrunk = async () => {
+		loading = true;
+
+		try {
+			await checkoutTrunk();
+			await refreshFiles(true);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+	};
+
 	onMount(() => {
 		void refreshFiles(true);
 		void refreshSnapshots();
@@ -442,6 +456,15 @@
 				<p class="font-semibold text-sm text-gray-400">
 					On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
 				</p>
+				{#if $repoStatus?.branch !== 'main'}
+					<Button size="xs" color="primary" on:click={handleCheckoutTrunk}>
+						{#if loading}
+							<Spinner class="w-4 h-4" />
+						{:else}
+							Check out main
+						{/if}
+					</Button>
+				{/if}
 			</div>
 		</Card>
 		<Card

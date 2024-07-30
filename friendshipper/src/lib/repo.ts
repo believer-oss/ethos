@@ -152,3 +152,5 @@ export const getCommitFileTextClass = (action: string) => {
 };
 
 export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');
+
+export const checkoutTrunk = async (): Promise<void> => invoke('checkout_trunk');
