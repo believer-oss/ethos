@@ -286,12 +286,14 @@
 			selectAll = false;
 
 			await refreshPulls();
-			await refreshFiles(true);
 
 			await emit('success', 'Pull request opened!');
 		} catch (e) {
 			await emit('error', e);
 		}
+
+		// refresh files after quick submit, whether it was successful or not
+		await refreshFiles(true);
 
 		quickSubmitting = false;
 		loading = false;

@@ -154,6 +154,11 @@ where
 {
     #[instrument(name = "SubmitOp::execute", skip(self))]
     async fn execute(&self) -> anyhow::Result<()> {
+        // abort if there are no files to submit
+        if self.files.is_empty() {
+            anyhow::bail!("No files to submit");
+        }
+
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {
             let repo_status = self.repo_status.read().clone();
@@ -435,7 +440,22 @@ where
             let worktrees = self.git_client.list_worktrees().await?;
             for tree in worktrees.iter() {
                 if tree.directory != repo_path {
-                    break 'path tree.directory.clone();
+                    // if the directory exists on disk, break
+                    if tree.directory.exists() {
+                        break 'path tree.directory.clone();
+                    }
+
+                    // if the directory doesn't exist, remove the worktree
+                    self.git_client
+                        .run(
+                            &[
+                                "worktree",
+                                "remove",
+                                tree.directory.to_string_lossy().as_ref(),
+                            ],
+                            Default::default(),
+                        )
+                        .await?;
                 }
             }
 
