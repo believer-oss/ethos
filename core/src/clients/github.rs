@@ -74,7 +74,7 @@ impl GraphQLClient {
         {
             Ok(res) => Ok(res
                 .data
-                .ok_or(anyhow!("Failed get valid response data"))?
+                .ok_or(anyhow!("Failed to get valid response data"))?
                 .repository
                 .ok_or(anyhow!("Failed to get valid repository"))?
                 .pull_request
@@ -105,7 +105,7 @@ impl GraphQLClient {
             Ok(res) => {
                 let pr: GetPullRequestRepositoryPullRequest = res
                     .data
-                    .ok_or(anyhow!("Faild to get valid response data"))?
+                    .ok_or(anyhow!("Failed to get valid response data"))?
                     .repository
                     .ok_or(anyhow!("Failed to get valid repository"))?
                     .pull_request
