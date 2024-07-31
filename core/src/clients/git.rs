@@ -207,9 +207,14 @@ impl Git {
 
     pub async fn fetch(&self, prune: ShouldPrune) -> anyhow::Result<()> {
         if prune == ShouldPrune::Yes {
-            self.run(&["fetch", "--prune"], Opts::default()).await
+            self.run(
+                &["fetch", "--prune", "--no-auto-maintenance"],
+                Opts::default(),
+            )
+            .await
         } else {
-            self.run(&["fetch"], Opts::default()).await
+            self.run(&["fetch", "--no-auto-maintenance"], Opts::default())
+                .await
         }
     }
 
@@ -548,6 +553,11 @@ impl Git {
 
     pub async fn quit_rebase(&self) -> anyhow::Result<()> {
         self.run(&["rebase", "--quit"], Opts::default()).await
+    }
+
+    pub async fn run_maintenance(&self) -> anyhow::Result<()> {
+        self.run(&["maintenance", "run", "--auto"], Opts::default())
+            .await
     }
 
     // sample output of: git worktree list --porcelain

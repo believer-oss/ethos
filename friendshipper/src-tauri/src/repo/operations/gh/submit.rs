@@ -374,7 +374,6 @@ where
             github_username: self.github_client.username.clone(),
             aws_client: self.aws_client.clone(),
             storage: self.storage.clone(),
-            skip_fetch: true,
             skip_dll_check: true,
             allow_offline_communication: true,
         };

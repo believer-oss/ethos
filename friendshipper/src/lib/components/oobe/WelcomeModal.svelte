@@ -8,13 +8,12 @@
 	import { getAppConfig, updateAppConfig } from '$lib/config';
 	import { appConfig, onboardingInProgress, repoStatus } from '$lib/stores';
 	import UnrealEngineLogo from '$lib/icons/UnrealEngineLogo.svelte';
-	import { configureGitUser, installGit } from '$lib/system';
+	import { configureGitUser, installGit, restart } from '$lib/system';
 	import {
 		cloneRepo,
 		forceDownloadDlls,
 		forceDownloadEngine,
 		getRepoStatus,
-		SkipFetch,
 		SkipDllCheck,
 		AllowOfflineCommunication
 	} from '$lib/repo';
@@ -168,11 +167,7 @@
 
 			// force update of repo status
 			message = 'Updating repo status...';
-			$repoStatus = await getRepoStatus(
-				SkipFetch.False,
-				SkipDllCheck.False,
-				AllowOfflineCommunication.True
-			);
+			$repoStatus = await getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.True);
 
 			// run initial fetch of DLLs - it may be worth moving this and the engine fetch
 			// to the clone endpoint on the backend
@@ -229,6 +224,12 @@
 			await emit('error', e);
 		}
 		showModal = false;
+
+		// if we're a contributor, we should restart to ensure all of our
+		// file watchers and other repo components initialize correctly
+		if (!isPlaytesterOnly) {
+			await restart();
+		}
 	};
 
 	const openCloneLocation = async () => {
@@ -460,7 +461,7 @@
 				<span class="text-md text-center text-gray-300 dark:text-gray-300 w-full"
 					>🎉You're all set, <span class="font-mono text-primary-400 dark:text-primary-400"
 						>{userDisplayName}</span
-					>!🎉</span
+					>!🎉 Friendshipper will now restart.</span
 				>
 			</div>
 		{/if}

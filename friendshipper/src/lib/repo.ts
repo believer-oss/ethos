@@ -51,11 +51,6 @@ export const cloneRepo = async (req: CloneRequest): Promise<void> => {
 	await invoke('clone_repo', { req });
 };
 
-export enum SkipFetch {
-	False = 0,
-	True = 1
-}
-
 export enum SkipDllCheck {
 	False = 0,
 	True = 1
@@ -67,15 +62,13 @@ export enum AllowOfflineCommunication {
 }
 
 export const getRepoStatus = async (
-	shouldSkipFetch: SkipFetch = SkipFetch.False,
 	shouldSkipDllCheck: SkipDllCheck = SkipDllCheck.False,
 	shouldAllowOfflineCommunication: AllowOfflineCommunication = AllowOfflineCommunication.False
 ): Promise<RepoStatus> => {
-	const skipFetch: boolean = shouldSkipFetch === SkipFetch.True;
 	const skipDllCheck: boolean = shouldSkipDllCheck === SkipDllCheck.True;
 	const allowOfflineCommunication: boolean =
 		shouldAllowOfflineCommunication === AllowOfflineCommunication.True;
-	return invoke('get_repo_status', { skipFetch, skipDllCheck, allowOfflineCommunication });
+	return invoke('get_repo_status', { skipDllCheck, allowOfflineCommunication });
 };
 
 export const submit = async (req: PushRequest): Promise<void> => invoke('submit', { req });
