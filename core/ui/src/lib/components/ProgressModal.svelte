@@ -19,7 +19,12 @@
 	});
 
 	void listen('git-log', (event) => {
-		message = event.payload as string;
+		// git-log "Updating files: 1%" etc too long, filter out and show static string
+		if (event.payload.startsWith('Updating files: ')) {
+			message = 'Updating files...';
+		} else {
+			message = event.payload as string;
+		}
 	});
 
 	const onOpen = () => {
