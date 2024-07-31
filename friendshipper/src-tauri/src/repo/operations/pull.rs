@@ -67,7 +67,6 @@ where
                 github_username: github_username.clone(),
                 aws_client: self.aws_client.clone(),
                 storage: self.storage.clone(),
-                skip_fetch: false,
                 skip_dll_check: false,
                 allow_offline_communication: false,
             };
@@ -130,7 +129,6 @@ where
                         github_username: github_username.clone(),
                         aws_client: self.aws_client.clone(),
                         storage: self.storage.clone(),
-                        skip_fetch: true,
                         skip_dll_check: false,
                         allow_offline_communication: false,
                     }
@@ -149,7 +147,6 @@ where
                 github_username: github_username.clone(),
                 aws_client: self.aws_client.clone(),
                 storage: self.storage.clone(),
-                skip_fetch: true,
                 skip_dll_check: false,
                 allow_offline_communication: false,
             };
@@ -213,7 +210,6 @@ where
                     github_username: github_username.clone(),
                     aws_client: self.aws_client.clone(),
                     storage: self.storage.clone(),
-                    skip_fetch: true,
                     skip_dll_check: false,
                     allow_offline_communication: false,
                 }

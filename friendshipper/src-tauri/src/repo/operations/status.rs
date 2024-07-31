@@ -14,7 +14,6 @@ use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::clients::git::ShouldPrune;
 use ethos_core::storage::{
     config::Project, ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList,
     ArtifactStorage, Platform,
@@ -75,7 +74,6 @@ where
     pub engine: T,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
-    pub skip_fetch: bool,
     pub skip_dll_check: bool,
     pub allow_offline_communication: bool,
 }
@@ -103,11 +101,6 @@ where
 {
     #[instrument(name = "StatusOp::run", skip_all)]
     pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
-        if !self.skip_fetch {
-            info!("Fetching latest for {:?}", self.git_client.repo_path);
-            self.git_client.fetch(ShouldPrune::Yes).await?;
-        }
-
         info!("StatusOp: running git status...");
         let status_output = self.git_client.status(vec![]).await?;
         let status_lines = status_output.lines().collect::<Vec<_>>();
@@ -544,7 +537,6 @@ where
         github_username: state.github_username(),
         aws_client: aws_client.clone(),
         storage,
-        skip_fetch: params.skip_fetch,
         skip_dll_check: params.skip_dll_check,
         allow_offline_communication: params.allow_offline_communication,
     };

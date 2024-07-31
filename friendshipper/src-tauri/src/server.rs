@@ -10,6 +10,7 @@ use anyhow::{bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
 use ethos_core::clients::git::Git;
+use ethos_core::clients::GitMaintenanceRunner;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use parking_lot::RwLock;
@@ -146,6 +147,22 @@ impl Server {
                 pause_file_watcher.clone(),
                 refresh_tx,
             )?;
+
+            // start the maintenance runner if we have a repo path
+            let repo_path = shared_state.app_config.read().repo_path.clone();
+            let tx = shared_state.git_tx.clone();
+            if !repo_path.is_empty() {
+                let maintenance_runner = GitMaintenanceRunner::new(repo_path, tx)
+                    .with_fetch_interval(Duration::from_secs(5));
+                tokio::spawn(async move {
+                    match maintenance_runner.run().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("Failed to run maintenance runner: {:?}", e);
+                        }
+                    };
+                });
+            }
 
             let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
                 .join(shared_state.engine.get_default_content_subdir());

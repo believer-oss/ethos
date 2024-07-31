@@ -386,15 +386,14 @@ pub async fn ludos_delete(
 #[tauri::command]
 pub async fn get_repo_status(
     state: tauri::State<'_, State>,
-    skip_fetch: bool,
     skip_dll_check: bool,
     allow_offline_communication: bool,
 ) -> Result<RepoStatus, TauriError> {
     let res = state
         .client
         .get(format!(
-            "{}/repo/status?skip_fetch={}&skipDllCheck={}&allowOfflineCommunication={}",
-            state.server_url, skip_fetch, skip_dll_check, allow_offline_communication
+            "{}/repo/status?&skipDllCheck={}&allowOfflineCommunication={}",
+            state.server_url, skip_dll_check, allow_offline_communication
         ))
         .send()
         .await?;
