@@ -11,6 +11,7 @@
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { type Nullable, ProgressModal } from '@ethos/core';
+	import { onMount } from 'svelte';
 	import type {
 		ArtifactEntry,
 		GameServerResult,
@@ -40,6 +41,7 @@
 	let countdownFinished = false;
 	let syncing = false;
 	let progressModalText = '';
+	let owner: string = '';
 
 	// if the start time changes, reset the countdown
 	$: playtest.spec.startTime, (countdownFinished = false);
@@ -116,18 +118,20 @@
 	const handleSyncAndLaunch = async () => {
 		const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
 		if (playtestAssignment && playtestAssignment.serverRef) {
-			const project = playtest.metadata.annotations['believer.dev/project'];
-			const entry = await getBuilds(250, project).then((a) =>
-				a.entries.find((b) => b.commit === playtest.spec.version)
-			);
+			if (playtest.metadata.annotations) {
+				const project = playtest.metadata.annotations['believer.dev/project'];
+				const entry = await getBuilds(250, project).then((a) =>
+					a.entries.find((b) => b.commit === playtest.spec.version)
+				);
 
-			const updatedServers = await getServers(playtest.spec.version);
-			const playtestServer = updatedServers.find(
-				(s) => s.name === playtestAssignment.serverRef?.name
-			);
+				const updatedServers = await getServers(playtest.spec.version);
+				const playtestServer = updatedServers.find(
+					(s) => s.name === playtestAssignment.serverRef?.name
+				);
 
-			if (playtestServer && entry) {
-				await handleSyncClient(entry, playtestServer);
+				if (playtestServer && entry) {
+					await handleSyncClient(entry, playtestServer);
+				}
 			}
 		}
 	};
@@ -166,6 +170,12 @@
 	// This could become a more general purpose helper in the future, but for now it's just for this component.
 	const getPlaytestQuerySelector = (pt: Playtest): string =>
 		pt.metadata.name.replace(/[.|/]/g, '-');
+
+	onMount(() => {
+		if (playtest.metadata.annotations && playtest.metadata.annotations['believer.dev/owner']) {
+			owner = playtest.metadata.annotations['believer.dev/owner'];
+		}
+	});
 </script>
 
 <Card
@@ -258,8 +268,13 @@
 				>
 			</span>
 			<span class="text-center font-bold text-sm"
-				>map: <span class="text-primary-400 font-normal">{playtest.spec.map}</span>
+				>map: <span class="text-primary-400 font-normal">{playtest.spec.map.split('/').pop()}</span>
 			</span>
+			{#if owner !== ''}
+				<span class="text-center font-bold text-sm"
+					>owner: <span class="text-primary-400 font-normal">{owner}</span>
+				</span>
+			{/if}
 			{#if !compact}
 				<span class="text-center font-bold text-sm"
 					>group size: <span class="text-primary-400 font-normal"

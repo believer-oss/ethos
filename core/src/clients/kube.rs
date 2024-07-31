@@ -452,6 +452,7 @@ impl KubeClient {
     pub async fn create_playtest(
         &self,
         input: CreatePlaytestRequest,
+        owner: String,
     ) -> Result<Playtest, CoreError> {
         let client = Client::try_from(self.kubeconfig().await?)?;
         let api: Api<Playtest> = Api::default_namespaced(client);
@@ -459,10 +460,10 @@ impl KubeClient {
         let pp = PostParams::default();
 
         let mut playtest = Playtest::new(&input.name, input.spec);
-        playtest.metadata.annotations = Some(BTreeMap::from([(
-            String::from("believer.dev/project"),
-            input.project,
-        )]));
+        playtest.metadata.annotations = Some(BTreeMap::from([
+            (String::from("believer.dev/project"), input.project),
+            (String::from("believer.dev/owner"), owner),
+        ]));
 
         match api.create(&pp, &playtest).await {
             Ok(res) => Ok(res),

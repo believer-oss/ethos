@@ -208,13 +208,21 @@ impl Git {
     pub async fn fetch(&self, prune: ShouldPrune) -> anyhow::Result<()> {
         if prune == ShouldPrune::Yes {
             self.run(
-                &["fetch", "--prune", "--no-auto-maintenance"],
+                &[
+                    "fetch",
+                    "--prune",
+                    "--no-auto-maintenance",
+                    "--show-forced-updates",
+                ],
                 Opts::default(),
             )
             .await
         } else {
-            self.run(&["fetch", "--no-auto-maintenance"], Opts::default())
-                .await
+            self.run(
+                &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
+                Opts::default(),
+            )
+            .await
         }
     }
 
