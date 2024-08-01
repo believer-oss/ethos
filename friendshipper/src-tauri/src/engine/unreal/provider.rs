@@ -12,6 +12,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use tracing::instrument;
 use tracing::warn;
 
 #[derive(Clone)]
@@ -47,6 +48,7 @@ impl EngineProvider for UnrealEngineProvider {
         }
     }
 
+    #[instrument(skip(self))]
     async fn send_status_update(&self, status: &RepoStatus) {
         let client = reqwest::Client::new();
         _ = client
@@ -112,6 +114,7 @@ impl EngineProvider for UnrealEngineProvider {
         bail!("No client found in path!");
     }
 
+    #[instrument(skip(self, asset_names))]
     async fn get_asset_display_names(
         &self,
         communication: engine::provider::CommunicationType,
