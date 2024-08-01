@@ -290,6 +290,8 @@ pub struct PushRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevertFilesRequest {
     pub files: Vec<String>,
+    #[serde(rename = "skipEngineCheck")]
+    pub skip_engine_check: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
