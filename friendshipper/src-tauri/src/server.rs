@@ -16,12 +16,13 @@ use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileI
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig};
 use ethos_core::types::errors::CoreError;
+use ethos_core::types::repo::RepoStatus;
 use ethos_core::types::repo::RepoStatusRef;
 use ethos_core::utils::logging::OtelReloadHandle;
 use ethos_core::worker::{RepoWorker, TaskSequence};
@@ -144,6 +145,7 @@ impl Server {
             let mut debouncer = self.create_file_watcher(
                 watcher_status,
                 watcher_git,
+                shared_state.engine.clone(),
                 pause_file_watcher.clone(),
                 refresh_tx,
             )?;
@@ -242,13 +244,25 @@ impl Server {
         Ok(())
     }
 
-    fn create_file_watcher(
+    fn create_file_watcher<T>(
         &self,
         status: RepoStatusRef,
         git_client: Git,
+        engine: T,
         pause_rx: Arc<AtomicBool>,
         refresh_tx: STDSender<()>,
-    ) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, CoreError> {
+    ) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, CoreError>
+    where
+        T: EngineProvider,
+    {
+        let (engine_update_tx, engine_update_rx) = std::sync::mpsc::channel::<RepoStatus>();
+
+        tokio::spawn(async move {
+            while let Ok(repo_status) = engine_update_rx.recv() {
+                engine.send_status_update(&repo_status).await;
+            }
+        });
+
         new_debouncer(
             Duration::from_secs(2),
             None,
@@ -292,6 +306,10 @@ impl Server {
                             Ok(output) => {
                                 for line in output.lines() {
                                     status.parse_file_line(line);
+                                }
+
+                                if let Err(e) = engine_update_tx.send(status.clone()) {
+                                    warn!("Failed to signal engine update channel, engine update will be delayed: {}", e);
                                 }
                             }
                             Err(e) => {

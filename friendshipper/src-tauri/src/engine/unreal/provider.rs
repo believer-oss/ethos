@@ -7,10 +7,12 @@ use async_trait::async_trait;
 use ethos_core::types::config::AppConfig;
 use ethos_core::types::config::RepoConfig;
 use ethos_core::types::gameserver::GameServerResults;
+use ethos_core::types::repo::RepoStatus;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use tracing::instrument;
 use tracing::warn;
 
 #[derive(Clone)]
@@ -18,16 +20,6 @@ pub struct UnrealEngineProvider {
     pub repo_path: PathBuf,
     pub uproject_path: PathBuf,
     pub ofpa_cache: OFPANameCacheRef,
-}
-
-// impl debug skipping the cache
-impl std::fmt::Debug for UnrealEngineProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UnrealEngineProvider")
-            .field("repo_path", &self.repo_path)
-            .field("uproject_path", &self.uproject_path)
-            .finish()
-    }
 }
 
 #[async_trait]
@@ -54,6 +46,16 @@ impl EngineProvider for UnrealEngineProvider {
                 warn!("Took {} seconds to load the OFPA name cache", elapsed_secs);
             }
         }
+    }
+
+    #[instrument(skip(self))]
+    async fn send_status_update(&self, status: &RepoStatus) {
+        let client = reqwest::Client::new();
+        _ = client
+            .post("http://localhost:8091/friendshipper-ue/status/update".to_string())
+            .json(status)
+            .send()
+            .await;
     }
 
     async fn check_ready_to_sync_repo(&self) -> Result<()> {
@@ -112,6 +114,7 @@ impl EngineProvider for UnrealEngineProvider {
         bail!("No client found in path!");
     }
 
+    #[instrument(skip(self, asset_names))]
     async fn get_asset_display_names(
         &self,
         communication: engine::provider::CommunicationType,

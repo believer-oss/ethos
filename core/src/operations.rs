@@ -11,7 +11,7 @@ use chrono::DateTime;
 use reqwest::StatusCode;
 use std::env;
 use std::path::PathBuf;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 
 #[derive(Clone)]
 pub struct CommitOp {
@@ -272,24 +272,32 @@ impl LockOp {
 
             if should_set_read_flag {
                 let set_readonly = self.op != LockOperation::Lock;
+                let operation_str = if set_readonly { "set" } else { "clear" };
+
                 for path in &self.paths {
                     if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
                         let mut absolute_path = PathBuf::from(&repo_path);
                         absolute_path.push(path);
 
-                        if let Ok(metadata) = std::fs::metadata(&absolute_path) {
-                            let mut perms = metadata.permissions().clone();
-                            if perms.readonly() != set_readonly {
-                                perms.set_readonly(set_readonly);
+                        match std::fs::metadata(&absolute_path) {
+                            Ok(metadata) => {
+                                let mut perms = metadata.permissions().clone();
+                                if perms.readonly() != set_readonly {
+                                    perms.set_readonly(set_readonly);
 
-                                if let Err(e) = std::fs::set_permissions(&absolute_path, perms) {
-                                    let operation_str = if set_readonly { "set" } else { "clear" };
-                                    warn!(
-                                        "Failed to {} readonly flag for file {:?}: {}",
-                                        operation_str, &absolute_path, e
-                                    );
+                                    if let Err(e) = std::fs::set_permissions(&absolute_path, perms)
+                                    {
+                                        error!(
+                                            "Failed to {} readonly flag for file {:?}: {}",
+                                            operation_str, &absolute_path, e
+                                        );
+                                    }
                                 }
                             }
+                            Err(e) => error!(
+                                "Failed to {} readonly flag for file {:?}: {}",
+                                operation_str, &absolute_path, e
+                            ),
                         }
                     }
                 }

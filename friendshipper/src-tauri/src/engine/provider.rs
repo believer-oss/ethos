@@ -2,11 +2,12 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use ethos_core::types::config::{AppConfig, RepoConfig};
 use ethos_core::types::gameserver::GameServerResults;
+use ethos_core::types::repo::RepoStatus;
 use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use tracing::{info, instrument};
+use tracing::info;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommunicationType {
@@ -17,12 +18,15 @@ pub enum CommunicationType {
 
 /// EngineProvider trait
 #[async_trait]
-pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
+pub trait EngineProvider: Clone + Send + Sync + 'static {
     /// Creates a new provider from app and repo config
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self;
 
     /// Loads any internal caches the provider needs from disk
     async fn load_caches(&mut self);
+
+    /// Sends repo status updates to the engine
+    async fn send_status_update(&self, status: &RepoStatus);
 
     /// Checks if the engine is in a state where many files can be synced.
     /// For example, if the Unreal editor is running, we should not sync, so this function
@@ -48,7 +52,6 @@ pub trait EngineProvider: Clone + Debug + Send + Sync + 'static {
     /// Given a path, finds the appropriate client executable to launch and returns its full path.
     fn find_client_executable(&self, path: PathBuf) -> Result<PathBuf>;
 
-    #[instrument(skip(self), err)]
     fn launch(&self, path: PathBuf, args: Vec<String>) -> Result<Option<Child>> {
         if cfg!(windows) {
             let exe = self.find_client_executable(path)?;

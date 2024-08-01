@@ -69,6 +69,7 @@ where
                 storage: self.storage.clone(),
                 skip_dll_check: false,
                 allow_offline_communication: false,
+                skip_engine_update: false,
             };
 
             status_op.execute().await?;
@@ -131,6 +132,7 @@ where
                         storage: self.storage.clone(),
                         skip_dll_check: false,
                         allow_offline_communication: false,
+                        skip_engine_update: true,
                     }
                 };
 
@@ -149,6 +151,7 @@ where
                 storage: self.storage.clone(),
                 skip_dll_check: false,
                 allow_offline_communication: false,
+                skip_engine_update: true,
             };
 
             status_op.execute().await?;
@@ -212,6 +215,7 @@ where
                     storage: self.storage.clone(),
                     skip_dll_check: false,
                     allow_offline_communication: false,
+                    skip_engine_update: false,
                 }
             };
 
