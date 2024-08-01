@@ -377,7 +377,7 @@
 	const handleLockSelected = async () => {
 		loading = true;
 		try {
-			if (await acquireLocks($selectedFiles, false)) {
+			if (await acquireLocks($selectedFiles)) {
 				await emit(
 					'error',
 					'Some files were unable to be locked because they are locked by other users! Check logs for more details.'

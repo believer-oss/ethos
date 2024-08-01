@@ -364,7 +364,6 @@ pub async fn rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
 pub async fn acquire_locks(
     state: tauri::State<'_, State>,
     files: Vec<ModifiedFile>,
-    fail_if_locked: bool,
 ) -> Result<bool, TauriError> {
     // get github username
     let mut res = state
@@ -394,22 +393,12 @@ pub async fn acquire_locks(
         if file.locked_by.is_empty() {
             paths.push(file.path);
         } else if file.locked_by != username {
-            if fail_if_locked {
-                // exit with an error
-                return Err(TauriError {
-                    message: format!(
-                        "Failed to lock file: {} is locked by {}",
-                        file.path, file.locked_by
-                    ),
-                });
-            } else {
-                // log an error but continue execution
-                already_locked = true;
-                warn!(
-                    "Failed to lock file: {} is locked by {}",
-                    file.path, file.locked_by
-                );
-            }
+            // log an error but continue execution
+            already_locked = true;
+            warn!(
+                "File {} is already locked by {}, skipping locking",
+                file.path, file.locked_by
+            );
         }
     }
 
