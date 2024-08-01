@@ -146,6 +146,7 @@
 			modifiedFiles={$allModifiedFiles}
 			onRevertFiles={handleRevertFiles}
 			snapshotsEnabled={false}
+			lockSelectedEnabled={false}
 		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[24rem]">

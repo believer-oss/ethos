@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/tauri';
-import type { Commit, CommitFileInfo } from '@ethos/core';
+import type { Commit, CommitFileInfo, ModifiedFile } from '@ethos/core';
 import type {
 	CloneRequest,
 	GitHubPullRequest,
@@ -110,6 +110,11 @@ export const syncEngineCommitWithUproject = async (): Promise<string> =>
 
 export const syncUprojectWithEngineCommit = async (): Promise<string> =>
 	invoke('sync_uproject_commit_with_engine');
+
+export const acquireLocks = async (
+	files: ModifiedFile[],
+	failIfLocked: boolean
+): Promise<boolean> => invoke('acquire_locks', { files, failIfLocked });
 
 export const releaseLocks = async (paths: string[], force: boolean): Promise<void> =>
 	invoke('release_locks', { paths, force });

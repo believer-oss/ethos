@@ -31,6 +31,8 @@
 	export let selectAll: boolean = false;
 	export let onRevertFiles: (files: string[]) => Promise<void>;
 	export let onOpenDirectory: (path: string) => Promise<void>;
+	export let onLockSelected: () => Promise<void>;
+	export let lockSelectedEnabled = true;
 
 	let showRevertConfirmation = false;
 	let shiftHeld = false;
@@ -162,6 +164,13 @@
 	<div class="flex justify-between items-center gap-2 pb-2">
 		<h3 class="text-primary-400 text-xl">Modified Files</h3>
 		<div class="flex gap-2">
+			{#if lockSelectedEnabled}
+				<Button
+					size="xs"
+					disabled={disabled || selectedFiles.length === 0}
+					on:click={onLockSelected}>Safe Lock Selected</Button
+				>
+			{/if}
 			<Button
 				size="xs"
 				disabled={disabled || selectedFiles.length === 0}
