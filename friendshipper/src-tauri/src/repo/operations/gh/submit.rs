@@ -376,6 +376,7 @@ where
             storage: self.storage.clone(),
             skip_dll_check: true,
             allow_offline_communication: true,
+            skip_engine_update: false,
         };
 
         // commit changes

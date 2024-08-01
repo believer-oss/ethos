@@ -76,6 +76,7 @@ where
     pub storage: ArtifactStorage,
     pub skip_dll_check: bool,
     pub allow_offline_communication: bool,
+    pub skip_engine_update: bool,
 }
 
 #[async_trait]
@@ -101,8 +102,15 @@ where
 {
     #[instrument(name = "StatusOp::run", skip_all)]
     pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
-        info!("StatusOp: running git status...");
-        let status_output = self.git_client.status(vec![]).await?;
+        info!("StatusOp: running git status and getting locks...");
+
+        let locks_future = self.git_client.verify_locks();
+        let status_future = self.git_client.status(vec![]);
+
+        let (locks, status_output) = futures::join!(locks_future, status_future);
+        let locks = locks?;
+        let status_output = status_output?;
+
         let status_lines = status_output.lines().collect::<Vec<_>>();
 
         info!("StatusOp: parsing status state...");
@@ -147,7 +155,6 @@ where
         {
             info!("StatusOp: getting locks");
             status.lock_user.clone_from(&self.github_username);
-            let locks = self.git_client.verify_locks().await?;
             status.locks_ours = locks.ours;
             status.locks_theirs = locks.theirs;
         }
@@ -314,6 +321,10 @@ where
 
             update_files_submit_status(&mut status.untracked_files.0);
             update_files_submit_status(&mut status.modified_files.0);
+        }
+
+        if !self.skip_engine_update {
+            self.engine.send_status_update(&status).await;
         }
 
         let mut repo_status = self.repo_status.write();
@@ -508,6 +519,8 @@ pub struct StatusParams {
     pub skip_dll_check: bool,
     #[serde(default)]
     pub allow_offline_communication: bool,
+    #[serde(default)]
+    pub skip_engine_update: bool,
 }
 
 pub async fn status_handler<T>(
@@ -539,6 +552,7 @@ where
         storage,
         skip_dll_check: params.skip_dll_check,
         allow_offline_communication: params.allow_offline_communication,
+        skip_engine_update: params.skip_engine_update,
     };
 
     // Make sure AWS credentials still valid
