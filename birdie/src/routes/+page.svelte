@@ -504,7 +504,7 @@
 				{:else if $currentRootFiles.length === 0}
 					<p class="text-center text-gray-500 dark:text-gray-400">No files found</p>
 				{:else}
-					<div class="flex flex-col gap-2 w-full">
+					<div class="flex flex-col gap-2 w-full h-full">
 						<Table>
 							<TableBody>
 								{#each $currentRootFiles as file, index}
@@ -664,7 +664,7 @@
 	</div>
 	{#if selectedFile}
 		<Card
-			class="w-full p-4 sm:p-4 max-w-full max-h-[50vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
+			class="w-full p-4 sm:p-4 max-w-full max-h-[30vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 		>
 			{#if loadingFileHistory}
 				<Spinner class="w-4 h-4 dark:text-gray-500 fill-white" />
