@@ -17,6 +17,7 @@
 	import { derived } from 'svelte/store';
 	import { emit } from '@tauri-apps/api/event';
 	import { RefreshOutline } from 'flowbite-svelte-icons';
+	import { ProgressModal } from '@ethos/core';
 	import type { Lock } from '$lib/types';
 	import { releaseLocks, getRepoStatus } from '$lib/repo';
 	import { allModifiedFiles, repoStatus } from '$lib/stores';
@@ -28,6 +29,8 @@
 	let showOtherLocks = false;
 	let allowReleaseOtherLocks = false;
 	let searchTerm = '';
+
+	let showProgressModal: boolean = false;
 
 	const formatPath = (path: string) => {
 		if (path === '/') return path;
@@ -125,18 +128,21 @@
 
 	const refreshLocks = async () => {
 		loading = true;
+		showProgressModal = true;
 		try {
 			repoStatus.set(await getRepoStatus());
 		} catch (e) {
 			await emit('error', e);
 		}
 		loading = false;
+		showProgressModal = false;
 	};
 
 	const handleReleaseSelected = async () => {
 		if (selectedForRelease.length === 0) return;
 
 		loading = true;
+		showProgressModal = true;
 		try {
 			await releaseLocks(selectedForRelease, numOthersSelected > 0);
 			await refreshLocks();
@@ -145,12 +151,14 @@
 		}
 		selectedForRelease = [];
 		loading = false;
+		showProgressModal = false;
 	};
 
 	const handleReleaseUnmodified = async () => {
 		if (unmodifiedLockedFiles.length === 0) return;
 
 		loading = true;
+		showProgressModal = true;
 		try {
 			await releaseLocks(
 				unmodifiedLockedFiles.map((lock) => lock.path),
@@ -162,6 +170,7 @@
 		}
 		selectedForRelease = [];
 		loading = false;
+		showProgressModal = false;
 	};
 
 	const getLockTimestamp = (locked_at: string): string => {
@@ -336,3 +345,5 @@
 		</Table>
 	</Card>
 {/if}
+
+<ProgressModal bind:showModal={showProgressModal} title="Updating locks" />
