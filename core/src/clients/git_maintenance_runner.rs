@@ -48,7 +48,6 @@ impl GitMaintenanceRunner {
         let fetch_task = tokio::task::spawn(async move {
             loop {
                 {
-                    let _ = tracing::info_span!("GitMaintenanceRunner::fetch").enter();
                     match git.fetch(ShouldPrune::Yes).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -66,7 +65,6 @@ impl GitMaintenanceRunner {
         let maintenance_task = tokio::task::spawn(async move {
             loop {
                 {
-                    let _ = tracing::info_span!("GitMaintenanceRunner::maintenance").enter();
                     match git.run_maintenance().await {
                         Ok(_) => {
                             info!("Maintenance complete");
