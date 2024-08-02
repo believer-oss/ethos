@@ -111,6 +111,9 @@ export const syncEngineCommitWithUproject = async (): Promise<string> =>
 export const syncUprojectWithEngineCommit = async (): Promise<string> =>
 	invoke('sync_uproject_commit_with_engine');
 
+export const acquireLocks = async (paths: string[], force: boolean): Promise<void> =>
+	invoke('acquire_locks', { paths, force });
+
 export const releaseLocks = async (paths: string[], force: boolean): Promise<void> =>
 	invoke('release_locks', { paths, force });
 

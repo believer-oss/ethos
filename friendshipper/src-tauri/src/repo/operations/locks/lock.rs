@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{extract::State, Json};
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 
 use crate::engine::EngineProvider;
 use ethos_core::operations::LockOp;
@@ -20,7 +20,51 @@ where
 {
     info!("lock request: {:?}", request);
 
-    internal_lock_handler(state, request, LockOperation::Lock).await
+    let mut paths: Vec<String> = Vec::new();
+    for path in request.paths {
+        if let Some(lock) = state
+            .repo_status
+            .read()
+            .locks_theirs
+            .iter()
+            .find(|l| l.path == path)
+        {
+            // do not attempt to lock any files owned by other users, instead log an error and abort
+            if let Some(owner) = &lock.owner {
+                error!(
+                    "Locking failed: file {} is already checked out by {}",
+                    path, owner.name
+                );
+                return Err(CoreError(anyhow!(
+                    "Failed to lock a file checked out by {}. Check the log for more details.",
+                    owner.name,
+                )));
+            }
+        } else if state
+            .repo_status
+            .read()
+            .modified_upstream
+            .iter()
+            .any(|p| p == &path)
+        {
+            // do not attempt to lock any files modified upstream by other users, instead log an error and abort
+            error!(
+                "Locking failed: files are modified upstream by other users. Sync and try again."
+            );
+            return Err(CoreError(anyhow!(
+                "Files are modified upstream by other users. Sync and try again."
+            )));
+        } else {
+            paths.push(path);
+        }
+    }
+
+    let request_data = LockRequest {
+        paths,
+        force: request.force,
+    };
+
+    internal_lock_handler(state, request_data, LockOperation::Lock).await
 }
 
 #[instrument(skip(state, request))]

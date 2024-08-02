@@ -36,6 +36,7 @@
 		Snapshot
 	} from '$lib/types';
 	import {
+		acquireLocks,
 		deleteSnapshot,
 		getCommitFileTextClass,
 		getPullRequests,
@@ -363,6 +364,29 @@
 		return 'bg-primary-500 dark:bg-primary-500';
 	};
 
+	const refreshLocks = async () => {
+		loading = true;
+		try {
+			repoStatus.set(await getRepoStatus());
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
+	const handleLockSelected = async () => {
+		loading = true;
+		try {
+			const selectedPaths = $selectedFiles.map((file) => file.path);
+			await acquireLocks(selectedPaths, false);
+			await emit('success', 'Files locked!');
+			await refreshLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
 	onMount(() => {
 		void refreshFiles(true);
 		void refreshSnapshots();
@@ -433,6 +457,7 @@
 			onOpenDirectory={handleOpenDirectory}
 			onRevertFiles={handleRevertFiles}
 			onSaveSnapshot={handleSaveSnapshot}
+			onLockSelected={handleLockSelected}
 		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[32rem]">

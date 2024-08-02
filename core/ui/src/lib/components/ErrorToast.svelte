@@ -24,6 +24,6 @@
 		bind:open={show}
 	>
 		<ExclamationCircleSolid slot="icon" class="w-5 h-5 text-white" />
-		{errorMessage}
+		<span class="w-full">{errorMessage}</span>
 	</Toast>
 </div>

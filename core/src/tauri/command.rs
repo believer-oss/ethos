@@ -7,6 +7,7 @@ use crate::types::repo::{
     CloneRequest, ConfigureUserRequest, LockRequest, PullResponse, RebaseStatusResponse,
     RevertFilesRequest,
 };
+
 use tauri::api::process::current_binary;
 use tauri::Env;
 use tracing::{error, info};
@@ -353,6 +354,29 @@ pub async fn rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
 
     if let Some(err) = check_client_error(res).await {
         return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn acquire_locks(
+    state: tauri::State<'_, State>,
+    paths: Vec<String>,
+    force: bool,
+) -> Result<(), TauriError> {
+    let request_data = LockRequest { paths, force };
+
+    let res = state
+        .client
+        .post(format!("{}/repo/locks/lock", state.server_url))
+        .json(&request_data)
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
     }
 
     Ok(())
