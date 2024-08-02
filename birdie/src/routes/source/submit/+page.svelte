@@ -65,7 +65,8 @@
 		await refreshFiles(false);
 
 		const req: RevertFilesRequest = {
-			files: $selectedFiles.map((file) => file.path)
+			files: $selectedFiles.map((file) => file.path),
+			skipEngineCheck: false
 		};
 
 		try {
