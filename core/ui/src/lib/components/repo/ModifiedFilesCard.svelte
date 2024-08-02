@@ -168,7 +168,7 @@
 				<Button
 					size="xs"
 					disabled={disabled || selectedFiles.length === 0}
-					on:click={onLockSelected}>Safe Lock Selected</Button
+					on:click={onLockSelected}>Lock Selected</Button
 				>
 			{/if}
 			<Button

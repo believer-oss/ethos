@@ -4,14 +4,13 @@ use crate::types::commits::Commit;
 use crate::types::config::{AppConfig, RepoConfig};
 use crate::types::logs::LogEntry;
 use crate::types::repo::{
-    CloneRequest, ConfigureUserRequest, LockRequest, ModifiedFile, PullResponse,
-    RebaseStatusResponse, RevertFilesRequest,
+    CloneRequest, ConfigureUserRequest, LockRequest, PullResponse, RebaseStatusResponse,
+    RevertFilesRequest,
 };
 
-use crate::types::github::user::UserInfoResponse;
 use tauri::api::process::current_binary;
 use tauri::Env;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 pub async fn check_client_error(res: reqwest::Response) -> Option<TauriError> {
     if res.status().is_client_error() {
@@ -363,12 +362,15 @@ pub async fn rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
 #[tauri::command]
 pub async fn acquire_locks(
     state: tauri::State<'_, State>,
-    files: Vec<ModifiedFile>,
-) -> Result<bool, TauriError> {
-    // get github username
-    let mut res = state
+    paths: Vec<String>,
+    force: bool,
+) -> Result<(), TauriError> {
+    let request_data = LockRequest { paths, force };
+
+    let res = state
         .client
-        .get(format!("{}/repo/gh/user", state.server_url))
+        .post(format!("{}/repo/locks/lock", state.server_url))
+        .json(&request_data)
         .send()
         .await?;
 
@@ -377,47 +379,7 @@ pub async fn acquire_locks(
         return Err(TauriError { message: body });
     }
 
-    let username = match res.json::<UserInfoResponse>().await {
-        Ok(res) => res.username,
-        Err(err) => {
-            return Err(TauriError {
-                message: format!("Failed to get github username: {}", err),
-            });
-        }
-    };
-
-    // only lock files that are unlocked
-    let mut paths: Vec<String> = Vec::new();
-    let mut already_locked = false;
-    for file in files {
-        if file.locked_by.is_empty() {
-            paths.push(file.path);
-        } else if file.locked_by != username {
-            // log an error but continue execution
-            already_locked = true;
-            warn!(
-                "File {} is already locked by {}, skipping locking",
-                file.path, file.locked_by
-            );
-        }
-    }
-
-    let request_data = LockRequest {
-        paths,
-        force: false,
-    };
-    res = state
-        .client
-        .post(format!("{}/repo/locks/lock", state.server_url))
-        .json(&request_data)
-        .send()
-        .await?;
-
-    if let Some(err) = check_client_error(res).await {
-        return Err(err);
-    }
-
-    Ok(already_locked)
+    Ok(())
 }
 
 #[tauri::command]

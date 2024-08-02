@@ -377,14 +377,9 @@
 	const handleLockSelected = async () => {
 		loading = true;
 		try {
-			if (await acquireLocks($selectedFiles)) {
-				await emit(
-					'error',
-					'Some files were unable to be locked because they are locked by other users! Check logs for more details.'
-				);
-			} else {
-				await emit('success', 'All files locked!');
-			}
+			const selectedPaths = $selectedFiles.map((file) => file.path);
+			await acquireLocks(selectedPaths, false);
+			await emit('success', 'Files locked!');
 			await refreshLocks();
 		} catch (e) {
 			await emit('error', e);
