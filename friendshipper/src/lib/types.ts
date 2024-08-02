@@ -253,6 +253,7 @@ export interface PushRequest {
 
 export interface RevertFilesRequest {
 	files: string[];
+	skipEngineCheck: boolean;
 }
 
 export interface LockOwnerInfo {

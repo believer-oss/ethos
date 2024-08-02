@@ -11,7 +11,7 @@ use chrono::DateTime;
 use reqwest::StatusCode;
 use std::env;
 use std::path::PathBuf;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Clone)]
 pub struct CommitOp {
@@ -268,6 +268,10 @@ impl LockOp {
                         }
                     }
                 }
+            }
+
+            for failure in lock_response.batch.failures.iter() {
+                warn!("Failed to lock path {}: {}", failure.path, failure.reason);
             }
 
             if should_set_read_flag {
