@@ -13,16 +13,6 @@ pub enum SubmitStatus {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ModifiedFileState {
-    #[default]
-    Added,
-    Modified,
-    Deleted,
-    Unmerged,
-    Unknown,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FileState {
     #[default]
     Unknown,
@@ -333,17 +323,6 @@ pub struct CommitFileInfo {
     pub action: String,
     pub file: String,
     pub display_name: String,
-}
-
-#[derive(Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModifiedFile {
-    pub path: String,
-    pub display_name: String,
-    pub state: ModifiedFileState,
-    pub is_staged: bool,
-    pub locked_by: String,
-    pub submit_status: SubmitStatus,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
