@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, fs::Permissions, path::PathBuf};
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -15,6 +15,9 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 
 use crate::state::AppState;
+
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Default, Deserialize)]
 pub struct InstallGitHooksParams {
@@ -64,6 +67,12 @@ impl Task for InstallGitHooksOp {
 
                     debug!("copying {:?} to {:?}", entry.path(), destination);
                     fs::copy(entry.path(), &destination)?;
+
+                    #[cfg(target_os = "macos")]
+                    {
+                        let perm = Permissions::from_mode(0o755);
+                        fs::set_permissions(destination, perm).unwrap();
+                    }
                 }
             }
         }
