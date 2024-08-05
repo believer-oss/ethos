@@ -355,6 +355,7 @@ where
         let argolabels = workflow.metadata.labels.as_ref().unwrap();
         let argoannotations = workflow.metadata.annotations.as_ref().unwrap();
 
+        #[allow(clippy::manual_inspect)]
         workflow.status.as_mut().map(|s| {
             s.started_at = s.started_at.as_mut().map(|started_at| {
                 let f: DateTime<Local> = DateTime::parse_from_rfc3339(started_at)
