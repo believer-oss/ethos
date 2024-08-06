@@ -283,36 +283,49 @@ impl LockOp {
                         let mut absolute_path = PathBuf::from(&repo_path);
                         absolute_path.push(path);
 
-                        // canonicalize path (this cleans up the path and ensures existence)
-                        match absolute_path.canonicalize() {
-                            Ok(canonical_path) => {
-                                // set readonly flag for the canonical path (not the original path
-                                match std::fs::metadata(&canonical_path) {
-                                    Ok(metadata) => {
-                                        let mut perms = metadata.permissions().clone();
-                                        if perms.readonly() != set_readonly {
-                                            perms.set_readonly(set_readonly);
+                        match absolute_path.try_exists() {
+                            Ok(exists) => {
+                                if exists {
+                                    // canonicalize path (this cleans up the path and ensures existence)
+                                    match absolute_path.canonicalize() {
+                                        Ok(canonical_path) => {
+                                            // set readonly flag for the canonical path (not the original path
+                                            match std::fs::metadata(&canonical_path) {
+                                                Ok(metadata) => {
+                                                    let mut perms = metadata.permissions().clone();
+                                                    if perms.readonly() != set_readonly {
+                                                        perms.set_readonly(set_readonly);
 
-                                            if let Err(e) =
-                                                std::fs::set_permissions(&canonical_path, perms)
-                                            {
-                                                error!(
+                                                        if let Err(e) = std::fs::set_permissions(
+                                                            &canonical_path,
+                                                            perms,
+                                                        ) {
+                                                            error!(
                                                     "Failed to {} readonly flag for file {:?}: {}",
                                                     operation_str, &canonical_path, e
                                                 );
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => error!(
+                                                    "Failed to {} readonly flag for file {:?}: {}",
+                                                    operation_str, &canonical_path, e
+                                                ),
                                             }
                                         }
-                                    }
-                                    Err(e) => error!(
-                                        "Failed to {} readonly flag for file {:?}: {}",
-                                        operation_str, &canonical_path, e
+                                        Err(e) => error!(
+                                        "Failed to canonicalize path {:?} for readonly flag: {}",
+                                        &absolute_path, e
                                     ),
+                                    }
                                 }
                             }
-                            Err(e) => error!(
-                                "Failed to canonicalize path {:?} for readonly flag: {}",
-                                &absolute_path, e
-                            ),
+                            Err(e) => {
+                                error!(
+                                    "Failed to check existence of path {:?} for readonly flag: {}",
+                                    &absolute_path, e
+                                );
+                            }
                         }
                     }
                 }
