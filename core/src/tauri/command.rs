@@ -137,6 +137,25 @@ pub async fn open_system_logs_folder(state: tauri::State<'_, State>) -> Result<(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn open_terminal_to_path(
+    state: tauri::State<'_, State>,
+    path: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/system/terminal", state.server_url))
+        .json(&path)
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 // Auth
 #[tauri::command]
 pub async fn check_login_required(state: tauri::State<'_, State>) -> Result<bool, TauriError> {

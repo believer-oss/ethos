@@ -171,6 +171,7 @@ fn main() {
             list_snapshots,
             open_logs_folder,
             open_system_logs_folder,
+            open_terminal_to_path,
             get_unrealversionselector_status,
             open_url,
             quick_submit,
