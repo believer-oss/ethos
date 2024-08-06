@@ -19,7 +19,8 @@
 		FolderOpenOutline,
 		InfoCircleSolid,
 		PlusOutline,
-		FileCopySolid
+		FileCopySolid,
+		ChevronSortOutline
 	} from 'flowbite-svelte-icons';
 	import { ModifiedFileState, SubmitStatus, type ModifiedFile } from '$lib/types/index.js';
 
@@ -155,6 +156,23 @@
 
 		return file.state + tooltip;
 	};
+
+	// sorting
+	let sortFunction = (a: ModifiedFile, b: ModifiedFile) =>
+		getFileDisplayString(a).localeCompare(getFileDisplayString(b));
+	let sortKey: string = 'file';
+	let sortDirection: number = 1; // ASC
+
+	$: sortedModifiedFiles = modifiedFiles.sort(sortFunction);
+
+	const changeSortDirection = (newSortKey: string) => {
+		if (newSortKey === sortKey) {
+			sortDirection = -sortDirection;
+		} else {
+			sortDirection = 1;
+			sortKey = newSortKey;
+		}
+	};
 </script>
 
 <svelte:window on:keydown={onKeyDown} on:keyup={onKeyup} />
@@ -188,7 +206,7 @@
 		</div>
 	</div>
 	<Table color="custom" striped={true}>
-		<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+		<TableHead class="w-full border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 			<TableHeadCell class="p-1 w-8">
 				<Checkbox
 					disabled={modifiedFiles.length === 0}
@@ -204,12 +222,45 @@
 					>Select/deselect all
 				</Tooltip>
 			</TableHeadCell>
-			<TableHeadCell class="p-1" />
-			<TableHeadCell class="p-1">Checked Out</TableHeadCell>
-			<TableHeadCell class="p-1">File</TableHeadCell>
+			<TableHeadCell
+				class="p-1 cursor-pointer"
+				on:click={() => {
+					changeSortDirection('modifiedFileState');
+					sortFunction = (a, b) => sortDirection * a.state.localeCompare(b.state);
+				}}
+			>
+				<div class="flex items-center">
+					<ChevronSortOutline class="dark:text-white" />
+				</div>
+			</TableHeadCell>
+			<TableHeadCell
+				class="p-1 cursor-pointer"
+				on:click={() => {
+					changeSortDirection('lockedBy');
+					sortFunction = (a, b) => sortDirection * a.lockedBy.localeCompare(b.lockedBy);
+				}}
+			>
+				<div class="flex flex-row w-max items-center">
+					Checked Out
+					<ChevronSortOutline class="dark:text-white" />
+				</div>
+			</TableHeadCell>
+			<TableHeadCell
+				class="p-1 cursor-pointer"
+				on:click={() => {
+					changeSortDirection('file');
+					sortFunction = (a, b) =>
+						sortDirection * getFileDisplayString(a).localeCompare(getFileDisplayString(b));
+				}}
+			>
+				<div class="flex items-center">
+					File
+					<ChevronSortOutline class="dark:text-white" />
+				</div>
+			</TableHeadCell>
 		</TableHead>
 		<TableBody>
-			{#each modifiedFiles as file, index}
+			{#each sortedModifiedFiles as file, index}
 				<TableBodyRow
 					class="text-left border-b-0 {index % 2 === 0
 						? 'bg-secondary-700 dark:bg-space-900'
