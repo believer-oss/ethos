@@ -35,6 +35,7 @@
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
 	export let showProgressModal: boolean;
+	export let progressModalTitle: string;
 	export let handleCheckForUpdates: () => Promise<void>;
 
 	let checkForUpdatesInFlight: boolean = false;
@@ -103,6 +104,7 @@
 
 		if (shouldShowProgressModal) {
 			showProgressModal = true;
+			progressModalTitle = 'Cloning repo...';
 			await internal();
 			showProgressModal = false;
 		} else {
@@ -145,19 +147,22 @@
 
 	const handleResetRepo = async () => {
 		try {
+			showModal = false;
+			showProgressModal = true;
+			progressModalTitle = 'Resetting repo...';
 			await resetRepo();
 
-			showModal = false;
 			await emit('success', 'Repo reset to main.');
 		} catch (e) {
 			showModal = false;
 			await emit('error', e);
 		}
+		showProgressModal = false;
 	};
 </script>
 
 <Modal
-	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto mb-16"
 	bodyClass="!border-t-0"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
@@ -628,8 +633,12 @@
 		</Accordion>
 	</Card>
 
-	<div class="flex flex-row-reverse gap-2">
-		<Button outline on:click={onDiscardClicked}>Discard</Button>
-		<Button on:click={onApplyClicked}>Apply</Button>
+	<div
+		class="absolute bottom-0 left-0 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900"
+	>
+		<div class="flex flex-row-reverse gap-2">
+			<Button outline on:click={onDiscardClicked}>Discard</Button>
+			<Button on:click={onApplyClicked}>Apply</Button>
+		</div>
 	</div>
 </Modal>

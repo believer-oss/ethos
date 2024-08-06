@@ -88,6 +88,7 @@
 	// Preferences Modal
 	let showPreferencesModal = false;
 	let showProgressModal = false;
+	let progressModalTitle: string = '';
 	let preferencesModalRequestInFlight = false;
 
 	// Update available
@@ -435,6 +436,7 @@
 	bind:showModal={showPreferencesModal}
 	bind:requestInFlight={preferencesModalRequestInFlight}
 	bind:showProgressModal
+	bind:progressModalTitle
 	{handleCheckForUpdates}
 />
 
@@ -790,7 +792,7 @@
 </div>
 <ErrorToast bind:show={hasError} {errorMessage} onClose={onErrorDismissed} />
 <SuccessToast bind:show={hasSuccess} message={successMessage} onClose={onSuccessDismissed} />
-<ProgressModal bind:showModal={showProgressModal} title="Cloning new repo" />
+<ProgressModal bind:showModal={showProgressModal} title={progressModalTitle} />
 <!-- Hidden dark mode toggle allows us to load the theme immediately, even though the actual toggle is in the preferences modal -->
 <DarkMode class="hidden" />
 
@@ -831,6 +833,7 @@
 
 	:global(::-webkit-scrollbar-track) {
 		background: theme('colors.secondary.700');
+		border-radius: 12px;
 	}
 
 	:global(::-webkit-scrollbar-thumb) {
@@ -840,5 +843,6 @@
 
 	:global(::-webkit-scrollbar-corner) {
 		background: theme('colors.secondary.700');
+		border-radius: 12px;
 	}
 </style>
