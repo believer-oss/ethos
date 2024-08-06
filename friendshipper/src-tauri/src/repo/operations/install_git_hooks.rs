@@ -1,11 +1,10 @@
-use std::{fs, fs::Permissions, path::PathBuf};
-
 use anyhow::anyhow;
 use anyhow::bail;
 use axum::async_trait;
 use axum::extract::Query;
 use axum::extract::State;
 use serde::Deserialize;
+use std::{fs, path::PathBuf};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::error;
 use tracing::{debug, info};
@@ -16,8 +15,11 @@ use ethos_core::worker::{Task, TaskSequence};
 
 use crate::state::AppState;
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::fs::PermissionsExt;
+
+#[cfg(not(target_os = "windows"))]
+use std::fs::Permissions;
 
 #[derive(Default, Deserialize)]
 pub struct InstallGitHooksParams {
@@ -68,7 +70,7 @@ impl Task for InstallGitHooksOp {
                     debug!("copying {:?} to {:?}", entry.path(), destination);
                     fs::copy(entry.path(), &destination)?;
 
-                    #[cfg(target_os = "macos")]
+                    #[cfg(not(target_os = "windows"))]
                     {
                         let perm = Permissions::from_mode(0o755);
                         fs::set_permissions(destination, perm).unwrap();
