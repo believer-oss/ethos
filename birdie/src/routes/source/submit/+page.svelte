@@ -65,7 +65,8 @@
 		await refreshFiles(false);
 
 		const req: RevertFilesRequest = {
-			files: $selectedFiles.map((file) => file.path)
+			files: $selectedFiles.map((file) => file.path),
+			skipEngineCheck: false
 		};
 
 		try {
@@ -146,6 +147,7 @@
 			modifiedFiles={$allModifiedFiles}
 			onRevertFiles={handleRevertFiles}
 			snapshotsEnabled={false}
+			lockSelectedEnabled={false}
 		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[24rem]">

@@ -23,7 +23,7 @@ pub struct RevertFilesOp<T> {
     pub files: Vec<String>,
     pub git_client: git::Git,
     pub repo_status: RepoStatusRef,
-    pub engine: T,
+    pub engine: Option<T>,
 }
 
 // Note: This is not "git revert", it's "git checkout -- <files>"
@@ -34,7 +34,9 @@ where
 {
     #[instrument(skip(self), name = "RevertOp::execute", fields(files = ?self.files))]
     async fn execute(&self) -> anyhow::Result<()> {
-        self.engine.check_ready_to_sync_repo().await?;
+        if let Some(engine) = &self.engine {
+            engine.check_ready_to_sync_repo().await?;
+        }
 
         if self.files.is_empty() {
             bail!("no files provided");
@@ -201,7 +203,11 @@ where
             git_client: state.git(),
             repo_status: state.repo_status.clone(),
             files: modified.iter().map(|f| f.path.clone()).collect(),
-            engine: state.engine.clone(),
+            engine: if request.skip_engine_check {
+                None
+            } else {
+                Some(state.engine.clone())
+            },
         };
 
         sequence.push(Box::new(op));

@@ -1,4 +1,5 @@
 use graphql_client::GraphQLQuery;
+use serde::{Deserialize, Serialize};
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -7,3 +8,8 @@ use graphql_client::GraphQLQuery;
     response_derives = "Clone, Debug, Serialize"
 )]
 pub struct GetUsername;
+
+#[derive(Default, Deserialize, Serialize)]
+pub struct UserInfoResponse {
+    pub username: String,
+}

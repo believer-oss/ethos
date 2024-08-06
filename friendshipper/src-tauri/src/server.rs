@@ -139,21 +139,21 @@ impl Server {
             )
             .await?;
 
-            // start file watcher
-            let watcher_status = shared_state.repo_status.clone();
-            let watcher_git = shared_state.git().clone();
-            let mut debouncer = self.create_file_watcher(
-                watcher_status,
-                watcher_git,
-                shared_state.engine.clone(),
-                pause_file_watcher.clone(),
-                refresh_tx,
-            )?;
-
             // start the maintenance runner if we have a repo path
             let repo_path = shared_state.app_config.read().repo_path.clone();
             let tx = shared_state.git_tx.clone();
             if !repo_path.is_empty() {
+                // start file watcher
+                let watcher_status = shared_state.repo_status.clone();
+                let watcher_git = shared_state.git().clone();
+                let mut debouncer = self.create_file_watcher(
+                    watcher_status,
+                    watcher_git,
+                    shared_state.engine.clone(),
+                    pause_file_watcher.clone(),
+                    refresh_tx,
+                )?;
+
                 let maintenance_runner = GitMaintenanceRunner::new(repo_path, tx)
                     .with_fetch_interval(Duration::from_secs(5));
                 tokio::spawn(async move {
@@ -164,16 +164,16 @@ impl Server {
                         }
                     };
                 });
-            }
 
-            let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
-                .join(shared_state.engine.get_default_content_subdir());
-            debouncer
-                .watcher()
-                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
-            debouncer
-                .cache()
-                .add_root(content_dir.as_path(), RecursiveMode::Recursive);
+                let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
+                    .join(shared_state.engine.get_default_content_subdir());
+                debouncer
+                    .watcher()
+                    .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
+                debouncer
+                    .cache()
+                    .add_root(content_dir.as_path(), RecursiveMode::Recursive);
+            }
 
             // install git hooks
             {

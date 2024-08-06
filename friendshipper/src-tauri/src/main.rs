@@ -176,6 +176,7 @@ fn main() {
             quick_submit,
             rebase,
             refresh_login,
+            acquire_locks,
             release_locks,
             reset_config,
             restore_snapshot,
