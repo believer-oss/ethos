@@ -75,6 +75,10 @@
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
 
+	// random title options to choose from
+	const titleOptions = ['friendshipper', '프렌드쉽퍼', 'フレンドシッパー'];
+	let title = titleOptions[0];
+
 	// Refresh timer
 	let lastRefresh = new Date().getTime();
 
@@ -128,6 +132,9 @@
 		hasSuccess = false;
 		successMessage = '';
 	};
+
+	const getRandomTitle = (): string =>
+		titleOptions[Math.floor(Math.random() * titleOptions.length)];
 
 	const handleCheckForUpdates = async () => {
 		latest = await getLatestVersion();
@@ -344,6 +351,8 @@
 				if (now - lastRefresh > refreshInterval) {
 					void refresh();
 				}
+
+				title = getRandomTitle();
 			}
 		});
 
@@ -446,9 +455,7 @@
 		data-tauri-drag-region
 	>
 		<div class="pl-2 flex gap-2 items-center">
-			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300"
-				>friendshipper</span
-			>
+			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300">{title}</span>
 		</div>
 		<div class="pr-2 flex gap-2 justify-end">
 			<Button
