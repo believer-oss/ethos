@@ -298,6 +298,9 @@
 						>
 							<TerminalSolid class="w-4 h-4" color="white" />
 						</Button>
+						<Tooltip class="text-sm w-max" placement="bottom">
+							Open powershell to git repo path.
+						</Tooltip>
 					</ButtonGroup>
 				</div>
 
