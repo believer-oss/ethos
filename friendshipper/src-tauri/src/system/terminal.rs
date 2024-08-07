@@ -6,7 +6,7 @@ use tracing::error;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
-#[cfg(windows)]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, path: String)
 where
     T: EngineProvider,
