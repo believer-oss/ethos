@@ -20,5 +20,10 @@ export const getLogs = async (): Promise<LogEvent[]> => invoke('get_logs');
 
 export const openSystemLogsFolder = async (): Promise<void> => invoke('open_system_logs_folder');
 
+export const openTerminalToPath = async (path: string): Promise<void> =>
+	invoke('open_terminal_to_path', {
+		path
+	});
+
 export const getUnrealVersionSelectorStatus = async (): Promise<UnrealVersionSelectorStatus> =>
 	invoke('get_unrealversionselector_status');

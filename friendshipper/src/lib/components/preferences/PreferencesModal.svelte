@@ -3,6 +3,7 @@
 		Accordion,
 		AccordionItem,
 		Button,
+		ButtonGroup,
 		Card,
 		Checkbox,
 		DarkMode,
@@ -21,7 +22,8 @@
 		DatabaseSolid,
 		ExclamationCircleOutline,
 		FolderOpenSolid,
-		UserSolid
+		UserSolid,
+		TerminalSolid
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
@@ -29,7 +31,7 @@
 	import type { AppConfig } from '$lib/types';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
-	import { restart } from '$lib/system';
+	import { openTerminalToPath, restart } from '$lib/system';
 	import { resetRepo } from '$lib/repo';
 
 	export let showModal: boolean;
@@ -76,6 +78,10 @@
 			defaultPath: localAppConfig.engineSourcePath || '.',
 			title: 'Select engine repository folder'
 		});
+	};
+
+	const openTerminalToRepo = async () => {
+		await openTerminalToPath(localAppConfig.repoPath);
 	};
 
 	const onApplyClicked = async () => {
@@ -278,14 +284,25 @@
 						<FolderOpenSolid />
 						Browse
 					</Button>
-					<Input
-						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.repoPath}
-					/>
+					<ButtonGroup class="w-full">
+						<Input
+							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							bind:value={localAppConfig.repoPath}
+						/>
+						<Tooltip class="text-sm" placement="bottom">
+							Specified folder must be a game repository.
+						</Tooltip>
+						<Button
+							class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
+							on:click={openTerminalToRepo}
+						>
+							<TerminalSolid class="w-4 h-4" color="white" />
+						</Button>
+						<Tooltip class="text-sm w-max" placement="bottom">
+							Open powershell to git repo path.
+						</Tooltip>
+					</ButtonGroup>
 				</div>
-				<Tooltip class="text-sm" placement="bottom">
-					Specified folder must be a game repository.
-				</Tooltip>
 
 				<Label class="text-white">Repo URL</Label>
 				<div class="flex gap-1 mb-2">
