@@ -175,7 +175,7 @@ impl Server {
                     .add_root(content_dir.as_path(), RecursiveMode::Recursive);
             }
 
-            // install git hooks
+            // install git hooks + set initial git config
             {
                 let hooks_state = shared_state.clone();
 
@@ -185,6 +185,9 @@ impl Server {
 
                 // avoids spamming a notification if repo/hooks paths are not configured
                 if !repo_path.is_empty() {
+                    let git = hooks_state.git().clone();
+                    git.set_config("gc.auto", "0").await?;
+
                     startup_tx.send("Installing git hooks".to_string())?;
                     if let Some(git_hooks_path) = git_hooks_path {
                         tokio::spawn(async move {

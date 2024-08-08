@@ -102,5 +102,8 @@ where
         *lock = repo_config.clone();
     }
 
+    // set gc.auto 0
+    state.git().set_config("gc.auto", "0").await?;
+
     Ok(())
 }
