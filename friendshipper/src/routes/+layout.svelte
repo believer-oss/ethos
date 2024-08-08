@@ -454,7 +454,7 @@
 		class="flex justify-between items-center gap-1 w-full h-8 bg-secondary-800 dark:bg-space-950 border-b border-opacity-50 border-dotted border-primary-500"
 		data-tauri-drag-region
 	>
-		<div class="pl-2 flex gap-2 items-center">
+		<div class="pl-2 flex gap-2 items-center pointer-events-none">
 			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300">{title}</span>
 		</div>
 		<div class="pr-2 flex gap-2 justify-end">
