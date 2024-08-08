@@ -614,6 +614,10 @@ impl Git {
         Ok(entries)
     }
 
+    pub async fn set_config(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        self.run(&["config", key, value], Opts::default()).await
+    }
+
     pub async fn run_and_collect_output<'a>(
         &self,
         args: &[&str],
