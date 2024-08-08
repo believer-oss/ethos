@@ -345,7 +345,7 @@
 			loginRequired = await checkLoginRequired();
 		};
 
-		void appWindow.onFocusChanged((focused) => {
+		void appWindow.onFocusChanged(({ payload: focused }) => {
 			if (focused) {
 				const now = new Date().getTime();
 				if (now - lastRefresh > refreshInterval) {
