@@ -60,7 +60,7 @@
 
 	let loading = false;
 	let fetchingPulls = false;
-	let quickSubmitting = false;
+	const quickSubmitting = false;
 	let promptForPAT = false;
 	let preferencesOpen = false;
 
@@ -74,6 +74,10 @@
 	let expandedCommit = '';
 	let loadingCommitFiles = false;
 	let commitFiles: CommitFileInfo[] = [];
+
+	// progress modal
+	let showProgressModal = false;
+	let progressModalTitle = '';
 
 	let selectAll = false;
 	let pulls: GitHubPullRequest[] = [];
@@ -163,6 +167,8 @@
 
 	const handleRestoreSnapshot = async (commit: string) => {
 		loadingSnapshots = true;
+		showProgressModal = true;
+		progressModalTitle = 'Restoring snapshot';
 
 		try {
 			await restoreSnapshot(commit);
@@ -178,6 +184,7 @@
 		}
 
 		loadingSnapshots = false;
+		showProgressModal = false;
 	};
 
 	const handleDeleteSnapshot = async (commit: string) => {
@@ -214,6 +221,8 @@
 
 	const handleRevertFiles = async () => {
 		loading = true;
+		showProgressModal = true;
+		progressModalTitle = 'Reverting files';
 
 		await refreshFiles(false);
 
@@ -236,15 +245,27 @@
 		await refreshFiles(false);
 
 		loading = false;
+		showProgressModal = false;
 	};
 
 	const handleSaveSnapshot = async () => {
 		loading = true;
+		showProgressModal = true;
+		progressModalTitle = 'Saving snapshot';
 
 		await refreshFiles(false);
 
 		try {
-			await saveSnapshot($selectedFiles.map((file) => file.path));
+			const currentCommitMessage = get(commitMessage);
+			const message =
+				typeof currentCommitMessage === 'string'
+					? currentCommitMessage
+					: `${currentCommitMessage.type}(${currentCommitMessage.scope}): ${currentCommitMessage.message}`;
+
+			await saveSnapshot(
+				message.length > 0 ? message : 'No message provided',
+				$selectedFiles.map((file) => file.path)
+			);
 
 			$selectedFiles = [];
 			selectAll = false;
@@ -257,11 +278,13 @@
 		}
 
 		loading = false;
+		showProgressModal = false;
 	};
 
 	const handleQuickSubmit = async () => {
 		loading = true;
-		quickSubmitting = true;
+		showProgressModal = true;
+		progressModalTitle = 'Opening pull request';
 
 		await refreshFiles(false);
 
@@ -297,7 +320,7 @@
 		// refresh files after quick submit, whether it was successful or not
 		await refreshFiles(true);
 
-		quickSubmitting = false;
+		showProgressModal = false;
 		loading = false;
 	};
 
@@ -377,6 +400,9 @@
 
 	const handleLockSelected = async () => {
 		loading = true;
+		showProgressModal = true;
+		progressModalTitle = 'Locking files';
+
 		try {
 			const selectedPaths = $selectedFiles.map((file) => file.path);
 			await acquireLocks(selectedPaths, false);
@@ -385,7 +411,9 @@
 		} catch (e) {
 			await emit('error', e);
 		}
+
 		loading = false;
+		showProgressModal = false;
 	};
 
 	onMount(() => {
@@ -410,7 +438,7 @@
 		}
 
 		const interval = setInterval(() => {
-			if (!quickSubmitting) {
+			if (!quickSubmitting && !loadingSnapshots) {
 				void refreshSnapshots();
 			}
 		}, 10000);
@@ -573,8 +601,12 @@
 <Card
 	class="w-full p-4 mt-2 sm:p-4 max-w-full min-h-[16rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 >
-	<Tabs style="underline" contentClass="bg-secondary-700 dark:bg-space-900 h-full overflow-y-auto">
-		<TabItem open title="My Submits" class="bg-secondary-700 dark:bg-space-900">
+	<Tabs
+		style="underline"
+		divider={false}
+		contentClass="bg-secondary-700 dark:bg-space-900 h-full overflow-y-auto"
+	>
+		<TabItem open title="My Submits ({pulls.length})" class="bg-secondary-700 dark:bg-space-900">
 			<Table color="custom" striped>
 				<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 					<TableHeadCell class="p-2">Number</TableHeadCell>
@@ -622,17 +654,16 @@
 				</TableBody>
 			</Table>
 		</TabItem>
-		<TabItem title="Snapshots">
+		<TabItem title="Snapshots ({snapshots.length})">
 			<Table color="custom" striped>
 				<TableHead
 					align="center"
-					class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950"
+					class="text-center border-b-0 p-2 bg-secondary-800 dark:bg-space-950"
 				>
 					<TableHeadCell class="p-2">Timestamp</TableHeadCell>
 					<TableHeadCell class="p-2">Commit</TableHeadCell>
-					<TableHeadCell class="p-2 text-center">Restore</TableHeadCell>
-					<TableHeadCell class="p-2 text-center">Files</TableHeadCell>
-					<TableHeadCell class="p-2 text-center">Delete</TableHeadCell>
+					<TableHeadCell class="p-2 text-center">Message</TableHeadCell>
+					<TableHeadCell class="p-2 text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
 					{#each snapshots as snapshot, index}
@@ -642,45 +673,47 @@
 								? 'bg-secondary-800 dark:bg-space-900'
 								: 'bg-secondary-700 dark:bg-space-950'}"
 						>
-							<TableBodyCell class="p-2">
+							<TableBodyCell class="p-2 w-16">
 								{new Date(snapshot.timestamp).toLocaleString()}
 							</TableBodyCell>
-							<TableBodyCell class="p-2">
-								{snapshot.commit}
+							<TableBodyCell class="p-2 w-8">
+								<code>{snapshot.commit.substring(0, 7)}</code>
 							</TableBodyCell>
-							<TableBodyCell class="flex justify-center p-2"
-								><Button
-									disabled={loadingSnapshots}
-									size="xs"
-									on:click={async () => {
-										await handleRestoreSnapshot(snapshot.commit);
-									}}>Restore</Button
-								></TableBodyCell
-							>
-							<TableBodyCell class="py-2 w-4">
-								<Button
-									size="xs"
-									color="primary"
-									on:click={() =>
-										expandedCommit === snapshot.commit
-											? setExpandedCommit('')
-											: setExpandedCommit(snapshot.commit)}
-								>
-									{#if expandedCommit === snapshot.commit}
-										Hide
-									{:else}
-										Show
-									{/if}
-								</Button>
+							<TableBodyCell class="p-2 text-center max-w-[20rem] truncate">
+								{snapshot.message}
 							</TableBodyCell>
-							<TableBodyCell class="flex items-center justify-center py-2">
-								<Button
-									size="xs"
-									color="red"
-									on:click={() => handleDeleteSnapshot(snapshot.commit)}
-								>
-									Delete
-								</Button>
+							<TableBodyCell class="flex justify-center p-2">
+								<ButtonGroup class="space-x-px">
+									<Button
+										disabled={loadingSnapshots}
+										color="primary"
+										size="xs"
+										on:click={async () => {
+											await handleRestoreSnapshot(snapshot.commit);
+										}}>Restore</Button
+									>
+									<Button
+										size="xs"
+										color="primary"
+										on:click={() =>
+											expandedCommit === snapshot.commit
+												? setExpandedCommit('')
+												: setExpandedCommit(snapshot.commit)}
+									>
+										{#if expandedCommit === snapshot.commit}
+											Hide Files
+										{:else}
+											Show Files
+										{/if}
+									</Button>
+									<Button
+										size="xs"
+										color="red"
+										on:click={() => handleDeleteSnapshot(snapshot.commit)}
+									>
+										Delete
+									</Button>
+								</ButtonGroup>
 							</TableBodyCell>
 						</TableBodyRow>
 						{#if expandedCommit === snapshot.commit}
@@ -746,4 +779,4 @@
 	</div>
 </Modal>
 
-<ProgressModal showModal={quickSubmitting} title="Opening pull request" />
+<ProgressModal showModal={showProgressModal} title={progressModalTitle} />
