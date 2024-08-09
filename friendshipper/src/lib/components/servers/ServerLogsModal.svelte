@@ -18,7 +18,7 @@
 		if (searchTerm === '') {
 			return true;
 		}
-		return line.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1;
+		return line.toLowerCase().includes(searchTerm.toLowerCase());
 	});
 
 	const onOpen = async () => {

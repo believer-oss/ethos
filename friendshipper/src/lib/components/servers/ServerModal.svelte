@@ -51,7 +51,7 @@
 		selectedCommit.set(newCommit);
 	};
 
-	$: void handleCommitChange(selected);
+	$: handleCommitChange(selected);
 
 	$: $builtCommits,
 		() => {
@@ -172,7 +172,9 @@
 				type="text"
 				size="sm"
 				bind:value={serverName}
-				on:input={() => handleValidation()}
+				on:input={() => {
+					handleValidation();
+				}}
 				placeholder="Server Name"
 				color={hasError ? 'red' : 'base'}
 				required

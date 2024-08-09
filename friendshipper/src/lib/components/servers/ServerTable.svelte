@@ -179,7 +179,13 @@
 							placement="bottom"
 							>{logTooltip}
 						</Tooltip>
-						<Button outline size="sm" on:click={() => handleCopyText(server)}>
+						<Button
+							outline
+							size="sm"
+							on:click={() => {
+								handleCopyText(server);
+							}}
+						>
 							<FileCopyOutline class="w-4 h-4" />
 						</Button>
 						<Tooltip
