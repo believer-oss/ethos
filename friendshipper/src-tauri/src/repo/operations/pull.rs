@@ -171,11 +171,18 @@ where
         // since the submitter synced. Since we pull using a rebase, the local commits will be safely merged with the upstream ones
         // and essentially disappear.
         {
-            let repo_status = self.repo_status.read();
+            let repo_status = self.repo_status.read().clone();
             if repo_status.commits_behind == 0 {
                 info!("no commits behind, skipping pull");
 
                 return Ok(());
+            }
+
+            // take a snapshot if we have any modified files
+            if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
+                self.git_client
+                    .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::KeepIndex)
+                    .await?;
             }
         }
 

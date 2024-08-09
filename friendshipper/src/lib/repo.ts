@@ -81,8 +81,8 @@ export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snaps
 export const restoreSnapshot = async (commit: string): Promise<void> =>
 	invoke('restore_snapshot', { commit });
 
-export const saveSnapshot = async (files: string[]): Promise<void> =>
-	invoke('save_snapshot', { files });
+export const saveSnapshot = async (message: string, files: string[]): Promise<void> =>
+	invoke('save_snapshot', { message, files });
 
 export const deleteSnapshot = async (commit: string): Promise<void> =>
 	invoke('delete_snapshot', { commit });

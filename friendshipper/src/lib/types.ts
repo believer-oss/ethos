@@ -275,6 +275,7 @@ export interface RebaseStatusResponse {
 
 export interface Snapshot {
 	commit: string;
+	message: string;
 	timestamp: string;
 }
 

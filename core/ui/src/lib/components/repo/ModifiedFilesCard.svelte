@@ -196,11 +196,8 @@
 				>Revert Selected
 			</Button>
 			{#if snapshotsEnabled}
-				<Button
-					size="xs"
-					disabled={disabled || selectedFiles.length === 0}
-					on:click={onSaveSnapshot}
-					>Save Snapshot
+				<Button size="xs" {disabled} on:click={onSaveSnapshot}
+					>Save Snapshot {selectedFiles.length > 0 ? `(${selectedFiles.length})` : '(all)'}
 				</Button>
 			{/if}
 		</div>
