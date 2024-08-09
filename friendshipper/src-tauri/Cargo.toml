@@ -1,5 +1,5 @@
 [package]
-version = "4.5.5"
+version = "4.5.6"
 name = "friendshipper"
 description = "Friendshipper"
 authors = ["you"]
