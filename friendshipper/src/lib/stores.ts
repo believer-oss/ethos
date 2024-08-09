@@ -97,16 +97,12 @@ export const workflowMap = derived(workflows, ($workflows) => {
 	return map;
 });
 
-export const builtCommits = derived(builds, ($builds) => {
-	if ($builds && $builds.entries) {
-		return $builds.entries.map((v) => ({
-			value: v,
-			name: v.commit
-		}));
-	}
-
-	return [];
-});
+export const builtCommits = derived(builds, ($builds) =>
+	$builds.entries.map((v) => ({
+		value: v,
+		name: v.commit
+	}))
+);
 
 export const allModifiedFiles = derived(repoStatus, ($repoStatus): ModifiedFile[] => {
 	const untracked = $repoStatus?.untrackedFiles ?? [];

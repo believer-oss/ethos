@@ -35,7 +35,13 @@
 
 <div class="flex items-center gap-2">
 	<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Playtests</p>
-	<Button class="!p-1.5" size="xs" on:click={() => handleCreatePlaytest()}>
+	<Button
+		class="!p-1.5"
+		size="xs"
+		on:click={() => {
+			handleCreatePlaytest();
+		}}
+	>
 		<CirclePlusOutline class="w-4 h-4" />
 	</Button>
 	{#if loading}
@@ -44,7 +50,13 @@
 </div>
 <div class="flex flex-col gap-2 mb-2 overflow-auto">
 	{#each $playtests as playtest}
-		<PlaytestCard {playtest} handleEditPlaytest={() => handleEditPlaytest(playtest)} bind:loading />
+		<PlaytestCard
+			{playtest}
+			handleEditPlaytest={() => {
+				handleEditPlaytest(playtest);
+			}}
+			bind:loading
+		/>
 	{/each}
 </div>
 

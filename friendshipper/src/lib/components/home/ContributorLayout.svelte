@@ -129,10 +129,10 @@
 			progressModalText = 'Pulling latest with git';
 			await syncLatest();
 
-			if ($appConfig.pullDlls === false) {
+			if (!$appConfig.pullDlls) {
 				progressModalText = 'Generating projects';
 				await generateSln();
-			} else if ($appConfig.openUprojectAfterSync === true) {
+			} else if ($appConfig.openUprojectAfterSync) {
 				progressModalText = 'Launching Unreal Engine';
 				await openProject();
 			}
@@ -236,7 +236,9 @@
 			void refreshMergeQueue();
 		}, 10000);
 
-		return () => clearInterval(interval);
+		return () => {
+			clearInterval(interval);
+		};
 	});
 </script>
 

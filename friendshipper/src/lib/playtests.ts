@@ -52,4 +52,4 @@ export const getPlaytestGroupForUser = (
 	playtest: Nullable<Playtest>,
 	user: string
 ): Nullable<GroupStatus> =>
-	playtest?.status?.groups.find((group) => group?.users?.includes(user)) ?? null;
+	playtest?.status?.groups.find((group) => group.users?.includes(user)) ?? null;
