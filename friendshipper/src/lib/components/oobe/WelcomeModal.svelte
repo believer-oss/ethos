@@ -74,22 +74,22 @@
 					awsSsoStartUrl !== '' &&
 					awsRoleName !== '' &&
 					artifactBucket !== '';
-				awsAccountId = awsAccountId.replaceAll(' ', '');
-				awsSsoStartUrl = awsSsoStartUrl.replaceAll(' ', '');
-				awsRoleName = awsRoleName.replaceAll(' ', '');
-				artifactBucket = artifactBucket.replaceAll(' ', '');
+				awsAccountId = awsAccountId.trim();
+				awsSsoStartUrl = awsSsoStartUrl.trim();
+				awsRoleName = awsRoleName.trim();
+				artifactBucket = artifactBucket.trim();
 				break;
 			case Page.Username:
 				valid = userDisplayName !== '';
 				break;
 			case Page.GitSetup:
 				valid = gitUsername !== '' && gitEmail !== '' && githubPAT !== '';
-				gitEmail = gitEmail.replaceAll(' ', '');
-				githubPAT = githubPAT.replaceAll(' ', '');
+				gitEmail = gitEmail.trim();
+				githubPAT = githubPAT.trim();
 				break;
 			case Page.CloneSettings:
 				valid = repoUrl !== '' && cloneLocation !== '';
-				repoUrl = repoUrl.replaceAll(' ', '');
+				repoUrl = repoUrl.trim();
 				break;
 			default:
 				break;
