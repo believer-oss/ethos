@@ -52,10 +52,10 @@
 			await syncLatest();
 			await refresh();
 
-			if ($appConfig.pullDlls === false) {
+			if (!$appConfig.pullDlls) {
 				asyncModalText = 'Generating projects';
 				await generateSln();
-			} else if ($appConfig.openUprojectAfterSync === true) {
+			} else if ($appConfig.openUprojectAfterSync) {
 				asyncModalText = 'Launching Unreal Engine';
 				await openProject();
 			}
@@ -206,7 +206,7 @@
 			<UnrealEngineLogoNoCircle class="w-3 h-3 mr-2" />
 			Open Editor
 		</Button>
-		{#if $appConfig.pullDlls === false}
+		{#if !$appConfig.pullDlls}
 			<Button
 				size="xs"
 				color="primary"

@@ -156,8 +156,9 @@
 			outline
 			size="xs"
 			class="border-0"
-			on:click={() =>
-				selectedCommit === commit.commit ? setSelectedCommit('') : setSelectedCommit(commit.commit)}
+			on:click={() => {
+				selectedCommit === commit.commit ? setSelectedCommit('') : setSelectedCommit(commit.commit);
+			}}
 		>
 			{#if selectedCommit === commit.commit}
 				<ChevronDownOutline class="w-5 h-5 text-white" />

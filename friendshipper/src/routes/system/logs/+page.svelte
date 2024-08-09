@@ -43,7 +43,7 @@
 	let searchTerm = '';
 	$: filteredItems = logs.filter(
 		(log) =>
-			JSON.stringify(log.fields).toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1 &&
+			JSON.stringify(log.fields).toLowerCase().includes(searchTerm.toLowerCase()) &&
 			(selectedLevels.includes(log.level) || selectedLevels.length === 0)
 	);
 

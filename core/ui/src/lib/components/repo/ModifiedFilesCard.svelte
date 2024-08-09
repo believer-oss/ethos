@@ -330,7 +330,9 @@
                                 {index % 2 === 0
 								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
 								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
-							on:click={() => handleFileToggled(file)}
+							on:click={() => {
+								handleFileToggled(file);
+							}}
 						>
 							{getFileDisplayString(file)}
 						</Button>

@@ -447,7 +447,9 @@
 			void refreshFiles();
 		}, 30000);
 
-		return () => clearInterval(interval);
+		return () => {
+			clearInterval(interval);
+		};
 	});
 </script>
 
