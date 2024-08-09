@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
 pub struct SaveSnapshotRequest {
+    pub message: String,
     pub files: Vec<String>,
 }
 
@@ -31,7 +32,7 @@ where
 {
     state
         .git()
-        .save_snapshot(req.files, SaveSnapshotIndexOption::KeepIndex)
+        .save_snapshot(&req.message, req.files, SaveSnapshotIndexOption::KeepIndex)
         .await?;
 
     Ok(())

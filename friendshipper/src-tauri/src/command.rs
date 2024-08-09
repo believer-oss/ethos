@@ -443,12 +443,13 @@ pub async fn restore_snapshot(
 #[tauri::command]
 pub async fn save_snapshot(
     state: tauri::State<'_, State>,
+    message: String,
     files: Vec<String>,
 ) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/snapshots/save", state.server_url))
-        .json(&SaveSnapshotRequest { files })
+        .json(&SaveSnapshotRequest { message, files })
         .send()
         .await?;
 

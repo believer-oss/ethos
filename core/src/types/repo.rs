@@ -178,7 +178,7 @@ impl RepoStatus {
     pub fn new() -> Self {
         Self {
             detached_head: false,
-            last_updated: chrono::Utc::now(),
+            last_updated: Utc::now(),
             branch: String::new(),
             remote_branch: String::new(),
             repo_owner: String::new(),
@@ -330,6 +330,7 @@ pub struct CommitFileInfo {
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Snapshot {
     pub commit: String,
+    pub message: String,
     pub timestamp: DateTime<Utc>,
 
     #[serde(skip)]

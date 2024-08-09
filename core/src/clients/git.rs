@@ -10,13 +10,13 @@ use regex::Regex;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 
 use crate::types::errors::CoreError;
 use crate::types::locks::VerifyLocksResponse;
 use crate::types::repo::{File, Snapshot};
 
-static SNAPSHOT_MESSAGE: &str = "ethos-core snapshot";
+static SNAPSHOT_PREFIX: &str = "snapshot";
 
 lazy_static! {
     static ref WORKTREE_DIR_REGEX: Regex = Regex::new(r"^worktree (.+)").unwrap();
@@ -308,32 +308,32 @@ impl Git {
         let output = self
             .run_and_collect_output(
                 &["stash", "list", "--pretty=format:%gd|%gs|%H|%aI"],
-                Opts::default(),
+                Opts::new_without_logs(),
             )
             .await?;
 
         let snapshots = output
             .lines()
             .filter_map(|line| {
-                if !line.contains(SNAPSHOT_MESSAGE) {
+                if !line.contains(SNAPSHOT_PREFIX) {
                     return None;
                 }
 
                 let parts = line.split('|').collect::<Vec<_>>();
                 if parts.len() < 4 {
-                    info!("Skipping line due to bad parse: {}", line);
+                    debug!("Skipping line due to bad parse: {}", line);
                     return None;
                 }
 
                 let stash_index = parts[0].trim();
+                let message = parts[1].split(SNAPSHOT_PREFIX).collect::<Vec<_>>()[1].trim();
                 let commit = parts[2].trim();
                 let date = parts[3].trim();
-
-                info!("Commit: {}, Date: {}", commit, date);
 
                 match DateTime::parse_from_rfc3339(date) {
                     Ok(date) => Some(Snapshot {
                         commit: commit.to_string(),
+                        message: message.to_string(),
                         timestamp: date.with_timezone(&Utc),
                         stash_index: stash_index.to_string(),
                     }),
@@ -348,40 +348,65 @@ impl Git {
         Ok(snapshots)
     }
 
+    pub async fn save_snapshot_all(
+        &self,
+        message: &str,
+        keep_index: SaveSnapshotIndexOption,
+    ) -> anyhow::Result<Snapshot> {
+        self.save_snapshot(message, vec![], keep_index).await
+    }
+
     pub async fn save_snapshot(
         &self,
+        message: &str,
         paths: Vec<String>,
         keep_index: SaveSnapshotIndexOption,
     ) -> anyhow::Result<Snapshot> {
         self.wait_for_lock().await;
 
-        // filter out any deleted files
-        let paths: Vec<String> = paths
-            .into_iter()
-            .filter(|path| self.repo_path.join(path).exists())
-            .collect();
+        // if any deleted files are manually chosen, return an error
+        if paths.clone().into_iter().any(|p| {
+            let path = self.repo_path.join(&p);
+            !path.exists()
+        }) {
+            bail!("Cannot manually snapshot deleted files");
+        }
 
         let mut args = vec!["add", "--"];
+
+        if paths.is_empty() {
+            args.push(".");
+        }
+
         for path in &paths {
             args.push(path);
         }
 
         self.run(&args, Opts::default()).await?;
 
+        let stash_message = format!("{} {}", SNAPSHOT_PREFIX, message);
         let mut stash_args = vec![
             "stash",
             "push",
             "--include-untracked",
             "--message",
-            SNAPSHOT_MESSAGE,
+            &stash_message,
         ];
         if keep_index == SaveSnapshotIndexOption::KeepIndex {
             stash_args.push("--keep-index");
         }
+
         stash_args.push("--");
+
+        // if paths is empty, stash everything
+        if paths.is_empty() {
+            stash_args.push(".");
+        }
+
         for path in &paths {
             stash_args.push(path);
         }
+
         self.run(&stash_args, Opts::default()).await?;
 
         let snapshots = self.list_snapshots().await?;
@@ -390,8 +415,8 @@ impl Git {
         assert!(first.is_some(), "Failed to get snapshot");
 
         // if there are more than 10, `git stash drop` each one after the 10th
-        if snapshots.len() > 10 {
-            for snapshot in snapshots.iter().skip(10) {
+        if snapshots.len() > 25 {
+            for snapshot in snapshots.iter().skip(25) {
                 self.run(&["stash", "drop", &snapshot.stash_index], Opts::default())
                     .await?;
             }
@@ -426,28 +451,24 @@ impl Git {
         commit: &str,
         currently_modified_files: Vec<File>,
     ) -> anyhow::Result<()> {
+        self.wait_for_lock().await;
+
         // get list of files in commit
         let files = self
             .run_and_collect_output(&["stash", "show", "--name-only", commit], Opts::default())
             .await?;
 
-        // get any files that are both in the stash output + currently modified
-        let filtered_files: Vec<String> = files
+        // bail if there are any conflicting files in the stash
+        if files
             .lines()
-            .filter(|f| currently_modified_files.iter().any(|cf| cf.path == *f))
-            .map(|s| s.to_string())
-            .collect();
-
-        // save a snapshot of the currently modified files if they conflict
-        self.save_snapshot(filtered_files, SaveSnapshotIndexOption::DiscardIndex)
-            .await?;
+            .any(|f| currently_modified_files.iter().any(|cf| cf.path == *f))
+        {
+            bail!("Cannot restore snapshot due to conflicting files");
+        }
 
         // check out the files from the stash
-        let mut checkout_args = vec!["checkout", commit, "--"];
-        for file in files.lines() {
-            checkout_args.push(file);
-        }
-        self.run(&checkout_args, Opts::default()).await?;
+        let apply_args = vec!["stash", "apply", commit];
+        self.run(&apply_args, Opts::default()).await?;
 
         // reset so everything is unstaged
         let mut args = vec!["reset", "--"];
