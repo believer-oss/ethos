@@ -178,8 +178,11 @@
 						>New Rig File</Label
 					>
 					<Input label="rigPath" class="h-8 w-1/3" bind:value={newRigEntry} />
-					<Button size="xs" on:click={() => handleAddRig(newRigEntry)}
-						><PlusSolid class="w-3 h-4" /></Button
+					<Button
+						size="xs"
+						on:click={() => {
+							handleAddRig(newRigEntry);
+						}}><PlusSolid class="w-3 h-4" /></Button
 					>
 				</div>
 			</div>
@@ -191,7 +194,9 @@
 					<Button
 						size="xs"
 						class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
-						on:click={() => handleRemoveRig(rigName)}
+						on:click={() => {
+							handleRemoveRig(rigName);
+						}}
 					>
 						<CloseSolid class="w-3 h-3" /></Button
 					>
@@ -205,8 +210,11 @@
 						>New Animation Directory</Label
 					>
 					<Input label="directoryPath" class="h-8 w-1/3" bind:value={newAnimationEntry} />
-					<Button size="xs" on:click={() => handleAddAnimation(newAnimationEntry)}
-						><PlusSolid class="w-3 h-4" /></Button
+					<Button
+						size="xs"
+						on:click={() => {
+							handleAddAnimation(newAnimationEntry);
+						}}><PlusSolid class="w-3 h-4" /></Button
 					>
 				</div>
 			</div>
@@ -218,7 +226,9 @@
 					<Button
 						size="xs"
 						class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
-						on:click={() => handleRemoveAnimation(directoryName)}
+						on:click={() => {
+							handleRemoveAnimation(directoryName);
+						}}
 					>
 						<CloseSolid class="w-3 h-3" /></Button
 					>
@@ -232,8 +242,11 @@
 						>New Mesh File</Label
 					>
 					<Input label="meshPath" class="h-8 w-1/3" bind:value={newMeshEntry} />
-					<Button size="xs" on:click={() => handleAddMesh(newMeshEntry)}
-						><PlusSolid class="w-3 h-4" /></Button
+					<Button
+						size="xs"
+						on:click={() => {
+							handleAddMesh(newMeshEntry);
+						}}><PlusSolid class="w-3 h-4" /></Button
 					>
 				</div>
 			</div>
@@ -245,7 +258,9 @@
 					<Button
 						size="xs"
 						class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
-						on:click={() => handleRemoveMesh(meshName)}
+						on:click={() => {
+							handleRemoveMesh(meshName);
+						}}
 					>
 						<CloseSolid class="w-3 h-3" /></Button
 					>

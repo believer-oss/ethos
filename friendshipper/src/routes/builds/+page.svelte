@@ -33,7 +33,9 @@
 			void refreshWorkflows();
 		}, 30000);
 
-		return () => clearInterval(interval);
+		return () => {
+			clearInterval(interval);
+		};
 	});
 </script>
 
