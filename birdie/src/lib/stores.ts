@@ -1,5 +1,5 @@
 import { derived, type Readable, writable } from 'svelte/store';
-import { type Commit, type ModifiedFile } from '@ethos/core';
+import type { Commit, ModifiedFile } from '@ethos/core';
 import type {
 	AppConfig,
 	Nullable,
