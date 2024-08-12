@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Card, Spinner } from 'flowbite-svelte';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { CirclePlusOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
@@ -41,6 +41,10 @@
 			await emit('error', e);
 		}
 	};
+
+	void listen('preferences-closed', () => {
+		void updateServers();
+	});
 
 	onMount(() => {
 		void updateServers();

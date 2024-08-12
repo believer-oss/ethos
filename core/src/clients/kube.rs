@@ -42,6 +42,7 @@ pub struct KubeClient {
 
     log_tail_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
     log_tx: Option<Sender<String>>,
+    region: String,
     cluster_name: String,
 }
 
@@ -56,6 +57,7 @@ impl KubeClient {
     pub async fn new(
         aws_creds: &AWSClient,
         cluster_name: String,
+        region: String,
         log_tx: Option<Sender<String>>,
     ) -> Result<Self> {
         debug!("Checking AWS credentials");
@@ -68,7 +70,7 @@ impl KubeClient {
 
         debug!("Getting EKS cluster info");
         let (eks_cluster_url, eks_cluster_cert) =
-            match aws_creds.eks_k8s_cluster_info(&cluster_name).await {
+            match aws_creds.eks_k8s_cluster_info(&cluster_name, &region).await {
                 Ok(v) => v,
                 Err(e) => {
                     return Err(anyhow!("Error getting EKS cluster info: {:?}", e));
@@ -76,7 +78,7 @@ impl KubeClient {
             };
 
         debug!("Generating k8s token");
-        let token = match aws_creds.generate_k8s_token(&cluster_name).await {
+        let token = match aws_creds.generate_k8s_token(&cluster_name, &region).await {
             Ok(token) => token,
             Err(e) => {
                 return Err(anyhow!("Error generating k8s token: {:?}", e));
@@ -123,6 +125,7 @@ impl KubeClient {
             default_project: project,
             log_tail_handle: Arc::new(RwLock::new(None)),
             log_tx,
+            region,
             cluster_name,
         })
     }
@@ -188,7 +191,11 @@ impl KubeClient {
             kubeconfig.last_retry_time = Some(Instant::now());
         }
 
-        let token = match self.aws_creds.generate_k8s_token(&self.cluster_name).await {
+        let token = match self
+            .aws_creds
+            .generate_k8s_token(&self.cluster_name, &self.region)
+            .await
+        {
             Ok(token) => token,
             Err(e) => {
                 error!("Error generating k8s token: {:?}", e);

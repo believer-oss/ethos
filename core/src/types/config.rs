@@ -3,6 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::AWS_REGION;
 use anyhow::{anyhow, bail, Result};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -101,8 +102,15 @@ pub struct AppConfig {
     #[serde(default, rename = "selectedArtifactProject")]
     pub selected_artifact_project: Option<String>,
 
+    #[serde(default = "default_playtest_region", rename = "playtestRegion")]
+    pub playtest_region: String,
+
     #[serde(default)]
     pub initialized: bool,
+}
+
+fn default_playtest_region() -> String {
+    AWS_REGION.to_string()
 }
 
 impl AppConfig {
@@ -136,6 +144,7 @@ impl AppConfig {
             record_play: false,
             aws_config: None,
             selected_artifact_project: None,
+            playtest_region: default_playtest_region(),
             initialized: false,
         }
     }
@@ -361,11 +370,8 @@ pub struct DynamicConfig {
     #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_auth_header")]
     pub otlp_auth_header: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub loki_endpoint: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub loki_auth_header: Option<String>,
+    #[serde(default, rename = "playtestRegions")]
+    pub playtest_regions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
