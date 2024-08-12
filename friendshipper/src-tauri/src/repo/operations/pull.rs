@@ -75,6 +75,16 @@ where
             status_op.execute().await?;
         }
 
+        // take a snapshot if we have any modified files
+        // we need to do this before we check for quicksubmit branch so that the
+        // stashes resolve inside out correctly
+        let repo_status = self.repo_status.read().clone();
+        if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
+            self.git_client
+                .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::KeepIndex)
+                .await?;
+        }
+
         // No need to hold a lock for this operation, but pass the ref directly to StatusOp so it can
         // make changes if necessary
         let app_config = self.app_config.read().clone();
@@ -176,13 +186,6 @@ where
                 info!("no commits behind, skipping pull");
 
                 return Ok(());
-            }
-
-            // take a snapshot if we have any modified files
-            if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
-                self.git_client
-                    .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::KeepIndex)
-                    .await?;
             }
         }
 
