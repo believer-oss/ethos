@@ -8,7 +8,7 @@ use opentelemetry_sdk::Resource;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender as MPSCSender;
 use tokio::sync::RwLock as TokioRwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
@@ -132,8 +132,14 @@ where
 
         let kube_client = match aws_client.clone() {
             Some(aws_client) => {
-                let kube_client =
-                    KubeClient::new(&aws_client, cluster_name, Some(server_log_tx.clone())).await?;
+                let region = app_config.read().playtest_region.clone();
+                let kube_client = KubeClient::new(
+                    &aws_client,
+                    cluster_name,
+                    region,
+                    Some(server_log_tx.clone()),
+                )
+                .await?;
                 Arc::new(RwLock::new(Some(kube_client)))
             }
             None => Arc::new(RwLock::new(None)),
@@ -209,6 +215,7 @@ where
     pub async fn replace_aws_client(
         &self,
         client: AWSClient,
+        playtest_region: String,
         username: &str,
     ) -> Result<(), CoreError> {
         let mut aws_client = self.aws_client.write().await;
@@ -216,7 +223,16 @@ where
         info!("Replacing AWS client");
         aws_client.replace(client.clone());
 
-        let new_dynamic_config = client.get_dynamic_config().await?;
+        let new_dynamic_config = match client.get_dynamic_config().await {
+            Ok(config) => config,
+            Err(e) => {
+                error!("Failed to get dynamic config from AWS client: {}", e);
+                return Err(CoreError::from(anyhow!(
+                    "Failed to get dynamic config from AWS client: {}",
+                    e
+                )));
+            }
+        };
 
         {
             let mut dynamic_config = self.dynamic_config.write();
@@ -227,6 +243,11 @@ where
         if let Some(endpoint) = new_dynamic_config.otlp_endpoint {
             if let Some(otel_reload_handle) = self.otel_reload_handle.clone() {
                 otel_reload_handle.modify(|otel_layer| {
+                    // if otel_layer is Some, return
+                    if otel_layer.is_some() {
+                        return;
+                    }
+
                     // if there's an auth token, set OTEL_EXPORTER_OTLP_HEADERS appropriately
                     if let Some(token) = new_dynamic_config.otlp_auth_header {
                         std::env::set_var(
@@ -269,6 +290,7 @@ where
         let new_kube_client = KubeClient::new(
             &client.clone(),
             new_dynamic_config.kubernetes_cluster_name,
+            playtest_region,
             Some(self.gameserver_log_tx.clone()),
         )
         .await?;

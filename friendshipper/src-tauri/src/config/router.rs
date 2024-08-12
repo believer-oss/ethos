@@ -124,7 +124,7 @@ where
             None => true,
         };
 
-        if refresh_client {
+        if refresh_client || current_config.playtest_region != payload.playtest_region {
             info!("Initializing AWS client with new config");
             let new_aws_client = AWSClient::new(
                 Some(state.notification_tx.clone()),
@@ -140,7 +140,10 @@ where
             }
 
             let username = state.app_config.read().user_display_name.clone();
-            state.replace_aws_client(new_aws_client, &username).await?;
+            let playtest_region = payload.playtest_region.clone();
+            state
+                .replace_aws_client(new_aws_client, playtest_region, &username)
+                .await?;
         }
     }
 

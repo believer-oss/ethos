@@ -424,10 +424,9 @@ impl AWSClient {
 
     // Ported from: https://github.com/awslabs/aws-sdk-rust/issues/980#issuecomment-1859340980
     #[instrument(skip_all)]
-    pub async fn generate_k8s_token<'a>(&self, cluster_name: &str) -> Result<String> {
+    pub async fn generate_k8s_token<'a>(&self, cluster_name: &str, region: &str) -> Result<String> {
         let credentials = self.get_credentials().await;
         let expiration = credentials.expiry();
-        let region = crate::AWS_REGION;
         let identity = Identity::new(credentials.clone(), expiration);
         let mut signing_settings = SigningSettings::default();
         signing_settings.signature_location = SignatureLocation::QueryParams;
@@ -484,11 +483,21 @@ impl AWSClient {
     pub async fn eks_k8s_cluster_info(
         &self,
         cluster_name: &str,
+        region: &str,
     ) -> Result<(http::Uri, Vec<Vec<u8>>)> {
         self.check_config().await?;
 
         debug!("Creating EKS client");
-        let client = EksClient::new(&self.get_sdk_config().await);
+
+        let region = region.to_string();
+
+        let current_sdk_config = self.get_sdk_config().await;
+        let region = Region::new(region);
+        let sdk_config = SdkConfig::builder()
+            .credentials_provider(current_sdk_config.credentials_provider().unwrap())
+            .region(region)
+            .build();
+        let client = EksClient::new(&sdk_config);
 
         debug!("Describing EKS cluster {:#?}", cluster_name);
         let resp = client.describe_cluster().name(cluster_name).send().await?;

@@ -11,6 +11,7 @@
 		Label,
 		Modal,
 		Radio,
+		Select,
 		Spinner,
 		Toggle,
 		Tooltip
@@ -26,12 +27,14 @@
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
-	import { appConfig } from '$lib/stores';
+	import { appConfig, dynamicConfig, playtests } from '$lib/stores';
 	import type { AppConfig } from '$lib/types';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
 	import { resetRepo } from '$lib/repo';
+	import { getPlaytests } from '$lib/playtests';
+	import { regions } from '$lib/regions';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -93,18 +96,24 @@
 				await emit('error', e);
 			}
 
+			const regionChanged = $appConfig.playtestRegion !== localAppConfig.playtestRegion;
+
 			try {
 				$appConfig = await getAppConfig();
 			} catch (e) {
 				await emit('error', e);
 			}
+
+			if (regionChanged) {
+				$playtests = await getPlaytests();
+			}
+
+			void emit('preferences-closed');
 			requestInFlight = false;
 		};
 
 		requestInFlight = true;
 		showModal = false;
-
-		void emit('preferences-closed');
 
 		if (shouldShowProgressModal) {
 			showProgressModal = true;
@@ -226,6 +235,20 @@
 				For engineers. Enable if you want to debug the game client locally. Increases download size.
 			</Tooltip>
 		</div>
+		{#if $dynamicConfig.playtestRegions.length > 1}
+			<div class="flex flex-col gap-2 m-4">
+				<Label class="text-white">Playtest Region</Label>
+				<Select
+					size="sm"
+					bind:value={localAppConfig.playtestRegion}
+					class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+				>
+					{#each $dynamicConfig.playtestRegions as region}
+						<option value={region}>{regions[region] || region}</option>
+					{/each}
+				</Select>
+			</div>
+		{/if}
 		<div class="m-4">
 			<Accordion>
 				<AccordionItem

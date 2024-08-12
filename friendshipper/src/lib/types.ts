@@ -11,6 +11,7 @@ export interface DiscordChannelInfo {
 export interface DynamicConfig {
 	maps: string[];
 	playtestDiscordChannels: DiscordChannelInfo[];
+	playtestRegions: string[];
 }
 
 export interface ProjectConfig {
@@ -42,6 +43,7 @@ export interface AppConfig {
 	recordPlay: boolean;
 	awsConfig: AWSConfig;
 	selectedArtifactProject: string;
+	playtestRegion: string;
 	initialized: boolean;
 }
 
