@@ -14,7 +14,6 @@ pub mod auth;
 pub mod builds;
 pub mod config;
 pub mod engine;
-pub mod ludos;
 pub mod obs;
 pub mod playtests;
 pub mod repo;
@@ -52,7 +51,6 @@ where
         .nest("/auth", auth::router())
         .nest("/builds", builds::router())
         .nest("/config", config::router())
-        .nest("/ludos", ludos::router())
         .nest("/obs", obs::router())
         .nest("/playtests", playtests::router())
         .nest("/project", repo::project::router())
