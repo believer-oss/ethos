@@ -15,7 +15,6 @@ use ethos_core::types::playtests::{
 use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::{CommitFileInfo, PushRequest, RepoStatus, Snapshot};
 use friendshipper::builds::router::GetWorkflowsResponse;
-use friendshipper::ludos;
 use friendshipper::repo::operations::{RestoreSnapshotRequest, SaveSnapshotRequest};
 
 #[tauri::command]
@@ -294,92 +293,6 @@ pub async fn stop_workflow(
     }
 
     Ok(res.text().await?)
-}
-
-// Ludos
-#[tauri::command]
-pub async fn ludos_get(
-    state: tauri::State<'_, State>,
-    key: String,
-) -> Result<ludos::GetResponse, TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/ludos/get", state.server_url))
-        .json(&ludos::GetPayload { key })
-        .send()
-        .await?;
-
-    if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
-    }
-
-    Ok(res.json().await?)
-}
-
-#[tauri::command]
-pub async fn ludos_put(
-    state: tauri::State<'_, State>,
-    key: String,
-    json_data: String,
-) -> Result<ludos::PutResponse, TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/ludos/put", state.server_url))
-        .json(&ludos::PutPayload {
-            key,
-            data: json_data,
-            format: String::default(),
-        })
-        .send()
-        .await?;
-
-    if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
-    }
-
-    Ok(res.json().await?)
-}
-
-#[tauri::command]
-pub async fn ludos_list(
-    state: tauri::State<'_, State>,
-    filter: String,
-) -> Result<ludos::ListResponse, TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/ludos/list", state.server_url))
-        .json(&ludos::ListPayload { filter })
-        .send()
-        .await?;
-
-    if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
-    }
-
-    Ok(res.json().await?)
-}
-
-#[tauri::command]
-pub async fn ludos_delete(
-    state: tauri::State<'_, State>,
-    keys: Vec<String>,
-) -> Result<ludos::DeletePayload, TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/ludos/delete", state.server_url))
-        .json(&ludos::DeletePayload { keys })
-        .send()
-        .await?;
-
-    if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
-    }
-
-    Ok(res.json().await?)
 }
 
 // Repo

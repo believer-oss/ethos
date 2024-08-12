@@ -33,13 +33,6 @@ pub enum EngineType {
     Source,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
-pub enum LudosEndpointType {
-    #[default]
-    Local,
-    Custom,
-}
-
 pub type AppConfigRef = Arc<RwLock<AppConfig>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -98,15 +91,6 @@ pub struct AppConfig {
     #[serde(default, rename = "engineRepoUrl")]
     pub engine_repo_url: String,
 
-    #[serde(default, rename = "ludosEndpointType")]
-    pub ludos_endpoint_type: LudosEndpointType,
-
-    #[serde(default, rename = "ludosCustomEndpoint")]
-    pub ludos_custom_endpoint: String,
-
-    #[serde(default, rename = "ludosShowUI")]
-    pub ludos_show_ui: bool,
-
     #[serde(default, rename = "recordPlay")]
     pub record_play: bool,
 
@@ -149,9 +133,6 @@ impl AppConfig {
             engine_source_path: Default::default(),
             engine_download_symbols: false,
             engine_repo_url: Default::default(),
-            ludos_endpoint_type: LudosEndpointType::Local,
-            ludos_custom_endpoint: Default::default(),
-            ludos_show_ui: false,
             record_play: false,
             aws_config: None,
             selected_artifact_project: None,
@@ -207,15 +188,6 @@ impl AppConfig {
         let project_path = self.get_uproject_path(repo_config);
         let uproject = UProject::load(&project_path)?;
         Ok(self.get_engine_path(&uproject))
-    }
-
-    pub fn ludos_endpoint(&self) -> String {
-        let endpoint: &str = match self.ludos_endpoint_type {
-            LudosEndpointType::Local => "http://localhost:18080",
-            LudosEndpointType::Custom => &self.ludos_custom_endpoint,
-        };
-
-        endpoint.to_string()
     }
 
     pub fn ensure_github_pat(&self) -> Result<String, CoreError> {
@@ -382,12 +354,6 @@ pub struct DynamicConfig {
 
     #[serde(default)]
     pub kubernetes_cluster_name: String,
-
-    #[serde(default, rename = "ludosEnabled")]
-    pub ludos_enabled: bool,
-
-    #[serde(default)]
-    pub ludos_access_secret: String,
 
     #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_endpoint")]
     pub otlp_endpoint: Option<String>,

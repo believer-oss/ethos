@@ -22,7 +22,6 @@
 		CodeBranchSolid,
 		CogOutline,
 		ComputerSpeakerSolid,
-		DatabaseSolid,
 		HomeSolid,
 		MinusOutline,
 		UserSolid,
@@ -688,33 +687,6 @@
 									spanClass={sidebarSubItemClass}
 									href="/source/diagnostics"
 									active={activeUrl === '/source/diagnostics'}
-								/>
-							</SidebarDropdownWrapper>
-						{/if}
-						{#if $dynamicConfig.ludosEnabled && $appConfig.ludosShowUI}
-							<SidebarDropdownWrapper
-								label="Ludos"
-								class="group/item text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950 rounded-lg"
-								ulClass="my-2 rounded-lg py-1 bg-secondary-800 dark:bg-space-950"
-							>
-								<svelte:fragment slot="icon">
-									<DatabaseSolid
-										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-									/>
-								</svelte:fragment>
-								<svelte:fragment slot="arrowup">
-									<ChevronUpOutline class="h-5 w-5 text-white" />
-								</svelte:fragment>
-								<svelte:fragment slot="arrowdown">
-									<ChevronDownOutline class="h-5 w-5 text-white" />
-								</svelte:fragment>
-								<SidebarItem
-									label="Storage"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									class={sidebarSubItemClass}
-									href="/ludos/objects"
-									active={activeUrl === '/ludos/objects'}
 								/>
 							</SidebarDropdownWrapper>
 						{/if}

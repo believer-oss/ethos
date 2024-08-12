@@ -19,7 +19,6 @@
 		AtomOutline,
 		CloudArrowUpSolid,
 		CodeBranchSolid,
-		DatabaseSolid,
 		ExclamationCircleOutline,
 		FolderOpenSolid,
 		UserSolid,
@@ -27,7 +26,7 @@
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
-	import { appConfig, dynamicConfig } from '$lib/stores';
+	import { appConfig } from '$lib/stores';
 	import type { AppConfig } from '$lib/types';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
@@ -47,7 +46,6 @@
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
-	$: isLudosEndpointNotCustom = localAppConfig.ludosEndpointType !== 'Custom';
 
 	const onOpen = () => {
 		localAppConfig = structuredClone($appConfig);
@@ -483,61 +481,6 @@
 			</div>
 		</div>
 	</div>
-
-	{#if $dynamicConfig.ludosEnabled}
-		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
-			<DatabaseSolid />
-			Ludos
-		</h1>
-		<div class="rounded-lg border border-gray-300 dark:border-gray-300">
-			<div class="mt-4 mb-4 ml-4 mr-4 flex flex-col gap-4">
-				<div class="flex flex-row gap-2">
-					<Checkbox
-						id="ludosShowUICheckbox"
-						bind:checked={localAppConfig.ludosShowUI}
-						class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
-					/>
-					<Label class="text-white">Show UI</Label>
-				</div>
-				<Tooltip>Only engineers should need this functionality.</Tooltip>
-				<div class="flex gap-2">
-					<Radio
-						name="endpoint"
-						bind:group={localAppConfig.ludosEndpointType}
-						class="mb-2 text-white"
-						value="Local"
-						>Local
-					</Radio>
-					{#if localAppConfig.ludosEndpointType === 'Local'}
-						<Label class="text-primary-400 dark:text-primary-400">http://localhost:18080</Label>
-					{:else}
-						<Label class="text-primary-400">http://localhost:18080</Label>
-					{/if}
-				</div>
-				<Tooltip class="text-sm" placement="top">
-					Default settings for a Ludos instance running in a local docker container.
-				</Tooltip>
-
-				<div class="flex gap-2">
-					<Radio
-						name="endpoint"
-						bind:group={localAppConfig.ludosEndpointType}
-						class="mb-2 text-white"
-						value="Custom"
-						>Custom
-					</Radio>
-					<Input
-						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.ludosCustomEndpoint}
-						bind:disabled={isLudosEndpointNotCustom}
-					/>
-				</div>
-				<Tooltip class="text-sm" placement="bottom">
-					Escape hatch if you want to use a custom endpoint.
-				</Tooltip>
-			</div>
-		</div>
-	{/if}
 
 	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
 		<CloudArrowUpSolid />

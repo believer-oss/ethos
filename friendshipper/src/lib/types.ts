@@ -11,7 +11,6 @@ export interface DiscordChannelInfo {
 export interface DynamicConfig {
 	maps: string[];
 	playtestDiscordChannels: DiscordChannelInfo[];
-	ludosEnabled: boolean;
 }
 
 export interface ProjectConfig {
@@ -40,9 +39,6 @@ export interface AppConfig {
 	engineSourcePath: string;
 	engineDownloadSymbols: boolean;
 	engineRepoUrl: string;
-	ludosEndpointType: string;
-	ludosCustomEndpoint: string;
-	ludosShowUI: boolean;
 	recordPlay: boolean;
 	awsConfig: AWSConfig;
 	selectedArtifactProject: string;
@@ -343,27 +339,6 @@ export interface CommitWorkflowInfo {
 
 export interface GetWorkflowsResponse {
 	commits: CommitWorkflowInfo[];
-}
-
-export interface LudosGetResponse {
-	key: string;
-	format: string;
-	data: string;
-}
-
-export interface LudosPutResponse {}
-
-export interface LudosListResponseItem {
-	key: string;
-	format: string;
-}
-
-export interface LudosListResponse {
-	objects: LudosListResponseItem[];
-}
-
-export interface LudosDeleteResponse {
-	keys: string[];
 }
 
 export interface UnrealVersionSelectorStatus {
