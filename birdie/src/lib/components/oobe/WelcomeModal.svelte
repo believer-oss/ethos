@@ -49,9 +49,12 @@
 		switch (currentPage) {
 			case Page.GitSetup:
 				valid = gitUsername !== '' && gitEmail !== '' && githubPAT !== '';
+				gitEmail = gitEmail.trim();
+				githubPAT = githubPAT.trim();
 				break;
 			case Page.CloneSettings:
 				valid = repoUrl !== '' && cloneLocation !== '';
+				repoUrl = repoUrl.trim();
 				break;
 			default:
 				break;
