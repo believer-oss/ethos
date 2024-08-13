@@ -96,6 +96,14 @@ jobs:
           cache: "yarn"
           cache-dependency-path: "${{ matrix.app }}/yarn.lock"
 
+      - name: Check format and linting
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        run: |
+          cargo fmt -p ethos-core -- --check
+          cargo fmt -p ${{ matrix.app }} -- --check 
+          cargo clippy --all-features -p ethos-core -- -D warnings
+          cargo clippy --all-features -p ${{ matrix.app }} -- -D warnings
+
       - name: Run unit tests
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
@@ -163,6 +171,14 @@ jobs:
           node-version: "20"
           cache: "yarn"
           cache-dependency-path: "${{ matrix.app }}/yarn.lock"
+
+      - name: Check format and linting
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        run: |
+          cargo fmt -p ethos-core -- --check
+          cargo fmt -p ${{ matrix.app }} -- --check 
+          cargo clippy --all-features -p ethos-core -- -D warnings
+          cargo clippy --all-features -p ${{ matrix.app }} -- -D warnings
 
       - name: Run unit tests
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
