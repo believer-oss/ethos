@@ -231,7 +231,7 @@
 				if ($appConfig.repoPath !== '') {
 					const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
 						getRepoConfig(),
-						getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.True),
+						getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False),
 						getAllCommits()
 					]);
 
