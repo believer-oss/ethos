@@ -174,7 +174,7 @@
 
 			// force update of repo status
 			message = 'Updating repo status...';
-			$repoStatus = await getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.True);
+			$repoStatus = await getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False);
 
 			// run initial fetch of DLLs - it may be worth moving this and the engine fetch
 			// to the clone endpoint on the backend
