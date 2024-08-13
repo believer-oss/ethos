@@ -12,7 +12,7 @@ use crate::state::AppState;
 use ethos_core::clients::git;
 use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
-use ethos_core::types::locks::ForceUnlock;
+use ethos_core::types::locks::LockOperation;
 use ethos_core::types::repo::RevertFilesRequest;
 use ethos_core::worker::{Task, TaskSequence};
 
@@ -217,9 +217,20 @@ where
     if !request.files.is_empty() {
         let lock_paths = request.files.to_vec();
         let github_pat = state.app_config.read().ensure_github_pat()?;
+        let github_username = state.github_username();
 
-        let op = LockOp::unlock(state.git(), lock_paths, github_pat, ForceUnlock::False);
-        sequence.push(Box::new(op));
+        let lock_op = LockOp {
+            git_client: state.git(),
+            paths: lock_paths,
+            op: LockOperation::Unlock,
+            response_tx: None,
+            github_pat,
+            repo_status: state.repo_status.clone(),
+            github_username,
+            force: false,
+        };
+
+        sequence.push(Box::new(lock_op));
     }
 
     let _ = state.operation_tx.send(sequence).await;

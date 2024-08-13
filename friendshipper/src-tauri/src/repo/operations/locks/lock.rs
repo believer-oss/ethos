@@ -7,6 +7,7 @@ use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::{LockOperation, LockResponse};
 use ethos_core::types::repo::LockRequest;
+use ethos_core::worker::TaskSequence;
 
 use crate::state::AppState;
 
@@ -90,22 +91,44 @@ where
     T: EngineProvider,
 {
     let github_pat = state.app_config.read().ensure_github_pat()?;
+    let github_username = state.github_username();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<LockResponse>(1);
 
-    let lock_op = {
-        LockOp {
-            git_client: state.git(),
-            paths: request.paths,
-            op,
-            github_pat,
-            force: request.force,
-        }
+    let lock_op = LockOp {
+        git_client: state.git(),
+        paths: request.paths,
+        op,
+        response_tx: Some(response_tx.clone()),
+        github_pat,
+        repo_status: state.repo_status.clone(),
+        github_username,
+        force: request.force,
     };
 
-    match lock_op.run().await {
-        Ok(response) => Ok(Json(response)),
-        Err(e) => Err(CoreError(anyhow!(
-            "Error executing lock op: {}",
-            e.to_string()
-        ))),
+    let (task_tx, task_rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+
+    let mut sequence = TaskSequence::new().with_completion_tx(task_tx);
+    sequence.push(Box::new(lock_op));
+
+    state.operation_tx.send(sequence).await?;
+
+    match task_rx.await {
+        Ok(e) => {
+            if let Some(e) = e {
+                error!("Lock operation ({:?}) failed: {}", op, e);
+                return Err(CoreError(e));
+            }
+        }
+        Err(_) => {
+            return Err(CoreError(anyhow!(
+                "Error executing lock operation ({:?})",
+                op
+            )))
+        }
+    }
+
+    match response_rx.recv().await {
+        Some(response) => Ok(Json(response)),
+        None => Err(CoreError(anyhow!("Failed to get lock response"))),
     }
 }

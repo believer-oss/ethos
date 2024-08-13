@@ -53,7 +53,7 @@ pub struct VerifyLocksResponse {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum LockOperation {
     Lock,
     Unlock,

@@ -223,12 +223,17 @@ async fn internal_lock_handler(
         });
     }
 
+    let github_username = state.github_username();
+
     let lock_op = {
         LockOp {
             git_client: state.git(),
             paths,
             op,
+            response_tx: None,
             github_pat,
+            repo_status: state.repo_status.clone(),
+            github_username,
             force: request.force,
         }
     };
