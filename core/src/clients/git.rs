@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
+use sysinfo::{System};
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
@@ -626,6 +627,13 @@ impl Git {
         // assert we have at least one arg
         if args.is_empty() {
             bail!("No arguments provided to git command");
+        }
+
+        let mut sys = System::new();
+        sys.refresh_processes();
+        // Just bail if we have more than 3 git-credential-manager procs running, because it might be death spiraling
+        if sys.processes_by_name("git-credential-manager").count() > 3 {
+            bail!("User may need to authenticate with the git credential manager");
         }
 
         let mut output = Some(String::new());
