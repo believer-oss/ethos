@@ -366,7 +366,7 @@ impl Git {
 
         // if any deleted files are manually chosen, return an error
         if paths.clone().into_iter().any(|p| {
-            let path = self.repo_path.join(&p);
+            let path = self.repo_path.join(p);
             !path.exists()
         }) {
             bail!("Cannot manually snapshot deleted files");

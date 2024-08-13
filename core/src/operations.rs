@@ -2,7 +2,9 @@ use crate::clients::git;
 use crate::clients::git::Opts;
 use crate::types::commits::Commit;
 use crate::types::config::RepoConfig;
-use crate::types::locks::{ForceUnlock, LockOperation, LockResponse};
+use crate::types::locks::Lock;
+use crate::types::locks::OwnerInfo;
+use crate::types::locks::{LockOperation, LockResponse};
 use crate::types::repo::{LockRequest, RepoStatusRef};
 use crate::worker::Task;
 use anyhow::bail;
@@ -188,7 +190,10 @@ pub struct LockOp {
     pub paths: Vec<String>,
     pub github_pat: String,
     pub op: LockOperation,
+    pub repo_status: RepoStatusRef,
+    pub github_username: String,
     pub force: bool,
+    pub response_tx: Option<tokio::sync::mpsc::Sender<LockResponse>>,
 }
 
 #[async_trait]
@@ -201,7 +206,7 @@ impl Task for LockOp {
     }
 
     fn get_name(&self) -> String {
-        String::from("LfsLock")
+        format!("LockOp ({:?})", self.op)
     }
 }
 
@@ -274,6 +279,39 @@ impl LockOp {
                 warn!("Failed to lock path {}: {}", failure.path, failure.reason);
             }
 
+            // update repo status to ensure any status updates sent to the engine have the latest lock info
+            {
+                let mut repo_status = self.repo_status.write();
+                if self.op == LockOperation::Lock {
+                    let timestamp: String = chrono::Utc::now().to_rfc3339();
+                    for lock in lock_response.batch.paths.iter() {
+                        repo_status.locks_ours.push(Lock {
+                            id: String::new(),
+                            path: lock.clone(),
+                            display_name: Some(String::new()),
+                            locked_at: timestamp.clone(),
+                            owner: Some(OwnerInfo {
+                                name: self.github_username.clone(),
+                            }),
+                        });
+                    }
+                } else {
+                    let filter_func = |lock: &Lock| {
+                        !lock_response
+                            .batch
+                            .paths
+                            .iter()
+                            .any(|path| *path == lock.path)
+                    };
+
+                    repo_status.locks_ours.retain(filter_func);
+
+                    if self.force {
+                        repo_status.locks_theirs.retain(filter_func)
+                    }
+                }
+            }
+
             if should_set_read_flag {
                 let set_readonly = self.op != LockOperation::Lock;
                 let operation_str = if set_readonly { "set" } else { "clear" };
@@ -331,6 +369,9 @@ impl LockOp {
                 }
             }
 
+            if let Some(response_tx) = &self.response_tx {
+                response_tx.send(lock_response.clone()).await?;
+            }
             return Ok(lock_response);
         } else if status == StatusCode::NOT_FOUND {
             info!(
@@ -361,30 +402,9 @@ impl LockOp {
             self.git_client.run(&args, Opts::default()).await?;
         }
 
+        if let Some(response_tx) = &self.response_tx {
+            response_tx.send(LockResponse::default()).await?;
+        }
         Ok(LockResponse::default())
-    }
-    pub fn lock(git_client: git::Git, paths: Vec<String>, github_pat: String) -> LockOp {
-        LockOp {
-            git_client,
-            paths,
-            github_pat,
-            op: LockOperation::Lock,
-            force: false,
-        }
-    }
-
-    pub fn unlock(
-        git_client: git::Git,
-        paths: Vec<String>,
-        github_pat: String,
-        force: ForceUnlock,
-    ) -> LockOp {
-        LockOp {
-            git_client,
-            paths,
-            github_pat,
-            op: LockOperation::Unlock,
-            force: force == ForceUnlock::True,
-        }
     }
 }
