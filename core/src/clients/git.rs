@@ -407,7 +407,11 @@ impl Git {
             stash_args.push(path);
         }
 
-        self.run(&stash_args, Opts::default()).await?;
+        // In testing, we found that regularly this would throw unlink errors when the editor was
+        // open. However, the snapshot still gets created successfully, so in this particular case
+        // we can ignore the error.
+        self.run(&stash_args, Opts::new_with_ignored(&["unable to unlink"]))
+            .await?;
 
         let snapshots = self.list_snapshots().await?;
 
