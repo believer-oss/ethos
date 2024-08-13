@@ -87,7 +87,7 @@ impl Server {
             // start the operation worker
             startup_tx.send("Starting operation worker".to_string())?;
             let (op_tx, op_rx) = mpsc::channel(32);
-            let mut worker = RepoWorker::new(app_config.clone(), op_rx, pause_file_watcher.clone());
+            let mut worker = RepoWorker::new(op_rx, pause_file_watcher.clone());
             tokio::spawn(async move {
                 worker.run().await;
             });
