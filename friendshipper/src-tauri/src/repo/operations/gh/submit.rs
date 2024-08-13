@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
-use directories_next::ProjectDirs;
 use octocrab::models::pulls::MergeableState;
 use octocrab::Octocrab;
 use std::path::PathBuf;
@@ -12,9 +11,9 @@ use crate::engine::EngineProvider;
 use crate::repo::operations::{PushRequest, StatusOp};
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
-use crate::APP_NAME;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
+use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
 use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
@@ -220,53 +219,30 @@ where
 
         // save a snapshot before submitting
         // make sure we have a temp dir for copying our files
-        let proj_dirs =
-            ProjectDirs::from("", "", APP_NAME).ok_or(anyhow!("Failed to get project dirs"))?;
-
-        let mut stash_path = proj_dirs.data_dir().to_path_buf();
-        stash_path.push(".stash");
-
-        // reset the stash path, delete and recreate
-        if stash_path.exists() {
-            std::fs::remove_dir_all(&stash_path)?;
-        }
-
-        std::fs::create_dir_all(&stash_path)?;
-
-        let current_branch = self.git_client.current_branch().await?;
-
-        // identify files that were deleted in the request
-        let (stashed_files, deleted_files): (Vec<String>, Vec<String>) =
-            self.files.iter().cloned().partition(|file| {
-                // build path from repo path
-                let path = self.git_client.repo_path.join(file);
-                // check if the file exists
-                path.exists()
-            });
-
-        // for each file, copy it to the stash
-        for file in &stashed_files {
-            let src = self.git_client.repo_path.join(file.clone());
-            let dest = stash_path.join(file);
-
-            std::fs::create_dir_all(dest.parent().unwrap())?;
-            std::fs::copy(src, dest)?;
-        }
+        let snapshot = self
+            .git_client
+            .save_snapshot_all("pre-submit", SaveSnapshotIndexOption::KeepIndex)
+            .await?;
 
         match self.execute_internal().await {
             Ok(_) => Ok(()),
             Err(e) => {
                 // attempt to reset to original branch and restore snapshot
                 // if this fails for any reason, we should simply log, then return the original error
-                let _ = self
-                    .recover(stash_path, &current_branch, stashed_files, deleted_files)
+                let branch = self.repo_status.read().branch.clone();
+                self.git_client.hard_reset(&branch).await?;
+
+                match self
+                    .git_client
+                    .restore_snapshot(&snapshot.commit, vec![])
                     .await
-                    .map_err(|err| {
-                        warn!(
-                            "Failed to recover from error during submit operation: {}",
-                            err
-                        );
-                    });
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        // log the error, but don't return it
+                        warn!("Failed to restore snapshot after failed submit: {}", e);
+                    }
+                }
 
                 Err(e)
             }
