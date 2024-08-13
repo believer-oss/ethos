@@ -436,15 +436,24 @@ where
 
         debug!("s3 entries list: {:?}", builds);
 
+        let dll_branch = match is_quicksubmit_branch(&status.branch) {
+            true => self.repo_config.read().trunk_branch.clone(),
+            false => status.branch.clone(),
+        };
+        let dll_branch_remote = format!("origin/{}", dll_branch);
+
         let git_opts = git::Opts::new_without_logs();
         let local_commit_shas: String = self
             .git_client
-            .run_and_collect_output(&["log", "--format=\"%H\"", "-1000"], git_opts)
+            .run_and_collect_output(&["log", "--format=\"%H\"", "-1000", &dll_branch], git_opts)
             .await
             .unwrap_or(String::new());
         let remote_commit_shas: String = self
             .git_client
-            .run_and_collect_output(&["log", "--format=\"%H\"", "-1000", "FETCH_HEAD"], git_opts)
+            .run_and_collect_output(
+                &["log", "--format=\"%H\"", "-1000", &dll_branch_remote],
+                git_opts,
+            )
             .await
             .unwrap_or(String::new());
 
