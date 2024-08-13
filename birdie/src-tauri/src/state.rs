@@ -9,7 +9,6 @@ use tracing::{error, info};
 
 use ethos_core::clients::{git, github};
 use ethos_core::types::config::AppConfigRef;
-use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::repo::{RepoStatus, RepoStatusRef};
 use ethos_core::worker::TaskSequence;
 
@@ -17,7 +16,6 @@ use crate::repo::{LockCache, LockCacheRef};
 
 pub struct AppState {
     pub app_config: AppConfigRef,
-    pub repo_config: RepoConfigRef,
     pub config_file: PathBuf,
 
     pub repo_status: RepoStatusRef,
@@ -38,7 +36,6 @@ impl AppState {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         app_config: AppConfigRef,
-        repo_config: RepoConfigRef,
         config_file: PathBuf,
         operation_tx: MPSCSender<TaskSequence>,
         version: String,
@@ -90,7 +87,6 @@ impl AppState {
 
         Ok(Self {
             app_config,
-            repo_config,
             config_file,
             repo_status,
             operation_tx,

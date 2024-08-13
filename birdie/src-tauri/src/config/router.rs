@@ -6,7 +6,7 @@ use tracing::info;
 
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::types::config::AppConfig;
-use ethos_core::types::config::{ConfigValidationError, RepoConfig};
+use ethos_core::types::config::ConfigValidationError;
 use ethos_core::types::errors::CoreError;
 
 use crate::repo::clone_handler;
@@ -21,28 +21,12 @@ use crate::{APP_NAME, KEYRING_USER};
 pub fn router(shared_state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(get_config).post(update_config))
-        .route("/repo", get(get_repo_config))
         .with_state(shared_state)
 }
 
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<AppConfig> {
     let config = state.app_config.read().clone();
     Json(config)
-}
-
-async fn get_repo_config(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<RepoConfig>, CoreError> {
-    let config = state.repo_config.read();
-
-    if config.trunk_branch.is_empty() {
-        return Err(anyhow!(ConfigValidationError(
-            "Trunk branch is not configured in the repository. Check friendshipper.yaml in the root of your project.".to_string()
-        ))
-            .into());
-    }
-
-    Ok(Json(config.clone()))
 }
 
 #[debug_handler]
@@ -184,15 +168,9 @@ fn save_config_to_file(state: Arc<AppState>, log_msg: &str) -> Result<(), CoreEr
         .unwrap();
 
     let mut config = state.app_config.read().clone();
-    let repo_config = config.initialize_repo_config()?;
 
     // Get rid of the PAT
     config.github_pat = None;
-
-    {
-        let mut lock = state.repo_config.write();
-        *lock = repo_config;
-    }
 
     serde_yaml::to_writer(file, &config).unwrap();
 

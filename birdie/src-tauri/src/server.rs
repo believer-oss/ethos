@@ -54,7 +54,6 @@ impl Server {
 
         if let (Some(config_file), Some(config)) = self.initialize_app_config()? {
             let app_config = Arc::new(RwLock::new(config.clone()));
-            let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
 
             let pause_file_watcher = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -70,7 +69,6 @@ impl Server {
             let shared_state = Arc::new(
                 AppState::new(
                     app_config.clone(),
-                    repo_config.clone(),
                     config_file,
                     op_tx.clone(),
                     VERSION.to_string(),
