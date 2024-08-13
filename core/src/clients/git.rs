@@ -656,8 +656,7 @@ impl Git {
 
         let mut sys = System::new();
         sys.refresh_processes_specifics(
-            ProcessRefreshKind::new()
-                .with_exe(UpdateKind::OnlyIfNotSet)
+            ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
         );
         // Just bail if we have more than 3 git-credential-manager procs running, because it might be death spiraling
         if sys.processes_by_name("git-credential-manager").count() > 3 {
