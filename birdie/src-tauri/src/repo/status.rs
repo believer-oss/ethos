@@ -190,8 +190,6 @@ impl StatusOp {
                         file.locked_by = lock.owner.clone().map(|x| x.name).unwrap_or_default();
                     } else if status.locks_ours.iter().any(|x| x.path == file.path) {
                         file.locked_by.clone_from(&self.github_username);
-                    } else {
-                        file.submit_status = SubmitStatus::CheckoutRequired;
                     }
                 }
             };
