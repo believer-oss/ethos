@@ -136,7 +136,6 @@ pub async fn push_handler(
         let task = PullOp {
             app_config,
             repo_status: state.repo_status.clone(),
-            trunk_branch: state.repo_config.read().trunk_branch.clone(),
             git_client: state.git(),
             github_username: state.github_username(),
         };
@@ -158,7 +157,7 @@ pub async fn push_handler(
         files: request.files.clone(),
         git_client: state.git(),
         repo_status: state.repo_status.clone(),
-        trunk_branch: state.repo_config.read().trunk_branch.clone(),
+        trunk_branch: "main".to_string(),
     };
 
     sequence.push(Box::new(push_op));

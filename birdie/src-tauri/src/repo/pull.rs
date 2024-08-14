@@ -22,9 +22,6 @@ pub struct PullOp {
     #[allow(dead_code)]
     pub app_config: AppConfig,
     pub repo_status: RepoStatusRef,
-    // This does not get read
-    #[allow(dead_code)]
-    pub trunk_branch: String,
     pub git_client: git::Git,
     pub github_username: String,
 }
@@ -93,7 +90,6 @@ pub async fn pull_handler(
     let pull_op = PullOp {
         app_config: config,
         repo_status: state.repo_status.clone(),
-        trunk_branch: state.repo_config.read().trunk_branch.clone(),
         git_client: state.git(),
         github_username: state.github_username(),
     };
