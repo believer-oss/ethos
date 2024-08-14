@@ -3,7 +3,7 @@
 </p>
 <h1 align='center'>Friendshipper</h1>
 
-Friendshipper is a desktop application for managing Unreal Engine project source control through Git. It:
+Friendshipper is a desktop application for managing Unreal Engine project source control through Git.
 
 - Uses [longtail](https://github.com/DanEngelbrecht/golongtail) to download builds of the game client.
 - Interacts with [f11r-operator](https://github.com/believer-oss/f11r-operator) to create game servers and facilitate
@@ -23,7 +23,7 @@ for writing Rust apps with a web-stack frontend. We use [Svelte](https://svelte.
 flowchart LR
 	subgraph "Local PC"
 		direction LR
-		UE["Unreal Editor"] -- HTTP RPC --> Friendshipper["friendshipper"]
+		UE["Unreal Editor"] -- HTTP RPC <--> Friendshipper["friendshipper"]
 		Friendshipper -. spawns .-> Client
 		Friendshipper -- via Git --> LFS["LFS Server"]
 		Friendshipper -- via Git --> GitHub
@@ -48,7 +48,7 @@ There are a few internal libs that are built into friendshipper:
 
 - `friendshipper/` - the Friendshipper UI and backend
 - `birdie` - A PoC art pipeline tool
-- `ethos-core/`: Code shared between various applications
+- `core/`: Code shared between various applications
 
 # Development
 
@@ -132,6 +132,9 @@ Our project is set up to take advantage of Tauri's hot-reloading feature. When s
 
 - Rust code: The application will automatically be killed, rebuilt, and launched
 - Frontend (web UI): Tauri will reload the page in-place, making it very fast to iterate on UI.
+
+Note that if you make changes to frontend components in `core/ui/`, you need to run `yarn` in the same directory to
+rebuild the shared components, and restart the app you're developing so it picks up the changes.
 
 ### Getting ready for commit
 
