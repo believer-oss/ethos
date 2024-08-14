@@ -3,6 +3,7 @@
 	import { CirclePlusOutline } from 'flowbite-svelte-icons';
 
 	// We get our playtests from the parent store
+	import { onMount } from 'svelte';
 	import { builds, playtests } from '$lib/stores';
 	import type { Playtest } from '$lib/types';
 	import { getPlaytests, ModalState } from '$lib/playtests';
@@ -31,6 +32,16 @@
 		playtests.set(await getPlaytests());
 		loading = false;
 	};
+
+	const updatePlaytests = async () => {
+		loading = true;
+		playtests.set(await getPlaytests());
+		loading = false;
+	};
+
+	onMount(() => {
+		void updatePlaytests();
+	});
 </script>
 
 <div class="flex items-center gap-2">
