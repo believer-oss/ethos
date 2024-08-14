@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "windows"))]
 use crate::fs::LocalDownloadPath;
 use crate::storage::StorageSchemaVersion;
-use crate::types::errors::CoreError;
 
 lazy_static! {
     // Attempts to match the format <branch>-<short sha>. See test_engine_association_regex() for examples.
@@ -197,16 +196,6 @@ impl AppConfig {
         let project_path = self.get_uproject_path(repo_config);
         let uproject = UProject::load(&project_path)?;
         Ok(self.get_engine_path(&uproject))
-    }
-
-    pub fn ensure_github_pat(&self) -> Result<String, CoreError> {
-        match self.github_pat.clone() {
-            Some(pat) => Ok(pat),
-            None => Err(anyhow!(
-                "GitHub PAT is not configured. Please configure it in the settings.".to_string()
-            )
-            .into()),
-        }
     }
 }
 

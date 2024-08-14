@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use axum::extract::State;
 use axum::{async_trait, Json};
 use std::fs;
@@ -216,7 +216,14 @@ where
     // unlock reverted files
     if !request.files.is_empty() {
         let lock_paths = request.files.to_vec();
-        let github_pat = state.app_config.read().ensure_github_pat()?;
+        let github_pat = state
+            .app_config
+            .read()
+            .github_pat
+            .clone()
+            .ok_or(CoreError(anyhow!(
+                "No github pat found. Please set a github pat in the config"
+            )))?;
         let github_username = state.github_username();
 
         let lock_op = LockOp {

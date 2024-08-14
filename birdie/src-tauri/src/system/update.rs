@@ -20,7 +20,9 @@ static REPO_NAME: &str = "ethos";
 
 #[debug_handler]
 pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
-    let token = state.app_config.read().ensure_github_pat()?;
+    let token = state.app_config.read().github_pat.clone().ok_or(anyhow!(
+        "No github pat found. Please set a github pat in the config"
+    ))?;
     let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
 
     let app_name = APP_NAME.to_lowercase();
@@ -37,7 +39,9 @@ pub async fn get_latest_version(State(state): State<Arc<AppState>>) -> Result<St
 #[debug_handler]
 pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
     info!("Running update");
-    let token = state.app_config.read().ensure_github_pat()?;
+    let token = state.app_config.read().github_pat.clone().ok_or(anyhow!(
+        "No github pat found. Please set a github pat in the config"
+    ))?;
     let octocrab = Octocrab::builder().personal_token(token.clone()).build()?;
 
     let app_name = APP_NAME.to_lowercase();

@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::Arc;
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use axum::extract::State;
 use axum::{async_trait, debug_handler, Json};
 use tokio::sync::oneshot::error::RecvError;
@@ -118,7 +118,14 @@ pub async fn revert_files_handler(
         }
     }
 
-    let github_pat = state.app_config.read().ensure_github_pat()?;
+    let github_pat = state
+        .app_config
+        .read()
+        .github_pat
+        .clone()
+        .ok_or(CoreError::from(anyhow!(
+            "GitHub PAT is not configured. Please configure it in the settings."
+        )))?;
 
     // unlock reverted files
     if !request.files.is_empty() {
