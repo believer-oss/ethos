@@ -18,6 +18,7 @@ directories-next = { workspace = true }
 keyring = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
+octocrab = { workspace = true }
 open = { workspace = true }
 parking_lot = { workspace = true }
 reqwest = { workspace = true }
@@ -39,8 +40,6 @@ tracing-subscriber = { workspace = true }
 urlencoding = { workspace = true }
 
 ethos-core = { workspace = true }
-
-octocrab = "0.32.0"
 
 aws-sdk-s3 = { version = "1" }
 walkdir = "2.4.0"
