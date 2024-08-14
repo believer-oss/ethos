@@ -5,9 +5,6 @@ use axum::{debug_handler, extract::State, routing::get, Json, Router};
 use tracing::info;
 
 use ethos_core::clients::github::GraphQLClient;
-
-// todo: mv ethos_core::types::config::BirdieConfig to birdie::types::config::AppConfig
-use ethos_core::types::config::BirdieConfig as AppConfig;
 use ethos_core::types::config::ConfigValidationError;
 use ethos_core::types::errors::CoreError;
 
@@ -18,6 +15,7 @@ use ethos_core::types::repo::CloneRequest;
 use {crate::DEFAULT_DRIVE_MOUNT, ethos_core::utils, std::path::Path};
 
 use crate::state::AppState;
+use crate::types::config::BirdieConfig;
 use crate::{APP_NAME, KEYRING_USER};
 
 pub fn router(shared_state: Arc<AppState>) -> Router {
@@ -26,7 +24,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .with_state(shared_state)
 }
 
-async fn get_config(State(state): State<Arc<AppState>>) -> Json<AppConfig> {
+async fn get_config(State(state): State<Arc<AppState>>) -> Json<BirdieConfig> {
     let config = state.app_config.read().clone();
     Json(config)
 }
@@ -34,7 +32,7 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Json<AppConfig> {
 #[debug_handler]
 async fn update_config(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<AppConfig>,
+    Json(payload): Json<BirdieConfig>,
 ) -> Result<String, CoreError> {
     let current_config = state.app_config.read().clone();
 

@@ -8,16 +8,14 @@ use tokio::sync::RwLock as TokioRwLock;
 use tracing::{error, info};
 
 use ethos_core::clients::{git, github};
-
-// todo: mv ethos_core::types::config::BirdieConfigRef to birdie::types::config::AppConfigRef
-use ethos_core::types::config::BirdieConfigRef as AppConfigRef;
 use ethos_core::types::repo::{RepoStatus, RepoStatusRef};
 use ethos_core::worker::TaskSequence;
 
 use crate::repo::{LockCache, LockCacheRef};
+use crate::types::config::BirdieConfigRef;
 
 pub struct AppState {
-    pub app_config: AppConfigRef,
+    pub app_config: BirdieConfigRef,
     pub config_file: PathBuf,
 
     pub repo_status: RepoStatusRef,
@@ -37,7 +35,7 @@ pub struct AppState {
 impl AppState {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        app_config: AppConfigRef,
+        app_config: BirdieConfigRef,
         config_file: PathBuf,
         operation_tx: MPSCSender<TaskSequence>,
         version: String,

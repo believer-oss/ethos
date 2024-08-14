@@ -16,8 +16,6 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, Span};
 use tracing::{info, warn};
 
-// todo: mv ethos_core::types::config::BirdieConfig to birdie::types::config::AppConfig
-use ethos_core::types::config::BirdieConfig as AppConfig;
 use ethos_core::types::repo::RepoStatus;
 use ethos_core::worker::RepoWorker;
 
@@ -26,6 +24,7 @@ use ethos_core::middleware::uri::{uri_passthrough, RequestUri};
 use {crate::DEFAULT_DRIVE_MOUNT, ethos_core::utils, std::path::Path};
 
 use crate::repo::StatusOp;
+use crate::types::config::BirdieConfig;
 use crate::{state::AppState, APP_NAME, KEYRING_USER, VERSION};
 
 pub struct Server {
@@ -156,7 +155,7 @@ impl Server {
         Ok(())
     }
 
-    fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<AppConfig>)> {
+    fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<BirdieConfig>)> {
         if let Some(base_dirs) = BaseDirs::new() {
             let config_dir = base_dirs.config_dir().join(APP_NAME);
 
@@ -190,7 +189,7 @@ impl Server {
                     }
                 };
 
-                match serde_yaml::to_writer(file, &AppConfig::default()) {
+                match serde_yaml::to_writer(file, &BirdieConfig::default()) {
                     Ok(_) => {
                         info!("Initialized config file at {}", &config_file_str);
                     }
@@ -206,7 +205,7 @@ impl Server {
                 .unwrap();
 
             match builder.build() {
-                Ok(settings) => match settings.try_deserialize::<AppConfig>() {
+                Ok(settings) => match settings.try_deserialize::<BirdieConfig>() {
                     Ok(mut config) => {
                         info!("Loaded config from {}", &config_file_str);
 
