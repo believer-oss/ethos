@@ -181,6 +181,17 @@ impl StatusOp {
                         file.submit_status = SubmitStatus::Unmerged;
                     } else if status.conflicts.iter().any(|x| *x == file.path) {
                         file.submit_status = SubmitStatus::Conflicted;
+                    } else if let Some(lock) = status
+                        .locks_theirs
+                        .iter()
+                        .find(|lock| lock.path == file.path)
+                    {
+                        file.submit_status = SubmitStatus::CheckedOutByOtherUser;
+                        file.locked_by = lock.owner.clone().map(|x| x.name).unwrap_or_default();
+                    } else if status.locks_ours.iter().any(|x| x.path == file.path) {
+                        file.locked_by.clone_from(&self.github_username);
+                    } else {
+                        file.submit_status = SubmitStatus::CheckoutRequired;
                     }
                 }
             };
