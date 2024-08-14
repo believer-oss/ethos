@@ -4,11 +4,11 @@ use std::io::Write;
 
 use anyhow::anyhow;
 use axum::extract::State;
-use octocrab::models::repos::Release;
 use octocrab::Octocrab;
 use tracing::{error, info};
 
 use ethos_core::types::errors::CoreError;
+use ethos_core::utils::update;
 use ethos_core::BIN_SUFFIX;
 
 use crate::engine::EngineProvider;
@@ -38,7 +38,9 @@ where
         Octocrab::builder().build()?
     };
 
-    let latest = get_latest(&octocrab).await?;
+    let app_name = APP_NAME.to_lowercase();
+    let latest =
+        update::get_latest_github_release(&octocrab, &app_name, REPO_OWNER, REPO_NAME).await?;
 
     Ok(latest
         .tag_name
@@ -59,7 +61,10 @@ where
         Octocrab::builder().build()?
     };
 
-    let latest = get_latest(&octocrab).await?;
+    let app_name = APP_NAME.to_lowercase();
+
+    let latest =
+        update::get_latest_github_release(&octocrab, &app_name, REPO_OWNER, REPO_NAME).await?;
     let app_name = APP_NAME.to_lowercase();
 
     let asset = latest
@@ -126,72 +131,5 @@ where
             }
         }
         None => Err(anyhow!("No asset found").into()),
-    }
-}
-
-async fn get_latest(octocrab: &Octocrab) -> anyhow::Result<Release> {
-    let app_name = APP_NAME.to_lowercase();
-
-    let releases = octocrab
-        .repos(REPO_OWNER, REPO_NAME)
-        .releases()
-        .list()
-        .send()
-        .await?;
-
-    let mut latest = releases
-        .into_iter()
-        .filter_map(|release| {
-            if release.draft || release.prerelease {
-                return None;
-            }
-
-            // if release doesn't match the format app_name-vX.Y.Z, skip it
-            if !release.tag_name.starts_with(&format!("{}-v", app_name)) {
-                return None;
-            }
-
-            // get semver
-            let version = release
-                .tag_name
-                .strip_prefix(&format!("{}-v", app_name))
-                .unwrap();
-            if semver::Version::parse(version).is_err() {
-                return None;
-            }
-
-            if release
-                .assets
-                .iter()
-                .any(|asset| asset.name == format!("{}{}", &app_name, BIN_SUFFIX))
-            {
-                return Some(release);
-            }
-
-            None
-        })
-        .collect::<Vec<Release>>();
-
-    // sort by semver
-    latest.sort_by(|a, b| {
-        // we can unwrap because we asserted this format earlier
-        let a = a
-            .tag_name
-            .strip_prefix(&format!("{}-v", &app_name))
-            .unwrap();
-        let b = b
-            .tag_name
-            .strip_prefix(&format!("{}-v", &app_name))
-            .unwrap();
-        let a = semver::Version::parse(a).unwrap();
-        let b = semver::Version::parse(b).unwrap();
-
-        // reverse it
-        b.cmp(&a)
-    });
-
-    match latest.first() {
-        Some(latest) => Ok(latest.clone()),
-        None => Err(anyhow!("No latest version found")),
     }
 }

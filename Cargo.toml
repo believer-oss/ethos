@@ -16,6 +16,7 @@ directories-next = "2.0.0"
 keyring = "2"
 lazy_static = { version = "1.4.0", features = [] }
 log = "0.4.20"
+octocrab = "0.39.0"
 open = "5.0.0"
 opentelemetry = "0.21.0"
 opentelemetry-http = "0.10.0"

@@ -40,7 +40,6 @@
 		commits,
 		appConfig,
 		repoStatus,
-		repoConfig,
 		updateDismissed,
 		allModifiedFiles,
 		locks
@@ -48,7 +47,7 @@
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import { getLatestVersion, getLogPath, restart, runUpdate } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
-	import { getAppConfig, getRepoConfig } from '$lib/config';
+	import { getAppConfig } from '$lib/config';
 	import { getAllCommits, getRepoStatus, verifyLocks } from '$lib/repo';
 
 	// Initialization
@@ -169,7 +168,6 @@
 			const config = await getAppConfig();
 			appConfig.set(config);
 			if (config.repoPath !== '') {
-				repoConfig.set(await getRepoConfig());
 				repoStatus.set(await getRepoStatus());
 				commits.set(await getAllCommits());
 				locks.set(await verifyLocks());

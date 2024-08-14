@@ -5,4 +5,5 @@ pub mod logging;
 pub mod process;
 pub mod serde;
 pub mod tracing;
+pub mod update;
 pub mod windows;
