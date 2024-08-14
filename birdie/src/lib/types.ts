@@ -28,12 +28,6 @@ export interface AppConfig {
 	initialized: boolean;
 }
 
-export interface RepoConfig {
-	uprojectPath: string;
-	trunkBranch: string;
-	gitHooksPath: string;
-}
-
 // Kubernetes API types
 export interface Metadata {
 	creationTimestamp: Nullable<string>;
