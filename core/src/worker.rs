@@ -1,9 +1,8 @@
-use crate::types::config::AppConfigRef;
 use async_trait::async_trait;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
-use tracing::{debug, error, info, instrument, span};
+use tracing::{error, info, instrument, span};
 
 #[async_trait]
 pub trait Task {
@@ -60,19 +59,13 @@ impl TaskSequence {
 }
 
 pub struct RepoWorker {
-    config: AppConfigRef,
     queue: Receiver<TaskSequence>,
     pause_file_watcher: Arc<AtomicBool>,
 }
 
 impl RepoWorker {
-    pub fn new(
-        config: AppConfigRef,
-        tx: Receiver<TaskSequence>,
-        pause_file_watcher: Arc<AtomicBool>,
-    ) -> Self {
+    pub fn new(tx: Receiver<TaskSequence>, pause_file_watcher: Arc<AtomicBool>) -> Self {
         RepoWorker {
-            config,
             queue: tx,
             pause_file_watcher,
         }
@@ -81,14 +74,6 @@ impl RepoWorker {
     // For running git tasks that could take a while, like pulling or pushing.
     pub async fn run(&mut self) {
         while let Some(sequence) = self.queue.recv().await {
-            {
-                let config = self.config.read();
-                if config.repo_path.is_empty() {
-                    debug!("Repo path not set, skipping Task");
-                    continue;
-                }
-            }
-
             let mut err: Option<anyhow::Error> = None;
             let span = sequence.span.clone();
 

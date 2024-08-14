@@ -399,7 +399,7 @@ pub async fn setup(
     // start the operation worker
     info!("Starting operation worker");
     let (op_tx, op_rx) = mpsc::channel(32);
-    let mut worker = RepoWorker::new(app_config.clone(), op_rx, pause_file_watcher);
+    let mut worker = RepoWorker::new(op_rx, pause_file_watcher);
     tokio::spawn(async move {
         worker.run().await;
     });
