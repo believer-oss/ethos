@@ -43,7 +43,7 @@
 			}
 		},
 		"bundle": {
-			"active": false,
+			"active": true,
 			"category": "DeveloperTool",
 			"copyright": "",
 			"deb": {
