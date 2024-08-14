@@ -72,9 +72,8 @@ where
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
     pub engine: T,
-    pub aws_client: AWSClient,
-    pub storage: ArtifactStorage,
-    pub skip_dll_check: bool,
+    pub aws_client: Option<AWSClient>,
+    pub storage: Option<ArtifactStorage>,
     pub allow_offline_communication: bool,
     pub skip_engine_update: bool,
 }
@@ -279,10 +278,17 @@ where
             }
         }
 
-        if !self.skip_dll_check {
+        if let Some(aws_client) = &self.aws_client {
             info!("StatusOp: searching for remote DLL archives...");
 
-            self.find_dll_archive_url_info(&mut status).await?;
+            let storage = self
+                .storage
+                .as_ref()
+                .expect("ArtifactStorage was None, but AWSClient was valid");
+
+            // if there's an aws client, we should always have a valid artifact storage
+            self.find_dll_archive_url_info(&mut status, aws_client, storage)
+                .await?;
             status.pull_dlls = pull_dlls;
         }
 
@@ -388,7 +394,12 @@ where
     }
 
     #[instrument(skip_all)]
-    async fn find_dll_archive_url_info(&self, status: &mut RepoStatus) -> anyhow::Result<()> {
+    async fn find_dll_archive_url_info(
+        &self,
+        status: &mut RepoStatus,
+        aws_client: &AWSClient,
+        storage: &ArtifactStorage,
+    ) -> anyhow::Result<()> {
         debug!("parsing remote URL for repo id");
 
         let repo_id = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
@@ -403,9 +414,7 @@ where
 
         debug!("fetching s3 editor entries list");
 
-        self.aws_client.check_config().await?;
-
-        let storage = &self.storage;
+        aws_client.check_config().await?;
 
         let project = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
             let app_config = self.app_config.read();
@@ -539,14 +548,26 @@ pub async fn status_handler<T>(
 where
     T: EngineProvider,
 {
-    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
+    let aws_client: Option<AWSClient> = if params.skip_dll_check {
+        None
+    } else {
+        let client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
-    let storage = match state.storage.read().clone() {
-        Some(storage) => storage,
-        None => {
-            return Err(CoreError(anyhow!(
-                "No storage configured for this app. AWS may still be initializing."
-            )))
+        // Make sure AWS credentials still valid
+        client.check_config().await?;
+        Some(client)
+    };
+
+    let storage: Option<ArtifactStorage> = if params.skip_dll_check {
+        None
+    } else {
+        match state.storage.read().clone() {
+            Some(storage) => Some(storage),
+            None => {
+                return Err(CoreError(anyhow!(
+                    "No storage configured for this app. AWS may still be initializing."
+                )))
+            }
         }
     };
 
@@ -557,15 +578,11 @@ where
         engine: state.engine.clone(),
         git_client: state.git(),
         github_username: state.github_username(),
-        aws_client: aws_client.clone(),
+        aws_client,
         storage,
-        skip_dll_check: params.skip_dll_check,
         allow_offline_communication: params.allow_offline_communication,
         skip_engine_update: params.skip_engine_update,
     };
-
-    // Make sure AWS credentials still valid
-    aws_client.check_config().await?;
 
     // make sure this status operation is executed behind any queued operations
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
