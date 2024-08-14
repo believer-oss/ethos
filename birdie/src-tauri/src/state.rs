@@ -8,7 +8,9 @@ use tokio::sync::RwLock as TokioRwLock;
 use tracing::{error, info};
 
 use ethos_core::clients::{git, github};
-use ethos_core::types::config::AppConfigRef;
+
+// todo: mv ethos_core::types::config::BirdieConfigRef to birdie::types::config::AppConfigRef
+use ethos_core::types::config::BirdieConfigRef as AppConfigRef;
 use ethos_core::types::repo::{RepoStatus, RepoStatusRef};
 use ethos_core::worker::TaskSequence;
 

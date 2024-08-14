@@ -7,7 +7,9 @@ use tracing::info;
 
 use ethos_core::clients::git;
 use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
-use ethos_core::types::config::AppConfig;
+
+// todo: mv ethos_core::types::config::BirdieConfig to birdie::types::config::AppConfig
+use ethos_core::types::config::BirdieConfig as AppConfig;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{PullResponse, RepoStatusRef};
 use ethos_core::worker::{Task, TaskSequence};

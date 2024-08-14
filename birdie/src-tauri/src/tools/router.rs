@@ -2,7 +2,9 @@ use axum::routing::post;
 use axum::{extract::State, Router};
 use ethos_core::clients::git;
 use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
-use ethos_core::types::config::AppConfig;
+
+// todo: mv ethos_core::types::config::BirdieConfig to birdie::types::config::AppConfig
+use ethos_core::types::config::BirdieConfig as AppConfig;
 use ethos_core::types::errors::CoreError;
 use std::path::Path;
 use std::process::Command;

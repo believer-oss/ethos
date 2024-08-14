@@ -5,7 +5,9 @@ use axum::{debug_handler, extract::State, routing::get, Json, Router};
 use tracing::info;
 
 use ethos_core::clients::github::GraphQLClient;
-use ethos_core::types::config::AppConfig;
+
+// todo: mv ethos_core::types::config::BirdieConfig to birdie::types::config::AppConfig
+use ethos_core::types::config::BirdieConfig as AppConfig;
 use ethos_core::types::config::ConfigValidationError;
 use ethos_core::types::errors::CoreError;
 

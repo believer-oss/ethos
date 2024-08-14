@@ -16,7 +16,8 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, Span};
 use tracing::{info, warn};
 
-use ethos_core::types::config::AppConfig;
+// todo: mv ethos_core::types::config::BirdieConfig to birdie::types::config::AppConfig
+use ethos_core::types::config::BirdieConfig as AppConfig;
 use ethos_core::types::repo::RepoStatus;
 use ethos_core::worker::RepoWorker;
 
@@ -189,7 +190,7 @@ impl Server {
                     }
                 };
 
-                match serde_yaml::to_writer(file, &AppConfig::new(crate::APP_NAME)) {
+                match serde_yaml::to_writer(file, &AppConfig::default()) {
                     Ok(_) => {
                         info!("Initialized config file at {}", &config_file_str);
                     }
@@ -199,19 +200,8 @@ impl Server {
                 }
             }
 
-            let default_config: AppConfig = AppConfig::new(crate::APP_NAME);
-
             let builder = Config::builder()
                 .add_source(config::File::with_name(config_file_str))
-                .set_default("pullDlls", true)
-                .unwrap()
-                .set_default("openUprojectAfterSync", true)
-                .unwrap()
-                .set_default(
-                    "enginePrebuiltPath",
-                    default_config.engine_prebuilt_path.clone(),
-                )
-                .unwrap()
                 .set_default("initialized", true)
                 .unwrap();
 
