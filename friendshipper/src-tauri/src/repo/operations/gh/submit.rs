@@ -11,7 +11,6 @@ use crate::engine::EngineProvider;
 use crate::repo::operations::{PushRequest, StatusOp};
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
-use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
@@ -47,8 +46,8 @@ where
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
     pub engine: T,
-    pub aws_client: AWSClient,
-    pub storage: ArtifactStorage,
+    pub aws_client: Option<AWSClient>,
+    pub storage: Option<ArtifactStorage>,
     pub repo_status: RepoStatusRef,
 
     pub git_client: git::Git,
@@ -348,9 +347,8 @@ where
             engine: self.engine.clone(),
             git_client: self.git_client.clone(),
             github_username: self.github_client.username.clone(),
-            aws_client: self.aws_client.clone(),
-            storage: self.storage.clone(),
-            skip_dll_check: true,
+            aws_client: None,
+            storage: None,
             allow_offline_communication: true,
             skip_engine_update: false,
         };
@@ -598,17 +596,6 @@ where
         None => return Err(CoreError(anyhow!(TokenNotFoundError))),
     };
 
-    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
-
-    let storage = match state.storage.read().clone() {
-        Some(storage) => storage,
-        None => {
-            return Err(CoreError(anyhow!(
-                "No storage configured for this app. AWS may still be initializing."
-            )))
-        }
-    };
-
     let submit_op = SubmitOp {
         files: request.files.clone(),
         commit_message: request.commit_message.clone(),
@@ -616,8 +603,8 @@ where
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
         engine: state.engine.clone(),
-        aws_client,
-        storage,
+        aws_client: None,
+        storage: None,
         repo_status: state.repo_status.clone(),
 
         git_client: state.git(),
