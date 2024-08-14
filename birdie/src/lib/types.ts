@@ -3,120 +3,14 @@ import type { ModifiedFile } from '@ethos/core';
 export type Nullable<T> = T | null;
 
 // Config types
-export interface DiscordChannelInfo {
-	name: string;
-	url: string;
-}
-
-export interface DynamicConfig {
-	playtestDiscordChannels: DiscordChannelInfo[];
-}
-
 export interface AppConfig {
 	repoPath: string;
 	repoUrl: string;
 	toolsPath: string;
 	toolsUrl: string;
 	userDisplayName: string;
-	pullDlls: boolean;
-	openUprojectAfterSync: boolean;
 	githubPAT: string;
-	engineType: string;
-	enginePrebuiltPath: string;
-	engineSourcePath: string;
-	recordPlay: boolean;
 	initialized: boolean;
-}
-
-// Kubernetes API types
-export interface Metadata {
-	creationTimestamp: Nullable<string>;
-	name: string;
-	namespace: Nullable<string>;
-	labels: Nullable<Map<string, string>>;
-	uid: string;
-}
-
-export interface LocalObjectReference {
-	name: string;
-}
-
-// Builds types
-export interface ArtifactEntry {
-	key: string;
-	displayName: string;
-	lastModified: number;
-	commit: string;
-}
-
-export interface ArtifactListResponse {
-	methodPrefix: string;
-	entries: ArtifactEntry[];
-}
-
-export interface LaunchOptions {
-	ip: string;
-	port: number;
-}
-
-export interface SyncClientRequest {
-	artifactEntry: ArtifactEntry;
-	methodPrefix: string;
-	launchOptions?: LaunchOptions;
-}
-
-// GameServer types
-
-export interface GameServerResult {
-	name: string;
-	displayName: string;
-	ip: string;
-	port: number;
-	version: string;
-}
-
-export interface LaunchRequest {
-	commit: string;
-	checkForExisting: boolean;
-	displayName: string;
-	map?: string;
-}
-
-// Playtest types
-export interface Group {
-	name: string;
-	users: Nullable<string[]>;
-}
-
-export interface PlaytestSpec {
-	version: string;
-	map: string;
-	displayName: string;
-	minGroups: number;
-	playersPerGroup: number;
-	startTime: string;
-	feedbackURL: string;
-	groups?: Nullable<Group[]>;
-}
-
-export interface GroupStatus extends Group {
-	serverRef: LocalObjectReference;
-}
-
-export interface PlaytestStatus {
-	groups: GroupStatus[];
-}
-
-export interface Playtest {
-	metadata: Metadata;
-	spec: PlaytestSpec;
-	status: Nullable<PlaytestStatus>;
-}
-
-export interface AssignUserRequest {
-	playtest: string;
-	user: string;
-	group?: Nullable<string>;
 }
 
 // Repo types
@@ -153,29 +47,6 @@ export interface RepoStatus {
 	conflicts: string[];
 	modifiedUpstream: string[];
 	lastPullRequest?: PullRequestStatus;
-}
-
-export interface MergeQueueEntry {
-	estimatedTimeToMerge: Nullable<number>;
-	state: 'QUEUED' | 'AWAITING_CHECKS' | 'LOCKED' | 'MERGEABLE' | 'UNMERGEABLE';
-}
-
-export interface PullRequestAuthor {
-	login: string;
-}
-
-export interface GitHubPullRequest {
-	number: number;
-	createdAt: string;
-	mergedAt: Nullable<string>;
-	merged: boolean;
-	mergeable: 'CONFLICTING' | 'MERGEABLE' | 'UNKNOWN';
-	mergeQueueEntry: Nullable<MergeQueueEntry>;
-	author: PullRequestAuthor;
-	permalink: string;
-	title: string;
-	state: 'CLOSED' | 'MERGED' | 'OPEN';
-	headRefName: string;
 }
 
 export interface CloneRequest {
@@ -222,13 +93,6 @@ export interface LogEvent {
 	level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 	fields: Record<string, string>;
 	target: string;
-}
-
-// events
-
-export interface QuickLaunchEvent {
-	artifactEntry: ArtifactEntry;
-	server: GameServerResult;
 }
 
 // diagnostic status checks
