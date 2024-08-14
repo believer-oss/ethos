@@ -7,13 +7,7 @@
 	import { get } from 'svelte/store';
 	import type { PushRequest, RevertFilesRequest } from '$lib/types';
 	import { getRepoStatus, revertFiles, submit } from '$lib/repo';
-	import {
-		allModifiedFiles,
-		commitMessage,
-		repoConfig,
-		repoStatus,
-		selectedFiles
-	} from '$lib/stores';
+	import { allModifiedFiles, commitMessage, repoStatus, selectedFiles } from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 
 	let loading = false;
@@ -21,11 +15,7 @@
 
 	let selectAll = false;
 
-	$: canSubmit =
-		$selectedFiles.length > 0 &&
-		get(commitMessage) !== '' &&
-		!loading &&
-		$repoConfig?.trunkBranch === $repoStatus?.branch;
+	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && !loading;
 
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
