@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { Button, Label, Input, Modal, Tooltip, Spinner } from 'flowbite-svelte';
-	import { FolderOpenSolid, CodeBranchSolid } from 'flowbite-svelte-icons';
+	import { Button, Label, Input, Modal, Tooltip, Spinner, ButtonGroup } from 'flowbite-svelte';
+	import { FolderOpenSolid, CodeBranchSolid, TerminalSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
 	import { appConfig } from '$lib/stores';
 	import type { AppConfig } from '$lib/types';
 	import { getAppConfig, updateAppConfig } from '$lib/config';
+	import { openTerminalToPath } from '$lib/system';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -35,6 +36,14 @@
 			defaultPath: localAppConfig.toolsPath || '.',
 			title: 'Select game repository folder'
 		});
+	};
+
+	const openTerminalToRepo = async () => {
+		await openTerminalToPath(localAppConfig.repoPath);
+	};
+
+	const openTerminalToTools = async () => {
+		await openTerminalToPath(localAppConfig.toolsPath);
 	};
 
 	const onApplyClicked = async () => {
@@ -115,11 +124,23 @@
 				<Label>Repo Path</Label>
 				<div class="flex gap-1 mb-2">
 					<Button class="h-8 gap-2" on:click={openRepoFolder}><FolderOpenSolid />Browse</Button>
-					<Input class="h-8" bind:value={localAppConfig.repoPath} />
+					<ButtonGroup class="w-full">
+						<Input class="h-8" bind:value={localAppConfig.repoPath} />
+						<Tooltip class="text-sm" placement="bottom">
+							Specified folder must be a game repository.
+						</Tooltip>
+						<Button
+							class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
+							disabled={!localAppConfig.repoPath}
+							on:click={openTerminalToRepo}
+						>
+							<TerminalSolid class="w-4 h-4" color="white" />
+						</Button>
+						<Tooltip class="text-sm w-max" placement="bottom">
+							Open powershell to git repo path.
+						</Tooltip>
+					</ButtonGroup>
 				</div>
-				<Tooltip class="text-sm" placement="bottom">
-					Specified folder must be a game repository.
-				</Tooltip>
 
 				<Label class="text-white">Repo URL</Label>
 				<div class="flex gap-1 mb-2">
@@ -144,7 +165,22 @@
 						<div class="flex gap-1 mb-2">
 							<Button class="h-8 gap-2" on:click={openToolsFolder}><FolderOpenSolid />Browse</Button
 							>
-							<Input class="h-8" bind:value={localAppConfig.toolsPath} />
+							<ButtonGroup class="w-full">
+								<Input class="h-8" bind:value={localAppConfig.toolsPath} />
+								<Tooltip class="text-sm" placement="bottom">
+									Specified folder must be a game repository.
+								</Tooltip>
+								<Button
+									class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
+									disabled={!localAppConfig.toolsPath}
+									on:click={openTerminalToTools}
+								>
+									<TerminalSolid class="w-4 h-4" color="white" />
+								</Button>
+								<Tooltip class="text-sm w-max" placement="bottom">
+									Open powershell to tools path.
+								</Tooltip>
+							</ButtonGroup>
 						</div>
 
 						<Label class="text-white">Tools URL</Label>

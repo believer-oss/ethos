@@ -1,16 +1,13 @@
 use std::process::Command;
+use std::sync::Arc;
 
 use axum::extract::State;
 use tracing::error;
 
-use crate::engine::EngineProvider;
 use crate::state::AppState;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, path: String)
-where
-    T: EngineProvider,
-{
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
     if let Err(e) = Command::new("cmd")
         .arg("/C")
         .arg("start")

@@ -315,6 +315,7 @@
 						</Tooltip>
 						<Button
 							class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
+							disabled={!localAppConfig.repoPath}
 							on:click={openTerminalToRepo}
 						>
 							<TerminalSolid class="w-4 h-4" color="white" />
