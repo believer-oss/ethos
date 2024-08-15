@@ -419,9 +419,9 @@ impl Git {
         let first = snapshots.first();
         assert!(first.is_some(), "Failed to get snapshot");
 
-        // if there are more than 10, `git stash drop` each one after the 10th
+        // if we have more than 25 snapshots, drop the oldest one
         if snapshots.len() > 25 {
-            for snapshot in snapshots.iter().skip(25) {
+            if let Some(snapshot) = snapshots.get(25) {
                 self.run(&["stash", "drop", &snapshot.stash_index], Opts::default())
                     .await?;
             }
