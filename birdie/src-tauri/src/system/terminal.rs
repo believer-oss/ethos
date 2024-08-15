@@ -24,5 +24,5 @@ pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: St
 
 #[cfg(not(target_os = "windows"))]
 pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, _path: String) {
-    error!("Open terminal not supported on linux");
+    error!("Open terminal not supported on linux or macOS");
 }

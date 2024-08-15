@@ -30,5 +30,5 @@ pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, _path: 
 where
     T: EngineProvider,
 {
-    error!("Open terminal not supported on linux");
+    error!("Open terminal not supported on linux or macOS");
 }
