@@ -1,15 +1,16 @@
 use axum::routing::post;
 use axum::{extract::State, Router};
-use ethos_core::clients::git;
-use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
-use ethos_core::types::config::AppConfig;
-use ethos_core::types::errors::CoreError;
 use std::path::Path;
 use std::process::Command;
 use std::{path::PathBuf, sync::Arc};
 use walkdir::WalkDir;
 
+use ethos_core::clients::git;
+use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
+use ethos_core::types::errors::CoreError;
+
 use crate::state::AppState;
+use crate::types::config::BirdieConfig;
 
 pub fn router(shared_state: Arc<AppState>) -> Router {
     Router::new()
@@ -19,7 +20,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
 }
 
 async fn sync_tools(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
-    let config: AppConfig = state.app_config.read().clone();
+    let config: BirdieConfig = state.app_config.read().clone();
     let tools_path = config.tools_path.clone();
 
     let mut did_sync: String = "Fail".to_string();
@@ -45,7 +46,7 @@ async fn sync_tools(State(state): State<Arc<AppState>>) -> Result<String, CoreEr
 }
 
 async fn run_set_env_cmd(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
-    let config: AppConfig = state.app_config.read().clone();
+    let config: BirdieConfig = state.app_config.read().clone();
     let tools_path = config.tools_path.clone();
     const CMD_FILE_NAME: &str = "set_env_var";
 

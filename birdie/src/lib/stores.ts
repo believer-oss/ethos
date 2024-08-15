@@ -1,17 +1,9 @@
 import { derived, type Readable, writable } from 'svelte/store';
-import { type Commit, type ModifiedFile } from '@ethos/core';
-import type {
-	AppConfig,
-	Nullable,
-	RepoConfig,
-	RepoStatus,
-	LFSFile,
-	VerifyLocksResponse
-} from '$lib/types';
+import type { Commit, ModifiedFile } from '@ethos/core';
+import type { AppConfig, Nullable, RepoStatus, LFSFile, VerifyLocksResponse } from '$lib/types';
 
 export const updateDismissed = writable(false);
 export const appConfig = writable(<AppConfig>{});
-export const repoConfig = writable(<Nullable<RepoConfig>>null);
 export const commits = writable(<Commit[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const currentRoot = writable('');

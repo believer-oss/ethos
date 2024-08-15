@@ -90,7 +90,14 @@ async fn internal_lock_handler<T>(
 where
     T: EngineProvider,
 {
-    let github_pat = state.app_config.read().ensure_github_pat()?;
+    let github_pat = state
+        .app_config
+        .read()
+        .github_pat
+        .clone()
+        .ok_or(CoreError(anyhow!(
+            "No github pat found. Please set a github pat in the config"
+        )))?;
     let github_username = state.github_username();
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<LockResponse>(1);
 

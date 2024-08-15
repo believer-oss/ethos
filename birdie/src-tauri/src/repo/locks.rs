@@ -177,7 +177,14 @@ async fn internal_lock_handler(
     request: LockRequest,
     op: LockOperation,
 ) -> Result<Json<LockResponse>, CoreError> {
-    let github_pat = state.app_config.read().ensure_github_pat()?;
+    let github_pat = state
+        .app_config
+        .read()
+        .github_pat
+        .clone()
+        .ok_or(CoreError::from(anyhow!(
+            "GitHub PAT is not configured. Please configure it in the settings."
+        )))?;
 
     // make a new vec of paths
     // for each path in self.paths, if path is a directory, add all files in the directory recursively to the vec

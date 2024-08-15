@@ -16,7 +16,6 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, Span};
 use tracing::{info, warn};
 
-use ethos_core::types::config::AppConfig;
 use ethos_core::types::repo::RepoStatus;
 use ethos_core::worker::RepoWorker;
 
@@ -25,6 +24,7 @@ use ethos_core::middleware::uri::{uri_passthrough, RequestUri};
 use {crate::DEFAULT_DRIVE_MOUNT, ethos_core::utils, std::path::Path};
 
 use crate::repo::StatusOp;
+use crate::types::config::BirdieConfig;
 use crate::{state::AppState, APP_NAME, KEYRING_USER, VERSION};
 
 pub struct Server {
@@ -155,7 +155,7 @@ impl Server {
         Ok(())
     }
 
-    fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<AppConfig>)> {
+    fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<BirdieConfig>)> {
         if let Some(base_dirs) = BaseDirs::new() {
             let config_dir = base_dirs.config_dir().join(APP_NAME);
 
@@ -189,7 +189,7 @@ impl Server {
                     }
                 };
 
-                match serde_yaml::to_writer(file, &AppConfig::new(crate::APP_NAME)) {
+                match serde_yaml::to_writer(file, &BirdieConfig::default()) {
                     Ok(_) => {
                         info!("Initialized config file at {}", &config_file_str);
                     }
@@ -199,24 +199,13 @@ impl Server {
                 }
             }
 
-            let default_config: AppConfig = AppConfig::new(crate::APP_NAME);
-
             let builder = Config::builder()
                 .add_source(config::File::with_name(config_file_str))
-                .set_default("pullDlls", true)
-                .unwrap()
-                .set_default("openUprojectAfterSync", true)
-                .unwrap()
-                .set_default(
-                    "enginePrebuiltPath",
-                    default_config.engine_prebuilt_path.clone(),
-                )
-                .unwrap()
                 .set_default("initialized", true)
                 .unwrap();
 
             match builder.build() {
-                Ok(settings) => match settings.try_deserialize::<AppConfig>() {
+                Ok(settings) => match settings.try_deserialize::<BirdieConfig>() {
                     Ok(mut config) => {
                         info!("Loaded config from {}", &config_file_str);
 

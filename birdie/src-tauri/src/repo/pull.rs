@@ -5,9 +5,9 @@ use axum::{async_trait, debug_handler, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
 
+use crate::types::config::BirdieConfig;
 use ethos_core::clients::git;
 use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
-use ethos_core::types::config::AppConfig;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{PullResponse, RepoStatusRef};
 use ethos_core::worker::{Task, TaskSequence};
@@ -20,7 +20,7 @@ use super::StatusOp;
 pub struct PullOp {
     // This does not get read
     #[allow(dead_code)]
-    pub app_config: AppConfig,
+    pub app_config: BirdieConfig,
     pub repo_status: RepoStatusRef,
     pub git_client: git::Git,
     pub github_username: String,
