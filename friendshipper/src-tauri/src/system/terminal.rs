@@ -25,7 +25,7 @@ where
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, _path: String)
 where
     T: EngineProvider,
