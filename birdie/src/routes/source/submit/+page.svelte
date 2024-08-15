@@ -6,7 +6,7 @@
 	import { ModifiedFilesCard, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import type { PushRequest, RevertFilesRequest } from '$lib/types';
-	import { getRepoStatus, revertFiles, submit } from '$lib/repo';
+	import { getRepoStatus, lockFiles, revertFiles, submit } from '$lib/repo';
 	import { allModifiedFiles, commitMessage, repoStatus, selectedFiles } from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 
@@ -100,6 +100,30 @@
 		loading = false;
 	};
 
+	const refreshLocks = async () => {
+		loading = true;
+		try {
+			repoStatus.set(await getRepoStatus());
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
+	const handleLockSelected = async () => {
+		loading = true;
+
+		try {
+			const selectedPaths = $selectedFiles.map((file) => file.path);
+			await lockFiles(selectedPaths);
+			await emit('success', 'Files locked successfully');
+			await refreshLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
 	onMount(() => {
 		void refreshFiles(true);
 
@@ -137,7 +161,7 @@
 			modifiedFiles={$allModifiedFiles}
 			onRevertFiles={handleRevertFiles}
 			snapshotsEnabled={false}
-			lockSelectedEnabled={false}
+			onLockSelected={handleLockSelected}
 		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[24rem]">
