@@ -6,7 +6,7 @@ use tracing::error;
 
 use crate::state::AppState;
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
     if let Err(e) = Command::new("cmd")
         .arg("/C")
@@ -19,4 +19,9 @@ pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: St
     {
         error!("Error opening terminal to path: {:?}", e);
     }
+}
+
+#[cfg(target_os = "linux")]
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
+    error!("Open terminal not supported on linux");
 }

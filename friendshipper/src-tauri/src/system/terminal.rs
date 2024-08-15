@@ -6,7 +6,7 @@ use tracing::error;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, path: String)
 where
     T: EngineProvider,
@@ -22,4 +22,9 @@ where
     {
         error!("Error opening terminal to path: {:?}", e);
     }
+}
+
+#[cfg(target_os = "linux")]
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
+    error!("Open terminal not supported on linux");
 }
