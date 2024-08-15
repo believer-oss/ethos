@@ -17,6 +17,7 @@ pub mod server;
 mod state;
 mod system;
 pub mod tools;
+mod types;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static APP_NAME: &str = env!("CARGO_PKG_NAME");

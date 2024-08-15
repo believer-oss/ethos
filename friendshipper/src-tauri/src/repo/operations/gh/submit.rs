@@ -589,7 +589,14 @@ pub async fn submit_handler<T>(
 where
     T: EngineProvider,
 {
-    let token = state.app_config.read().ensure_github_pat()?;
+    let token = state
+        .app_config
+        .read()
+        .github_pat
+        .clone()
+        .ok_or(CoreError::from(anyhow!(
+            "GitHub PAT is not configured. Please configure it in the settings."
+        )))?;
 
     let github_client = match state.github_client.read().clone() {
         Some(client) => client.clone(),
