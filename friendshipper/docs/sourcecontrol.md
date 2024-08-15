@@ -17,7 +17,7 @@ You will need:
 * Personal Access Token
 
 If using the editor/engine binary download features, you will also need:
-* AWS creds (TODO more info here)
+* [AWS creds and setup](https://github.com/believer-oss/ethos/blob/rjd/readme-updates/friendshipper/docs/setup.md#aws)
 
 Upon first launch of Friendshipper, you will be prompted to fill in this information. You can always update it in the Preferences page later.
 
