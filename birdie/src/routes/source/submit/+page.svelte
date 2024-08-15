@@ -139,7 +139,7 @@
 		void refreshFiles(true);
 
 		const interval = setInterval(async () => {
-			if (progressModalTitle === 'Submitting') {
+			if (!loading) {
 				await refreshFiles(true);
 			}
 		}, 10000);
