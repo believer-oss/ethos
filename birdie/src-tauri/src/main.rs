@@ -139,6 +139,7 @@ fn main() {
             install_git,
             lock_files,
             open_system_logs_folder,
+            open_terminal_to_path,
             open_url,
             rebase,
             release_locks,

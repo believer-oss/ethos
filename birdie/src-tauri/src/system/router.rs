@@ -6,6 +6,7 @@ use axum::Router;
 use crate::state::AppState;
 use crate::system::git::{configure_user, install};
 use crate::system::logs::{get_logs, open_system_logs_folder};
+use crate::system::terminal::open_terminal_to_path;
 use crate::system::update::{get_latest_version, run_update};
 
 pub fn router(shared_state: Arc<AppState>) -> Router {
@@ -16,6 +17,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/update", get(get_latest_version).post(run_update))
         .route("/logs", get(get_logs))
         .route("/open-logs", post(open_system_logs_folder))
+        .route("/terminal", post(open_terminal_to_path))
         .with_state(shared_state)
 }
 

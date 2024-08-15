@@ -1,17 +1,14 @@
 #[cfg(target_os = "windows")]
 use std::process::Command;
+use std::sync::Arc;
 
 use axum::extract::State;
 use tracing::error;
 
-use crate::engine::EngineProvider;
 use crate::state::AppState;
 
 #[cfg(target_os = "windows")]
-pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, path: String)
-where
-    T: EngineProvider,
-{
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
     if let Err(e) = Command::new("cmd")
         .arg("/C")
         .arg("start")
@@ -26,9 +23,6 @@ where
 }
 
 #[cfg(not(target_os = "windows"))]
-pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, _path: String)
-where
-    T: EngineProvider,
-{
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, _path: String) {
     error!("Open terminal not supported on linux or macOS");
 }
