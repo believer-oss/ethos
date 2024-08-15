@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::{debug_handler, Json};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as TokioRwLock;
-use tracing::warn;
+use tracing::{error, info, warn};
 use walkdir::WalkDir;
 
 use ethos_core::clients::git;
@@ -111,21 +111,78 @@ pub async fn lock_files(
         let mut lock_cache = state.lock_cache.write().await;
         lock_cache.populate_cache().await?;
     }
+    info!("lock request: {:?}", request);
 
-    let resp = internal_lock_handler(state.clone(), request.clone(), LockOperation::Lock).await?;
+    let mut paths: Vec<String> = Vec::new();
+    for path in request.paths.clone() {
+        if let Some(lock) = state
+            .repo_status
+            .read()
+            .locks_theirs
+            .iter()
+            .find(|l| l.path == path)
+        {
+            // do not attempt to lock any files owned by other users, instead log an error and abort
+            if let Some(owner) = &lock.owner {
+                warn!(
+                    "Locking failed: file {} is already checked out by {}",
+                    path, owner.name
+                );
+                return Err(CoreError(anyhow!(
+                    "Failed to lock a file checked out by {}. Check the log for more details.",
+                    owner.name,
+                )));
+            }
+        } else if state
+            .repo_status
+            .read()
+            .modified_upstream
+            .iter()
+            .any(|p| p == &path)
+        {
+            // do not attempt to lock any files modified upstream by other users, instead log an error and abort
+            warn!(
+                "Locking failed: files are modified upstream by other users. Sync and try again."
+            );
+            return Err(CoreError(anyhow!(
+                "Files are modified upstream by other users. Sync and try again."
+            )));
+        } else {
+            paths.push(path);
+        }
+    }
+
+    let request_data = LockRequest {
+        paths: paths.clone(),
+        force: request.force,
+    };
+
+    let resp = internal_lock_handler(state.clone(), request_data, LockOperation::Lock).await?;
 
     let repo_path = PathBuf::from(state.app_config.read().repo_path.clone());
-    for path in &request.paths {
+    for path in paths {
         // append path to repo dir
         let path = PathBuf::from(path);
         let full_path = repo_path.join(path);
 
         // set readonly
-        let mut perms = full_path.metadata()?.permissions();
-        #[allow(clippy::permissions_set_readonly_false)]
-        perms.set_readonly(false);
+        match full_path.try_exists() {
+            Ok(exists) => {
+                if exists {
+                    let mut perms = full_path.metadata()?.permissions();
+                    #[allow(clippy::permissions_set_readonly_false)]
+                    perms.set_readonly(false);
 
-        fs::set_permissions(full_path, perms)?;
+                    fs::set_permissions(full_path, perms)?;
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to check existence of path {:?} for readonly flag: {}",
+                    &full_path, e
+                );
+            }
+        }
     }
 
     // repopulate lock cache

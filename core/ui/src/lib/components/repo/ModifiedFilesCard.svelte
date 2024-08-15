@@ -227,7 +227,7 @@
 				}}
 			>
 				<div class="flex items-center">
-					<ChevronSortOutline class="dark:text-white" />
+					<ChevronSortOutline size="sm" />
 				</div>
 			</TableHeadCell>
 			<TableHeadCell
@@ -239,7 +239,7 @@
 			>
 				<div class="flex flex-row w-max items-center">
 					Checked Out
-					<ChevronSortOutline class="dark:text-white" />
+					<ChevronSortOutline size="sm" />
 				</div>
 			</TableHeadCell>
 			<TableHeadCell
@@ -252,7 +252,7 @@
 			>
 				<div class="flex items-center">
 					File
-					<ChevronSortOutline class="dark:text-white" />
+					<ChevronSortOutline size="sm" />
 				</div>
 			</TableHeadCell>
 		</TableHead>

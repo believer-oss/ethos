@@ -6,12 +6,15 @@
 	import { ModifiedFilesCard, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import type { PushRequest, RevertFilesRequest } from '$lib/types';
-	import { getRepoStatus, revertFiles, submit } from '$lib/repo';
+	import { getRepoStatus, lockFiles, revertFiles, submit, verifyLocks } from '$lib/repo';
 	import { allModifiedFiles, commitMessage, repoStatus, selectedFiles } from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 
+	// progress modal
+	let showProgressModal = false;
+	let progressModalTitle = '';
+
 	let loading = false;
-	let submitting = false;
 
 	let selectAll = false;
 
@@ -75,7 +78,8 @@
 
 	const handleSubmit = async () => {
 		loading = true;
-		submitting = true;
+		showProgressModal = true;
+		progressModalTitle = 'Submitting';
 
 		await refreshFiles(false);
 
@@ -96,7 +100,38 @@
 			await emit('error', e);
 		}
 
-		submitting = false;
+		showProgressModal = false;
+		progressModalTitle = '';
+		loading = false;
+	};
+
+	const refreshLocks = async () => {
+		loading = true;
+		try {
+			repoStatus.set(await getRepoStatus());
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
+	const handleLockSelected = async () => {
+		loading = true;
+		showProgressModal = true;
+		progressModalTitle = 'Locking Files';
+
+		try {
+			const selectedPaths = $selectedFiles.map((file) => file.path);
+			await lockFiles(selectedPaths);
+			await emit('success', 'Files locked!');
+			await verifyLocks();
+			await refreshLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		showProgressModal = false;
+		progressModalTitle = '';
 		loading = false;
 	};
 
@@ -104,7 +139,7 @@
 		void refreshFiles(true);
 
 		const interval = setInterval(async () => {
-			if (!submitting) {
+			if (!loading) {
 				await refreshFiles(true);
 			}
 		}, 10000);
@@ -137,7 +172,7 @@
 			modifiedFiles={$allModifiedFiles}
 			onRevertFiles={handleRevertFiles}
 			snapshotsEnabled={false}
-			lockSelectedEnabled={false}
+			onLockSelected={handleLockSelected}
 		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[24rem]">
@@ -169,4 +204,5 @@
 		</Card>
 	</div>
 </div>
-<ProgressModal bind:showModal={submitting} title="Submitting" />
+
+<ProgressModal showModal={showProgressModal} title={progressModalTitle} />
