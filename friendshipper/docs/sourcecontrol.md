@@ -1,14 +1,28 @@
 # Overview
 
 Friendshipper is designed to be a one-stop-shop for all nontechnical users' source control needs. For Unreal projects, 
-it essentially replaces workflows that UGS and P4V support. Features:
+it essentially replaces workflows that UGS and P4V support.
+
+### Features
+
 * Commit history
-* Syncing repo + editor binaries
+* Syncing repo + engine/editor binaries
 * Submitting files + optional commit message formatting
 * Reverting files
 * LFS lock management
 * Generating code project files + opening editor
 * Automatic and manual snapshots of worktree state
+* Background fetching of latest
+* Background repo maintenance (git gc, etc)
+
+### Repo Requirements
+* Must be hosted on Github with merge queue enabled
+* LFS server with locking support (see [lfs-rs](https://github.com/believer-oss/lfs-rs))
+
+### Limitations
+* Assumes all development happens on a single trunk branch
+* Creating and switching between branches is not supported
+* Only supports a single project at a time
 
 # Setup
 
