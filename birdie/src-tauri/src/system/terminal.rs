@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use std::process::Command;
 use std::sync::Arc;
 
@@ -22,6 +23,6 @@ pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: St
 }
 
 #[cfg(target_os = "linux")]
-pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, _path: String) {
     error!("Open terminal not supported on linux");
 }

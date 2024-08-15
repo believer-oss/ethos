@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 use axum::extract::State;
@@ -25,6 +26,9 @@ where
 }
 
 #[cfg(target_os = "linux")]
-pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, path: String) {
+pub async fn open_terminal_to_path(State(_state): State<Arc<AppState>>, _path: String)
+where
+    T: EngineProvider,
+{
     error!("Open terminal not supported on linux");
 }
