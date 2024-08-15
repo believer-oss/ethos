@@ -27,8 +27,8 @@ where
 
 #[cfg(target_os = "linux")]
 pub async fn open_terminal_to_path<T>(State(_state): State<AppState<T>>, _path: String)
-    where
-        T: EngineProvider,
+where
+    T: EngineProvider,
 {
     error!("Open terminal not supported on linux");
 }
