@@ -27,8 +27,41 @@ Friendshipper assumes particular configuration settings across your infrastructu
 
 ### AWS
 
-WIP
+Friendshipper currently assumes SSO authentication is configured for your AWS account.
 
-#### SSO
+#### IAM requirements
 
-WIP
+A minimal IAM policy for Friendshipper to work is below. Note that there are variables stubbed in (in all caps) that you would need to replace should you copy this policy directly.
+
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Action": "ecr:DescribeImages",
+			"Resource": ["arn:aws:ecr:REGION:ACCOUNT_ID:repository/IMAGE_REPO"]
+		},
+		{
+			"Effect": "Allow",
+			"Action": "eks:DescribeCluster",
+			"Resource": ["arn:aws:eks:REGION:ACCOUNT_ID:cluster/CLUSTER_NAME"]
+		},
+		{
+			"Effect": "Allow",
+			"Action": "sts:GetCallerIdentity",
+			"Resource": "*"
+		},
+		{
+			"Effect": "Allow",
+			"Action": ["s3:ListBucket"],
+			"Resource": ["arn:aws:s3:::ARTIFACT_BUCKET"]
+		},
+		{
+			"Effect": "Allow",
+			"Action": ["s3:GetObject", "s3:GetObjectAcl"],
+			"Resource": ["arn:aws:s3:::BUCKET_NAME/friendshipper/*", "arn:aws:s3:::BUCKET_NAME/v1/*"]
+		}
+	]
+}
+```
