@@ -356,8 +356,8 @@ pub struct DynamicConfig {
     #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_endpoint")]
     pub otlp_endpoint: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_auth_header")]
-    pub otlp_auth_header: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_headers")]
+    pub otlp_headers: Option<String>,
 
     #[serde(default, rename = "playtestRegions")]
     pub playtest_regions: Vec<String>,

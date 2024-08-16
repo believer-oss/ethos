@@ -248,12 +248,9 @@ where
                         return;
                     }
 
-                    // if there's an auth token, set OTEL_EXPORTER_OTLP_HEADERS appropriately
-                    if let Some(token) = new_dynamic_config.otlp_auth_header {
-                        std::env::set_var(
-                            "OTEL_EXPORTER_OTLP_HEADERS",
-                            format!("Authorization={}", token),
-                        );
+                    // if there are OTEL headers, set OTEL_EXPORTER_OTLP_HEADERS appropriately
+                    if let Some(headers) = new_dynamic_config.otlp_headers {
+                        std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", headers);
                     }
 
                     let tracer = opentelemetry_otlp::new_pipeline()
