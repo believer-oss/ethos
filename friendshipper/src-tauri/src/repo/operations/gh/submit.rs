@@ -226,23 +226,27 @@ where
         match self.execute_internal().await {
             Ok(_) => Ok(()),
             Err(e) => {
-                // attempt to reset to original branch and restore snapshot
-                // if this fails for any reason, we should simply log, then return the original error
-                let branch = self.repo_status.read().branch.clone();
-                self.git_client.hard_reset(&branch).await?;
+                // can't touch the working tree unless the engine isn't running
+                if self.engine.check_ready_to_sync_repo().await.is_ok() {
+                    // attempt to reset to original branch and restore snapshot
+                    // if this fails for any reason, we should simply log, then return the original error
+                    let branch = self.repo_status.read().branch.clone();
+                    self.git_client.hard_reset(&branch).await?;
 
-                match self
-                    .git_client
-                    .restore_snapshot(&snapshot.commit, vec![])
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        // log the error, but don't return it
-                        warn!("Failed to restore snapshot after failed submit: {}", e);
+                    match self
+                        .git_client
+                        .restore_snapshot(&snapshot.commit, vec![])
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // log the error, but don't return it
+                            warn!("Failed to restore snapshot after failed submit: {}", e);
+                        }
                     }
+                } else {
+                    warn!("Unable to automatically restore pre-submit state due to editor running.")
                 }
-
                 Err(e)
             }
         }
