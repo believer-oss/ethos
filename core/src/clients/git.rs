@@ -386,33 +386,33 @@ impl Git {
         self.run(&args, Opts::default()).await?;
 
         let stash_message = format!("{} {}", SNAPSHOT_PREFIX, message);
-        let mut stash_args = vec![
-            "stash",
-            "push",
-            "--include-untracked",
-            "--message",
-            &stash_message,
-        ];
+        let mut stash_create_args = vec!["stash", "create"];
         if keep_index == SaveSnapshotIndexOption::KeepIndex {
-            stash_args.push("--keep-index");
+            stash_create_args.push("--keep-index");
         }
 
-        stash_args.push("--");
+        stash_create_args.push("--");
 
         // if paths is empty, stash everything
         if paths.is_empty() {
-            stash_args.push(".");
+            stash_create_args.push(".");
         }
 
         for path in &paths {
-            stash_args.push(path);
+            stash_create_args.push(path);
         }
 
-        // In testing, we found that regularly this would throw unlink errors when the editor was
-        // open. However, the snapshot still gets created successfully, so in this particular case
-        // we can ignore the error.
-        self.run(&stash_args, Opts::new_with_ignored(&["unable to unlink"]))
+        // We use the stash create and store commands because stash push modifies the working
+        // tree, and we need to avoid doing that when the engine is running, as it could cause
+        // the command to fail and put the repo into a bad state. The create/store commands
+        // create a stash commit and store it into the stash list, respectively, without
+        // messing with the working tree at all.
+        let stash_sha = self
+            .run_and_collect_output(&stash_create_args, Opts::default())
             .await?;
+
+        let stash_store_args = &["stash", "store", "--message", &stash_message, &stash_sha];
+        self.run(stash_store_args, Opts::default()).await?;
 
         let snapshots = self.list_snapshots().await?;
 
