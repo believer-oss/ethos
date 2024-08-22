@@ -79,8 +79,3 @@ pub async fn set_fetch_include(repo_path: String, paths: &str) -> Result<(), Cor
     }
     Ok(())
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UnfavoriteFileParams {
-    pub file: String,
-}
