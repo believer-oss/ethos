@@ -6,6 +6,7 @@ pub use router::router;
 pub use status::StatusOp;
 
 mod clone;
+mod config;
 mod diagnostics;
 mod file;
 mod lfs;

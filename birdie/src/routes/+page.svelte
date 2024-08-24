@@ -21,7 +21,9 @@
 		EditOutline,
 		FileCheckOutline,
 		FileCheckSolid,
-		FolderSolid
+		FolderSolid,
+		HeartOutline,
+		HeartSolid
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
@@ -29,6 +31,7 @@
 	import {
 		downloadLFSFiles,
 		getAllFiles,
+		getFetchInclude,
 		getFileHistory,
 		getFiles,
 		lockFiles,
@@ -85,6 +88,9 @@
 			value: 'character'
 		}
 	];
+
+	// git config
+	let fetchIncludeList: string[] = [];
 
 	const handleGetDirectoryMetadata = async () => {
 		try {
@@ -247,6 +253,7 @@
 			await downloadFiles([fullPath]);
 
 			selectedFile.lfsState = LocalFileLFSState.Local;
+			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -263,6 +270,7 @@
 			await downloadFiles(paths);
 
 			selectedFiles = [];
+			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -442,6 +450,11 @@
 	onMount(() => {
 		void refreshFiles();
 
+		const setupFetchIncludeList = async (): Promise<void> => {
+			fetchIncludeList = await getFetchInclude();
+		};
+		void setupFetchIncludeList();
+
 		// refresh every 30 seconds
 		const interval = setInterval(() => {
 			void refreshFiles();
@@ -523,6 +536,15 @@
 													await handleFileToggled(file);
 												}}
 											/>
+										</TableBodyCell>
+										<TableBodyCell class="p-2 w-4">
+											{#if file.fileType === FileType.File}
+												{#if fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
+													<HeartSolid class="w-4 h-4 text-green-500" />
+												{:else}
+													<HeartOutline class="w-4 h-4 text-gray-500" />
+												{/if}
+											{/if}
 										</TableBodyCell>
 										<TableBodyCell class="p-2">
 											{#if file.fileType === FileType.Directory}
@@ -653,7 +675,17 @@
 						</div>
 						<Button on:click={() => showInExplorer(selectedFile)}>Show in Explorer</Button>
 						{#if selectedFile.lfsState === LocalFileLFSState.Stub}
-							<Button on:click={() => handleDownloadFile(selectedFile)}>Download</Button>
+							<Button
+								class="w-full"
+								color="primary"
+								on:click={() => handleDownloadFile(selectedFile)}>Download</Button
+							>
+						{:else if !fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
+							<Button
+								class="w-full"
+								color="primary"
+								on:click={() => handleDownloadFile(selectedFile)}>Favorite</Button
+							>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}

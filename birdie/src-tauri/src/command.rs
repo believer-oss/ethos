@@ -173,6 +173,23 @@ pub async fn verify_locks(
     Ok(res.json().await?)
 }
 
+// Git Config
+#[tauri::command]
+pub async fn get_fetch_include(state: tauri::State<'_, State>) -> Result<Vec<String>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/config/fetchinclude", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
 // Birdie commands
 #[tauri::command]
 pub async fn get_files(
