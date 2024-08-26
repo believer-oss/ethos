@@ -12,7 +12,8 @@
 		Table,
 		TableBody,
 		TableBodyCell,
-		TableBodyRow
+		TableBodyRow,
+		Tooltip
 	} from 'flowbite-svelte';
 	import { onMount, tick } from 'svelte';
 	import {
@@ -224,6 +225,7 @@
 			allFiles = await getAllFiles();
 
 			await handleGetDirectoryMetadata();
+			await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -443,6 +445,20 @@
 		showSearchModal = false;
 	};
 
+	const inFetchInclude = (path: string) => {
+		for (let i = 0; i <= fetchIncludeList.length; i += 1) {
+			if (/\.[^/]+$/.test(fetchIncludeList[i]) && fetchIncludeList[i] === path) {
+				// if the path ends with a file extension (.*), do a direct string match
+				return true;
+			}
+			if (path.startsWith(fetchIncludeList[i])) {
+				// path is a directory
+				return true;
+			}
+		}
+		return false;
+	};
+
 	void listen('refresh-files', () => {
 		void refreshFiles();
 	});
@@ -538,12 +554,10 @@
 											/>
 										</TableBodyCell>
 										<TableBodyCell class="p-2 w-4">
-											{#if file.fileType === FileType.File}
-												{#if fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
-													<HeartSolid class="w-4 h-4 text-green-500" />
-												{:else}
-													<HeartOutline class="w-4 h-4 text-gray-500" />
-												{/if}
+											{#if inFetchInclude(`${$currentRoot}/${file.name}`)}
+												<HeartSolid class="w-4 h-4 text-green-500" />
+											{:else}
+												<HeartOutline class="w-4 h-4 text-gray-500" />
 											{/if}
 										</TableBodyCell>
 										<TableBodyCell class="p-2">
@@ -592,6 +606,7 @@
 					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
 						>Download Selected Files
 					</Button>
+					<Tooltip>Downloads selected files on disk and favorites it for future syncs.</Tooltip>
 					<Button class="w-full" disabled={loading} on:click={handleLockSelectedFiles}
 						>Lock Selected Files
 					</Button>
@@ -669,23 +684,24 @@
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
+								<span class="w-20">Favorited:</span>
+								<span class="dark:text-primary-400 w-64"
+									>{!inFetchInclude(`${$currentRoot}/${selectedFile.name}`) ? 'No' : 'Yes'}</span
+								>
+							</div>
+							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Locked by:</span>
 								<span class="dark:text-primary-400 w-64">{getLockOwner(selectedFile)}</span>
 							</div>
 						</div>
 						<Button on:click={() => showInExplorer(selectedFile)}>Show in Explorer</Button>
-						{#if selectedFile.lfsState === LocalFileLFSState.Stub}
+						{#if selectedFile.lfsState === LocalFileLFSState.Stub || !inFetchInclude(`${$currentRoot}/${selectedFile.name}`)}
 							<Button
 								class="w-full"
 								color="primary"
 								on:click={() => handleDownloadFile(selectedFile)}>Download</Button
 							>
-						{:else if !fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
-							<Button
-								class="w-full"
-								color="primary"
-								on:click={() => handleDownloadFile(selectedFile)}>Favorite</Button
-							>
+							<Tooltip>Downloads the file on disk and favorites it for future syncs.</Tooltip>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}
