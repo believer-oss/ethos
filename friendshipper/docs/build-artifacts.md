@@ -82,7 +82,42 @@ On push events to main, the Windows client build and Linux server build are kick
 
 The compile itself is done via a modified version of the [vela-games/circleci-ue5-game](https://github.com/vela-games/circleci-ue5-game/blob/main/Tools/BuildGraph.xml) BuildGraph.xml file. On the merge queue branch we run the call the [Stage](https://dev.epicgames.com/documentation/en-us/unreal-engine/buildgraph-script-tasks-reference-for-unreal-engine#stage) task on the editor target, and then separately run an in-house unit test runner. On the main branch we run the `Linux Pak and Stage` and `Windows Pak and Stage` targets, which perform the `Compile` and `BuildCookRun` tasks.
 
-After building the server, a Docker image is created using a simple Dockerfile that copies the game binaries into the container and an `entrypoint.sh` to run the server.
+After building the server, a Docker image is created using a simple Dockerfile that copies the game binaries into the container and an `entrypoint.sh` to run the server. Our build container is based on the [ue4-docker](https://github.com/adamrehn/ue4-docker) build-prerequisites image, which creates a ue4 user at uid 1000, so we ensure the server is run as that user. [Kaniko](https://github.com/GoogleContainerTools/kaniko) is used to build the image and push it to the ECR registry, which is called with `--build-arg="UPROJECT=$uproject_name"` to set the correct path and binary name.
+
+```Dockerfile
+FROM debian:stable-slim
+ARG USERNAME=ue4
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+ARG DEBIAN_FRONTEND=noninteractive
+
+ARG UPROJECT=TP_ThirdPerson
+ENV UPROJECT=${UPROJECT}
+
+# Create the user - Uncomment for sudo access inside container
+#RUN groupadd --gid $USER_GID $USERNAME \
+#  && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+#  && apt-get update \
+#  && apt-get install -y sudo \
+#  && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
+#  && chmod 0440 /etc/sudoers.d/$USERNAME \
+#  && apt-get clean \
+#  && rm -rf /var/lib/apt/lists/*
+
+COPY --chown=ue4:ue4 . /app/
+USER ${USERNAME}
+EXPOSE 7777/udp
+ENTRYPOINT ["/app/entrypoint.sh"]
+```
+
+```bash
+#!/bin/sh
+
+[ -z "${UPROJECT}" ] && echo "UPROJECT not set" && exit 1
+
+echo "Running ${UPROJECT} in ${PWD}"
+exec "/app/${UPROJECT}/Binaries/Linux/${UPROJECT}Server" "${@}"
+```
 
 After building the client, a longtail upload similar to the above is run, roughly:
 
