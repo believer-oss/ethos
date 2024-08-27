@@ -19,6 +19,7 @@ log = "0.4.20"
 octocrab = "0.39.0"
 open = "5.0.0"
 opentelemetry = "0.21.0"
+opentelemetry-http = "0.10.0"
 opentelemetry-otlp = { version = "0.14.0", features = ["http-proto", "reqwest-client"] }
 opentelemetry_sdk = { version = "0.21.1", features = ["rt-tokio"] }
 parking_lot = "0.12.1"
@@ -36,6 +37,7 @@ sysinfo = "0.30.5"
 tauri = { version = "1.5", features = ["process-relaunch", "dialog-open", "window-show", "window-maximize", "window-minimize", "window-close", "window-hide", "window-start-dragging", "window-unmaximize", "window-unminimize", "process-command-api", "system-tray", "notification-all", "shell-open", "devtools"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1.14"
+tonic = "0.9.2"
 tower-http = { version = "0.5.2", features = ["trace"] }
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
