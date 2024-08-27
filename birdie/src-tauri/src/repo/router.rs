@@ -4,10 +4,9 @@ use axum::routing::{get, post};
 use axum::Router;
 
 use crate::repo::clone::clone_handler;
-use crate::repo::config::{del_fetch_include, get_fetch_include};
 use crate::repo::diagnostics;
 use crate::repo::file::{get_all_files, get_file_history, get_files};
-use crate::repo::lfs::download_files;
+use crate::repo::lfs::{del_fetch_include, download_files, get_fetch_include};
 use crate::repo::locks::{lock_files, unlock_files, verify_locks_handler};
 use crate::repo::log::log_handler;
 use crate::repo::pull::pull_handler;

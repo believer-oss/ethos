@@ -1,13 +1,11 @@
 pub use clone::clone_handler;
-pub use config::DeleteFetchIncludeRequest;
 pub use file::File;
-pub use lfs::DownloadFilesRequest;
+pub use lfs::{DeleteFetchIncludeRequest, DownloadFilesRequest};
 pub use locks::{LockCache, LockCacheRef};
 pub use router::router;
 pub use status::StatusOp;
 
 mod clone;
-mod config;
 mod diagnostics;
 mod file;
 mod lfs;
