@@ -71,18 +71,13 @@ pub async fn set_fetch_include(repo_path: String, paths: &str) -> Result<(), Cor
 
     let mut all_paths = paths.replace('\\', "/").to_string();
 
-    match git_config.raw_value("lfs.fetchinclude") {
-        Ok(value) => {
-            all_paths.push(',');
-            all_paths.push_str(&value.to_string());
-        }
-        Err(_) => {
-            // for proper priority, we need to set lfs.fetchexclude to empty string
-            git_config.set_raw_value(&"lfs.fetchexclude", "")?;
-        }
+    if let Ok(value) = git_config.raw_value("lfs.fetchexclude") {
+        all_paths.push(',');
+        all_paths.push_str(&value.to_string());
     }
 
-    git_config.set_raw_value(&"lfs.fetchinclude", all_paths.as_str())?; // creates lfs.fetchinclude section or overwrites it
+    git_config.set_raw_value(&"lfs.fetchinclude", all_paths.as_str())?;
+    git_config.set_raw_value(&"lfs.fetchexclude", "")?;
 
     // write new config to disk
     match std::fs::OpenOptions::new().write(true).open(&config_path) {

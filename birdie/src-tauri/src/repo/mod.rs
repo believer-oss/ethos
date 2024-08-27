@@ -1,4 +1,5 @@
 pub use clone::clone_handler;
+pub use config::DeleteFetchIncludeRequest;
 pub use file::File;
 pub use lfs::DownloadFilesRequest;
 pub use locks::{LockCache, LockCacheRef};

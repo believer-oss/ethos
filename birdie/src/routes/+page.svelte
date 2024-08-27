@@ -30,6 +30,7 @@
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import {
+		delFetchInclude,
 		downloadLFSFiles,
 		getAllFiles,
 		getFetchInclude,
@@ -277,6 +278,20 @@
 			await emit('error', e);
 		}
 
+		loading = false;
+	};
+
+	const handleUnFavoriteFile = async (selected: Nullable<LFSFile>) => {
+		loading = true;
+		if (selected === null) return;
+		const fullPath = `${$currentRoot}/${selected.name}`;
+
+		try {
+			await delFetchInclude([fullPath]);
+			fetchIncludeList = await getFetchInclude();
+		} catch (e) {
+			await emit('error', e);
+		}
 		loading = false;
 	};
 
@@ -594,7 +609,10 @@
 					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
 						>Download Selected Files
 					</Button>
-					<Tooltip>Downloads selected files on disk and favorites it for future syncs.</Tooltip>
+					<Tooltip
+						>Downloads selected files on disk and favorites it for automatic download on future
+						syncs.</Tooltip
+					>
 					<Button class="w-full" disabled={loading} on:click={handleLockSelectedFiles}
 						>Lock Selected Files
 					</Button>
@@ -692,7 +710,14 @@
 								on:click={() => handleDownloadFile(selectedFile)}>Download</Button
 							>
 							<Tooltip>Downloads the file on disk and favorites it for future syncs.</Tooltip>
-						{:else if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
+						{:else if fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
+							<Button
+								class="w-full"
+								color="primary"
+								on:click={() => handleUnFavoriteFile(selectedFile)}>Unfavorite</Button
+							>
+						{/if}
+						{#if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}
 							<Button disabled={loading} on:click={lockSelectedFile}>Lock File</Button>
