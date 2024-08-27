@@ -39,6 +39,65 @@ We currently have WorkflowEventBindings for these events:
 - Game client builds (Windows)
 - Game server builds (Linux)
 
+For example, this is the binding for Windows Game client builds:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowEventBinding
+metadata:
+  name: gh-windows-client
+spec:
+  event:
+    # Only build on game repos
+    # We need the after ref to build. The all-zero after is the branch being deleted.
+    # Only build the client when we have a commit on a main branch, or a commit subject with a [ci] prefix
+    # Make sure we have more than 2 elements, otherwise we'll throw an error
+    # Metadata header name is all lowercase
+    # payload.ref == refs/heads/main
+    selector: >-
+      discriminator == "game" &&
+      payload.after != "" &&
+      payload.after != "0000000000000000000000000000000000000000" &&
+      metadata["x-github-event"] == ["push"] &&
+      (
+        hasPrefix(payload.head_commit?.message, "[ci]") ||
+        (
+          len(split(payload.ref, "/")) > 2 &&
+          splitAfter(payload.ref, "/")[2] == "main"
+        )
+      )
+  submit:
+    metadata:
+      # Name the workflow based on the commit hash
+      name: '"windows-client-" + payload.after'
+      labels:
+        believer.dev/commit: 'payload.after'
+        believer.dev/ref: 'replace(split(payload.ref, "/", 3)[2], "/", "_")'
+        believer.dev/repo: 'lower(payload.repository.name)'
+        believer.dev/pusher: 'payload.head_commit?.author?.username ?? replace(payload.pusher.name, "[bot]", "")'
+        # Uncomment below to hide the workflow from the friendshipper UI
+        #believer.dev/friendshipper-hidden: 'string("true")'
+      annotations:
+        believer.dev/email: 'payload.head_commit?.author?.email'
+        believer.dev/message: 'first(split(payload.head_commit?.message, "\n")) ?? "No commit message"'
+        believer.dev/compare: 'payload.compare ?? ""'
+        believer.dev/display-name: 'string("Client Build - Win64")'
+        believer.dev/description: 'string("Build the game client and upload it for distribution")'
+    workflowTemplateRef:
+      name: windows-build-game
+    arguments:
+      parameters:
+        - name: game_repo
+          valueFrom:
+            event: payload.repository.name
+        - name: game_owner
+          valueFrom:
+            event: payload.repository.owner.name
+        - name: game_revision
+          valueFrom:
+            event: payload.after
+```
+
 ### Engine Builds
 
 On engine builds, we run the [InstalledEngineBuild.xml](https://github.com/EpicGames/UnrealEngine/blob/ue5-main/Engine/Build/InstalledEngineBuild.xml) BuildGraph with a target of "Make Installed Build $Platform". The resulting `LocalBuilds/Engine/$Platform` directory is uploaded to S3 via longtail with roughly the following commands:
