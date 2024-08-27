@@ -445,20 +445,6 @@
 		showSearchModal = false;
 	};
 
-	const inFetchInclude = (path: string) => {
-		for (let i = 0; i <= fetchIncludeList.length; i += 1) {
-			if (/\.[^/]+$/.test(fetchIncludeList[i]) && fetchIncludeList[i] === path) {
-				// if the path ends with a file extension (.*), do a direct string match
-				return true;
-			}
-			if (path.startsWith(fetchIncludeList[i])) {
-				// path is a directory
-				return true;
-			}
-		}
-		return false;
-	};
-
 	void listen('refresh-files', () => {
 		void refreshFiles();
 	});
@@ -554,10 +540,12 @@
 											/>
 										</TableBodyCell>
 										<TableBodyCell class="p-2 w-4">
-											{#if inFetchInclude(`${$currentRoot}/${file.name}`)}
-												<HeartSolid class="w-4 h-4 text-green-500" />
-											{:else}
-												<HeartOutline class="w-4 h-4 text-gray-500" />
+											{#if file.fileType === FileType.File}
+												{#if fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
+													<HeartSolid class="w-4 h-4 text-green-500" />
+												{:else}
+													<HeartOutline class="w-4 h-4 text-gray-500" />
+												{/if}
 											{/if}
 										</TableBodyCell>
 										<TableBodyCell class="p-2">
@@ -686,7 +674,9 @@
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Favorited:</span>
 								<span class="dark:text-primary-400 w-64"
-									>{!inFetchInclude(`${$currentRoot}/${selectedFile.name}`) ? 'No' : 'Yes'}</span
+									>{!fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)
+										? 'No'
+										: 'Yes'}</span
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
@@ -695,7 +685,7 @@
 							</div>
 						</div>
 						<Button on:click={() => showInExplorer(selectedFile)}>Show in Explorer</Button>
-						{#if selectedFile.lfsState === LocalFileLFSState.Stub || !inFetchInclude(`${$currentRoot}/${selectedFile.name}`)}
+						{#if selectedFile.lfsState === LocalFileLFSState.Stub || !fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
 							<Button
 								class="w-full"
 								color="primary"
