@@ -193,7 +193,7 @@ pub async fn get_fetch_include(state: tauri::State<'_, State>) -> Result<Vec<Str
 #[tauri::command]
 pub async fn del_fetch_include(
     state: tauri::State<'_, State>,
-    files: Vec<String>
+    files: Vec<String>,
 ) -> Result<(), TauriError> {
     let res = state
         .client

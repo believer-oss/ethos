@@ -73,14 +73,14 @@ pub async fn del_fetch_include(
                     return Err(CoreError(anyhow!(
                         "Failed to write to git config file: {}",
                         e
-                )));
+                    )));
                 }
             },
             Err(e) => {
                 return Err(CoreError(anyhow!(
                     "Failed to open git config file for writing: {}",
                     e
-            )));
+                )));
             }
         }
     }
