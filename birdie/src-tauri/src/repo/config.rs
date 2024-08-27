@@ -39,6 +39,7 @@ pub async fn del_fetch_include(
     let mut git_config =
         gix_config::File::from_path_no_includes(config_path.clone(), Source::Local)?;
 
+    // get current lfs.fetchinclude value
     if let Ok(value) = git_config.raw_value("lfs.fetchinclude") {
         let mut all_paths_vec: Vec<String> = value
             .to_string()
@@ -46,19 +47,22 @@ pub async fn del_fetch_include(
             .map(|s| s.to_string())
             .collect();
 
+        // remove unfavorited paths from lfs.fetchinclude if they exist
         for file in request.files.iter() {
             if let Some(index) = all_paths_vec.iter().position(|x| x == file) {
                 all_paths_vec.remove(index);
             }
         }
+
         all_paths_vec.retain(|x| !x.is_empty()); // remove empty paths to prevent trailing commas
         let all_paths_str = all_paths_vec.join(",");
         if all_paths_vec.is_empty() {
+            // set lfs.fetchexclude to * to prevent all files from being downloaded
             git_config.set_raw_value(&"lfs.fetchexclude", "*")?;
         }
         git_config.set_raw_value(&"lfs.fetchinclude", all_paths_str.as_str())?;
 
-        // write new config to disk
+        // clear current config and write new config to disk
         match std::fs::OpenOptions::new()
             .write(true)
             .truncate(true)

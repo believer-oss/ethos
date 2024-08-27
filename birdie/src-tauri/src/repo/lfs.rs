@@ -22,11 +22,10 @@ pub async fn download_files(
     State(state): State<Arc<AppState>>,
     Json(request): Json<DownloadFilesRequest>,
 ) -> Result<(), CoreError> {
-    // create params for setting fetch include
     let repo_path = state.app_config.read().repo_path.clone();
     let mut fetch_include_paths: Vec<String> = Vec::new();
     for file_path in request.files.iter() {
-        // recursively flatten directory into all child files
+        // recursively flatten paths into all child files
         let full_path = PathBuf::from(repo_path.clone()).join(file_path);
         let local_path = PathBuf::from(file_path.clone());
         fetch_include_paths.extend(flatten_path(full_path, local_path));
@@ -80,10 +79,12 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
                 }
             }
             if !value.is_empty() {
+                // append existing lfs.fetchinclude value
                 all_paths.push_str(&value.to_string())
             }
         }
         Err(_) => {
+            // no existing lfs.fetchinclude value
             all_paths = paths.join(",").replace("\\", "/");
         }
     }
@@ -91,7 +92,7 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
     git_config.set_raw_value(&"lfs.fetchinclude", all_paths.as_str())?;
     git_config.set_raw_value(&"lfs.fetchexclude", "")?;
 
-    // write new config to disk
+    // clear current config and write new config to disk
     match std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
