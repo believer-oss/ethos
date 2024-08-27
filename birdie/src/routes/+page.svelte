@@ -226,7 +226,7 @@
 			allFiles = await getAllFiles();
 
 			await handleGetDirectoryMetadata();
-			await getFetchInclude();
+			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
