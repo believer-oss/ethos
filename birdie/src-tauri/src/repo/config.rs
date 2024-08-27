@@ -64,7 +64,6 @@ pub async fn del_fetch_include(
             .truncate(true)
             .open(&config_path)
         {
-            // truncate to clear file before writing, or else write messes up
             Ok(mut writable_git_config) => match git_config.write_to(&mut writable_git_config) {
                 Ok(_) => {
                     info!("Successfully set lfs.fetchinclude to {}", all_paths_str);
