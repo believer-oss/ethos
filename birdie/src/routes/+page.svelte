@@ -288,6 +288,24 @@
 
 		try {
 			await delFetchInclude([fullPath]);
+
+			fetchIncludeList = await getFetchInclude();
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
+	const handleUnFavoriteSelectedFiles = async () => {
+		loading = true;
+		if (selectedFiles.length === 0) return;
+
+		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+
+		try {
+			await delFetchInclude(paths);
+
+			selectedFiles = [];
 			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
@@ -609,10 +627,13 @@
 					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
 						>Download Selected Files
 					</Button>
-					<Tooltip
-						>Downloads selected files on disk and favorites it for automatic download on future
-						syncs.</Tooltip
-					>
+					<Tooltip>
+						Downloads selected files on disk and adds them to the automatic downloads list.
+					</Tooltip>
+					<Button class="w-full" disabled={loading} on:click={handleUnFavoriteSelectedFiles}
+						>Unfavorite Selected Files
+					</Button>
+					<Tooltip>Removes any favorited files from the automatic downloads list.</Tooltip>
 					<Button class="w-full" disabled={loading} on:click={handleLockSelectedFiles}
 						>Lock Selected Files
 					</Button>
@@ -709,14 +730,16 @@
 								color="primary"
 								on:click={() => handleDownloadFile(selectedFile)}>Download</Button
 							>
-							<Tooltip>Downloads the file on disk and favorites it for future syncs.</Tooltip>
+							<Tooltip
+								>Downloads selected files on disk and adds them to the automatic downloads list.
+							</Tooltip>
 						{:else if fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
 							<Button
 								class="w-full"
 								color="primary"
 								on:click={() => handleUnFavoriteFile(selectedFile)}>Unfavorite</Button
 							>
-						{/if}
+							<Tooltip>Removes any favorited files from the automatic downloads list.</Tooltip>{/if}
 						{#if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}

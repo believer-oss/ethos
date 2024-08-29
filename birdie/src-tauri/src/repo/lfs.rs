@@ -85,9 +85,12 @@ pub async fn del_fetch_include(
             .collect();
 
         // remove unfavorited paths from lfs.fetchinclude if they exist
-        for file in request.files.iter() {
-            if let Some(index) = all_paths_vec.iter().position(|x| x == file) {
-                all_paths_vec.remove(index);
+        for path in request.files.iter() {
+            let full_path = PathBuf::from(state.app_config.read().repo_path.clone()).join(path);
+            let local_path = PathBuf::from(path.clone());
+            let flattened_paths = flatten_path(full_path, local_path);
+            for file_path in flattened_paths {
+                all_paths_vec.retain(|x| x != &file_path);
             }
         }
 
@@ -137,9 +140,8 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
         Ok(value) => {
             for path in paths {
                 // remove duplicates
-                let normalized_path = path.replace("\\", "/");
-                if !value.to_string().contains(&normalized_path) {
-                    all_paths.push_str(&normalized_path);
+                if !value.to_string().contains(&path) {
+                    all_paths.push_str(&path);
                     all_paths.push(',');
                 }
             }
@@ -150,7 +152,7 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
         }
         Err(_) => {
             // no existing lfs.fetchinclude value
-            all_paths = paths.join(",").replace("\\", "/");
+            all_paths = paths.join(",");
         }
     }
 
@@ -195,7 +197,7 @@ pub fn flatten_path(full_path: PathBuf, local_path: PathBuf) -> Vec<String> {
         }
     } else {
         // append string with local file path, so it's easier for frontend to string match
-        flat_paths.push(local_path.to_str().unwrap().to_string());
+        flat_paths.push(local_path.to_str().unwrap().to_string().replace("\\", "/"));
     }
     flat_paths
 }
