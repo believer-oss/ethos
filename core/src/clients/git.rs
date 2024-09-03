@@ -241,17 +241,17 @@ impl Git {
         // TODO: handle alternative remotes
         let mut args = vec!["pull", "origin", &current_branch];
 
-        match stash_strategy {
-            PullStashStrategy::Autostash => args.push("--autostash"),
-            PullStashStrategy::None => {}
-        }
-
         match pull_strategy {
             PullStrategy::Rebase => args.push("--rebase"),
             PullStrategy::FFOnly => {
                 args.push("--ff-only");
                 args.push("--no-rebase");
             }
+        }
+
+        match stash_strategy {
+            PullStashStrategy::Autostash => args.push("--autostash"),
+            PullStashStrategy::None => {}
         }
 
         self.run(&args, Opts::default()).await
