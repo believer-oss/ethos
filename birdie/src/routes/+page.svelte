@@ -282,8 +282,9 @@
 	};
 
 	const handleUnFavoriteFile = async (selected: Nullable<LFSFile>) => {
-		loading = true;
 		if (selected === null) return;
+		loading = true;
+
 		const fullPath = `${$currentRoot}/${selected.name}`;
 
 		try {
@@ -297,8 +298,8 @@
 	};
 
 	const handleUnFavoriteSelectedFiles = async () => {
-		loading = true;
 		if (selectedFiles.length === 0) return;
+		loading = true;
 
 		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
 
@@ -314,8 +315,8 @@
 	};
 
 	const handleLockSelectedFiles = async () => {
-		loading = true;
 		if (selectedFiles.length === 0) return;
+		loading = true;
 
 		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
 
