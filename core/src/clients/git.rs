@@ -708,7 +708,7 @@ impl Git {
         }
     }
 
-    #[instrument(err, fields(otel.name = format!("git {}", args[0]).as_str()))]
+    #[instrument(fields(otel.name = format!("git {}", args[0]).as_str()))]
     async fn run_and_collect_output_internal<'a>(
         &self,
         args: &[&str],
