@@ -40,6 +40,9 @@ where
 
     match log_op.run().await {
         Ok(output) => Ok(Json(output)),
-        Err(e) => Err(CoreError(anyhow!("Error executing log: {}", e.to_string()))),
+        Err(e) => Err(CoreError::Internal(anyhow!(
+            "Error executing log: {}",
+            e.to_string()
+        ))),
     }
 }

@@ -42,7 +42,7 @@ where
         let aws_config = match state.app_config.read().aws_config.clone() {
             Some(config) => config,
             None => {
-                return Err(CoreError::from(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "No AWS config found in app config"
                 )));
             }
@@ -65,7 +65,7 @@ where
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
     match aws_client.refresh_token(true).await {
         Ok(_) => Ok(()),
-        Err(e) => Err(CoreError::from(anyhow!(
+        Err(e) => Err(CoreError::Internal(anyhow!(
             "Failed to refresh AWS credentials: {}",
             e
         ))),

@@ -227,7 +227,7 @@ where
             Ok(config) => config,
             Err(e) => {
                 error!("Failed to get dynamic config from AWS client: {}", e);
-                return Err(CoreError::from(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "Failed to get dynamic config from AWS client: {}",
                     e
                 )));
@@ -310,7 +310,7 @@ where
         let artifact_bucket = match &self.app_config.read().aws_config {
             Some(aws_config) => aws_config.artifact_bucket_name.clone(),
             None => {
-                return Err(CoreError::from(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "No AWS config found in app config"
                 )));
             }

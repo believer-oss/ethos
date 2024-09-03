@@ -598,13 +598,17 @@ where
         .read()
         .github_pat
         .clone()
-        .ok_or(CoreError::from(anyhow!(
+        .ok_or(CoreError::Input(anyhow!(
             "GitHub PAT is not configured. Please configure it in the settings."
         )))?;
 
+    if request.files.is_empty() {
+        return Err(CoreError::Input(anyhow!("No files to submit")));
+    }
+
     let github_client = match state.github_client.read().clone() {
         Some(client) => client.clone(),
-        None => return Err(CoreError(anyhow!(TokenNotFoundError))),
+        None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
     };
 
     let submit_op = SubmitOp {
@@ -631,7 +635,7 @@ where
 
     match rx.await {
         Ok(Some(e)) => {
-            return Err(CoreError(e));
+            return Err(CoreError::Internal(e));
         }
         Ok(None) => {}
         Err(e) => return Err(e.into()),

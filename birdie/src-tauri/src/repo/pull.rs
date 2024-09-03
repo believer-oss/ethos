@@ -101,7 +101,7 @@ pub async fn pull_handler(
 
     let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(Json(PullResponse { conflicts: None }))

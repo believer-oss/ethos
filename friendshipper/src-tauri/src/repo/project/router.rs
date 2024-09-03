@@ -61,7 +61,11 @@ async fn open_project<T>(State(state): State<AppState<T>>) -> Result<(), CoreErr
 where
     T: EngineProvider,
 {
-    state.engine.open_project().await.map_err(CoreError)
+    state
+        .engine
+        .open_project()
+        .await
+        .map_err(|e| CoreError::Internal(anyhow!(e)))
 }
 
 async fn sln_handler<T>(
@@ -73,7 +77,7 @@ where
 {
     let res = generate_and_open_project(&state, &solution).await;
     match res {
-        Err(e) => Err(CoreError(e)),
+        Err(e) => Err(CoreError::Internal(e)),
         Ok(_) => Ok(()),
     }
 }
@@ -164,7 +168,7 @@ where
     let app_config = state.app_config.read().clone();
 
     if app_config.engine_type != EngineType::Source {
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "Preferences are configured to use prebuilt engine."
         )));
     }
@@ -174,7 +178,7 @@ where
     let uproject = UProject::load(&uproject_path)?;
 
     if !uproject.is_custom_engine() {
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "UProject is not configured to use a custom engine."
         )));
     }
@@ -183,7 +187,7 @@ where
         Ok(sha) => sha,
         Err(e) => {
             error!("Caught error parsing engine sha: {}", e);
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Caught error parsing engine commit. Check log for details."
             )));
         }
@@ -205,7 +209,7 @@ where
         open: false,
     };
     if let Err(e) = generate_and_open_project(&state, &solution).await {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(engine_commit)
@@ -222,7 +226,7 @@ where
     let app_config = state.app_config.read().clone();
 
     if app_config.engine_type != EngineType::Source {
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "Preferences are configured to use prebuilt engine."
         )));
     }
@@ -231,7 +235,7 @@ where
     let uproject_path = app_config.get_uproject_path(&repo_config);
     let old_uproject = UProject::load(&uproject_path)?;
     if !old_uproject.is_custom_engine() {
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "UProject is configured to use stock Unreal version {}, not a custom version.",
             old_uproject.engine_association
         )));
@@ -260,7 +264,7 @@ where
                 "Failed to read uproject from file {:?}: {}",
                 uproject_path, e
             );
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Failed to read UProject file {:?}. Check log for details.",
                 uproject_path
             )));
@@ -274,7 +278,7 @@ where
                 "Failed to parse uprojects contents into json. Error: {}. Contents: {}",
                 e, uproject_contents
             );
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Failed to parse uproject json. Check log for details.",
             )));
         }
@@ -305,7 +309,7 @@ where
             "Failed to write uproject file {:?}. Error: {}",
             uproject_path, e
         );
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "Failed to write uproject file. Check log for details."
         )));
     }
@@ -319,7 +323,7 @@ where
         open: false,
     };
     if let Err(e) = generate_and_open_project(&state, &solution).await {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(engine_commit)

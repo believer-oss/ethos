@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{extract::State, Json};
-use tracing::{error, info, instrument};
+use tracing::{info, instrument};
 
 use crate::engine::EngineProvider;
 use ethos_core::operations::LockOp;
@@ -32,13 +32,10 @@ where
         {
             // do not attempt to lock any files owned by other users, instead log an error and abort
             if let Some(owner) = &lock.owner {
-                error!(
+                return Err(CoreError::Input(anyhow!(
                     "Locking failed: file {} is already checked out by {}",
-                    path, owner.name
-                );
-                return Err(CoreError(anyhow!(
-                    "Failed to lock a file checked out by {}. Check the log for more details.",
-                    owner.name,
+                    path,
+                    owner.name
                 )));
             }
         } else if state
@@ -49,10 +46,7 @@ where
             .any(|p| p == &path)
         {
             // do not attempt to lock any files modified upstream by other users, instead log an error and abort
-            error!(
-                "Locking failed: files are modified upstream by other users. Sync and try again."
-            );
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Input(anyhow!(
                 "Files are modified upstream by other users. Sync and try again."
             )));
         } else {
@@ -95,7 +89,7 @@ where
         .read()
         .github_pat
         .clone()
-        .ok_or(CoreError(anyhow!(
+        .ok_or(CoreError::Internal(anyhow!(
             "No github pat found. Please set a github pat in the config"
         )))?;
     let github_username = state.github_username();
@@ -122,12 +116,11 @@ where
     match task_rx.await {
         Ok(e) => {
             if let Some(e) = e {
-                error!("Lock operation ({:?}) failed: {}", op, e);
-                return Err(CoreError(e));
+                return Err(CoreError::Internal(e));
             }
         }
         Err(_) => {
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Error executing lock operation ({:?})",
                 op
             )))
@@ -136,6 +129,6 @@ where
 
     match response_rx.recv().await {
         Some(response) => Ok(Json(response)),
-        None => Err(CoreError(anyhow!("Failed to get lock response"))),
+        None => Err(CoreError::Internal(anyhow!("Failed to get lock response"))),
     }
 }

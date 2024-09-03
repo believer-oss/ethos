@@ -60,5 +60,7 @@ pub async fn remediate_rebase_handler(State(state): State<Arc<AppState>>) -> Res
         return Ok(());
     }
 
-    Err(CoreError(anyhow!("Failed to abort or quit rebase")))
+    Err(CoreError::Internal(anyhow!(
+        "Failed to abort or quit rebase"
+    )))
 }

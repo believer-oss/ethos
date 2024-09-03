@@ -191,7 +191,7 @@ where
     let storage = match state.storage.read().clone() {
         Some(storage) => storage,
         None => {
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Storage not configured. AWS may still be initializing."
             )));
         }
@@ -206,7 +206,7 @@ where
         let uproject = match UProject::load(&uproject_path) {
             Ok(p) => p,
             Err(e) => {
-                return Err(CoreError(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "Unable to update engine due to missing uproject at {}. Error: {}",
                     uproject_path.display(),
                     e
@@ -283,7 +283,7 @@ where
                         project.split_once('-').ok_or(anyhow!("Invalid project"))?;
                     (owner, repo)
                 }
-                None => return Err(CoreError(anyhow!("No project selected"))),
+                None => return Err(CoreError::Internal(anyhow!("No project selected"))),
             };
 
             Project::new(owner, repo)
@@ -313,7 +313,7 @@ where
 
     let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(())

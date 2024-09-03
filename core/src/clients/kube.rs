@@ -268,7 +268,7 @@ impl KubeClient {
                     }
                 })
                 .collect::<Vec<GameServerResults>>()),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -327,13 +327,13 @@ impl KubeClient {
                         return Ok(res.items.first().unwrap().to_owned());
                     }
                 }
-                Err(e) => return Err(CoreError::from(self.handle_kube_error(e).await)),
+                Err(e) => return Err(CoreError::Internal(self.handle_kube_error(e).await)),
             }
         }
 
         match api.create(&PostParams::default(), &gameserver).await {
             Ok(_) => Ok(gameserver),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -344,7 +344,7 @@ impl KubeClient {
 
         match api.get(name).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -357,7 +357,7 @@ impl KubeClient {
 
         match api.delete(name, &params).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -390,7 +390,7 @@ impl KubeClient {
                         .as_str(),
                     )
                 {
-                    return Err(CoreError::from(self.handle_kube_error(e).await));
+                    return Err(CoreError::Internal(self.handle_kube_error(e).await));
                 }
                 Ok(None)
             }
@@ -451,7 +451,7 @@ impl KubeClient {
                 });
                 Ok(items)
             }
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -474,7 +474,7 @@ impl KubeClient {
 
         match api.create(&pp, &playtest).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -501,10 +501,10 @@ impl KubeClient {
 
                 match api.replace(name, &pp, &playtest).await {
                     Ok(res) => Ok(res),
-                    Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+                    Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
                 }
             }
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -517,7 +517,7 @@ impl KubeClient {
 
         match api.delete(name, &params).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -534,7 +534,7 @@ impl KubeClient {
         let mut playtest: Playtest;
         match api.get(playtest_name).await {
             Ok(_) => {}
-            Err(e) => return Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => return Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
 
         // remove the user from the playtests if they're already in it
@@ -592,7 +592,7 @@ impl KubeClient {
 
                         return match api.replace(playtest_name, &pp, &playtest).await {
                             Ok(_) => Ok(()),
-                            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+                            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
                         };
                     }
                 }
@@ -639,7 +639,7 @@ impl KubeClient {
         let mut playtest: Playtest;
         match api.get(playtest_name).await {
             Ok(res) => playtest = res,
-            Err(e) => return Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => return Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
 
         playtest.spec.groups.iter_mut().for_each(|g| {
@@ -652,7 +652,7 @@ impl KubeClient {
 
         match api.replace(playtest_name, &pp, &playtest).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -666,7 +666,7 @@ impl KubeClient {
 
         match api.patch(playtest_name, &pp, &patch).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(CoreError::from(self.handle_kube_error(e).await)),
+            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
         }
     }
 
@@ -718,7 +718,7 @@ impl KubeClient {
                     serde_yaml::from_str(data.get("projects").unwrap())?;
                 Ok(project_configs)
             }
-            None => Err(CoreError::from(anyhow!("ConfigMap data is empty"))),
+            None => Err(CoreError::Internal(anyhow!("ConfigMap data is empty"))),
         }
     }
 

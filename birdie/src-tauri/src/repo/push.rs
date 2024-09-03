@@ -114,7 +114,9 @@ pub async fn push_handler(
     {
         let repo_status = state.repo_status.read();
         if repo_status.conflict_upstream {
-            return Err(CoreError(anyhow!("Conflict detected. See Diagnostics.")));
+            return Err(CoreError::Internal(anyhow!(
+                "Conflict detected. See Diagnostics."
+            )));
         }
 
         // nothing to do

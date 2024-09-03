@@ -27,23 +27,26 @@ impl Client {
 
         const OBS_CONNECTION_ERROR: &str = "Could not connect to OBS. Is it running?";
         let client = match timeout(Duration::from_secs(5), connection).await {
-            Ok(c) => c.map_err(|_| CoreError(anyhow!(OBS_CONNECTION_ERROR)))?,
+            Ok(c) => c.map_err(|_| CoreError::Internal(anyhow!(OBS_CONNECTION_ERROR)))?,
             Err(_) => {
-                return Err(CoreError(anyhow!(OBS_CONNECTION_ERROR)));
+                return Err(CoreError::Internal(anyhow!(OBS_CONNECTION_ERROR)));
             }
         };
 
         match client.scenes().set_current_program_scene(&self.scene).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(CoreError(anyhow!("Error setting scene: {}", e)));
+                return Err(CoreError::Internal(anyhow!("Error setting scene: {}", e)));
             }
         }
 
         match client.recording().start().await {
             Ok(_) => {}
             Err(e) => {
-                return Err(CoreError(anyhow!("Error starting recording: {}", e)));
+                return Err(CoreError::Internal(anyhow!(
+                    "Error starting recording: {}",
+                    e
+                )));
             }
         };
         Ok(())

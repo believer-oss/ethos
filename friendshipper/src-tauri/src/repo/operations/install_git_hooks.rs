@@ -104,7 +104,7 @@ where
 
     let git_hooks_path = state.repo_config.read().git_hooks_path.clone();
     if git_hooks_path.is_none() {
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "Git hooks path is unset in friendshipper.yaml"
         )));
     }

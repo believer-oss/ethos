@@ -63,7 +63,10 @@ where
         }
         Err(e) => {
             error!("Error getting servers: {:?}", e);
-            Err(CoreError::from(anyhow!("Error getting servers: {:?}", e)))
+            Err(CoreError::Internal(anyhow!(
+                "Error getting servers: {:?}",
+                e
+            )))
         }
     }
 }
@@ -137,7 +140,7 @@ where
             file.write_all(logs.as_bytes())?;
             file.sync_all()?;
         } else {
-            return Err(CoreError::from(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Unable to find logs for server {}",
                 name
             )));
@@ -159,7 +162,7 @@ where
         }));
     }
 
-    Err(CoreError::from(anyhow!(
+    Err(CoreError::Internal(anyhow!(
         "Unable to find project directories"
     )))
 }
@@ -190,9 +193,12 @@ where
                 version: server.spec.version.clone(),
                 creation_timestamp: server.metadata.creation_timestamp.unwrap(),
             })),
-            None => Err(CoreError::from(anyhow!("Server is not ready yet"))),
+            None => Err(CoreError::Internal(anyhow!("Server is not ready yet"))),
         },
-        Err(e) => Err(CoreError::from(anyhow!("Error getting server: {:?}", e))),
+        Err(e) => Err(CoreError::Internal(anyhow!(
+            "Error getting server: {:?}",
+            e
+        ))),
     }
 }
 
@@ -251,14 +257,20 @@ async fn open_logs_folder() -> Result<(), CoreError> {
                 Ok(_) => {}
                 Err(e) => {
                     error!("Failed to create logs folder: {:?}", e);
-                    return Err(CoreError(anyhow!("Failed to create logs folder: {:?}", e)));
+                    return Err(CoreError::Internal(anyhow!(
+                        "Failed to create logs folder: {:?}",
+                        e
+                    )));
                 }
             }
         }
 
         if let Err(e) = open::that(log_path) {
             error!("Failed to open logs folder: {:?}", e);
-            return Err(CoreError(anyhow!("Failed to create logs folder: {:?}", e)));
+            return Err(CoreError::Internal(anyhow!(
+                "Failed to create logs folder: {:?}",
+                e
+            )));
         }
     }
 

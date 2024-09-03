@@ -184,7 +184,7 @@ where
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     if !state.app_config.read().pull_dlls {
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "You must enable 'Download DLLs' in Preferences to force a DLL download."
         )));
     }
@@ -228,7 +228,7 @@ where
 
     let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(Json(DownloadResponse {

@@ -123,7 +123,7 @@ pub async fn revert_files_handler(
         .read()
         .github_pat
         .clone()
-        .ok_or(CoreError::from(anyhow!(
+        .ok_or(CoreError::Internal(anyhow!(
             "GitHub PAT is not configured. Please configure it in the settings."
         )))?;
 
@@ -151,7 +151,7 @@ pub async fn revert_files_handler(
 
     let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(Json(String::from("OK")))

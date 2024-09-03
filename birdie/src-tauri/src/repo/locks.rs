@@ -128,7 +128,7 @@ pub async fn lock_files(
                     "Locking failed: file {} is already checked out by {}",
                     path, owner.name
                 );
-                return Err(CoreError(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "Failed to lock a file checked out by {}. Check the log for more details.",
                     owner.name,
                 )));
@@ -144,7 +144,7 @@ pub async fn lock_files(
             warn!(
                 "Locking failed: files are modified upstream by other users. Sync and try again."
             );
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Files are modified upstream by other users. Sync and try again."
             )));
         } else {
@@ -239,7 +239,7 @@ async fn internal_lock_handler(
         .read()
         .github_pat
         .clone()
-        .ok_or(CoreError::from(anyhow!(
+        .ok_or(CoreError::Internal(anyhow!(
             "GitHub PAT is not configured. Please configure it in the settings."
         )))?;
 
@@ -304,7 +304,7 @@ async fn internal_lock_handler(
 
     match lock_op.run().await {
         Ok(response) => Ok(Json(response)),
-        Err(e) => Err(CoreError(anyhow!(
+        Err(e) => Err(CoreError::Internal(anyhow!(
             "Error executing lock op: {}",
             e.to_string()
         ))),
@@ -316,7 +316,7 @@ pub async fn verify_locks_handler(
 ) -> Result<Json<VerifyLocksResponse>, CoreError> {
     match state.git().verify_locks().await {
         Ok(output) => Ok(Json(output)),
-        Err(e) => Err(CoreError(anyhow!(
+        Err(e) => Err(CoreError::Internal(anyhow!(
             "Error fetching locks: {}",
             e.to_string()
         ))),

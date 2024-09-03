@@ -249,7 +249,7 @@ where
     T: EngineProvider,
 {
     // delete file at config path
-    fs::remove_file(state.config_file).map_err(|e| CoreError(anyhow!(e)))
+    fs::remove_file(state.config_file).map_err(|e| CoreError::Internal(anyhow!(e)))
 }
 
 fn save_config_to_file<T>(state: AppState<T>, log_msg: &str) -> Result<(), CoreError>
