@@ -60,7 +60,7 @@ const SUBMIT_PREFIX: &str = "[quick submit]";
 #[async_trait]
 impl Task for GitHubSubmitOp {
     #[instrument(name = "GitHubSubmitOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let octocrab = Octocrab::builder()
             .personal_token(self.token.clone())
             .build()?;
@@ -99,9 +99,9 @@ impl Task for GitHubSubmitOp {
                         .await?;
                 }
                 MergeableState::Dirty => {
-                    return Err(anyhow!(
+                    return Err(CoreError::Input(anyhow!(
                         "PR state is 'dirty'. It's likely a commit check has failed."
-                    ));
+                    )));
                 }
                 _ => {
                     info!("mergeable state: {:?}", state);
@@ -151,10 +151,10 @@ where
     T: EngineProvider,
 {
     #[instrument(name = "SubmitOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         // abort if there are no files to submit
         if self.files.is_empty() {
-            anyhow::bail!("No files to submit");
+            return Err(CoreError::Input(anyhow!("No files to submit")));
         }
 
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
@@ -212,7 +212,7 @@ where
                     };
                     tracing::error!("{}: {}", reason, name_formatted);
                 }
-                anyhow::bail!("Some files are not allowed to be submitted. Check the log for specific errors.");
+                return Err(CoreError::Input(anyhow!("Some files are not allowed to be submitted. Check the log for specific errors.")));
             }
         }
 
@@ -262,7 +262,7 @@ where
     T: EngineProvider,
 {
     #[instrument(name = "SubmitOp::execute_internal", skip(self))]
-    pub async fn execute_internal(&self) -> anyhow::Result<()> {
+    pub async fn execute_internal(&self) -> Result<(), CoreError> {
         let base_branch = self.repo_config.read().trunk_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
         let mut f11r_branch = {
@@ -627,7 +627,7 @@ where
         github_client,
     };
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(submit_op));
 
@@ -635,7 +635,7 @@ where
 
     match rx.await {
         Ok(Some(e)) => {
-            return Err(CoreError::Internal(e));
+            return Err(e);
         }
         Ok(None) => {}
         Err(e) => return Err(e.into()),

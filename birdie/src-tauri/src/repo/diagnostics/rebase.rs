@@ -15,7 +15,7 @@ use crate::state::AppState;
 
 #[debug_handler]
 pub async fn rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
     let rebase = RebaseOp {

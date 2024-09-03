@@ -38,7 +38,7 @@ pub struct PushOp {
 
 #[async_trait]
 impl Task for PushOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         self.git_client.push(&self.trunk_branch).await?;
 
         Ok(())

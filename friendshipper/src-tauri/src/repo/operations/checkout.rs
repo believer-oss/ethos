@@ -17,10 +17,11 @@ pub struct CheckoutOp {
 
 #[async_trait]
 impl Task for CheckoutOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         self.git_client
             .run(&["checkout", &self.branch], Default::default())
             .await
+            .map_err(CoreError::Internal)
     }
 
     fn get_name(&self) -> String {
@@ -35,7 +36,7 @@ where
     T: EngineProvider,
 {
     // Block on any other fetch-like operations in the queue
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
     let op = {

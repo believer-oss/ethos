@@ -106,7 +106,7 @@ where
         force: request.force,
     };
 
-    let (task_tx, task_rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (task_tx, task_rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
 
     let mut sequence = TaskSequence::new().with_completion_tx(task_tx);
     sequence.push(Box::new(lock_op));
@@ -116,7 +116,7 @@ where
     match task_rx.await {
         Ok(e) => {
             if let Some(e) = e {
-                return Err(CoreError::Internal(e));
+                return Err(e);
             }
         }
         Err(_) => {

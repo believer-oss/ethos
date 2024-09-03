@@ -6,7 +6,7 @@ use axum::extract::Query;
 use axum::{async_trait, debug_handler, extract::State, Json};
 use parking_lot::RwLock;
 use serde::Deserialize;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
@@ -60,7 +60,7 @@ pub struct StatusOp {
 
 #[async_trait]
 impl Task for StatusOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let _ = self.run().await?;
 
         Ok(())
@@ -262,7 +262,7 @@ pub async fn status_handler(
     };
 
     // make sure this status operation is executed behind any queued operations
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
 
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(status_op));
@@ -272,8 +272,7 @@ pub async fn status_handler(
     match rx.await {
         Ok(e) => {
             if let Some(e) = e {
-                error!("Status operation failed: {}", e);
-                return Err(CoreError::Internal(e));
+                return Err(e);
             }
 
             let status = state.repo_status.read();

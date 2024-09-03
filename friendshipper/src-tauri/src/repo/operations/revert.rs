@@ -33,13 +33,13 @@ where
     T: EngineProvider,
 {
     #[instrument(skip(self), name = "RevertOp::execute", fields(files = ?self.files))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         if let Some(engine) = &self.engine {
             engine.check_ready_to_sync_repo().await?;
         }
 
         if self.files.is_empty() {
-            bail!("no files provided");
+            return Err(CoreError::Input(anyhow!("no files provided")));
         }
 
         let mut num_chars = 0;
@@ -148,7 +148,7 @@ pub async fn revert_files_handler<T>(
 where
     T: EngineProvider,
 {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
     let repo_path = state.app_config.read().repo_path.clone();
@@ -242,9 +242,9 @@ where
 
     let _ = state.operation_tx.send(sequence).await;
 
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError::Internal(e));
+        return Err(e);
     }
 
     Ok(Json(String::from("OK")))

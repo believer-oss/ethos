@@ -197,12 +197,12 @@ impl Server {
                                 git_hooks_path,
                             };
 
-                            let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+                            let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
                             let mut sequence = TaskSequence::new().with_completion_tx(tx);
                             sequence.push(Box::new(op));
                             let _ = hooks_state.operation_tx.send(sequence).await;
 
-                            let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+                            let res: Result<Option<CoreError>, RecvError> = rx.await;
                             match res {
                                 Ok(operation_error) => {
                                     if let Some(e) = operation_error {

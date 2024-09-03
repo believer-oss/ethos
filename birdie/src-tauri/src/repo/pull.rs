@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::bail;
+use anyhow::anyhow;
 use axum::{async_trait, debug_handler, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
@@ -28,7 +28,7 @@ pub struct PullOp {
 
 #[async_trait]
 impl Task for PullOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         {
             let status_op = {
                 StatusOp {
@@ -52,7 +52,9 @@ impl Task for PullOp {
             }
 
             if !repo_status.conflicts.is_empty() {
-                bail!("Conflicts detected, cannot pull. See Diagnostics.");
+                return Err(CoreError::Input(anyhow!(
+                    "Conflicts detected, cannot pull. See Diagnostics."
+                )));
             }
         }
 
@@ -94,14 +96,14 @@ pub async fn pull_handler(
         github_username: state.github_username(),
     };
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(pull_op));
     let _ = state.operation_tx.send(sequence).await;
 
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError::Internal(e));
+        return Err(e);
     }
 
     Ok(Json(PullResponse { conflicts: None }))
