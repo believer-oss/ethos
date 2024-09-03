@@ -1,3 +1,4 @@
+use crate::types::errors::CoreError;
 use async_trait::async_trait;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use tracing::{error, info, instrument, span};
 
 #[async_trait]
 pub trait Task {
-    async fn execute(&self) -> anyhow::Result<()>;
+    async fn execute(&self) -> Result<(), CoreError>;
     fn get_name(&self) -> String;
 }
 
@@ -14,7 +15,7 @@ pub struct NoOp;
 
 #[async_trait]
 impl Task for NoOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         Ok(())
     }
 
@@ -25,7 +26,7 @@ impl Task for NoOp {
 
 pub struct TaskSequence {
     pub tasks: Vec<Box<dyn Task + Send + Sync>>,
-    pub completion_tx: Option<tokio::sync::oneshot::Sender<Option<anyhow::Error>>>,
+    pub completion_tx: Option<tokio::sync::oneshot::Sender<Option<CoreError>>>,
 
     span: tracing::Span,
 }
@@ -47,7 +48,7 @@ impl TaskSequence {
 
     pub fn with_completion_tx(
         mut self,
-        tx: tokio::sync::oneshot::Sender<Option<anyhow::Error>>,
+        tx: tokio::sync::oneshot::Sender<Option<CoreError>>,
     ) -> Self {
         self.completion_tx = Some(tx);
         self
@@ -74,7 +75,7 @@ impl RepoWorker {
     // For running git tasks that could take a while, like pulling or pushing.
     pub async fn run(&mut self) {
         while let Some(sequence) = self.queue.recv().await {
-            let mut err: Option<anyhow::Error> = None;
+            let mut err: Option<CoreError> = None;
             let span = sequence.span.clone();
 
             self.pause_file_watcher
@@ -103,7 +104,7 @@ impl RepoWorker {
         &self,
         op: Box<dyn Task + Send + Sync>,
         _span: &tracing::Span,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), CoreError> {
         info!("Running: {:?}", op.get_name());
         match op.execute().await {
             Ok(_) => {}

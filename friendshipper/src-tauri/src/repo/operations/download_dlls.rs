@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use axum::extract::State;
 use axum::{async_trait, Json};
@@ -55,11 +54,13 @@ impl<T> Task for DownloadDllsOp<T>
 where
     T: EngineProvider,
 {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         self.engine.check_ready_to_sync_repo().await?;
 
         if self.dll_commit.is_empty() {
-            bail!("No DLL archive found for current branch.");
+            return Err(CoreError::Internal(anyhow!(
+                "No DLL archive found for current branch."
+            )));
         }
 
         let mut binaries_staging_path =
@@ -96,7 +97,10 @@ where
             .await
         {
             Err(e) => {
-                bail!("Failed to determine editor dll archive URL: {}", e);
+                return Err(CoreError::Internal(anyhow!(
+                    "Failed to determine editor dll archive URL: {}",
+                    e
+                )));
             }
             Ok(archive) => archive,
         };
@@ -147,7 +151,10 @@ where
         match dll_download_result {
             Ok(()) => {}
             Err(e) => {
-                bail!("Failed to download dll: {:?}", e);
+                return Err(CoreError::Internal(anyhow!(
+                    "Failed to download dll: {:?}",
+                    e
+                )));
             }
         }
 
@@ -221,14 +228,14 @@ where
         }
     };
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(download_op));
     let _ = state.operation_tx.send(sequence).await;
 
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError::Internal(e));
+        return Err(e);
     }
 
     Ok(Json(DownloadResponse {

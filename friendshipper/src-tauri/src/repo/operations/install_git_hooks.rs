@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use anyhow::bail;
 use axum::async_trait;
 use axum::extract::Query;
 use axum::extract::State;
@@ -34,12 +33,16 @@ pub struct InstallGitHooksOp {
 
 #[async_trait]
 impl Task for InstallGitHooksOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         if self.repo_path.is_empty() {
-            bail!("Failed to install git hooks - repo_path is not set");
+            return Err(CoreError::Input(anyhow!(
+                "Failed to install git hooks - repo_path is not set"
+            )));
         }
         if self.git_hooks_path.is_empty() {
-            bail!("Failed to install git hooks - git_hooks_path is not set");
+            return Err(CoreError::Input(anyhow!(
+                "Failed to install git hooks - git_hooks_path is not set"
+            )));
         }
 
         let git_hooks_path_source = {
@@ -114,11 +117,11 @@ where
         git_hooks_path: git_hooks_path.unwrap(),
     };
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(op));
     let _ = state.operation_tx.send(sequence).await;
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     match res {
         Ok(operation_error) => {
             if let Some(e) = operation_error {

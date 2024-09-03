@@ -6,7 +6,7 @@ use axum::extract::Query;
 use axum::{async_trait, extract::State, Json};
 use parking_lot::RwLock;
 use serde::Deserialize;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::engine;
 use crate::engine::EngineProvider;
@@ -84,7 +84,7 @@ where
     T: EngineProvider,
 {
     #[instrument(name = "StatusOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let _ = self.run().await?;
 
         Ok(())
@@ -585,7 +585,7 @@ where
     };
 
     // make sure this status operation is executed behind any queued operations
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
 
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(status_op));
@@ -595,8 +595,7 @@ where
     match rx.await {
         Ok(e) => {
             if let Some(e) = e {
-                error!("Status operation failed: {}", e);
-                return Err(CoreError::Internal(e));
+                return Err(e);
             }
 
             let status = state.repo_status.read();

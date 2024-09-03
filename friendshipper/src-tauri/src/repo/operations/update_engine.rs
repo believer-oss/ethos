@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use anyhow::anyhow;
-use anyhow::bail;
 use axum::async_trait;
 use axum::extract::State;
 use ethos_core::fs::LocalDownloadPath;
@@ -45,7 +44,7 @@ pub struct UpdateEngineOp {
 #[async_trait]
 impl Task for UpdateEngineOp {
     #[instrument(name = "UpdateEngineOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         // If there's no match we assume it's using an Epic distribution of the engine build so we don't have any work to do
         if self.new_uproject.is_custom_engine() {
             info!("Engine association has been updated to non-installed version {}, attempting to sync new engine", self.new_uproject.engine_association);
@@ -74,7 +73,10 @@ impl Task for UpdateEngineOp {
                         url
                     }
                     Err(e) => {
-                        bail!("Failed to determine engine archive URL: {:?}", e);
+                        return Err(CoreError::Internal(anyhow!(
+                            "Failed to determine engine archive URL: {:?}",
+                            e
+                        )));
                     }
                 };
 
@@ -121,7 +123,10 @@ impl Task for UpdateEngineOp {
                 match download_result {
                     Ok(()) => {}
                     Err(e) => {
-                        bail!("Failed to download engine archive: {:?}", e);
+                        return Err(CoreError::Internal(anyhow!(
+                            "Failed to download engine archive: {:?}",
+                            e
+                        )));
                     }
                 }
             } else {
@@ -306,14 +311,14 @@ where
         }
     };
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(update_op));
     let _ = state.operation_tx.send(sequence).await;
 
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError::Internal(e));
+        return Err(e);
     }
 
     Ok(())

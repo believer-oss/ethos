@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, debug_handler, Json};
 use tokio::sync::oneshot::error::RecvError;
@@ -26,9 +26,9 @@ pub struct RevertFilesOp {
 // Note: This is not "git revert", it's "git checkout -- <files>"
 #[async_trait]
 impl Task for RevertFilesOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         if self.files.is_empty() {
-            bail!("no files provided");
+            return Err(CoreError::Input(anyhow!("no files provided")));
         }
 
         let branch = self.repo_status.read().branch.clone();
@@ -54,7 +54,7 @@ pub async fn revert_files_handler(
     Json(request): Json<RevertFilesRequest>,
 ) -> Result<Json<String>, CoreError> {
     info!("revert files request: {:?}", request);
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
     let repo_path = state.app_config.read().repo_path.clone();
@@ -149,9 +149,9 @@ pub async fn revert_files_handler(
 
     let _ = state.operation_tx.send(sequence).await;
 
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError::Internal(e));
+        return Err(e);
     }
 
     Ok(Json(String::from("OK")))

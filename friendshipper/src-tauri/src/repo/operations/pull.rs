@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use axum::{async_trait, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info, instrument};
@@ -48,7 +48,7 @@ where
     T: EngineProvider,
 {
     #[instrument(name = "PullOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         info!("Pulling repo");
         let github_username = self
             .github_client
@@ -106,13 +106,15 @@ where
         if is_quicksubmit_branch(&branch) {
             let github_client = match &self.github_client {
                 Some(c) => c,
-                None => return Err(anyhow!(TokenNotFoundError)),
+                None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
             };
             let has_open_prs = github_client
                 .is_branch_pr_open(&owner, &repo_name, &branch, 25)
                 .await?;
             if has_open_prs {
-                bail!("You may only sync when all Quick Submit changes have been merged.");
+                return Err(CoreError::Input(anyhow!(
+                    "You may only sync when all Quick Submit changes have been merged."
+                )));
             }
 
             did_stash = self.git_client.stash(git::StashAction::Push).await?;
@@ -165,7 +167,9 @@ where
 
             let repo_status = self.repo_status.read();
             if !repo_status.conflicts.is_empty() {
-                bail!("Conflicts detected, cannot pull. See Diagnostics.");
+                return Err(CoreError::Input(anyhow!(
+                    "Conflicts detected, cannot pull. See Diagnostics."
+                )));
             }
         }
 
@@ -231,7 +235,9 @@ where
         let artifact_prefix = match app_config.selected_artifact_project.clone() {
             Some(project) => project,
             None => {
-                return Err(anyhow!("No selected artifact project found in config."));
+                return Err(CoreError::Input(anyhow!(
+                    "No selected artifact project found in config."
+                )));
             }
         };
 
@@ -291,7 +297,9 @@ where
                             (owner, repo)
                         }
                         None => {
-                            return Err(anyhow!("No selected artifact project found in config."));
+                            return Err(CoreError::Input(anyhow!(
+                                "No selected artifact project found in config."
+                            )));
                         }
                     };
 
@@ -356,14 +364,14 @@ where
         engine: state.engine.clone(),
     };
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
     sequence.push(Box::new(pull_op));
     let _ = state.operation_tx.send(sequence).await;
 
-    let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError::Internal(e));
+        return Err(e);
     }
 
     Ok(Json(PullResponse { conflicts: None }))

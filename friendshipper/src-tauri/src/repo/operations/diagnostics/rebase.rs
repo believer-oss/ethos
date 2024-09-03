@@ -17,7 +17,7 @@ pub async fn rebase_handler<T>(State(state): State<AppState<T>>) -> Result<(), C
 where
     T: EngineProvider,
 {
-    let (tx, rx) = tokio::sync::oneshot::channel::<Option<anyhow::Error>>();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
 
     let rebase = RebaseOp {

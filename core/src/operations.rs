@@ -2,6 +2,7 @@ use crate::clients::git;
 use crate::clients::git::Opts;
 use crate::types::commits::Commit;
 use crate::types::config::RepoConfig;
+use crate::types::errors::CoreError;
 use crate::types::locks::Lock;
 use crate::types::locks::OwnerInfo;
 use crate::types::locks::{LockOperation, LockResponse};
@@ -26,7 +27,7 @@ pub struct CommitOp {
 #[async_trait]
 impl Task for CommitOp {
     #[instrument(name = "CommitOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         if !self.skip_status_check {
             let repo_status = self.repo_status.read();
             if !repo_status.has_staged_changes {
@@ -58,7 +59,7 @@ pub struct LogOp {
 #[async_trait]
 impl Task for LogOp {
     #[instrument(name = "LogOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let _ = self.run().await?;
 
         Ok(())
@@ -114,7 +115,7 @@ pub struct AddOp {
 #[async_trait]
 impl Task for AddOp {
     #[instrument(name = "AddOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let mut args = vec!["add"];
 
         for file in &self.files {
@@ -142,7 +143,7 @@ pub struct RestoreOp {
 #[async_trait]
 impl Task for RestoreOp {
     #[instrument(name = "RestoreOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let mut args = vec!["restore", "--staged"];
 
         for file in &self.files {
@@ -170,7 +171,7 @@ pub struct RebaseOp {
 #[async_trait]
 impl Task for RebaseOp {
     #[instrument(name = "RebaseOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let remote_branch = self.repo_status.read().remote_branch.clone();
         let args: Vec<&str> = vec!["rebase", &remote_branch];
 
@@ -199,7 +200,7 @@ pub struct LockOp {
 #[async_trait]
 impl Task for LockOp {
     #[instrument(name = "LockOp::execute", skip(self))]
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let _ = self.run().await?;
 
         Ok(())

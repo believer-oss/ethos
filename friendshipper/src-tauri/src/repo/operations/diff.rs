@@ -19,7 +19,7 @@ pub struct DiffOp {
 
 #[async_trait]
 impl Task for DiffOp {
-    async fn execute(&self) -> anyhow::Result<()> {
+    async fn execute(&self) -> Result<(), CoreError> {
         let _ = self.run().await?;
 
         Ok(())
