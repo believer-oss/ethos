@@ -4,13 +4,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import type { ArtifactEntry, Nullable, Playtest, PlaytestSpec } from '$lib/types';
 	import { createPlaytest, deletePlaytest, ModalState, updatePlaytest } from '$lib/playtests';
-	import {
-		appConfig,
-		activeProjectConfig,
-		allProjects,
-		workflowMap,
-		dynamicConfig
-	} from '$lib/stores';
+	import { appConfig, activeProjectConfig, allProjects, workflowMap } from '$lib/stores';
 	import { getBuilds } from '$lib/builds';
 
 	export let versions: ArtifactEntry[];
@@ -262,7 +256,7 @@
 					size="sm"
 					name="minGroups"
 					min="1"
-					max={$dynamicConfig.playtestDiscordChannels.length + 1}
+					max="25"
 					value={playtest ? playtest.spec.minGroups : 1}
 					required
 				/>
