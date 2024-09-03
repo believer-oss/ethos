@@ -12,7 +12,8 @@
 		Table,
 		TableBody,
 		TableBodyCell,
-		TableBodyRow
+		TableBodyRow,
+		Tooltip
 	} from 'flowbite-svelte';
 	import { onMount, tick } from 'svelte';
 	import {
@@ -21,14 +22,18 @@
 		EditOutline,
 		FileCheckOutline,
 		FileCheckSolid,
-		FolderSolid
+		FolderSolid,
+		HeartOutline,
+		HeartSolid
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import {
+		delFetchInclude,
 		downloadLFSFiles,
 		getAllFiles,
+		getFetchInclude,
 		getFileHistory,
 		getFiles,
 		lockFiles,
@@ -85,6 +90,9 @@
 			value: 'character'
 		}
 	];
+
+	// git config
+	let fetchIncludeList: string[] = [];
 
 	const handleGetDirectoryMetadata = async () => {
 		try {
@@ -218,6 +226,7 @@
 			allFiles = await getAllFiles();
 
 			await handleGetDirectoryMetadata();
+			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -247,6 +256,7 @@
 			await downloadFiles([fullPath]);
 
 			selectedFile.lfsState = LocalFileLFSState.Local;
+			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -263,6 +273,7 @@
 			await downloadFiles(paths);
 
 			selectedFiles = [];
+			fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -270,9 +281,42 @@
 		loading = false;
 	};
 
-	const handleLockSelectedFiles = async () => {
+	const handleUnFavoriteFile = async (selected: Nullable<LFSFile>) => {
+		if (selected === null) return;
 		loading = true;
+
+		const fullPath = `${$currentRoot}/${selected.name}`;
+
+		try {
+			await delFetchInclude([fullPath]);
+
+			fetchIncludeList = await getFetchInclude();
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
+	const handleUnFavoriteSelectedFiles = async () => {
 		if (selectedFiles.length === 0) return;
+		loading = true;
+
+		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+
+		try {
+			await delFetchInclude(paths);
+
+			selectedFiles = [];
+			fetchIncludeList = await getFetchInclude();
+		} catch (e) {
+			await emit('error', e);
+		}
+		loading = false;
+	};
+
+	const handleLockSelectedFiles = async () => {
+		if (selectedFiles.length === 0) return;
+		loading = true;
 
 		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
 
@@ -442,6 +486,11 @@
 	onMount(() => {
 		void refreshFiles();
 
+		const setupFetchIncludeList = async (): Promise<void> => {
+			fetchIncludeList = await getFetchInclude();
+		};
+		void setupFetchIncludeList();
+
 		// refresh every 30 seconds
 		const interval = setInterval(() => {
 			void refreshFiles();
@@ -524,6 +573,15 @@
 												}}
 											/>
 										</TableBodyCell>
+										<TableBodyCell class="p-2 w-4">
+											{#if file.fileType === FileType.File}
+												{#if fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
+													<HeartSolid class="w-4 h-4 text-green-500" />
+												{:else}
+													<HeartOutline class="w-4 h-4 text-gray-500" />
+												{/if}
+											{/if}
+										</TableBodyCell>
 										<TableBodyCell class="p-2">
 											{#if file.fileType === FileType.Directory}
 												<Button
@@ -570,6 +628,13 @@
 					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
 						>Download Selected Files
 					</Button>
+					<Tooltip>
+						Downloads selected files on disk and adds them to the automatic downloads list.
+					</Tooltip>
+					<Button class="w-full" disabled={loading} on:click={handleUnFavoriteSelectedFiles}
+						>Unfavorite Selected Files
+					</Button>
+					<Tooltip>Removes any favorited files from the automatic downloads list.</Tooltip>
 					<Button class="w-full" disabled={loading} on:click={handleLockSelectedFiles}
 						>Lock Selected Files
 					</Button>
@@ -647,14 +712,36 @@
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
+								<span class="w-20">Favorited:</span>
+								<span class="dark:text-primary-400 w-64"
+									>{!fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)
+										? 'No'
+										: 'Yes'}</span
+								>
+							</div>
+							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Locked by:</span>
 								<span class="dark:text-primary-400 w-64">{getLockOwner(selectedFile)}</span>
 							</div>
 						</div>
 						<Button on:click={() => showInExplorer(selectedFile)}>Show in Explorer</Button>
-						{#if selectedFile.lfsState === LocalFileLFSState.Stub}
-							<Button on:click={() => handleDownloadFile(selectedFile)}>Download</Button>
-						{:else if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
+						{#if selectedFile.lfsState === LocalFileLFSState.Stub || !fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
+							<Button
+								class="w-full"
+								color="primary"
+								on:click={() => handleDownloadFile(selectedFile)}>Download</Button
+							>
+							<Tooltip
+								>Downloads selected files on disk and adds them to the automatic downloads list.
+							</Tooltip>
+						{:else if fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
+							<Button
+								class="w-full"
+								color="primary"
+								on:click={() => handleUnFavoriteFile(selectedFile)}>Unfavorite</Button
+							>
+							<Tooltip>Removes any favorited files from the automatic downloads list.</Tooltip>{/if}
+						{#if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
 						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}
 							<Button disabled={loading} on:click={lockSelectedFile}>Lock File</Button>

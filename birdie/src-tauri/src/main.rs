@@ -121,6 +121,8 @@ fn main() {
             clone_repo,
             configure_git_user,
             download_lfs_files,
+            get_fetch_include,
+            del_fetch_include,
             fix_rebase,
             get_commits,
             get_all_files,

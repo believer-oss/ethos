@@ -46,6 +46,7 @@ walkdir = "2.4.0"
 fs_extra = "1.3.0"
 futures = "0.3.30"
 structopt = "0.3.26"
+gix-config = "0.38.0"
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }

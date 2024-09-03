@@ -6,7 +6,7 @@ use axum::Router;
 use crate::repo::clone::clone_handler;
 use crate::repo::diagnostics;
 use crate::repo::file::{get_all_files, get_file_history, get_files};
-use crate::repo::lfs::download_files;
+use crate::repo::lfs::{del_fetch_include, download_files, get_fetch_include};
 use crate::repo::locks::{lock_files, unlock_files, verify_locks_handler};
 use crate::repo::log::log_handler;
 use crate::repo::pull::pull_handler;
@@ -19,6 +19,10 @@ use crate::state::AppState;
 pub fn router(shared_state: Arc<AppState>) -> Router {
     Router::new()
         .route("/clone", post(clone_handler))
+        .route(
+            "/config/fetchinclude",
+            get(get_fetch_include).delete(del_fetch_include),
+        )
         .route("/status", get(status_handler))
         .route("/files", get(get_files))
         .route("/files/all", get(get_all_files))

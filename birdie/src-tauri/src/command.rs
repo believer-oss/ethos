@@ -5,7 +5,7 @@ use tracing::info;
 use birdie::metadata::{
     DirectoryClass, DirectoryMetadata, UpdateMetadataClassRequest, UpdateMetadataRequest,
 };
-use birdie::repo::{DownloadFilesRequest, File};
+use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File};
 use ethos_core::tauri::command::check_client_error;
 use ethos_core::tauri::error::TauriError;
 use ethos_core::types::commits::Commit;
@@ -171,6 +171,42 @@ pub async fn verify_locks(
     }
 
     Ok(res.json().await?)
+}
+
+// Git Config
+#[tauri::command]
+pub async fn get_fetch_include(state: tauri::State<'_, State>) -> Result<Vec<String>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/config/fetchinclude", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn del_fetch_include(
+    state: tauri::State<'_, State>,
+    files: Vec<String>,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .delete(format!("{}/repo/config/fetchinclude", state.server_url))
+        .json(&DeleteFetchIncludeRequest { files })
+        .send()
+        .await?;
+
+    if let Some(err) = check_client_error(res).await {
+        return Err(err);
+    }
+
+    Ok(())
 }
 
 // Birdie commands

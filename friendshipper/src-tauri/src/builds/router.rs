@@ -20,7 +20,7 @@ use ethos_core::clients::obs;
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList, Platform,
 };
-use ethos_core::types::argo::workflow::Workflow;
+use ethos_core::types::argo::workflow::{Workflow, WorkflowStatus};
 use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::GameServerResults;
@@ -355,21 +355,24 @@ where
         let argolabels = workflow.metadata.labels.as_ref().unwrap();
         let argoannotations = workflow.metadata.annotations.as_ref().unwrap();
 
-        workflow.status.as_mut().map(|s| {
-            s.started_at = s.started_at.as_mut().map(|started_at| {
-                let f: DateTime<Local> = DateTime::parse_from_rfc3339(started_at)
-                    .unwrap_or(Local::now().into())
-                    .into();
-                f.time().format("%r").to_string()
+        workflow
+            .status
+            .as_mut()
+            .map(|s: &mut WorkflowStatus| -> &mut WorkflowStatus {
+                s.started_at = s.started_at.as_mut().map(|started_at| {
+                    let f: DateTime<Local> = DateTime::parse_from_rfc3339(started_at)
+                        .unwrap_or(Local::now().into())
+                        .into();
+                    f.time().format("%r").to_string()
+                });
+                s.finished_at = s.finished_at.as_mut().map(|finished_at| {
+                    let f: DateTime<Local> = DateTime::parse_from_rfc3339(finished_at)
+                        .unwrap_or(Local::now().into())
+                        .into();
+                    f.time().format("%r").to_string()
+                });
+                s
             });
-            s.finished_at = s.finished_at.as_mut().map(|finished_at| {
-                let f: DateTime<Local> = DateTime::parse_from_rfc3339(finished_at)
-                    .unwrap_or(Local::now().into())
-                    .into();
-                f.time().format("%r").to_string()
-            });
-            s
-        });
 
         let commit = argolabels.get(ARGO_WORKFLOW_COMMIT_LABEL_KEY).unwrap();
         let pusher = argolabels

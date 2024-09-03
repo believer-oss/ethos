@@ -75,3 +75,8 @@ export const showCommitFiles = async (
 
 export const downloadLFSFiles = async (files: string[]): Promise<void> =>
 	invoke('download_lfs_files', { files });
+
+export const getFetchInclude = async (): Promise<string[]> => invoke('get_fetch_include');
+
+export const delFetchInclude = async (files: string[]): Promise<void> =>
+	invoke('del_fetch_include', { files });
