@@ -256,7 +256,7 @@
 					size="sm"
 					name="minGroups"
 					min="1"
-					max="10"
+					max="25"
 					value={playtest ? playtest.spec.minGroups : 1}
 					required
 				/>
