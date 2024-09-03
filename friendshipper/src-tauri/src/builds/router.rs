@@ -187,7 +187,7 @@ where
                 aws_client.get_credentials().await,
             )?;
         }
-        Err(e) => return Err(CoreError::from(e)),
+        Err(e) => return Err(CoreError::Internal(e.into())),
     }
 
     if let Some(launch_options) = payload.launch_options {
@@ -223,7 +223,7 @@ where
             Ok(child) => child,
             Err(e) => {
                 error!("Failed to launch game client with error: {}", e);
-                return Err(CoreError(e));
+                return Err(CoreError::Internal(e));
             }
         };
 
@@ -275,7 +275,7 @@ where
         .collect::<Vec<_>>();
 
     for entry in entries {
-        fs::remove_dir_all(entry.path()).map_err(CoreError::from)?;
+        fs::remove_dir_all(entry.path())?;
     }
 
     Ok(())
@@ -288,7 +288,7 @@ where
     let longtail_path = state.longtail.exec_path.clone();
 
     if let Some(longtail_path) = longtail_path {
-        fs::remove_file(longtail_path).map_err(CoreError::from)?;
+        fs::remove_file(longtail_path)?;
     }
 
     Ok(())

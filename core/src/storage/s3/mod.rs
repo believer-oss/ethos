@@ -43,7 +43,7 @@ impl ArtifactProvider for S3ArtifactProvider {
 
         match res.key_count() {
             None => {
-                return Err(CoreError::from(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "No object found in bucket with prefix {}",
                     prefix
                 )));
@@ -54,7 +54,7 @@ impl ArtifactProvider for S3ArtifactProvider {
                 return Ok(format!("s3://{}/{}", self.s3_bucket, key));
             }
             Some(c) => {
-                return Err(CoreError::from(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "Multiple object found! Prefix {prefix} returned {c} objects, expected 1",
                 )));
             }
@@ -81,7 +81,7 @@ impl ArtifactProvider for S3ArtifactProvider {
         while let Some(resp) = paginator.next().await {
             if resp.is_err() {
                 warn!("Error getting list of objects from S3: [{:?}", resp);
-                return Err(CoreError::from(anyhow!(
+                return Err(CoreError::Internal(anyhow!(
                     "Error getting list of objects from S3"
                 )));
             };

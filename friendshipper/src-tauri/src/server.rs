@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
 use ethos_core::clients::git::Git;
@@ -328,7 +328,7 @@ impl Server {
                 }
             },
         )
-        .map_err(CoreError::from)
+            .map_err(|e| CoreError::Internal(anyhow!(e)))
     }
 
     fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<AppConfig>)> {

@@ -273,13 +273,15 @@ pub async fn status_handler(
         Ok(e) => {
             if let Some(e) = e {
                 error!("Status operation failed: {}", e);
-                return Err(CoreError(e));
+                return Err(CoreError::Internal(e));
             }
 
             let status = state.repo_status.read();
 
             Ok(Json(status.clone()))
         }
-        Err(_) => Err(CoreError(anyhow!("Error executing status operation"))),
+        Err(_) => Err(CoreError::Internal(anyhow!(
+            "Error executing status operation"
+        ))),
     }
 }

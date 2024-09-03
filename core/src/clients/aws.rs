@@ -349,7 +349,10 @@ impl AWSClient {
             Err(e) => {
                 let e = e.into_service_error();
                 error!("Error getting dynamic config: {:?}", e);
-                return Err(CoreError(anyhow!("Error getting dynamic config: {:?}", e)));
+                return Err(CoreError::Internal(anyhow!(
+                    "Error getting dynamic config: {:?}",
+                    e
+                )));
             }
         };
 
@@ -399,7 +402,10 @@ impl AWSClient {
         while let Some(resp) = paginator.next().await {
             if resp.is_err() {
                 debug!("Resp: [{:?}", resp);
-                return Err(CoreError(anyhow!("Error getting object key: {:?}", resp)));
+                return Err(CoreError::Internal(anyhow!(
+                    "Error getting object key: {:?}",
+                    resp
+                )));
             };
             for object in resp.unwrap().contents() {
                 let entry = ArtifactEntry::from(object.clone());
@@ -619,7 +625,9 @@ pub fn ensure_aws_client(client: Option<AWSClient>) -> Result<AWSClient, CoreErr
         Some(client) => Ok(client),
         None => {
             error!("AWS client not initialized. Double check that AWS configuration is correct in the UI.");
-            Err(CoreError(anyhow!("AWS client not initialized. See logs!")))
+            Err(CoreError::Internal(anyhow!(
+                "AWS client not initialized. See logs!"
+            )))
         }
     }
 }

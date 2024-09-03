@@ -52,7 +52,7 @@ where
 
     match diff_op.run().await {
         Ok(output) => Ok(Json(output)),
-        Err(e) => Err(CoreError(anyhow!(
+        Err(e) => Err(CoreError::Internal(anyhow!(
             "Error executing diff: {}",
             e.to_string()
         ))),

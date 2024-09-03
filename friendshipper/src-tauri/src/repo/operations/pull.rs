@@ -337,7 +337,7 @@ where
     let storage = match state.storage.read().clone() {
         Some(storage) => storage,
         None => {
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Internal(anyhow!(
                 "Storage not configured. AWS may still be initializing."
             )));
         }
@@ -361,14 +361,10 @@ where
     sequence.push(Box::new(pull_op));
     let _ = state.operation_tx.send(sequence).await;
 
-    info!("waiting for pull to complete");
-
     let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
-
-    info!("pull completed");
 
     Ok(Json(PullResponse { conflicts: None }))
 }

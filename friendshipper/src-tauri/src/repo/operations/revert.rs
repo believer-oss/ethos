@@ -221,7 +221,7 @@ where
             .read()
             .github_pat
             .clone()
-            .ok_or(CoreError(anyhow!(
+            .ok_or(CoreError::Internal(anyhow!(
                 "No github pat found. Please set a github pat in the config"
             )))?;
         let github_username = state.github_username();
@@ -244,7 +244,7 @@ where
 
     let res: Result<Option<anyhow::Error>, RecvError> = rx.await;
     if let Ok(Some(e)) = res {
-        return Err(CoreError(e));
+        return Err(CoreError::Internal(e));
     }
 
     Ok(Json(String::from("OK")))

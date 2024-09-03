@@ -27,7 +27,7 @@ impl ArtifactProvider for MockArtifactProvider {
     async fn get_artifact_by_prefix(&self, prefix: &str) -> Result<String, CoreError> {
         // TODO: Send back an actual longtail .json file to test with.
         match prefix.contains("fail") {
-            true => Err(CoreError::from(anyhow!("fail".to_string()))),
+            true => Err(CoreError::Internal(anyhow!("fail".to_string()))),
             false => Ok("Fake successful file contents".to_string()),
         }
     }

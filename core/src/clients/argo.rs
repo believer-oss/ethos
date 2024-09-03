@@ -73,7 +73,7 @@ impl ArgoClient {
 
         if response.status().is_client_error() {
             let body = response.text().await?;
-            return Err(CoreError(anyhow!(body)));
+            return Err(CoreError::Internal(anyhow!(body)));
         }
 
         let mut workflows: ObjectList<Workflow> = match response.json().await {

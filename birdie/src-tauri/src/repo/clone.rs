@@ -36,7 +36,7 @@ pub async fn clone_handler(
             return Ok(());
         }
 
-        return Err(CoreError(anyhow!(
+        return Err(CoreError::Internal(anyhow!(
             "The folder {} already exists but is not a git repository.",
             repo_path.to_str().unwrap_or_default()
         )));

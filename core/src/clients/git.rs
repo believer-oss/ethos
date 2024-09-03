@@ -862,7 +862,10 @@ pub async fn configure_global(key: &str, value: &str) -> Result<(), CoreError> {
             key, value, err_output
         );
 
-        return Err(CoreError(anyhow!("Git config failed: {}", err_output)));
+        return Err(CoreError::Internal(anyhow!(
+            "Git config failed: {}",
+            err_output
+        )));
     }
 
     Ok(())

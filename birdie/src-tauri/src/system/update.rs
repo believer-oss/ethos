@@ -78,7 +78,10 @@ pub async fn run_update(State(state): State<Arc<AppState>>) -> Result<(), CoreEr
             if response.status().is_client_error() {
                 let text = response.text().await?;
                 error!("Error downloading asset: {:?}", text.clone());
-                return Err(CoreError(anyhow!("Error downloading asset: {:?}", text)));
+                return Err(CoreError::Internal(anyhow!(
+                    "Error downloading asset: {:?}",
+                    text
+                )));
             }
 
             let exe_path = match std::env::current_exe() {
