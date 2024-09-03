@@ -113,14 +113,14 @@ pub async fn del_fetch_include(
                     info!("Successfully set lfs.fetchinclude to {}", all_paths_str);
                 }
                 Err(e) => {
-                    return Err(CoreError(anyhow!(
+                    return Err(CoreError::Input(anyhow!(
                         "Failed to write to git config file: {}",
                         e
                     )));
                 }
             },
             Err(e) => {
-                return Err(CoreError(anyhow!(
+                return Err(CoreError::Input(anyhow!(
                     "Failed to open git config file for writing: {}",
                     e
                 )));
@@ -170,14 +170,14 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
                 info!("Successfully set lfs.fetchinclude to {}", all_paths);
             }
             Err(e) => {
-                return Err(CoreError(anyhow!(
+                return Err(CoreError::Input(anyhow!(
                     "Failed to write to git config file: {}",
                     e
                 )));
             }
         },
         Err(e) => {
-            return Err(CoreError(anyhow!(
+            return Err(CoreError::Input(anyhow!(
                 "Failed to open git config file for writing: {}",
                 e
             )));
