@@ -24,7 +24,7 @@ async fn sync_tools(State(state): State<Arc<AppState>>) -> Result<String, CoreEr
     let tools_path = config.tools_path.clone();
     let tools_url = config.tools_url.clone();
     let (_, git_name) = tools_url.rsplit_once('/').unwrap();
-    let repo_name = git_name.replace(".git","");
+    let repo_name = git_name.replace(".git", "");
 
     let sync_path = format!("{tools_path}/{repo_name}");
 
