@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use anyhow::anyhow;
 use axum::routing::post;
 use axum::{extract::State, routing::get, Json, Router};
-use tracing::info;
+use tracing::{info, instrument};
 
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::clients::kube::ensure_kube_client;
@@ -75,6 +75,7 @@ where
     Json(config)
 }
 
+#[instrument(skip(state), err)]
 async fn update_config<T>(
     State(state): State<AppState<T>>,
     Json(payload): Json<AppConfig>,
