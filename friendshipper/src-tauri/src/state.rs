@@ -8,7 +8,7 @@ use opentelemetry_sdk::Resource;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender as MPSCSender;
 use tokio::sync::RwLock as TokioRwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
@@ -212,6 +212,7 @@ where
             .map_or(String::default(), |x| x.username.clone())
     }
 
+    #[instrument(skip(self, client))]
     pub async fn replace_aws_client(
         &self,
         client: AWSClient,
