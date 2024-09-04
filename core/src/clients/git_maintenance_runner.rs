@@ -2,7 +2,7 @@ use crate::clients::git::{Git, ShouldPrune};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender as STDSender;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub struct GitMaintenanceRunner {
     git: Git,
@@ -51,7 +51,7 @@ impl GitMaintenanceRunner {
                     match git.fetch(ShouldPrune::Yes).await {
                         Ok(_) => {}
                         Err(e) => {
-                            error!("Error fetching: {:?}", e);
+                            warn!("Error fetching: {:?}", e);
                         }
                     }
                 }

@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -26,9 +26,9 @@ pub async fn download_files(
     let mut fetch_include_paths: Vec<String> = Vec::new();
     for file_path in request.files.iter() {
         // recursively flatten paths into all child files
-        let full_path = PathBuf::from(repo_path.clone()).join(file_path);
-        let local_path = PathBuf::from(file_path.clone());
-        fetch_include_paths.extend(flatten_path(full_path, local_path));
+        let full_path = Path::new(&repo_path).join(file_path);
+        let local_path = Path::new(file_path);
+        fetch_include_paths.extend(flatten_path(&full_path, local_path));
     }
     set_fetch_include(repo_path, fetch_include_paths).await?;
 
@@ -86,9 +86,9 @@ pub async fn del_fetch_include(
 
         // remove unfavorited paths from lfs.fetchinclude if they exist
         for path in request.files.iter() {
-            let full_path = PathBuf::from(state.app_config.read().repo_path.clone()).join(path);
-            let local_path = PathBuf::from(path.clone());
-            let flattened_paths = flatten_path(full_path, local_path);
+            let full_path = Path::new(&state.app_config.read().repo_path).join(path);
+            let local_path = Path::new(path);
+            let flattened_paths = flatten_path(&full_path, local_path);
             for file_path in flattened_paths {
                 all_paths_vec.retain(|x| x != &file_path);
             }
@@ -186,18 +186,73 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
     Ok(())
 }
 
-pub fn flatten_path(full_path: PathBuf, local_path: PathBuf) -> Vec<String> {
-    let mut flat_paths: Vec<String> = Vec::new();
+pub fn flatten_path(full_path: &Path, local_path: &Path) -> Vec<String> {
+    let mut flat_paths = Vec::new();
     if full_path.is_dir() {
-        for child in fs::read_dir(full_path).unwrap() {
-            let child = child.unwrap();
-            let child_path = child.path();
-            let child_local_path = local_path.join(child.file_name());
-            flat_paths.extend(flatten_path(child_path, child_local_path));
+        if let Ok(entries) = fs::read_dir(full_path) {
+            for entry in entries.filter_map(Result::ok) {
+                let child_path = entry.path();
+                let child_local_path = local_path.join(entry.file_name());
+                flat_paths.extend(flatten_path(&child_path, &child_local_path));
+            }
         }
-    } else {
-        // append string with local file path, so it's easier for frontend to string match
-        flat_paths.push(local_path.to_str().unwrap().to_string().replace("\\", "/"));
+    } else if full_path.is_file() {
+        if let Some(path_str) = local_path.to_str() {
+            flat_paths.push(path_str.replace('\\', "/"));
+        }
     }
     flat_paths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_flatten_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Create a test directory structure
+        fs::create_dir_all(base_path.join("dir1/subdir")).unwrap();
+        fs::create_dir_all(base_path.join("dir2")).unwrap();
+        File::create(base_path.join("file1.txt")).unwrap();
+        File::create(base_path.join("dir1/file2.txt")).unwrap();
+        File::create(base_path.join("dir1/subdir/file3.txt")).unwrap();
+        File::create(base_path.join("dir2/file4.txt")).unwrap();
+
+        // Test case 1: Flatten the entire directory
+        let result = flatten_path(base_path, Path::new(""));
+        let expected = vec![
+            "file1.txt",
+            "dir1/file2.txt",
+            "dir1/subdir/file3.txt",
+            "dir2/file4.txt",
+        ];
+        assert_eq!(result.len(), expected.len());
+        for path in expected {
+            assert!(result.contains(&path.to_string()));
+        }
+
+        // Test case 2: Flatten a subdirectory
+        let result = flatten_path(&base_path.join("dir1"), Path::new("dir1"));
+        let expected = vec!["dir1/file2.txt", "dir1/subdir/file3.txt"];
+        assert_eq!(result, expected);
+
+        // Test case 3: Flatten a single file
+        let result = flatten_path(&base_path.join("file1.txt"), Path::new("file1.txt"));
+        let expected = vec!["file1.txt"];
+        assert_eq!(result, expected);
+
+        // Test case 4: Flatten an empty directory
+        fs::create_dir(base_path.join("empty_dir")).unwrap();
+        let result = flatten_path(&base_path.join("empty_dir"), Path::new("empty_dir"));
+        assert!(result.is_empty());
+
+        // Test case 5: Flatten a non-existent path
+        let result = flatten_path(&base_path.join("non_existent"), Path::new("non_existent"));
+        assert!(result.is_empty());
+    }
 }
