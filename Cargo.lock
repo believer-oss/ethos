@@ -458,9 +458,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-ecr"
-version = "1.42.0"
+version = "1.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e4c9459176ab063f753eb710186f5ea7d3db6e3bad3dadb9b3a9fe8d107651d"
+checksum = "337c5b62ece2c969bd33549b3101ef1765ee72afb49532f6766609db5e262345"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -480,9 +480,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-eks"
-version = "1.47.0"
+version = "1.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3f0e30103627fbc764f4f0ceb172113f639f49ca21a3a9be37bfb3c5735f3fc"
+checksum = "68e016fcaaf2b0a04628d4df03715d2dfb1db853216396b8be00e89b8c8a7190"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -503,9 +503,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "1.47.0"
+version = "1.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cca49303c05d2a740b8a4552fac63a4db6ead84f7e7eeed04761fd3014c26f25"
+checksum = "00a545b16c05af9302b0b4b38a7584f6f323749e407169aa3e9b210e7c0a808d"
 dependencies = [
  "ahash 0.8.11",
  "aws-credential-types",
@@ -538,9 +538,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-sso"
-version = "1.40.0"
+version = "1.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5879bec6e74b648ce12f6085e7245417bc5f6d672781028384d2e494be3eb6d"
+checksum = "af0a3f676cba2c079c9563acc9233998c8951cdbe38629a0bef3c8c1b02f3658"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -560,9 +560,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-ssooidc"
-version = "1.41.0"
+version = "1.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ef4cd9362f638c22a3b959fd8df292e7e47fdf170270f86246b97109b5f2f7d"
+checksum = "c91b6a04495547162cf52b075e3c15a17ab6608bf9c5785d3e5a5509b3f09f5c"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -582,9 +582,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-sts"
-version = "1.40.0"
+version = "1.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b1e2735d2ab28b35ecbb5496c9d41857f52a0d6a0075bbf6a8af306045ea6f6"
+checksum = "99c56bcd6a56cab7933980a54148b476a5a69a7694e3874d9aa2a566f150447d"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.6.4"
+version = "4.6.5"
 dependencies = [
  "anyhow",
  "async-trait",
