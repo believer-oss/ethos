@@ -20,11 +20,11 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
-	import { appConfig, builds } from '$lib/stores';
+	import { builds, repoConfig } from '$lib/stores';
 	import { syncClient } from '$lib/builds';
 	import { downloadServerLogs, terminateServer } from '$lib/gameServers';
 	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
-	import { getAppConfig } from '$lib/config';
+	import { getAppConfig, getRepoConfig } from '$lib/config';
 
 	const defaultLogTooltip = 'Download server logs';
 
@@ -100,8 +100,9 @@
 
 	const handleCopyMobileLaunchText = async (server: GameServerResult) => {
 		try {
-			const config = await getAppConfig();
-			const url = `${config.mobileURLScheme}://?${server.ip}:${server.port}&NetImguiClientPort=${server.netimguiPort}&PlayerName=${config.userDisplayName}`;
+			const appConfigData = await getAppConfig();
+			const repoConfigData = await getRepoConfig();
+			const url = `${repoConfigData.mobileURLScheme}://?${server.ip}:${server.port}&NetImguiClientPort=${server.netimguiPort}&PlayerName=${appConfigData.userDisplayName}`;
 			void navigator.clipboard.writeText(url);
 		} catch (e) {
 			await emit('error', e);
@@ -129,9 +130,9 @@
 	};
 
 	onMount(() => {
-		$appConfig = get(appConfig);
-		if ($appConfig.mobileURLScheme) {
-			if ($appConfig.mobileURLScheme.length > 0) {
+		$repoConfig = get(repoConfig);
+		if ($repoConfig.mobileURLScheme) {
+			if ($repoConfig.mobileURLScheme.length > 0) {
 				showMobileURLButton = true;
 			}
 		}

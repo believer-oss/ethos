@@ -106,9 +106,6 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub initialized: bool,
-
-    #[serde(default, rename = "mobileURLScheme")]
-    pub mobile_url_scheme: String,
 }
 
 fn default_playtest_region() -> String {
@@ -148,7 +145,6 @@ impl AppConfig {
             selected_artifact_project: None,
             playtest_region: default_playtest_region(),
             initialized: false,
-            mobile_url_scheme: Default::default(),
         }
     }
 
@@ -241,6 +237,9 @@ pub struct RepoConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub commit_guidelines_url: Option<String>,
+
+    #[serde(default, rename = "mobileURLScheme")]
+    pub mobile_url_scheme: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -272,6 +271,7 @@ impl Default for RepoConfig {
                 "test".to_string(),
                 "chore".to_string(),
             ],
+            mobile_url_scheme: String::default(),
         }
     }
 }
