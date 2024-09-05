@@ -4,7 +4,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
 	import { appConfig } from '$lib/stores';
-	import type { AppConfig } from '$lib/types';
+	import type { BirdieConfig } from '$lib/types';
 	import { getAppConfig, updateAppConfig } from '$lib/config';
 	import { openTerminalToPath } from '$lib/system';
 
@@ -13,7 +13,15 @@
 	export let showProgressModal: boolean;
 	export let handleCheckForUpdates: () => Promise<void>;
 
-	let localAppConfig: AppConfig = {};
+	let localAppConfig: BirdieConfig = {
+		repoPath: '',
+		repoUrl: '',
+		toolsPath: '',
+		toolsUrl: '',
+		userDisplayName: '',
+		githubPAT: '',
+		initialized: false
+	};
 	let checkForUpdatesInFlight = false;
 
 	const onOpen = () => {
@@ -21,21 +29,27 @@
 	};
 
 	const openRepoFolder = async () => {
-		localAppConfig.repoPath = await open({
+		const repoPath = await open({
 			directory: true,
 			multiple: false,
 			defaultPath: localAppConfig.repoPath || '.',
 			title: 'Select game repository folder'
 		});
+		if (typeof repoPath === 'string') {
+			localAppConfig.repoPath = repoPath;
+		}
 	};
 
 	const openToolsFolder = async () => {
-		localAppConfig.toolsPath = await open({
+		const toolsPath = await open({
 			directory: true,
 			multiple: false,
 			defaultPath: localAppConfig.toolsPath || '.',
 			title: 'Select game repository folder'
 		});
+		if (typeof toolsPath === 'string') {
+			localAppConfig.toolsPath = toolsPath;
+		}
 	};
 
 	const openTerminalToRepo = async () => {
@@ -123,7 +137,10 @@
 			<div class="flex flex-col gap-2">
 				<Label>Repo Path</Label>
 				<div class="flex gap-1 mb-2">
-					<Button class="h-8 gap-2" on:click={openRepoFolder}><FolderOpenSolid />Browse</Button>
+					<Button class="h-8 gap-2" on:click={openRepoFolder}>
+						<FolderOpenSolid />
+						Browse
+					</Button>
 					<ButtonGroup class="w-full">
 						<Input class="h-8" bind:value={localAppConfig.repoPath} />
 						<Tooltip class="text-sm" placement="bottom">
@@ -163,8 +180,10 @@
 					<div class="mt-2 mb-2 ml-2 mr-2">
 						<Label>Tools Path</Label>
 						<div class="flex gap-1 mb-2">
-							<Button class="h-8 gap-2" on:click={openToolsFolder}><FolderOpenSolid />Browse</Button
-							>
+							<Button class="h-8 gap-2" on:click={openToolsFolder}>
+								<FolderOpenSolid />
+								Browse
+							</Button>
 							<ButtonGroup class="w-full">
 								<Input class="h-8" bind:value={localAppConfig.toolsPath} />
 								<Tooltip class="text-sm" placement="bottom">

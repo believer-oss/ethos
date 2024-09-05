@@ -3,7 +3,7 @@ import type { ModifiedFile } from '@ethos/core';
 export type Nullable<T> = T | null;
 
 // Config types
-export interface AppConfig {
+export interface BirdieConfig {
 	repoPath: string;
 	repoUrl: string;
 	toolsPath: string;
