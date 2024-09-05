@@ -249,6 +249,13 @@
 				</Select>
 			</div>
 		{/if}
+		<div class="flex flex-col gap-2 m-4">
+			<Label class="text-white">Mobile URL Scheme</Label>
+			<Input
+				class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400:"
+				bind:value={localAppConfig.mobileURLScheme}
+			/>
+		</div>
 		<div class="m-4">
 			<Accordion>
 				<AccordionItem

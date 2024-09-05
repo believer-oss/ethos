@@ -9,14 +9,22 @@
 		TableHeadCell,
 		Tooltip
 	} from 'flowbite-svelte';
-	import { ArchiveArrowDownOutline, CodeOutline, FileCopyOutline } from 'flowbite-svelte-icons';
+	import {
+		ArchiveArrowDownOutline,
+		CodeOutline,
+		FileCopyOutline,
+		PhoneOutline
+	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { ProgressModal } from '@ethos/core';
+	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
-	import { builds } from '$lib/stores';
+	import { appConfig, builds } from '$lib/stores';
 	import { syncClient } from '$lib/builds';
 	import { downloadServerLogs, terminateServer } from '$lib/gameServers';
 	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
+	import { getAppConfig } from '$lib/config';
 
 	const defaultLogTooltip = 'Download server logs';
 
@@ -32,6 +40,8 @@
 	// logs modal
 	let showServerLogsModal = false;
 	let selectedServerName = '';
+
+	let showMobileURLButton: boolean = false;
 
 	const formatServerName = (name: string): string => {
 		if (name.length > 30) {
@@ -88,6 +98,16 @@
 		void navigator.clipboard.writeText(url);
 	};
 
+	const handleCopyMobileLaunchText = async (server: GameServerResult) => {
+		try {
+			const config = await getAppConfig();
+			const url = `${config.mobileURLScheme}://?${server.ip}:${server.port}&NetImguiClientPort=${server.netimguiPort}&PlayerName=${config.userDisplayName}`;
+			void navigator.clipboard.writeText(url);
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
 	const getAgeString = (creationTimestamp: string): string => {
 		const date = new Date(creationTimestamp);
 		const now = new Date();
@@ -107,6 +127,15 @@
 		}
 		return `${seconds}s`;
 	};
+
+	onMount(() => {
+		$appConfig = get(appConfig);
+		if ($appConfig.mobileURLScheme) {
+			if ($appConfig.mobileURLScheme.length > 0) {
+				showMobileURLButton = true;
+			}
+		}
+	});
 </script>
 
 <Table color="custom" striped={true} divClass="w-full h-full overflow-x-hidden overflow-y-auto">
@@ -192,6 +221,22 @@
 							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
 							placement="bottom"
 							>Copy launch URL
+						</Tooltip>
+						{#if showMobileURLButton}
+							<Button
+								outline
+								size="sm"
+								on:click={() => {
+									void handleCopyMobileLaunchText(server);
+								}}
+							>
+								<PhoneOutline class="w-4 h-4" />
+							</Button>
+						{/if}
+						<Tooltip
+							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+							placement="bottom"
+							>Copy mobile launch URL
 						</Tooltip>
 						<Button
 							outline

@@ -106,6 +106,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub initialized: bool,
+
+    #[serde(default, rename = "mobileURLScheme")]
+    pub mobile_url_scheme: String,
 }
 
 fn default_playtest_region() -> String {
@@ -145,6 +148,7 @@ impl AppConfig {
             selected_artifact_project: None,
             playtest_region: default_playtest_region(),
             initialized: false,
+            mobile_url_scheme: Default::default(),
         }
     }
 
