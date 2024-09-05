@@ -3,6 +3,7 @@
 		Breadcrumb,
 		BreadcrumbItem,
 		Button,
+		ButtonGroup,
 		Card,
 		Checkbox,
 		Input,
@@ -24,12 +25,14 @@
 		FileCheckSolid,
 		FolderSolid,
 		HeartOutline,
-		HeartSolid
+		HeartSolid,
+		RotateOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
 	import {
+		cloneRepo,
 		delFetchInclude,
 		downloadLFSFiles,
 		getAllFiles,
@@ -38,6 +41,7 @@
 		getFiles,
 		lockFiles,
 		showCommitFiles,
+		syncLatest,
 		unlockFiles,
 		verifyLocks
 	} from '$lib/repo';
@@ -56,6 +60,8 @@
 		updateDirectoryMetadata,
 		updateMetadataClass
 	} from '$lib/metadata';
+	import { getAppConfig } from '$lib/config';
+	import { runSetEnv, syncTools } from '$lib/tools';
 
 	let loading = false;
 	let allFiles: string[] = [];
@@ -67,6 +73,10 @@
 	let modalLoading: boolean = false;
 	let selectedFiles: LFSFile[] = [];
 	let shiftHeld = false;
+
+	// sync and tools
+	let inAsyncOperation = false;
+	let asyncModalText = '';
 
 	$: filteredFiles = allFiles.filter(
 		(file) =>
@@ -90,6 +100,44 @@
 			value: 'character'
 		}
 	];
+
+	// sync and tools
+	const handleSyncClicked = async () => {
+		try {
+			inAsyncOperation = true;
+			asyncModalText = 'Pulling latest with git';
+
+			await syncLatest();
+			// refresh will run when commits view opens
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		inAsyncOperation = false;
+	};
+
+	const handleSyncToolsClicked = async () => {
+		try {
+			inAsyncOperation = true;
+			asyncModalText = 'Pulling tools with git';
+
+			try {
+				$appConfig = await getAppConfig();
+			} catch (e) {
+				await emit('error', e);
+			}
+
+			const didSync: boolean = await syncTools();
+			if (!didSync && $appConfig.toolsPath && $appConfig.toolsUrl) {
+				await cloneRepo({ url: $appConfig.toolsUrl, path: $appConfig.toolsPath });
+				await runSetEnv();
+			}
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		inAsyncOperation = false;
+	};
 
 	// git config
 	let fetchIncludeList: string[] = [];
@@ -512,6 +560,26 @@
 		{#if loading}
 			<Spinner class="w-4 h-4 dark:text-gray-500 fill-white" />
 		{/if}
+		<ButtonGroup size="xs" class="space-x-px ml-auto">
+			<Button
+				size="xs"
+				color="primary"
+				disabled={inAsyncOperation || loading}
+				on:click={async () => handleSyncClicked()}
+			>
+				<RotateOutline class="w-3 h-3 mr-2" />
+				Sync
+			</Button>
+			<Button
+				size="xs"
+				color="primary"
+				disabled={inAsyncOperation || loading}
+				on:click={async () => handleSyncToolsClicked()}
+			>
+				<RotateOutline class="w-3 h-3 mr-2" />
+				Tools
+			</Button>
+		</ButtonGroup>
 	</div>
 	<div class="overflow-x-auto overflow-y-hidden py-1 h-8 min-h-[2rem]">
 		<Breadcrumb
@@ -812,3 +880,5 @@
 		</div>
 	</div>
 </Modal>
+
+<ProgressModal bind:showModal={inAsyncOperation} bind:title={asyncModalText} />
