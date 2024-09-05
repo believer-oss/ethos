@@ -6,6 +6,8 @@ use birdie::metadata::{
     DirectoryClass, DirectoryMetadata, UpdateMetadataClassRequest, UpdateMetadataRequest,
 };
 use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File};
+use birdie::types::config::BirdieConfig;
+
 use ethos_core::tauri::command::check_client_error;
 use ethos_core::tauri::error::TauriError;
 use ethos_core::types::commits::Commit;
@@ -13,6 +15,42 @@ use ethos_core::types::locks::VerifyLocksResponse;
 use ethos_core::types::repo::{CommitFileInfo, LockRequest, PushRequest, RepoStatus};
 
 use crate::State;
+
+#[tauri::command]
+pub async fn get_config(state: tauri::State<'_, State>) -> Result<BirdieConfig, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/config", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn update_config(
+    state: tauri::State<'_, State>,
+    config: BirdieConfig,
+) -> Result<BirdieConfig, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/config", state.server_url))
+        .json(&config)
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        let body = res.text().await?;
+        return Err(TauriError { message: body });
+    }
+
+    Ok(res.json().await?)
+}
 
 #[tauri::command]
 pub async fn show_commit_files(

@@ -126,9 +126,7 @@ fn main() {
             fix_rebase,
             get_commits,
             get_all_files,
-            get_app_config,
             get_files,
-            update_app_config,
             get_directory_metadata,
             get_file_history,
             get_latest_version,
@@ -156,7 +154,9 @@ fn main() {
             update_metadata,
             update_metadata_class,
             sync_tools,
-            verify_locks
+            verify_locks,
+            get_config,
+            update_config
         ])
         .setup(move |app| {
             let handle = app.handle();

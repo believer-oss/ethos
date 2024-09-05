@@ -10,14 +10,14 @@ use ethos_core::middleware::nonce::NONCE;
 
 use crate::state::AppState;
 
-mod config;
+pub mod config;
 pub mod metadata;
 pub mod repo;
 pub mod server;
 mod state;
 mod system;
 pub mod tools;
-mod types;
+pub mod types;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static APP_NAME: &str = env!("CARGO_PKG_NAME");
