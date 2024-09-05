@@ -28,7 +28,7 @@
 		unassignUserFromPlaytest
 	} from '$lib/playtests';
 	import { appConfig, builds, dynamicConfig, playtests } from '$lib/stores';
-	import { openUrl } from '$lib/utils';
+	import { openUrl, handleError } from '$lib/utils';
 	import { getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
 
@@ -55,11 +55,11 @@
 
 		try {
 			await assignUserToGroup({ playtest: item.metadata.name, group: group.name, user });
+			const updatedPlaytests = await getPlaytests();
+			playtests.set(updatedPlaytests);
 		} catch (e) {
-			await emit('error', e);
+			await handleError(e);
 		}
-
-		playtests.set(await getPlaytests());
 		loading = false;
 	};
 
@@ -68,19 +68,23 @@
 
 		try {
 			await assignUserToGroup({ playtest: item.metadata.name, user });
+			const updatedPlaytests = await getPlaytests();
+			playtests.set(updatedPlaytests);
 		} catch (e) {
-			await emit('error', e);
+			await handleError(e);
 		}
-
-		playtests.set(await getPlaytests());
 		loading = false;
 	};
 
 	const handleUnassign = async (item: Playtest, user: string) => {
 		loading = true;
-		await unassignUserFromPlaytest(item.metadata.name, user);
-
-		playtests.set(await getPlaytests());
+		try {
+			await unassignUserFromPlaytest(item.metadata.name, user);
+			const updatedPlaytests = await getPlaytests();
+			playtests.set(updatedPlaytests);
+		} catch (e) {
+			await handleError(e);
+		}
 		loading = false;
 	};
 

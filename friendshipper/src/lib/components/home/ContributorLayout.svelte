@@ -39,6 +39,7 @@
 	import { getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
+	import { handleError } from '$lib/utils';
 
 	let loadingMergeQueue = false;
 	let loadingPlaytests = false;
@@ -53,9 +54,10 @@
 			loadingPlaytests = true;
 			$playtests = await getPlaytests();
 		} catch (e) {
-			await emit('error', e);
+			await handleError(e);
+		} finally {
+			loadingPlaytests = false;
 		}
-		loadingPlaytests = false;
 	};
 
 	const refreshRepo = async () => {

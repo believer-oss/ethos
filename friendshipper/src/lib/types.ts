@@ -2,6 +2,12 @@ import type { ModifiedFile } from '@ethos/core';
 
 export type Nullable<T> = T | null;
 
+// Error type
+export interface TauriError {
+	message: string;
+	status_code: number;
+}
+
 // Config types
 export interface DiscordChannelInfo {
 	name: string;
