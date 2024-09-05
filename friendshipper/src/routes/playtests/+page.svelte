@@ -9,6 +9,7 @@
 	import { getPlaytests, ModalState } from '$lib/playtests';
 	import PlaytestCard from '$lib/components/playtests/PlaytestCard.svelte';
 	import PlaytestModal from '$lib/components/playtests/PlaytestModal.svelte';
+	import { handleError } from '$lib/utils';
 
 	let loading = false;
 	let showModal = false;
@@ -27,16 +28,26 @@
 		showModal = true;
 	};
 
-	const handleModalSubmit = async () => {
-		loading = true;
-		playtests.set(await getPlaytests());
-		loading = false;
-	};
-
 	const updatePlaytests = async () => {
 		loading = true;
-		playtests.set(await getPlaytests());
-		loading = false;
+		try {
+			playtests.set(await getPlaytests());
+		} catch (e) {
+			await handleError(e);
+		} finally {
+			loading = false;
+		}
+	};
+
+	const handleModalSubmit = async () => {
+		loading = true;
+		try {
+			await updatePlaytests();
+		} catch (e) {
+			await handleError(e);
+		} finally {
+			loading = false;
+		}
 	};
 
 	onMount(() => {

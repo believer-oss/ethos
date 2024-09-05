@@ -65,6 +65,7 @@
 	import { getLatestVersion, openSystemLogsFolder, restart, runUpdate } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
+	import { handleError } from '$lib/utils';
 
 	// Initialization
 	let appVersion = '';
@@ -310,7 +311,7 @@
 			try {
 				playtests.set(await playtestsPromise);
 			} catch (e) {
-				await emit('error', e);
+				await handleError(e);
 			}
 
 			if ($appConfig.repoPath !== '') {

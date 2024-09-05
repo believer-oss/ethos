@@ -23,13 +23,16 @@
 		Nullable,
 		Playtest,
 		QuickLaunchEvent,
-		SyncClientRequest
+		SyncClientRequest,
+		TauriError
 	} from '$lib/types';
 	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
 	import { syncClient, getBuilds } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { getPlaytestGroupForUser } from '$lib/playtests';
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
+	import { restart } from '$lib/system';
+	import { checkLoginRequired } from '$lib/auth';
 
 	// Loading states
 	let playtestLoading = false;
@@ -74,6 +77,15 @@
 				servers = await getServers(commit);
 			} catch (e) {
 				await emit('error', e);
+
+				const error = e as TauriError;
+				if (error.status_code === 401) {
+					// check auth status
+					const loginRequired = await checkLoginRequired();
+					if (loginRequired) {
+						await restart();
+					}
+				}
 			}
 			fetchingServers = false;
 		}
@@ -176,10 +188,12 @@
 		if (nextPlaytest !== null) {
 			const playtestAssignment = getPlaytestGroupForUser(nextPlaytest, $appConfig.userDisplayName);
 			if (playtestAssignment && playtestAssignment.serverRef) {
-				const project = nextPlaytest.metadata.annotations['believer.dev/project'];
-				const entry = await getBuilds(250, project).then((a) =>
-					a.entries.find((b) => b.commit === nextPlaytest.spec.version)
-				);
+				const project = nextPlaytest.metadata.annotations?.['believer.dev/project'];
+				const entry = project
+					? await getBuilds(250, project).then((a) =>
+							a.entries.find((b) => b.commit === nextPlaytest.spec.version)
+					  )
+					: null;
 
 				if (entry !== selected) {
 					const updatedServers = await getServers(nextPlaytest?.spec.version);
