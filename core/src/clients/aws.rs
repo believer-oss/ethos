@@ -196,7 +196,7 @@ impl AWSClient {
     }
 
     // Returns true when the underlying access token was refreshed
-    pub async fn check_config(&self) -> Result<()> {
+    pub async fn check_config(&self) -> Result<(), CoreError> {
         debug!("Checking AWS config");
         let sso_config: Option<SsoConfig>;
         let login_required: bool;
@@ -221,7 +221,7 @@ impl AWSClient {
         Ok(())
     }
 
-    pub async fn refresh_token(&self, allow_prompt: bool) -> Result<()> {
+    pub async fn refresh_token(&self, allow_prompt: bool) -> Result<(), CoreError> {
         let mut auth_context = self.auth_context.write().await;
 
         let sso_config = auth_context.sso_config.clone();
@@ -247,10 +247,15 @@ impl AWSClient {
                             warn!("Token can not automatically be refreshed, prompting for login.");
                             auth_context.login_required = true;
 
-                            return Err(anyhow!("Access token expired"));
+                            return Err(CoreError::Unauthorized);
                         }
                     }
-                    _ => return Err(anyhow!("Unable to refresh token: {:?}", e)),
+                    _ => {
+                        return Err(CoreError::Internal(anyhow!(
+                            "Unable to refresh token: {:?}",
+                            e
+                        )))
+                    }
                 },
             };
 
@@ -278,14 +283,16 @@ impl AWSClient {
                                 auth_context.credentials = updated_creds;
                             }
                             Err(e) => {
-                                return Err(anyhow!(
+                                return Err(CoreError::Internal(anyhow!(
                                     "Unable to get credentials from provider: {:?}",
                                     e
-                                ));
+                                )));
                             }
                         },
                         None => {
-                            return Err(anyhow!("Unable to get credentials provider"));
+                            return Err(CoreError::Internal(anyhow!(
+                                "Unable to get credentials provider"
+                            )));
                         }
                     }
 
@@ -490,7 +497,7 @@ impl AWSClient {
         &self,
         cluster_name: &str,
         region: &str,
-    ) -> Result<(http::Uri, Vec<Vec<u8>>)> {
+    ) -> Result<(http::Uri, Vec<Vec<u8>>), CoreError> {
         self.check_config().await?;
 
         debug!("Creating EKS client");

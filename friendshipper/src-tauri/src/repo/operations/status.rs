@@ -100,7 +100,7 @@ where
     T: EngineProvider,
 {
     #[instrument(name = "StatusOp::run", skip_all)]
-    pub(crate) async fn run(&self) -> anyhow::Result<RepoStatus> {
+    pub(crate) async fn run(&self) -> Result<RepoStatus, CoreError> {
         info!("StatusOp: running git status and getting locks...");
 
         let locks_future = self.git_client.verify_locks();
@@ -245,7 +245,9 @@ where
             {
                 Ok(url) => url,
                 Err(_) => {
-                    return Err(anyhow!("Failed to get remote URL for repo"));
+                    return Err(CoreError::Internal(anyhow!(
+                        "Failed to get remote URL for repo"
+                    )));
                 }
             };
 
@@ -399,7 +401,7 @@ where
         status: &mut RepoStatus,
         aws_client: &AWSClient,
         storage: &ArtifactStorage,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), CoreError> {
         debug!("parsing remote URL for repo id");
 
         let repo_id = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
@@ -420,11 +422,12 @@ where
             let app_config = self.app_config.read();
             let (owner, repo) = match app_config.selected_artifact_project {
                 Some(ref project) => {
-                    let (owner, repo) =
-                        project.split_once('-').ok_or(anyhow!("Invalid project"))?;
+                    let (owner, repo) = project
+                        .split_once('-')
+                        .ok_or(CoreError::Input(anyhow!("Invalid project")))?;
                     (owner, repo)
                 }
-                None => return Err(anyhow!("No project selected")),
+                None => return Err(CoreError::Input(anyhow!("No project selected"))),
             };
 
             Project::new(owner, repo)

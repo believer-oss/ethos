@@ -17,6 +17,19 @@ use ethos_core::types::repo::{CommitFileInfo, PushRequest, RepoStatus, Snapshot}
 use friendshipper::builds::router::GetWorkflowsResponse;
 use friendshipper::repo::operations::{RestoreSnapshotRequest, SaveSnapshotRequest};
 
+// Update the TauriError creation to include status_code
+async fn create_tauri_error(res: reqwest::Response) -> TauriError {
+    let status = res.status().as_u16();
+    let message = res
+        .text()
+        .await
+        .unwrap_or_else(|_| "Failed to read response body".to_string());
+    TauriError {
+        message,
+        status_code: status,
+    }
+}
+
 #[tauri::command]
 pub async fn get_unrealversionselector_status(
     state: tauri::State<'_, State>,
@@ -31,8 +44,7 @@ pub async fn get_unrealversionselector_status(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -50,8 +62,7 @@ pub async fn get_dynamic_config(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -68,8 +79,7 @@ pub async fn get_project_config(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -95,19 +105,20 @@ pub async fn get_builds(
     match req.send().await {
         Ok(res) => {
             if res.status().is_client_error() {
-                let body = res.text().await?;
-                Err(TauriError { message: body })
+                Err(create_tauri_error(res).await)
             } else {
                 match res.json::<ArtifactList>().await {
                     Ok(res) => Ok(res),
                     Err(err) => Err(TauriError {
                         message: err.to_string(),
+                        status_code: 0,
                     }),
                 }
             }
         }
         Err(err) => Err(TauriError {
             message: err.to_string(),
+            status_code: 0,
         }),
     }
 }
@@ -128,8 +139,7 @@ pub async fn show_commit_files(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -150,8 +160,7 @@ pub async fn verify_build(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -243,8 +252,7 @@ pub async fn get_workflows(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -266,8 +274,7 @@ pub async fn get_workflow_node_logs(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.text().await?)
@@ -288,8 +295,7 @@ pub async fn stop_workflow(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.text().await?)
@@ -312,8 +318,7 @@ pub async fn get_repo_status(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
     Ok(res.json().await?)
 }
@@ -327,8 +332,7 @@ pub async fn list_snapshots(state: tauri::State<'_, State>) -> Result<Vec<Snapsh
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -424,13 +428,13 @@ pub async fn get_pull_request(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     let body = res.text().await?;
     let json = serde_json::from_str(&body).map_err(|e| TauriError {
         message: e.to_string(),
+        status_code: 0,
     })?;
 
     Ok(json)
@@ -451,8 +455,7 @@ pub async fn get_pull_requests(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -469,8 +472,7 @@ pub async fn get_merge_queue(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -491,19 +493,20 @@ pub async fn get_servers(
     match req.send().await {
         Ok(res) => {
             if res.status().is_client_error() {
-                let body = res.text().await?;
-                Err(TauriError { message: body })
+                Err(create_tauri_error(res).await)
             } else {
                 match res.json::<Vec<GameServerResults>>().await {
                     Ok(res) => Ok(res),
                     Err(err) => Err(TauriError {
                         message: err.to_string(),
+                        status_code: 0,
                     }),
                 }
             }
         }
         Err(err) => Err(TauriError {
             message: err.to_string(),
+            status_code: 0,
         }),
     }
 }
@@ -520,8 +523,7 @@ pub async fn get_server(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -540,8 +542,7 @@ pub async fn launch_server(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(())
@@ -729,8 +730,7 @@ pub async fn force_download_dlls(state: tauri::State<'_, State>) -> Result<(), T
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(())
@@ -745,8 +745,7 @@ pub async fn force_download_engine(state: tauri::State<'_, State>) -> Result<(),
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(())
@@ -764,8 +763,7 @@ pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), T
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(())
@@ -785,8 +783,7 @@ pub async fn sync_engine_commit_with_uproject(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     let response_text = res.text().await?;
@@ -807,8 +804,7 @@ pub async fn sync_uproject_commit_with_engine(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     let response_text = res.text().await?;
@@ -825,8 +821,7 @@ async fn generate_and_open_sln(
     let res = client.post(endpoint).send().await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(())

@@ -215,7 +215,7 @@ impl KubeClient {
         kubeconfig.expires_at = Instant::now() + Duration::from_secs(600);
     }
 
-    pub async fn handle_kube_error(&self, e: kube::Error) -> anyhow::Error {
+    pub async fn handle_kube_error(&self, e: kube::Error) -> CoreError {
         match e {
             kube::Error::Api(ae) => {
                 info!("API error {}: {}", ae.code, ae.message);
@@ -223,11 +223,13 @@ impl KubeClient {
                 if ae.code == 401 {
                     info!("Got 401, refreshing token");
                     self.refresh_token(true).await;
+
+                    return CoreError::Unauthorized;
                 }
 
-                anyhow::Error::new(ae)
+                CoreError::Internal(anyhow::Error::new(ae))
             }
-            _ => anyhow::Error::new(e),
+            _ => CoreError::Internal(anyhow::Error::new(e)),
         }
     }
 
@@ -268,7 +270,7 @@ impl KubeClient {
                     }
                 })
                 .collect::<Vec<GameServerResults>>()),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -317,7 +319,6 @@ impl KubeClient {
 
         if check_for_existing {
             let lp = ListParams::default().labels(format!("{SHA_LABEL_KEY}={sha}").as_str());
-            //let api: Api<GameServer> = Api::default_namespaced(client);
 
             match api.list(&lp).await {
                 Ok(res) => {
@@ -327,13 +328,13 @@ impl KubeClient {
                         return Ok(res.items.first().unwrap().to_owned());
                     }
                 }
-                Err(e) => return Err(CoreError::Internal(self.handle_kube_error(e).await)),
+                Err(e) => return Err(self.handle_kube_error(e).await),
             }
         }
 
         match api.create(&PostParams::default(), &gameserver).await {
             Ok(_) => Ok(gameserver),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -344,7 +345,7 @@ impl KubeClient {
 
         match api.get(name).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -357,7 +358,7 @@ impl KubeClient {
 
         match api.delete(name, &params).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -390,9 +391,10 @@ impl KubeClient {
                         .as_str(),
                     )
                 {
-                    return Err(CoreError::Internal(self.handle_kube_error(e).await));
+                    Err(self.handle_kube_error(e).await)
+                } else {
+                    Ok(None)
                 }
-                Ok(None)
             }
         }
     }
@@ -451,7 +453,7 @@ impl KubeClient {
                 });
                 Ok(items)
             }
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -474,7 +476,7 @@ impl KubeClient {
 
         match api.create(&pp, &playtest).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -501,10 +503,10 @@ impl KubeClient {
 
                 match api.replace(name, &pp, &playtest).await {
                     Ok(res) => Ok(res),
-                    Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+                    Err(e) => Err(self.handle_kube_error(e).await),
                 }
             }
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -517,7 +519,7 @@ impl KubeClient {
 
         match api.delete(name, &params).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -534,7 +536,7 @@ impl KubeClient {
         let mut playtest: Playtest;
         match api.get(playtest_name).await {
             Ok(_) => {}
-            Err(e) => return Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => return Err(self.handle_kube_error(e).await),
         }
 
         // remove the user from the playtests if they're already in it
@@ -592,7 +594,7 @@ impl KubeClient {
 
                         return match api.replace(playtest_name, &pp, &playtest).await {
                             Ok(_) => Ok(()),
-                            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+                            Err(e) => Err(self.handle_kube_error(e).await),
                         };
                     }
                 }
@@ -639,7 +641,7 @@ impl KubeClient {
         let mut playtest: Playtest;
         match api.get(playtest_name).await {
             Ok(res) => playtest = res,
-            Err(e) => return Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => return Err(self.handle_kube_error(e).await),
         }
 
         playtest.spec.groups.iter_mut().for_each(|g| {
@@ -652,7 +654,7 @@ impl KubeClient {
 
         match api.replace(playtest_name, &pp, &playtest).await {
             Ok(res) => Ok(res),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 
@@ -666,7 +668,7 @@ impl KubeClient {
 
         match api.patch(playtest_name, &pp, &patch).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(CoreError::Internal(self.handle_kube_error(e).await)),
+            Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
 

@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use tracing::info;
-
 use birdie::metadata::{
     DirectoryClass, DirectoryMetadata, UpdateMetadataClassRequest, UpdateMetadataRequest,
 };
@@ -16,6 +14,16 @@ use ethos_core::types::repo::{CommitFileInfo, LockRequest, PushRequest, RepoStat
 
 use crate::State;
 
+// Add this function at the top of the file, after imports
+async fn create_tauri_error(res: reqwest::Response) -> TauriError {
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    TauriError {
+        message: body,
+        status_code: status.as_u16(),
+    }
+}
+
 #[tauri::command]
 pub async fn get_config(state: tauri::State<'_, State>) -> Result<BirdieConfig, TauriError> {
     let res = state
@@ -25,8 +33,7 @@ pub async fn get_config(state: tauri::State<'_, State>) -> Result<BirdieConfig, 
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -45,8 +52,7 @@ pub async fn update_config(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -64,8 +70,7 @@ pub async fn show_commit_files(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -89,8 +94,7 @@ pub async fn get_file_history(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -106,8 +110,7 @@ pub async fn get_repo_status(state: tauri::State<'_, State>) -> Result<RepoStatu
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
     Ok(res.json().await?)
 }
@@ -204,8 +207,7 @@ pub async fn verify_locks(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -221,8 +223,7 @@ pub async fn get_fetch_include(state: tauri::State<'_, State>) -> Result<Vec<Str
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -262,9 +263,7 @@ pub async fn get_files(
     let res = req.send().await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        info!("get_files error: {}", body);
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -279,8 +278,7 @@ pub async fn get_all_files(state: tauri::State<'_, State>) -> Result<Vec<String>
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -303,8 +301,7 @@ pub async fn get_directory_metadata(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -346,8 +343,7 @@ pub async fn update_metadata(
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(res.json().await?)
@@ -362,8 +358,7 @@ pub async fn sync_tools(state: tauri::State<'_, State>) -> Result<bool, TauriErr
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     let res_text = res.text().await;
@@ -381,8 +376,7 @@ pub async fn run_set_env(state: tauri::State<'_, State>) -> Result<(), TauriErro
         .await?;
 
     if res.status().is_client_error() {
-        let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(create_tauri_error(res).await);
     }
 
     Ok(())

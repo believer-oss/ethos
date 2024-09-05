@@ -14,8 +14,12 @@ use tracing::{error, info};
 
 pub async fn check_client_error(res: reqwest::Response) -> Option<TauriError> {
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await.unwrap();
-        Some(TauriError { message: body })
+        Some(TauriError {
+            message: body,
+            status_code,
+        })
     } else {
         None
     }
@@ -36,6 +40,7 @@ pub async fn get_system_status(state: tauri::State<'_, State>) -> Result<bool, T
         Ok(_) => Ok(true),
         Err(e) => Err(TauriError {
             message: e.to_string(),
+            status_code: 500, // Internal Server Error as a default
         }),
     }
 }
@@ -54,8 +59,12 @@ pub async fn get_latest_version(state: tauri::State<'_, State>) -> Result<String
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.text().await?)
@@ -73,6 +82,7 @@ pub async fn run_update(state: tauri::State<'_, State>) -> Result<(), TauriError
         Ok(_) => Ok(()),
         Err(e) => Err(TauriError {
             message: e.to_string(),
+            status_code: 500, // Internal Server Error as a default
         }),
     }
 }
@@ -115,8 +125,12 @@ pub async fn get_logs(state: tauri::State<'_, State>) -> Result<Vec<LogEntry>, T
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.json().await?)
@@ -166,8 +180,12 @@ pub async fn check_login_required(state: tauri::State<'_, State>) -> Result<bool
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.json().await?)
@@ -201,6 +219,7 @@ pub async fn install_git(state: tauri::State<'_, State>) -> Result<(), TauriErro
         Ok(_) => Ok(()),
         Err(e) => Err(TauriError {
             message: e.to_string(),
+            status_code: 500, // Internal Server Error as a default
         }),
     }
 }
@@ -222,6 +241,7 @@ pub async fn configure_git_user(
         Ok(_) => Ok(()),
         Err(e) => Err(TauriError {
             message: e.to_string(),
+            status_code: 500, // Internal Server Error as a default
         }),
     }
 }
@@ -235,8 +255,12 @@ pub async fn get_repo_config(state: tauri::State<'_, State>) -> Result<RepoConfi
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.json().await?)
@@ -260,20 +284,26 @@ pub async fn get_commits(
 
     match req.send().await {
         Ok(res) => {
-            if res.status().is_client_error() {
+            let status = res.status();
+            if status.is_client_error() {
                 let body = res.text().await?;
-                Err(TauriError { message: body })
+                Err(TauriError {
+                    message: body,
+                    status_code: status.as_u16(),
+                })
             } else {
                 match res.json::<Vec<Commit>>().await {
                     Ok(res) => Ok(res),
                     Err(err) => Err(TauriError {
                         message: err.to_string(),
+                        status_code: 500, // Internal Server Error as a default
                     }),
                 }
             }
         }
         Err(err) => Err(TauriError {
             message: err.to_string(),
+            status_code: 500, // Internal Server Error as a default
         }),
     }
 }
@@ -341,8 +371,12 @@ pub async fn get_rebase_status(
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.json().await?)
@@ -394,8 +428,12 @@ pub async fn acquire_locks(
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(())
@@ -434,7 +472,10 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
     let body = res.text().await?;
 
     if status.is_client_error() {
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code: status.as_u16(),
+        });
     }
 
     let response: PullResponse = match serde_json::from_str(&body) {
@@ -442,6 +483,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
         Err(e) => {
             return Err(TauriError {
                 message: format!("Failed to parse pull response: {}.", e),
+                status_code: 500, // Internal Server Error as a default
             });
         }
     };
@@ -450,6 +492,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
         if !conflicts.is_empty() {
             return Err(TauriError {
                 message: format!("Failed to pull due to file conflict: {}", conflicts[0]),
+                status_code: 409, // Conflict
             });
         }
     }
@@ -467,8 +510,12 @@ pub async fn get_app_config(state: tauri::State<'_, State>) -> Result<AppConfig,
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.json().await?)
@@ -487,8 +534,12 @@ pub async fn update_app_config(
         .await?;
 
     if res.status().is_client_error() {
+        let status_code = res.status().as_u16();
         let body = res.text().await?;
-        return Err(TauriError { message: body });
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
     }
 
     Ok(res.text().await?)
@@ -516,6 +567,7 @@ pub async fn reset_config(state: tauri::State<'_, State>) -> Result<(), TauriErr
 pub async fn open_url(url: String) -> Result<(), TauriError> {
     open::that(url).map_err(|e| TauriError {
         message: e.to_string(),
+        status_code: 500, // Internal Server Error as a default
     })?;
 
     Ok(())

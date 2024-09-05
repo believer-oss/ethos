@@ -154,6 +154,19 @@ impl Server {
             let repo_path = shared_state.app_config.read().repo_path.clone();
             let tx = shared_state.git_tx.clone();
             if !repo_path.is_empty() {
+                // Check for and remove index.lock if it exists
+                let index_lock_path = PathBuf::from(&repo_path).join(".git").join("index.lock");
+                if index_lock_path.exists() {
+                    match fs::remove_file(&index_lock_path) {
+                        Ok(_) => {
+                            info!("Removed existing index.lock file");
+                        }
+                        Err(e) => {
+                            warn!("Failed to remove index.lock file: {:?}", e);
+                        }
+                    }
+                }
+
                 let maintenance_runner = GitMaintenanceRunner::new(repo_path, tx)
                     .with_fetch_interval(Duration::from_secs(5));
                 tokio::spawn(async move {
@@ -234,6 +247,25 @@ impl Server {
                     shutdown_rx.recv().await;
 
                     info!("Shutting down server");
+
+                    // Wait up to 30 seconds for index.lock to go away
+                    let repo_path = shared_state.app_config.read().repo_path.clone();
+                    if !repo_path.is_empty() {
+                        info!("Waiting for index.lock to be removed");
+                        let index_lock_path =
+                            PathBuf::from(repo_path).join(".git").join("index.lock");
+                        let mut attempts = 0;
+                        while index_lock_path.exists() && attempts < 30 {
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            attempts += 1;
+                        }
+
+                        if index_lock_path.exists() {
+                            warn!("index.lock still present after 30 seconds");
+                        } else {
+                            info!("index.lock removed after {} seconds", attempts);
+                        }
+                    }
                 })
                 .await;
 

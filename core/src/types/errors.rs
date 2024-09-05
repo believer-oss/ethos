@@ -7,12 +7,14 @@ use crate::types::github::TokenNotFoundError;
 pub enum CoreError {
     Input(anyhow::Error),
     Internal(anyhow::Error),
+    Unauthorized,
 }
 
 impl IntoResponse for CoreError {
     fn into_response(self) -> Response {
         match self {
             CoreError::Input(e) => (StatusCode::BAD_REQUEST, format!("{}", e)).into_response(),
+            CoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
             CoreError::Internal(e) => {
                 if e.downcast_ref::<TokenNotFoundError>().is_some() {
                     return TokenNotFoundError.into_response();
@@ -28,6 +30,7 @@ impl std::fmt::Display for CoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CoreError::Input(e) => write!(f, "{}", e),
+            CoreError::Unauthorized => write!(f, "Unauthorized"),
             CoreError::Internal(e) => write!(f, "{}", e),
         }
     }
