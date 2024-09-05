@@ -80,11 +80,20 @@ impl ArtifactProvider for S3ArtifactProvider {
 
         while let Some(resp) = paginator.next().await {
             if resp.is_err() {
-                warn!("Error getting list of objects from S3: [{:?}", resp);
-                return Err(CoreError::Internal(anyhow!(
-                    "Error getting list of objects from S3"
-                )));
-            };
+                if let Err(err) = resp {
+                    warn!("Error getting list of objects from S3: [{:?}", err);
+                    if let Some(sdk_error) = err.as_service_error() {
+                        if sdk_error.meta().code() == Some("ExpiredToken") {
+                            return Err(CoreError::Unauthorized);
+                        }
+                    }
+
+                    return Err(CoreError::Internal(anyhow!(
+                        "Error getting list of objects from S3: {:?}",
+                        err
+                    )));
+                }
+            }
             for object in resp.unwrap().contents() {
                 let entry = ArtifactEntry::from(object.clone());
                 entry_list.push(entry);
