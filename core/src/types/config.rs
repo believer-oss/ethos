@@ -237,6 +237,9 @@ pub struct RepoConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub commit_guidelines_url: Option<String>,
+
+    #[serde(default, rename = "mobileURLScheme")]
+    pub mobile_url_scheme: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -268,6 +271,7 @@ impl Default for RepoConfig {
                 "test".to_string(),
                 "chore".to_string(),
             ],
+            mobile_url_scheme: String::default(),
         }
     }
 }

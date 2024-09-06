@@ -45,6 +45,7 @@ export interface AppConfig {
 	selectedArtifactProject: string;
 	playtestRegion: string;
 	initialized: boolean;
+	mobileURLScheme: string;
 }
 
 export interface RepoConfig {
