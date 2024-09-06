@@ -8,7 +8,7 @@
 	},
 	"package": {
 		"productName": "Friendshipper",
-		"version": "4.6.5"
+		"version": "4.6.6"
 	},
 	"tauri": {
 		"allowlist": {
