@@ -205,9 +205,20 @@ where
             Ok(uproject) => Some(uproject),
         };
 
-        self.git_client
+        // run git pull but retry one time if it fails
+        match self
+            .git_client
             .pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
-            .await?;
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Failed to pull, retrying once. Error: {}", e);
+                self.git_client
+                    .pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+                    .await?;
+            }
+        }
 
         if did_stash {
             self.git_client.stash(git::StashAction::Pop).await?;
