@@ -78,7 +78,7 @@ impl Server {
 
         startup_tx.send("Initializing application config".to_string())?;
 
-        let pause_file_watcher = Arc::new(AtomicBool::new(false));
+        let pause_background_tasks = Arc::new(AtomicBool::new(false));
 
         if let (Some(config_file), Some(config)) = self.initialize_app_config()? {
             let app_config = Arc::new(RwLock::new(config.clone()));
@@ -87,7 +87,7 @@ impl Server {
             // start the operation worker
             startup_tx.send("Starting operation worker".to_string())?;
             let (op_tx, op_rx) = mpsc::channel(32);
-            let mut worker = RepoWorker::new(op_rx, pause_file_watcher.clone());
+            let mut worker = RepoWorker::new(op_rx, pause_background_tasks.clone());
             tokio::spawn(async move {
                 worker.run().await;
             });
@@ -146,7 +146,7 @@ impl Server {
                 watcher_status,
                 watcher_git,
                 shared_state.engine.clone(),
-                pause_file_watcher.clone(),
+                pause_background_tasks.clone(),
                 refresh_tx,
             )?;
 
@@ -167,8 +167,9 @@ impl Server {
                     }
                 }
 
-                let maintenance_runner = GitMaintenanceRunner::new(repo_path, tx)
-                    .with_fetch_interval(Duration::from_secs(5));
+                let maintenance_runner =
+                    GitMaintenanceRunner::new(repo_path, pause_background_tasks, tx)
+                        .with_fetch_interval(Duration::from_secs(5));
                 tokio::spawn(async move {
                     match maintenance_runner.run().await {
                         Ok(_) => {}

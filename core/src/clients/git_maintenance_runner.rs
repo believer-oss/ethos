@@ -1,12 +1,15 @@
 use crate::clients::git::{Git, ShouldPrune};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender as STDSender;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
 pub struct GitMaintenanceRunner {
     git: Git,
     config: MaintenanceConfig,
+    pause: Arc<AtomicBool>,
 }
 
 struct MaintenanceConfig {
@@ -24,12 +27,12 @@ impl Default for MaintenanceConfig {
 }
 
 impl GitMaintenanceRunner {
-    pub fn new(path: String, tx: STDSender<String>) -> Self {
+    pub fn new(path: String, pause: Arc<AtomicBool>, tx: STDSender<String>) -> Self {
         let git = Git::new(PathBuf::from(path.clone()), tx);
 
         let config = MaintenanceConfig::default();
 
-        GitMaintenanceRunner { git, config }
+        GitMaintenanceRunner { git, pause, config }
     }
 
     pub fn with_fetch_interval(mut self, interval: Duration) -> Self {
@@ -45,9 +48,10 @@ impl GitMaintenanceRunner {
     pub async fn run(&self) -> anyhow::Result<()> {
         let git = self.git.clone();
         let fetch_interval = self.config.fetch_interval;
+        let pause = self.pause.clone();
         let fetch_task = tokio::task::spawn(async move {
             loop {
-                {
+                if !pause.clone().load(std::sync::atomic::Ordering::Relaxed) {
                     match git.fetch(ShouldPrune::Yes).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -62,9 +66,10 @@ impl GitMaintenanceRunner {
 
         let git = self.git.clone();
         let maintenance_interval = self.config.maintenance_interval;
+        let pause = self.pause.clone();
         let maintenance_task = tokio::task::spawn(async move {
             loop {
-                {
+                if pause.clone().load(std::sync::atomic::Ordering::Relaxed) {
                     match git.run_maintenance().await {
                         Ok(_) => {
                             info!("Maintenance complete");
