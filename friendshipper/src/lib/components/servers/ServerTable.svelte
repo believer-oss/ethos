@@ -17,14 +17,11 @@
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { ProgressModal } from '@ethos/core';
-	import { onMount } from 'svelte';
-	import { get } from 'svelte/store';
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
-	import { builds, repoConfig } from '$lib/stores';
+	import { appConfig, builds, dynamicConfig } from '$lib/stores';
 	import { syncClient } from '$lib/builds';
 	import { downloadServerLogs, terminateServer } from '$lib/gameServers';
 	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
-	import { getAppConfig, getRepoConfig } from '$lib/config';
 
 	const defaultLogTooltip = 'Download server logs';
 
@@ -40,8 +37,6 @@
 	// logs modal
 	let showServerLogsModal = false;
 	let selectedServerName = '';
-
-	let showMobileURLButton: boolean = false;
 
 	const formatServerName = (name: string): string => {
 		if (name.length > 30) {
@@ -100,9 +95,7 @@
 
 	const handleCopyMobileLaunchText = async (server: GameServerResult) => {
 		try {
-			const appConfigData = await getAppConfig();
-			const repoConfigData = await getRepoConfig();
-			const url = `${repoConfigData.mobileURLScheme}://?${server.ip}:${server.port}&NetImguiClientPort=${server.netimguiPort}&PlayerName=${appConfigData.userDisplayName}`;
+			const url = `${$dynamicConfig.mobileURLScheme}://?${server.ip}:${server.port}&NetImguiClientPort=${server.netimguiPort}&PlayerName=${$appConfig.userDisplayName}`;
 			void navigator.clipboard.writeText(url);
 		} catch (e) {
 			await emit('error', e);
@@ -128,15 +121,6 @@
 		}
 		return `${seconds}s`;
 	};
-
-	onMount(() => {
-		$repoConfig = get(repoConfig);
-		if ($repoConfig.mobileURLScheme) {
-			if ($repoConfig.mobileURLScheme.length > 0) {
-				showMobileURLButton = true;
-			}
-		}
-	});
 </script>
 
 <Table color="custom" striped={true} divClass="w-full h-full overflow-x-hidden overflow-y-auto">
@@ -223,7 +207,7 @@
 							placement="bottom"
 							>Copy launch URL
 						</Tooltip>
-						{#if showMobileURLButton}
+						{#if $dynamicConfig.mobileURLScheme.length > 0}
 							<Button
 								outline
 								size="sm"
