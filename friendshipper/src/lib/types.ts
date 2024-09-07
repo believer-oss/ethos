@@ -12,6 +12,7 @@ export interface DynamicConfig {
 	maps: string[];
 	playtestDiscordChannels: DiscordChannelInfo[];
 	playtestRegions: string[];
+	mobileURLScheme: string;
 }
 
 export interface ProjectConfig {
@@ -45,7 +46,6 @@ export interface AppConfig {
 	selectedArtifactProject: string;
 	playtestRegion: string;
 	initialized: boolean;
-	mobileURLScheme: string;
 }
 
 export interface RepoConfig {
