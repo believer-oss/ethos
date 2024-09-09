@@ -12,13 +12,11 @@ use tauri::api::process::current_binary;
 use tauri::Env;
 use tracing::{error, info};
 
-pub async fn check_client_error(res: reqwest::Response) -> Option<TauriError> {
-    if res.status().is_client_error() {
-        let status_code = res.status().as_u16();
-        let body = res.text().await.unwrap();
+pub async fn check_error(code: reqwest::StatusCode, body: String) -> Option<TauriError> {
+    if code.is_client_error() || code.is_server_error() {
         Some(TauriError {
             message: body,
-            status_code,
+            status_code: code.as_u16(),
         })
     } else {
         None
@@ -58,7 +56,7 @@ pub async fn get_latest_version(state: tauri::State<'_, State>) -> Result<String
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -124,7 +122,7 @@ pub async fn get_logs(state: tauri::State<'_, State>) -> Result<Vec<LogEntry>, T
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -144,7 +142,7 @@ pub async fn open_system_logs_folder(state: tauri::State<'_, State>) -> Result<(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -163,7 +161,7 @@ pub async fn open_terminal_to_path(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -179,7 +177,7 @@ pub async fn check_login_required(state: tauri::State<'_, State>) -> Result<bool
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -199,7 +197,7 @@ pub async fn refresh_login(state: tauri::State<'_, State>) -> Result<(), TauriEr
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -254,7 +252,7 @@ pub async fn get_repo_config(state: tauri::State<'_, State>) -> Result<RepoConfi
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -285,7 +283,7 @@ pub async fn get_commits(
     match req.send().await {
         Ok(res) => {
             let status = res.status();
-            if status.is_client_error() {
+            if status.is_client_error() || status.is_server_error() {
                 let body = res.text().await?;
                 Err(TauriError {
                     message: body,
@@ -320,7 +318,7 @@ pub async fn clone_repo(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
     Ok(())
@@ -334,7 +332,7 @@ pub async fn checkout_trunk(state: tauri::State<'_, State>) -> Result<(), TauriE
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -353,7 +351,7 @@ pub async fn revert_files(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -370,7 +368,7 @@ pub async fn get_rebase_status(
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -390,7 +388,7 @@ pub async fn fix_rebase(state: tauri::State<'_, State>) -> Result<(), TauriError
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -405,7 +403,7 @@ pub async fn rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -427,7 +425,7 @@ pub async fn acquire_locks(
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -453,7 +451,7 @@ pub async fn release_locks(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -471,7 +469,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
     let status = res.status();
     let body = res.text().await?;
 
-    if status.is_client_error() {
+    if status.is_client_error() || status.is_server_error() {
         return Err(TauriError {
             message: body,
             status_code: status.as_u16(),
@@ -509,7 +507,7 @@ pub async fn get_app_config(state: tauri::State<'_, State>) -> Result<AppConfig,
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -533,7 +531,7 @@ pub async fn update_app_config(
         .send()
         .await?;
 
-    if res.status().is_client_error() {
+    if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
         let body = res.text().await?;
         return Err(TauriError {
@@ -553,7 +551,7 @@ pub async fn reset_config(state: tauri::State<'_, State>) -> Result<(), TauriErr
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
