@@ -9,6 +9,7 @@
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
 	import { getServers } from '$lib/gameServers';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
+	import { handleError } from '$lib/utils';
 
 	let fetchingServers = false;
 	let servers: GameServerResult[] = [];
@@ -23,7 +24,7 @@
 			try {
 				servers = await getServers();
 			} catch (e) {
-				await emit('error', e);
+				await handleError(e);
 			}
 			fetchingServers = false;
 		}

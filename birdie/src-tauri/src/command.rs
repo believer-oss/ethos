@@ -6,7 +6,7 @@ use birdie::metadata::{
 use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File};
 use birdie::types::config::BirdieConfig;
 
-use ethos_core::tauri::command::check_client_error;
+use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
 use ethos_core::types::commits::Commit;
 use ethos_core::types::locks::VerifyLocksResponse;
@@ -124,9 +124,13 @@ pub async fn submit(state: tauri::State<'_, State>, req: PushRequest) -> Result<
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    let status = res.status();
+    let body = res.text().await?;
+
+    if let Some(err) = check_error(status, body.clone()).await {
         return Err(err);
     }
+
     Ok(())
 }
 // LFS
@@ -143,7 +147,7 @@ pub async fn download_lfs_files(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -165,7 +169,7 @@ pub async fn lock_files(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -188,7 +192,7 @@ pub async fn unlock_files(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -241,7 +245,7 @@ pub async fn del_fetch_include(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
@@ -322,7 +326,7 @@ pub async fn update_metadata_class(
         .send()
         .await?;
 
-    if let Some(err) = check_client_error(res).await {
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);
     }
 
