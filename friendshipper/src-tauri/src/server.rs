@@ -201,7 +201,11 @@ impl Server {
                 // avoids spamming a notification if repo/hooks paths are not configured
                 if !repo_path.is_empty() {
                     let git = hooks_state.git().clone();
+
+                    // ensure important git configs are set
                     git.set_config("gc.auto", "0").await?;
+                    git.set_config("maintenance.auto", "0").await?;
+                    git.set_config("core.pager", "cat").await?;
 
                     startup_tx.send("Installing git hooks".to_string())?;
                     if let Some(git_hooks_path) = git_hooks_path {
