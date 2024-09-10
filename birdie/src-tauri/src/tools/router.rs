@@ -22,18 +22,23 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
 async fn sync_tools(State(state): State<Arc<AppState>>) -> Result<String, CoreError> {
     let config: BirdieConfig = state.app_config.read().clone();
     let tools_path = config.tools_path.clone();
+    let tools_url = config.tools_url.clone();
+    let (_, git_name) = tools_url.rsplit_once('/').unwrap();
+    let repo_name = git_name.replace(".git", "");
+
+    let sync_path = format!("{tools_path}/{repo_name}");
 
     let mut did_sync: String = "Fail".to_string();
-    let dir_exists = Path::new(&tools_path).exists();
+    let dir_exists = Path::new(&sync_path).exists();
 
     let mut dir_empty = true;
     if dir_exists {
-        dir_empty = Path::new(&tools_path).read_dir()?.next().is_none();
+        dir_empty = Path::new(&sync_path).read_dir()?.next().is_none();
     }
 
     // If there's no directory or an empty directory we need to clone instead
     if dir_exists && !dir_empty {
-        let repo_buf = PathBuf::from(tools_path);
+        let repo_buf = PathBuf::from(sync_path);
         let git_client: git::Git = git::Git::new(repo_buf, state.git_tx.clone());
 
         git_client
