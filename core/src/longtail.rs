@@ -18,7 +18,7 @@ use aws_credential_types::Credentials;
 use directories_next::ProjectDirs;
 use hex::FromHex;
 use sha2::{Digest, Sha256};
-use tracing::{debug, info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 use which::{which, which_in};
 
 use super::fs::LocalDownloadPath;
@@ -299,14 +299,27 @@ impl Longtail {
                 }
             });
 
+        let mut error_lines = Vec::new();
         errreader
             .lines()
             .map_while(|line| line.ok())
             .for_each(|line| {
-                send_msg(&tx, LongtailMsg::Log(line));
+                send_msg(&tx, LongtailMsg::ErrEvt(line.clone()));
+                error_lines.push(line);
             });
 
-        output.wait().expect("Failed waiting on child!!!");
+        let status = output
+            .wait()
+            .map_err(|e| anyhow::anyhow!("Failed waiting on child: {}", e))?;
+
+        if !status.success() {
+            let error_message = error_lines.join("\n");
+            return Err(anyhow::anyhow!(
+                "Longtail command failed: {}",
+                error_message
+            ));
+        }
+
         send_msg(&tx, LongtailMsg::DoneArcSyncEvt);
 
         if let Some(cache) = &cache {
@@ -348,30 +361,23 @@ impl Longtail {
         Ok(())
     }
 
-    pub fn msg_to_string(msg: LongtailMsg) -> String {
-        let msg_txt: String = match msg {
+    pub fn log_message(msg: LongtailMsg) {
+        match msg {
             LongtailMsg::Log(s) => {
-                debug!("Log: {}", s);
-                s
+                info!("Log: {}", s);
             }
             LongtailMsg::ExecEvt(s) => {
-                debug!("Exec: {}", s);
-                format!("Executing: {}", s)
+                info!("Executing: {}", s)
             }
             LongtailMsg::ErrEvt(s) => {
-                debug!("Err: {}", s);
-                format!("ERROR: {}", s)
+                error!("ERROR: {}", s)
             }
             LongtailMsg::DoneLtDlEvt => {
-                debug!("Done downloading longtail");
-                "Done downloading longtail".to_string()
+                info!("Done downloading longtail");
             }
             LongtailMsg::DoneArcSyncEvt => {
-                debug!("Done syncing");
-                "Done syncing".to_string()
+                info!("Done syncing");
             }
         };
-
-        msg_txt
     }
 }

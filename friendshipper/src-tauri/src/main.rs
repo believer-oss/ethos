@@ -5,6 +5,7 @@
 
 use std::thread;
 
+use ethos_core::longtail::Longtail;
 use lazy_static::lazy_static;
 use serde::Serialize;
 use tauri::api::notification::Notification;
@@ -254,12 +255,13 @@ fn main() {
                 }
             });
 
-            let (longtail_tx, longtail_rx) = std::sync::mpsc::channel();
+            let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
             let longtail_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 while let Ok(msg) = longtail_rx.recv() {
+                    Longtail::log_message(msg.clone());
+
                     if let LongtailMsg::Log(s) = msg {
-                        info!("longtail log: {}", &s);
                         longtail_handle.emit_all("longtail-log", &s).unwrap();
 
                         if let Some(captures) = LONGTAIL_PROGRESS_REGEX.captures(&s) {

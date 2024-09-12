@@ -120,7 +120,7 @@ where
     )
 }
 
-#[instrument(skip(state))]
+#[instrument(skip(state), ret)]
 async fn sync_client<T>(
     State(state): State<AppState<T>>,
     Json(payload): Json<SyncClientRequest>,
