@@ -43,7 +43,7 @@ pub struct UpdateEngineOp {
 
 #[async_trait]
 impl Task for UpdateEngineOp {
-    #[instrument(name = "UpdateEngineOp::execute", skip(self))]
+    #[instrument(name = "UpdateEngineOp::execute", skip(self), ret)]
     async fn execute(&self) -> Result<(), CoreError> {
         // If there's no match we assume it's using an Epic distribution of the engine build so we don't have any work to do
         if self.new_uproject.is_custom_engine() {

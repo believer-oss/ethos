@@ -54,6 +54,17 @@ impl<T> Task for DownloadDllsOp<T>
 where
     T: EngineProvider,
 {
+    #[tracing::instrument(
+        name = "DownloadDllsOp::execute",
+        ret,
+        skip(self),
+        fields(
+            project_name = %self.project_name,
+            dll_commit = %self.dll_commit,
+            download_symbols = %self.download_symbols,
+            artifact_prefix = %self.artifact_prefix
+        )
+    )]
     async fn execute(&self) -> Result<(), CoreError> {
         self.engine.check_ready_to_sync_repo().await?;
 
