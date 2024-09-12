@@ -235,11 +235,17 @@ impl LockOp {
             .connection_verbose(true)
             .build()
             .unwrap();
+        let unique_paths = {
+            let mut unique = self.paths.clone();
+            unique.sort();
+            unique.dedup();
+            unique
+        };
         let response = client
             .post(format!("{}/{}", server_url, endpoint))
             .bearer_auth(&self.github_pat)
             .json(&LockRequest {
-                paths: self.paths.clone(),
+                paths: unique_paths,
                 force: self.force,
             })
             .send()
