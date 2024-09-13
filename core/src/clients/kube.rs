@@ -54,6 +54,7 @@ pub struct KubeConfig {
 }
 
 impl KubeClient {
+    #[instrument(skip(aws_creds, log_tx))]
     pub async fn new(
         aws_creds: &AWSClient,
         cluster_name: String,
@@ -724,6 +725,7 @@ impl KubeClient {
         }
     }
 
+    #[instrument(skip(self))]
     pub fn default_project(&self) -> ProjectConfig {
         self.default_project.clone()
     }

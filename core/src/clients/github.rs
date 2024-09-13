@@ -24,6 +24,7 @@ pub struct GraphQLClient {
 }
 
 impl GraphQLClient {
+    #[instrument(skip(token))]
     pub async fn new(token: String) -> Result<Self> {
         let client = Client::builder()
             .user_agent("graphql-rust/0.10.0")
