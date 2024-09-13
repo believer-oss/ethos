@@ -24,6 +24,7 @@ pub struct UnrealEngineProvider {
 
 #[async_trait]
 impl EngineProvider for UnrealEngineProvider {
+    #[instrument(skip(app_config, repo_config))]
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self {
         Self {
             repo_path: PathBuf::from(app_config.repo_path),
@@ -32,6 +33,7 @@ impl EngineProvider for UnrealEngineProvider {
         }
     }
 
+    #[instrument(skip(self))]
     async fn load_caches(&mut self) {
         let now = SystemTime::now();
 

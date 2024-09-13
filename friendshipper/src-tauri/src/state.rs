@@ -67,6 +67,7 @@ where
     T: EngineProvider,
 {
     #[allow(clippy::too_many_arguments)]
+    #[instrument(skip_all)]
     pub async fn new(
         app_config: AppConfigRef,
         repo_config: RepoConfigRef,
