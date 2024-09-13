@@ -75,10 +75,6 @@
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
 
-	// random title options to choose from
-	const titleOptions = ['friendshipper', '프렌드쉽퍼', 'フレンドシッパー'];
-	let title = titleOptions[0];
-
 	// Refresh timer
 	let lastRefresh = new Date().getTime();
 
@@ -132,9 +128,6 @@
 		hasSuccess = false;
 		successMessage = '';
 	};
-
-	const getRandomTitle = (): string =>
-		titleOptions[Math.floor(Math.random() * titleOptions.length)];
 
 	const handleCheckForUpdates = async () => {
 		latest = await getLatestVersion();
@@ -351,8 +344,6 @@
 				if (now - lastRefresh > refreshInterval) {
 					void refresh();
 				}
-
-				title = getRandomTitle();
 			}
 		});
 
@@ -455,7 +446,9 @@
 		data-tauri-drag-region
 	>
 		<div class="pl-2 flex gap-2 items-center pointer-events-none">
-			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300">{title}</span>
+			<Img imgClass="w-5 h-5" src="/assets/icon.png" /><span class="text-gray-300"
+				>friendshipper</span
+			>
 		</div>
 		<div class="pr-2 flex gap-2 justify-end">
 			<Button
@@ -465,8 +458,10 @@
 				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
 				on:click={async () => {
 					await appWindow.minimize();
-				}}><MinusOutline class="h-4 w-4" /></Button
+				}}
 			>
+				<MinusOutline class="h-4 w-4" />
+			</Button>
 			<Button
 				outline
 				color="dark"
@@ -474,8 +469,10 @@
 				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
 				on:click={async () => {
 					await appWindow.toggleMaximize();
-				}}><WindowOutline class="h-4 w-4" /></Button
+				}}
 			>
+				<WindowOutline class="h-4 w-4" />
+			</Button>
 			<Button
 				outline
 				color="dark"
@@ -483,8 +480,10 @@
 				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
 				on:click={async () => {
 					await appWindow.hide();
-				}}><CloseOutline class="h-4 w-4" /></Button
+				}}
 			>
+				<CloseOutline class="h-4 w-4" />
+			</Button>
 		</div>
 	</div>
 	{#if !initialized}
