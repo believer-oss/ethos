@@ -65,13 +65,14 @@ fn force_window_to_front(window: Window) {
 }
 
 fn main() {
-    let (log_path, _otel_reload_handle) = match logging::init(VERSION, APP_NAME) {
-        Ok(path) => path,
-        Err(e) => {
-            error!("Failed to initialize logging: {:?}", e);
-            std::process::exit(1);
-        }
-    };
+    let (log_path, _otel_reload_handle) =
+        match logging::init(VERSION, APP_NAME, VERSION, None, None, None) {
+            Ok(path) => path,
+            Err(e) => {
+                error!("Failed to initialize logging: {:?}", e);
+                std::process::exit(1);
+            }
+        };
 
     match utils::process::check_for_process(APP_NAME) {
         Ok(_) => {}

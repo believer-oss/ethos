@@ -6,6 +6,8 @@
 use std::thread;
 
 use ethos_core::longtail::Longtail;
+use ethos_core::types::errors::CoreError;
+use friendshipper::server::Server;
 use lazy_static::lazy_static;
 use serde::Serialize;
 use tauri::api::notification::Notification;
@@ -76,7 +78,7 @@ fn force_window_to_front(window: Window) {
 
 const PORT: u16 = 8484;
 
-fn main() {
+fn main() -> Result<(), CoreError> {
     let arg = std::env::args().nth(1).unwrap_or_default();
     if arg.starts_with("friendshipper://") {
         tauri_plugin_deep_link::prepare("com.believer.friendshipper");
@@ -84,338 +86,361 @@ fn main() {
         let _ = tauri_plugin_deep_link::set_identifier("com.believer.friendshipper");
     }
 
-    let (log_path, otel_reload_handle) = match logging::init(VERSION, APP_NAME) {
-        Ok(path) => path,
-        Err(e) => {
-            error!("Failed to initialize logging: {:?}", e);
-            std::process::exit(1);
+    if let (Some(config_file), Some(config)) = Server::initialize_app_config()? {
+        let (log_path, otel_reload_handle) = match tauri::async_runtime::block_on(async {
+            logging::init(
+                VERSION,
+                APP_NAME,
+                VERSION,
+                Some(config.user_display_name.clone()),
+                config.otlp_endpoint.clone(),
+                config.otlp_headers.clone(),
+            )
+        }) {
+            Ok(path) => path,
+            Err(e) => {
+                error!("Failed to initialize logging: {:?}", e);
+                std::process::exit(1);
+            }
+        };
+
+        match utils::process::check_for_process(APP_NAME) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Failed to check for existing process: {:?}", e);
+                std::process::exit(1);
+            }
         }
-    };
 
-    match utils::process::check_for_process(APP_NAME) {
-        Ok(_) => {}
-        Err(e) => {
-            error!("Failed to check for existing process: {:?}", e);
-            std::process::exit(1);
+        match utils::process::wait_for_port(PORT) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Failed to wait for port: {:?}", e);
+                std::process::exit(1);
+            }
         }
-    }
 
-    match utils::process::wait_for_port(PORT) {
-        Ok(_) => {}
-        Err(e) => {
-            error!("Failed to wait for port: {:?}", e);
-            std::process::exit(1);
-        }
-    }
+        let server_url = format!("http://localhost:{}", PORT);
+        info!(
+            version = VERSION,
+            address = &server_url,
+            app = APP_NAME,
+            "Starting up"
+        );
 
-    let server_url = format!("http://localhost:{}", PORT);
-    info!(
-        version = VERSION,
-        address = &server_url,
-        app = APP_NAME,
-        "Starting up"
-    );
+        let tray = initialize_tray();
 
-    let tray = initialize_tray();
+        let client = match clients::command::new_reqwest_client() {
+            Ok(client) => client,
+            Err(e) => {
+                error!("Failed to create reqwest client: {:?}", e);
+                std::process::exit(1);
+            }
+        };
 
-    let client = match clients::command::new_reqwest_client() {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Failed to create reqwest client: {:?}", e);
-            std::process::exit(1);
-        }
-    };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let url_clone = server_url.clone();
+        tauri::Builder::default()
+            .manage(State {
+                server_url: server_url.clone(),
+                log_path: log_path.clone(),
+                client: client.clone(),
+                shutdown_tx,
+            })
+            .invoke_handler(tauri::generate_handler![
+                assign_user_to_group,
+                check_login_required,
+                checkout_trunk,
+                clone_repo,
+                configure_git_user,
+                create_playtest,
+                delete_playtest,
+                delete_snapshot,
+                download_server_logs,
+                fix_rebase,
+                get_builds,
+                get_commits,
+                get_dynamic_config,
+                get_app_config,
+                get_log_path,
+                update_app_config,
+                get_latest_version,
+                get_logs,
+                get_playtests,
+                get_project_config,
+                get_pull_request,
+                get_pull_requests,
+                get_rebase_status,
+                get_repo_config,
+                get_repo_status,
+                get_server,
+                get_servers,
+                get_system_status,
+                get_workflows,
+                get_workflow_node_logs,
+                install_git,
+                launch_server,
+                list_snapshots,
+                open_logs_folder,
+                open_system_logs_folder,
+                open_terminal_to_path,
+                get_unrealversionselector_status,
+                open_url,
+                quick_submit,
+                rebase,
+                refresh_login,
+                acquire_locks,
+                release_locks,
+                reset_config,
+                restore_snapshot,
+                revert_files,
+                force_download_dlls,
+                force_download_engine,
+                get_merge_queue,
+                reinstall_git_hooks,
+                save_snapshot,
+                stop_workflow,
+                sync_engine_commit_with_uproject,
+                sync_uproject_commit_with_engine,
+                reset_repo,
+                restart,
+                run_update,
+                generate_sln,
+                open_sln,
+                reset_longtail,
+                show_commit_files,
+                start_gameserver_log_tail,
+                stop_gameserver_log_tail,
+                sync_client,
+                sync_latest,
+                open_project,
+                terminate_server,
+                unassign_user_from_playtest,
+                update_playtest,
+                verify_build,
+                wipe_client_data,
+            ])
+            .setup(move |app| {
+                let handle = app.handle();
+                let (notification_tx, notification_rx) = std::sync::mpsc::channel();
 
-    let url_clone = server_url.clone();
-    tauri::Builder::default()
-        .manage(State {
-            server_url: server_url.clone(),
-            log_path: log_path.clone(),
-            client: client.clone(),
-            shutdown_tx,
-        })
-        .invoke_handler(tauri::generate_handler![
-            assign_user_to_group,
-            check_login_required,
-            checkout_trunk,
-            clone_repo,
-            configure_git_user,
-            create_playtest,
-            delete_playtest,
-            delete_snapshot,
-            download_server_logs,
-            fix_rebase,
-            get_builds,
-            get_commits,
-            get_dynamic_config,
-            get_app_config,
-            get_log_path,
-            update_app_config,
-            get_latest_version,
-            get_logs,
-            get_playtests,
-            get_project_config,
-            get_pull_request,
-            get_pull_requests,
-            get_rebase_status,
-            get_repo_config,
-            get_repo_status,
-            get_server,
-            get_servers,
-            get_system_status,
-            get_workflows,
-            get_workflow_node_logs,
-            install_git,
-            launch_server,
-            list_snapshots,
-            open_logs_folder,
-            open_system_logs_folder,
-            open_terminal_to_path,
-            get_unrealversionselector_status,
-            open_url,
-            quick_submit,
-            rebase,
-            refresh_login,
-            acquire_locks,
-            release_locks,
-            reset_config,
-            restore_snapshot,
-            revert_files,
-            force_download_dlls,
-            force_download_engine,
-            get_merge_queue,
-            reinstall_git_hooks,
-            save_snapshot,
-            stop_workflow,
-            sync_engine_commit_with_uproject,
-            sync_uproject_commit_with_engine,
-            reset_repo,
-            restart,
-            run_update,
-            generate_sln,
-            open_sln,
-            reset_longtail,
-            show_commit_files,
-            start_gameserver_log_tail,
-            stop_gameserver_log_tail,
-            sync_client,
-            sync_latest,
-            open_project,
-            terminate_server,
-            unassign_user_from_playtest,
-            update_playtest,
-            verify_build,
-            wipe_client_data,
-        ])
-        .setup(move |app| {
-            let handle = app.handle();
-            let (notification_tx, notification_rx) = std::sync::mpsc::channel();
-
-            let identifier = app.config().tauri.bundle.identifier.clone();
-            thread::spawn(move || {
-                while let Ok(notification) = notification_rx.recv() {
-                    let _ = Notification::new(&identifier)
-                        .title(APP_NAME)
-                        .body(&notification)
-                        .show();
-                }
-            });
-
-            let (frontend_op_tx, frontend_op_rx) = std::sync::mpsc::channel();
-            {
-                let frontend_op_handle = handle.clone();
+                let identifier = app.config().tauri.bundle.identifier.clone();
                 thread::spawn(move || {
-                    while let Ok(op) = frontend_op_rx.recv() {
-                        match op {
-                            FrontendOp::ShowUI => {
-                                let window = frontend_op_handle.get_window("main").unwrap();
-                                force_window_to_front(window);
+                    while let Ok(notification) = notification_rx.recv() {
+                        let _ = Notification::new(&identifier)
+                            .title(APP_NAME)
+                            .body(&notification)
+                            .show();
+                    }
+                });
+
+                let (frontend_op_tx, frontend_op_rx) = std::sync::mpsc::channel();
+                {
+                    let frontend_op_handle = handle.clone();
+                    thread::spawn(move || {
+                        while let Ok(op) = frontend_op_rx.recv() {
+                            match op {
+                                FrontendOp::ShowUI => {
+                                    let window = frontend_op_handle.get_window("main").unwrap();
+                                    force_window_to_front(window);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                let (gameserver_log_tx, gameserver_log_rx) = std::sync::mpsc::channel::<String>();
+                let gameserver_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = gameserver_log_rx.recv() {
+                        gameserver_handle.emit_all("gameserver-log", &msg).unwrap();
+                    }
+                });
+
+                let (git_tx, git_rx) = std::sync::mpsc::channel::<String>();
+                let git_app_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = git_rx.recv() {
+                        let msg = ANSI_REGEX.replace_all(&msg, "");
+                        git_app_handle.emit_all("git-log", &msg).unwrap();
+                    }
+                });
+
+                let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
+                let longtail_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = longtail_rx.recv() {
+                        Longtail::log_message(msg.clone());
+
+                        if let LongtailMsg::Log(s) = msg {
+                            longtail_handle.emit_all("longtail-log", &s).unwrap();
+
+                            if let Some(captures) = LONGTAIL_PROGRESS_REGEX.captures(&s) {
+                                let progress: String = captures
+                                    .get(1)
+                                    .map(|m| m.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let elapsed: String = captures
+                                    .get(2)
+                                    .map(|m| m.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let remaining: String = captures
+                                    .get(3)
+                                    .map(|m| m.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                longtail_handle
+                                    .emit_all(
+                                        "longtail-sync-progress",
+                                        LongtailProgressCaptures {
+                                            progress,
+                                            elapsed,
+                                            remaining,
+                                        },
+                                    )
+                                    .unwrap();
+                            } else {
+                                warn!("failed to parse longtail log: {}", &s);
                             }
                         }
                     }
                 });
-            }
 
-            let (gameserver_log_tx, gameserver_log_rx) = std::sync::mpsc::channel::<String>();
-            let gameserver_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                while let Ok(msg) = gameserver_log_rx.recv() {
-                    gameserver_handle.emit_all("gameserver-log", &msg).unwrap();
-                }
-            });
+                let (startup_tx, startup_rx) = std::sync::mpsc::channel::<String>();
+                let startup_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = startup_rx.recv() {
+                        startup_handle.emit_all("startup-message", &msg).unwrap();
 
-            let (git_tx, git_rx) = std::sync::mpsc::channel::<String>();
-            let git_app_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                while let Ok(msg) = git_rx.recv() {
-                    let msg = ANSI_REGEX.replace_all(&msg, "");
-                    git_app_handle.emit_all("git-log", &msg).unwrap();
-                }
-            });
-
-            let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
-            let longtail_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                while let Ok(msg) = longtail_rx.recv() {
-                    Longtail::log_message(msg.clone());
-
-                    if let LongtailMsg::Log(s) = msg {
-                        longtail_handle.emit_all("longtail-log", &s).unwrap();
-
-                        if let Some(captures) = LONGTAIL_PROGRESS_REGEX.captures(&s) {
-                            let progress: String = captures
-                                .get(1)
-                                .map(|m| m.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let elapsed: String = captures
-                                .get(2)
-                                .map(|m| m.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let remaining: String = captures
-                                .get(3)
-                                .map(|m| m.as_str())
-                                .unwrap_or("")
-                                .to_string();
-
-                            longtail_handle
-                                .emit_all(
-                                    "longtail-sync-progress",
-                                    LongtailProgressCaptures {
-                                        progress,
-                                        elapsed,
-                                        remaining,
-                                    },
-                                )
-                                .unwrap();
-                        } else {
-                            warn!("failed to parse longtail log: {}", &s);
+                        if msg.eq("Starting server") {
+                            break;
                         }
                     }
-                }
-            });
+                });
 
-            let (startup_tx, startup_rx) = std::sync::mpsc::channel::<String>();
-            let startup_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                while let Ok(msg) = startup_rx.recv() {
-                    startup_handle.emit_all("startup-message", &msg).unwrap();
-
-                    if msg.eq("Starting server") {
-                        break;
+                let (refresh_tx, refresh_rx) = std::sync::mpsc::channel::<()>();
+                let refresh_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while refresh_rx.recv().is_ok() {
+                        refresh_handle.emit_all("git-refresh", "").unwrap();
                     }
-                }
-            });
+                });
 
-            let (refresh_tx, refresh_rx) = std::sync::mpsc::channel::<()>();
-            let refresh_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                while refresh_rx.recv().is_ok() {
-                    refresh_handle.emit_all("git-refresh", "").unwrap();
-                }
-            });
+                let server_log_path = log_path.clone();
+                tauri::async_runtime::spawn(async move {
+                    let server = friendshipper::server::Server::new(
+                        PORT,
+                        longtail_tx.clone(),
+                        notification_tx.clone(),
+                        frontend_op_tx,
+                        server_log_path,
+                        git_tx.clone(),
+                        gameserver_log_tx.clone(),
+                        otel_reload_handle,
+                    );
 
-            let server_log_path = log_path.clone();
-            tauri::async_runtime::spawn(async move {
-                let server = friendshipper::server::Server::new(
-                    PORT,
-                    longtail_tx.clone(),
-                    notification_tx.clone(),
-                    frontend_op_tx,
-                    server_log_path,
-                    git_tx.clone(),
-                    gameserver_log_tx.clone(),
-                    otel_reload_handle,
-                );
-
-                match server.run(startup_tx, refresh_tx, shutdown_rx).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Server error: {:?}", e);
-                    }
-                }
-            });
-
-            let deep_link_handle = handle.clone();
-            tauri::async_runtime::spawn(async move {
-                let deep_link_request = move |request| {
-                    info!("Received deep link: {:?}", request);
-                    match deep_link_handle.emit_all("scheme-request-received", request) {
+                    match server
+                        .run(config, config_file, startup_tx, refresh_tx, shutdown_rx)
+                        .await
+                    {
                         Ok(_) => {}
                         Err(e) => {
-                            error!("Failed to emit scheme-request-received: {:?}", e);
+                            error!("Server error: {:?}", e);
                         }
                     }
+                });
 
-                    if let Some(window) = deep_link_handle.get_window("main") {
-                        force_window_to_front(window);
+                let deep_link_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let deep_link_request = move |request| {
+                        info!("Received deep link: {:?}", request);
+                        match deep_link_handle.emit_all("scheme-request-received", request) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("Failed to emit scheme-request-received: {:?}", e);
+                            }
+                        }
+
+                        if let Some(window) = deep_link_handle.get_window("main") {
+                            force_window_to_front(window);
+                        }
+                    };
+                    match tauri_plugin_deep_link::register("friendshipper", deep_link_request) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("Failed to register deep link handler: {:?}", e);
+                        }
                     }
-                };
-                match tauri_plugin_deep_link::register("friendshipper", deep_link_request) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Failed to register deep link handler: {:?}", e);
-                    }
-                }
-            });
+                });
 
-            Ok(())
-        })
-        .system_tray(tray)
-        .on_system_tray_event(move |app, event| match event {
-            SystemTrayEvent::DoubleClick {
-                position: _,
-                size: _,
-                ..
-            } => {
-                let window = app.get_window("main").unwrap();
-
-                force_window_to_front(window);
-            }
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "show" => {
+                Ok(())
+            })
+            .system_tray(tray)
+            .on_system_tray_event(move |app, event| match event {
+                SystemTrayEvent::DoubleClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
                     let window = app.get_window("main").unwrap();
 
                     force_window_to_front(window);
                 }
-                "open-sln" => {
-                    tauri::async_runtime::block_on(async {
-                        match tray_open_sln(url_clone.clone(), client.clone()).await {
-                            Ok(_) => {}
-                            Err(e) => {
-                                error!("Error opening sln: {:?}", e);
+                SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                    "show" => {
+                        let window = app.get_window("main").unwrap();
+
+                        force_window_to_front(window);
+                    }
+                    "open-sln" => {
+                        tauri::async_runtime::block_on(async {
+                            match tray_open_sln(url_clone.clone(), client.clone()).await {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("Error opening sln: {:?}", e);
+                                }
                             }
-                        }
-                    });
-                }
-                "generate-and-open-sln" => {
-                    tauri::async_runtime::block_on(async {
-                        match tray_generate_and_open_sln(url_clone.clone(), client.clone()).await {
-                            Ok(_) => {}
-                            Err(e) => {
-                                error!("Error generating and opening sln: {:?}", e);
+                        });
+                    }
+                    "generate-and-open-sln" => {
+                        tauri::async_runtime::block_on(async {
+                            match tray_generate_and_open_sln(url_clone.clone(), client.clone())
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("Error generating and opening sln: {:?}", e);
+                                }
                             }
-                        }
-                    });
-                }
-                "quit" => {
-                    std::process::exit(0);
-                }
+                        });
+                    }
+                    "quit" => {
+                        std::process::exit(0);
+                    }
+                    _ => {}
+                },
                 _ => {}
-            },
-            _ => {}
-        })
-        .on_window_event(|event| {
-            if let WindowEvent::CloseRequested { api, .. } = event.event() {
-                event.window().hide().unwrap();
-                api.prevent_close();
-            }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+            })
+            .on_window_event(|event| {
+                if let WindowEvent::CloseRequested { api, .. } = event.event() {
+                    event.window().hide().unwrap();
+                    api.prevent_close();
+                }
+            })
+            .run(tauri::generate_context!())
+            .expect("error while running tauri application");
+
+        Ok(())
+    } else {
+        error!("Failed to initialize app config");
+        Err(CoreError::Internal(anyhow::anyhow!(
+            "Failed to initialize app config"
+        )))
+    }
 }
 
 #[cfg(test)]

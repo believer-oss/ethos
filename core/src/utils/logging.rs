@@ -1,9 +1,10 @@
 use directories_next::ProjectDirs;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::Tracer;
+use opentelemetry_sdk::trace::{Sampler, Tracer};
+use opentelemetry_sdk::Resource;
+use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::{env, fs};
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::{Layered, SubscriberExt};
@@ -20,24 +21,49 @@ pub type OtelReloadHandle = Handle<
     Layered<EnvFilter, Registry, Registry>,
 >;
 
-pub fn init(prefix: &str, app: &str) -> anyhow::Result<(PathBuf, OtelReloadHandle)> {
+pub fn init(
+    prefix: &str,
+    app: &str,
+    version: &str,
+    username: Option<String>,
+    otlp_endpoint: Option<String>,
+    otlp_headers: Option<String>,
+) -> anyhow::Result<(PathBuf, OtelReloadHandle)> {
     // OpenTelemetry
-    let otel_layer = match env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
-        Ok(endpoint) if !endpoint.is_empty() => {
+    let otel_layer = match otlp_endpoint {
+        Some(endpoint) if !endpoint.is_empty() => {
+            // if there are OTEL headers, set OTEL_EXPORTER_OTLP_HEADERS appropriately
+            if let Some(headers) = otlp_headers {
+                std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", headers);
+            }
+
+            let mut resource_attributes = vec![
+                opentelemetry::KeyValue::new("service.name", app.to_string().to_lowercase()),
+                opentelemetry::KeyValue::new("service.version", version.to_string()),
+            ];
+
+            if let Some(username) = username {
+                resource_attributes.push(opentelemetry::KeyValue::new("user", username));
+            }
+
             let tracer = opentelemetry_otlp::new_pipeline()
                 .tracing()
+                .with_trace_config(
+                    opentelemetry_sdk::trace::config()
+                        .with_resource(Resource::new(resource_attributes))
+                        .with_sampler(Sampler::AlwaysOn),
+                )
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
                         .http()
                         .with_protocol(OTEL_TRACER_PROTOCOL)
-                        .with_endpoint(endpoint)
+                        .with_endpoint(endpoint.clone())
                         .with_timeout(OTEL_TRACER_TIMEOUT),
                 )
                 .install_batch(opentelemetry_sdk::runtime::Tokio)
                 .expect("otel tracing pipeline should install");
-            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-            Some(otel_layer)
+            Some(tracing_opentelemetry::layer().with_tracer(tracer))
         }
         _ => None,
     };

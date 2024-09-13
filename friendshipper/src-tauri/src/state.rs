@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::trace::{config, Sampler};
+use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::Resource;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender as MPSCSender;
@@ -218,6 +218,8 @@ where
         client: AWSClient,
         playtest_region: String,
         username: &str,
+        config: AppConfigRef,
+        config_file: PathBuf,
     ) -> Result<(), CoreError> {
         let mut aws_client = self.aws_client.write().await;
 
@@ -241,7 +243,7 @@ where
         }
 
         // reload handle for otlp
-        if let Some(endpoint) = new_dynamic_config.otlp_endpoint {
+        if let Some(endpoint) = new_dynamic_config.otlp_endpoint.clone() {
             if let Some(otel_reload_handle) = self.otel_reload_handle.clone() {
                 otel_reload_handle.modify(|otel_layer| {
                     // if otel_layer is Some, return
@@ -250,14 +252,14 @@ where
                     }
 
                     // if there are OTEL headers, set OTEL_EXPORTER_OTLP_HEADERS appropriately
-                    if let Some(headers) = new_dynamic_config.otlp_headers {
+                    if let Some(headers) = new_dynamic_config.otlp_headers.clone() {
                         std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", headers);
                     }
 
                     let tracer = opentelemetry_otlp::new_pipeline()
                         .tracing()
                         .with_trace_config(
-                            config()
+                            opentelemetry_sdk::trace::config()
                                 .with_resource(Resource::new(vec![
                                     opentelemetry::KeyValue::new(
                                         "service.name",
@@ -275,13 +277,47 @@ where
                             opentelemetry_otlp::new_exporter()
                                 .http()
                                 .with_protocol(OTEL_TRACER_PROTOCOL)
-                                .with_endpoint(endpoint)
+                                .with_endpoint(endpoint.clone())
                                 .with_timeout(OTEL_TRACER_TIMEOUT),
                         )
                         .install_batch(opentelemetry_sdk::runtime::Tokio)
                         .expect("otel tracing pipeline should install");
                     *otel_layer = Some(tracing_opentelemetry::layer().with_tracer(tracer));
                 })?;
+            }
+
+            // Check if OTLP endpoint or headers have changed
+            let mut app_config_changed = false;
+            {
+                let mut app_config = self.app_config.write();
+
+                if app_config.otlp_endpoint != new_dynamic_config.otlp_endpoint {
+                    app_config.otlp_endpoint = new_dynamic_config.otlp_endpoint;
+                    app_config_changed = true;
+                }
+
+                if app_config.otlp_headers != new_dynamic_config.otlp_headers {
+                    app_config.otlp_headers = new_dynamic_config.otlp_headers;
+                    app_config_changed = true;
+                }
+            }
+
+            // If changes were made, write the updated config to file
+            if app_config_changed {
+                let app_config = self.app_config.read();
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&config_file)
+                    .map_err(|e| {
+                        CoreError::Internal(anyhow::anyhow!("Failed to open config file: {}", e))
+                    })?;
+
+                serde_yaml::to_writer(file, &*app_config).map_err(|e| {
+                    CoreError::Internal(anyhow::anyhow!("Failed to write config file: {}", e))
+                })?;
+
+                info!("Updated app config file with new OTLP settings");
             }
         }
 

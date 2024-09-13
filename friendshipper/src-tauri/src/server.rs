@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
+use axum::Router;
 use config::Config;
 use directories_next::BaseDirs;
 use ethos_core::clients::git::Git;
@@ -16,7 +17,7 @@ use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileI
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
@@ -70,218 +71,233 @@ impl Server {
 
     pub async fn run(
         &self,
+        config: AppConfig,
+        config_file: PathBuf,
         startup_tx: STDSender<String>,
         refresh_tx: STDSender<()>,
-        shutdown_rx: mpsc::Receiver<()>,
+        mut shutdown_rx: mpsc::Receiver<()>,
     ) -> Result<(), CoreError> {
-        let mut shutdown_rx = shutdown_rx;
+        let (app, address, shared_state) = self
+            .initialize_server(config, config_file, startup_tx.clone(), refresh_tx)
+            .await?;
 
+        info!("starting server at {}", address);
+        startup_tx.send("Starting server".to_string())?;
+        let listener = tokio::net::TcpListener::bind(address).await?;
+        let result = axum::serve(listener, app.into_make_service())
+            .with_graceful_shutdown(async move {
+                shutdown_rx.recv().await;
+
+                info!("Shutting down server");
+
+                // Wait up to 30 seconds for index.lock to go away
+                let repo_path = shared_state.app_config.read().repo_path.clone();
+                if !repo_path.is_empty() {
+                    info!("Waiting for index.lock to be removed");
+                    let index_lock_path = PathBuf::from(repo_path).join(".git").join("index.lock");
+                    let mut attempts = 0;
+                    while index_lock_path.exists() && attempts < 30 {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        attempts += 1;
+                    }
+
+                    if index_lock_path.exists() {
+                        warn!("index.lock still present after 30 seconds");
+                    } else {
+                        info!("index.lock removed after {} seconds", attempts);
+                    }
+                }
+            })
+            .await;
+
+        match result {
+            Ok(_) => {
+                info!("server shut down gracefully");
+            }
+            Err(e) => info!("server shut down with error: {:?}", e),
+        }
+
+        Ok(())
+    }
+
+    #[instrument(
+        level = "info",
+        skip(self, config, config_file, startup_tx, refresh_tx)
+    )]
+    async fn initialize_server(
+        &self,
+        config: AppConfig,
+        config_file: PathBuf,
+        startup_tx: STDSender<String>,
+        refresh_tx: STDSender<()>,
+    ) -> Result<(Router, String, AppState<UnrealEngineProvider>), CoreError> {
         startup_tx.send("Initializing application config".to_string())?;
 
         let pause_background_tasks = Arc::new(AtomicBool::new(false));
 
-        if let (Some(config_file), Some(config)) = self.initialize_app_config()? {
-            let app_config = Arc::new(RwLock::new(config.clone()));
-            let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
+        let app_config = Arc::new(RwLock::new(config.clone()));
+        let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
 
-            // start the operation worker
-            startup_tx.send("Starting operation worker".to_string())?;
-            let (op_tx, op_rx) = mpsc::channel(32);
-            let mut worker = RepoWorker::new(op_rx, pause_background_tasks.clone());
-            tokio::spawn(async move {
-                worker.run().await;
+        // start the operation worker
+        startup_tx.send("Starting operation worker".to_string())?;
+        let (op_tx, op_rx) = mpsc::channel(32);
+        let mut worker = RepoWorker::new(op_rx, pause_background_tasks.clone());
+        tokio::spawn(async move {
+            worker.run().await;
+        });
+
+        startup_tx.send("Checking for local dynamic config overrides".to_string())?;
+        let storage: Option<ArtifactStorage> = None;
+        let dynamic_config_override: Option<Result<DynamicConfig, anyhow::Error>> = BaseDirs::new()
+            .and_then(|b| {
+                let override_file = b.config_dir().join(APP_NAME).join("dynamic-config.json");
+                debug!(
+                    "Checking if we should load dynamic config from {:?}",
+                    override_file
+                );
+                override_file.exists().then(|| {
+                    debug!("Loading dynamic config from {:?}", override_file);
+                    let data = fs::read_to_string(override_file)?;
+                    Ok(serde_json::from_str(&data)?)
+                })
             });
 
-            startup_tx.send("Checking for local dynamic config overrides".to_string())?;
-            let storage: Option<ArtifactStorage> = None;
-            let dynamic_config_override: Option<Result<DynamicConfig, anyhow::Error>> =
-                BaseDirs::new().and_then(|b| {
-                    let override_file = b.config_dir().join(APP_NAME).join("dynamic-config.json");
-                    debug!(
-                        "Checking if we should load dynamic config from {:?}",
-                        override_file
-                    );
-                    override_file.exists().then(|| {
-                        debug!("Loading dynamic config from {:?}", override_file);
-                        let data = fs::read_to_string(override_file)?;
-                        Ok(serde_json::from_str(&data)?)
-                    })
-                });
+        let dynamic_config = match dynamic_config_override {
+            Some(Ok(config)) => config,
+            Some(Err(e)) => {
+                debug!("Failed to load dynamic config: {:?}", e);
+                startup_tx.send("Fetching dynamic config".to_string())?;
 
-            let dynamic_config = match dynamic_config_override {
-                Some(Ok(config)) => config,
-                Some(Err(e)) => {
-                    debug!("Failed to load dynamic config: {:?}", e);
-                    startup_tx.send("Fetching dynamic config".to_string())?;
+                DynamicConfig::default()
+            }
+            None => DynamicConfig::default(),
+        };
 
-                    DynamicConfig::default()
-                }
-                None => DynamicConfig::default(),
-            };
+        startup_tx.send("Initializing application state".to_string())?;
+        let shared_state: AppState<UnrealEngineProvider> = AppState::new(
+            app_config.clone(),
+            repo_config.clone(),
+            Arc::new(RwLock::new(dynamic_config.clone())),
+            config_file,
+            storage,
+            self.longtail_tx.clone(),
+            op_tx.clone(),
+            self.notification_tx.clone(),
+            self.frontend_op_tx.clone(),
+            VERSION.to_string(),
+            None,
+            self.log_path.clone(),
+            Some(self.otel_reload_handle.clone()),
+            self.git_tx.clone(),
+            self.gameserver_log_tx.clone(),
+        )
+        .await?;
 
-            startup_tx.send("Initializing application state".to_string())?;
-            let shared_state: AppState<UnrealEngineProvider> = AppState::new(
-                app_config.clone(),
-                repo_config.clone(),
-                Arc::new(RwLock::new(dynamic_config.clone())),
-                config_file,
-                storage,
-                self.longtail_tx.clone(),
-                op_tx.clone(),
-                self.notification_tx.clone(),
-                self.frontend_op_tx.clone(),
-                VERSION.to_string(),
-                None,
-                self.log_path.clone(),
-                Some(self.otel_reload_handle.clone()),
-                self.git_tx.clone(),
-                self.gameserver_log_tx.clone(),
-            )
-            .await?;
+        // configure file watcher
+        let watcher_status = shared_state.repo_status.clone();
+        let watcher_git = shared_state.git().clone();
+        let mut debouncer = self.create_file_watcher(
+            watcher_status,
+            watcher_git,
+            shared_state.engine.clone(),
+            pause_background_tasks.clone(),
+            refresh_tx,
+        )?;
 
-            // configure file watcher
-            let watcher_status = shared_state.repo_status.clone();
-            let watcher_git = shared_state.git().clone();
-            let mut debouncer = self.create_file_watcher(
-                watcher_status,
-                watcher_git,
-                shared_state.engine.clone(),
-                pause_background_tasks.clone(),
-                refresh_tx,
-            )?;
-
-            // start the maintenance runner if we have a repo path
-            let repo_path = shared_state.app_config.read().repo_path.clone();
-            let tx = shared_state.git_tx.clone();
-            if !repo_path.is_empty() {
-                // Check for and remove index.lock if it exists
-                let index_lock_path = PathBuf::from(&repo_path).join(".git").join("index.lock");
-                if index_lock_path.exists() {
-                    match fs::remove_file(&index_lock_path) {
-                        Ok(_) => {
-                            info!("Removed existing index.lock file");
-                        }
-                        Err(e) => {
-                            warn!("Failed to remove index.lock file: {:?}", e);
-                        }
+        // start the maintenance runner if we have a repo path
+        let repo_path = shared_state.app_config.read().repo_path.clone();
+        let tx = shared_state.git_tx.clone();
+        if !repo_path.is_empty() {
+            // Check for and remove index.lock if it exists
+            let index_lock_path = PathBuf::from(&repo_path).join(".git").join("index.lock");
+            if index_lock_path.exists() {
+                match fs::remove_file(&index_lock_path) {
+                    Ok(_) => {
+                        info!("Removed existing index.lock file");
+                    }
+                    Err(e) => {
+                        warn!("Failed to remove index.lock file: {:?}", e);
                     }
                 }
-
-                let maintenance_runner =
-                    GitMaintenanceRunner::new(repo_path, pause_background_tasks, tx)
-                        .with_fetch_interval(Duration::from_secs(5));
-                tokio::spawn(async move {
-                    match maintenance_runner.run().await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("Failed to run maintenance runner: {:?}", e);
-                        }
-                    };
-                });
-
-                // start file watcher
-                let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
-                    .join(shared_state.engine.get_default_content_subdir());
-                debouncer
-                    .watcher()
-                    .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
-                debouncer
-                    .cache()
-                    .add_root(content_dir.as_path(), RecursiveMode::Recursive);
             }
 
-            // install git hooks + set initial git config
-            {
-                let hooks_state = shared_state.clone();
+            let maintenance_runner =
+                GitMaintenanceRunner::new(repo_path, pause_background_tasks, tx)
+                    .with_fetch_interval(Duration::from_secs(5));
+            tokio::spawn(async move {
+                match maintenance_runner.run().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Failed to run maintenance runner: {:?}", e);
+                    }
+                };
+            });
 
-                let repo_path: String = hooks_state.app_config.read().repo_path.clone();
-                let git_hooks_path: Option<String> =
-                    hooks_state.repo_config.read().git_hooks_path.clone();
+            // start file watcher
+            let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
+                .join(shared_state.engine.get_default_content_subdir());
+            debouncer
+                .watcher()
+                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
+            debouncer
+                .cache()
+                .add_root(content_dir.as_path(), RecursiveMode::Recursive);
+        }
 
-                // avoids spamming a notification if repo/hooks paths are not configured
-                if !repo_path.is_empty() {
-                    let git = hooks_state.git().clone();
+        // install git hooks + set initial git config
+        {
+            let hooks_state = shared_state.clone();
 
-                    // ensure important git configs are set
-                    git.set_config("gc.auto", "0").await?;
-                    git.set_config("maintenance.auto", "0").await?;
+            let repo_path: String = hooks_state.app_config.read().repo_path.clone();
+            let git_hooks_path: Option<String> =
+                hooks_state.repo_config.read().git_hooks_path.clone();
 
-                    startup_tx.send("Installing git hooks".to_string())?;
-                    if let Some(git_hooks_path) = git_hooks_path {
-                        tokio::spawn(async move {
-                            let op = InstallGitHooksOp {
-                                repo_path,
-                                git_hooks_path,
-                            };
+            // avoids spamming a notification if repo/hooks paths are not configured
+            if !repo_path.is_empty() {
+                let git = hooks_state.git().clone();
 
-                            let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
-                            let mut sequence = TaskSequence::new().with_completion_tx(tx);
-                            sequence.push(Box::new(op));
-                            let _ = hooks_state.operation_tx.send(sequence).await;
+                // ensure important git configs are set
+                git.set_config("gc.auto", "0").await?;
+                git.set_config("maintenance.auto", "0").await?;
 
-                            let res: Result<Option<CoreError>, RecvError> = rx.await;
-                            match res {
-                                Ok(operation_error) => {
-                                    if let Some(e) = operation_error {
-                                        error!("Failed to install git hook: {}", e);
-                                    }
-                                }
-                                Err(e) => {
+                startup_tx.send("Installing git hooks".to_string())?;
+                if let Some(git_hooks_path) = git_hooks_path {
+                    tokio::spawn(async move {
+                        let op = InstallGitHooksOp {
+                            repo_path,
+                            git_hooks_path,
+                        };
+
+                        let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
+                        let mut sequence = TaskSequence::new().with_completion_tx(tx);
+                        sequence.push(Box::new(op));
+                        let _ = hooks_state.operation_tx.send(sequence).await;
+
+                        let res: Result<Option<CoreError>, RecvError> = rx.await;
+                        match res {
+                            Ok(operation_error) => {
+                                if let Some(e) = operation_error {
                                     error!("Failed to install git hook: {}", e);
                                 }
                             }
-                        });
-                    }
-                }
-            }
-
-            let app = crate::router(&shared_state.log_path)?
-                .with_state(shared_state.clone())
-                .layer(ethos_core::utils::tracing::new_tracing_layer(
-                    APP_NAME.to_lowercase(),
-                ));
-
-            let address = format!("127.0.0.1:{}", self.port);
-
-            info!("starting server at {}", address);
-            startup_tx.send("Starting server".to_string())?;
-            let listener = tokio::net::TcpListener::bind(address).await?;
-            let result = axum::serve(listener, app.into_make_service())
-                .with_graceful_shutdown(async move {
-                    shutdown_rx.recv().await;
-
-                    info!("Shutting down server");
-
-                    // Wait up to 30 seconds for index.lock to go away
-                    let repo_path = shared_state.app_config.read().repo_path.clone();
-                    if !repo_path.is_empty() {
-                        info!("Waiting for index.lock to be removed");
-                        let index_lock_path =
-                            PathBuf::from(repo_path).join(".git").join("index.lock");
-                        let mut attempts = 0;
-                        while index_lock_path.exists() && attempts < 30 {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                            attempts += 1;
+                            Err(e) => {
+                                error!("Failed to install git hook: {}", e);
+                            }
                         }
-
-                        if index_lock_path.exists() {
-                            warn!("index.lock still present after 30 seconds");
-                        } else {
-                            info!("index.lock removed after {} seconds", attempts);
-                        }
-                    }
-                })
-                .await;
-
-            match result {
-                Ok(_) => {
-                    info!("server shut down gracefully");
+                    });
                 }
-                Err(e) => info!("server shut down with error: {:?}", e),
             }
         }
 
-        Ok(())
+        let app = crate::router(&shared_state.log_path)?
+            .with_state(shared_state.clone())
+            .layer(ethos_core::utils::tracing::new_tracing_layer(
+                APP_NAME.to_lowercase(),
+            ));
+
+        let address = format!("127.0.0.1:{}", self.port);
+
+        Ok((app, address, shared_state))
     }
 
     fn create_file_watcher<T>(
@@ -367,7 +383,7 @@ impl Server {
             .map_err(|e| CoreError::Internal(anyhow!(e)))
     }
 
-    fn initialize_app_config(&self) -> Result<(Option<PathBuf>, Option<AppConfig>)> {
+    pub fn initialize_app_config() -> Result<(Option<PathBuf>, Option<AppConfig>)> {
         if let Some(base_dirs) = BaseDirs::new() {
             let config_dir = base_dirs.config_dir().join(APP_NAME);
 

@@ -143,7 +143,13 @@ where
             let username = state.app_config.read().user_display_name.clone();
             let playtest_region = payload.playtest_region.clone();
             state
-                .replace_aws_client(new_aws_client, playtest_region, &username)
+                .replace_aws_client(
+                    new_aws_client,
+                    playtest_region,
+                    &username,
+                    state.app_config.clone(),
+                    state.config_file.clone(),
+                )
                 .await?;
         }
     }

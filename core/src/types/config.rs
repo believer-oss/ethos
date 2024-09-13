@@ -104,6 +104,12 @@ pub struct AppConfig {
     #[serde(default = "default_playtest_region", rename = "playtestRegion")]
     pub playtest_region: String,
 
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_endpoint")]
+    pub otlp_endpoint: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_headers")]
+    pub otlp_headers: Option<String>,
+
     #[serde(default)]
     pub initialized: bool,
 }
@@ -144,6 +150,8 @@ impl AppConfig {
             aws_config: None,
             selected_artifact_project: None,
             playtest_region: default_playtest_region(),
+            otlp_endpoint: None,
+            otlp_headers: None,
             initialized: false,
         }
     }
