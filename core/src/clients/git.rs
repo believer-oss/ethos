@@ -533,6 +533,7 @@ impl Git {
     pub async fn log(&self, limit: usize, git_ref: &str) -> anyhow::Result<String> {
         self.run_and_collect_output(
             &[
+                "--no-pager",
                 "log",
                 &format!("-{}", limit),
                 "--pretty=format:%H|%s|%an|%aI",
