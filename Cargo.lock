@@ -2119,7 +2119,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.6.11"
+version = "4.6.12"
 dependencies = [
  "anyhow",
  "async-trait",
