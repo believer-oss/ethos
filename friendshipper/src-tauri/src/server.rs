@@ -205,10 +205,15 @@ impl Server {
         )?;
 
         // start the maintenance runner if we have a repo path
+        let span = tracing::info_span!("acquire_config_lock").entered();
         let repo_path = shared_state.app_config.read().repo_path.clone();
+        span.exit();
+
         let tx = shared_state.git_tx.clone();
         if !repo_path.is_empty() {
             // Check for and remove index.lock if it exists
+            let span = tracing::info_span!("remove_index_lock").entered();
+
             let index_lock_path = PathBuf::from(&repo_path).join(".git").join("index.lock");
             if index_lock_path.exists() {
                 match fs::remove_file(&index_lock_path) {
@@ -220,6 +225,8 @@ impl Server {
                     }
                 }
             }
+
+            span.exit();
 
             let maintenance_runner =
                 GitMaintenanceRunner::new(repo_path, pause_background_tasks, tx)
@@ -234,21 +241,30 @@ impl Server {
             });
 
             // start file watcher
+            let span = tracing::info_span!("start_file_watcher").entered();
+
+            let inner_span = tracing::info_span!("acquire_config_lock").entered();
             let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
                 .join(shared_state.engine.get_default_content_subdir());
+            inner_span.exit();
+
+            let inner_span = tracing::info_span!("watcher_start_watch").entered();
             debouncer
                 .watcher()
                 .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
-            debouncer
-                .cache()
-                .add_root(content_dir.as_path(), RecursiveMode::Recursive);
+            inner_span.exit();
+
+            span.exit();
         }
 
         // install git hooks + set initial git config
         {
             let hooks_state = shared_state.clone();
 
+            let span = tracing::info_span!("acquire_config_lock").entered();
             let repo_path: String = hooks_state.app_config.read().repo_path.clone();
+            span.exit();
+
             let git_hooks_path: Option<String> =
                 hooks_state.repo_config.read().git_hooks_path.clone();
 
@@ -289,17 +305,23 @@ impl Server {
             }
         }
 
+        let span = tracing::info_span!("create_router").entered();
         let app = crate::router(&shared_state.log_path)?
             .with_state(shared_state.clone())
             .layer(ethos_core::utils::tracing::new_tracing_layer(
                 APP_NAME.to_lowercase(),
             ));
+        span.exit();
 
         let address = format!("127.0.0.1:{}", self.port);
 
         Ok((app, address, shared_state))
     }
 
+    #[instrument(
+        level = "info",
+        skip(self, status, git_client, engine, pause_rx, refresh_tx)
+    )]
     fn create_file_watcher<T>(
         &self,
         status: RepoStatusRef,
