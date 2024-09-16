@@ -73,8 +73,8 @@ export const showCommitFiles = async (
 	stash: boolean = false
 ): Promise<CommitFileInfo[]> => invoke('show_commit_files', { commit, stash });
 
-export const downloadLFSFiles = async (files: string[]): Promise<void> =>
-	invoke('download_lfs_files', { files });
+export const downloadLFSFiles = async (files: string[], includeWip: boolean): Promise<void> =>
+	invoke('download_lfs_files', { files, includeWip });
 
 export const getFetchInclude = async (): Promise<string[]> => invoke('get_fetch_include');
 
