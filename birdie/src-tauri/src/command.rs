@@ -1,10 +1,9 @@
-use std::path::PathBuf;
-
 use birdie::metadata::{
     DirectoryClass, DirectoryMetadata, UpdateMetadataClassRequest, UpdateMetadataRequest,
 };
 use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File};
 use birdie::types::config::BirdieConfig;
+use std::path::PathBuf;
 
 use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
@@ -138,12 +137,12 @@ pub async fn submit(state: tauri::State<'_, State>, req: PushRequest) -> Result<
 pub async fn download_lfs_files(
     state: tauri::State<'_, State>,
     files: Vec<String>,
+    include_wip: bool,
 ) -> Result<(), TauriError> {
-    let req = DownloadFilesRequest { files };
     let res = state
         .client
         .post(format!("{}/repo/lfs/download", state.server_url))
-        .json(&req)
+        .json(&DownloadFilesRequest { files, include_wip })
         .send()
         .await?;
 

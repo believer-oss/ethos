@@ -16,6 +16,7 @@ use crate::state::AppState;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DownloadFilesRequest {
     pub files: Vec<String>,
+    pub include_wip: bool,
 }
 
 pub async fn download_files(
@@ -28,19 +29,13 @@ pub async fn download_files(
         // recursively flatten paths into all child files
         let full_path = Path::new(&repo_path).join(file_path);
         let local_path = Path::new(file_path);
-        fetch_include_paths.extend(flatten_path(&full_path, local_path));
+        fetch_include_paths.extend(flatten_path(&full_path, local_path, request.include_wip));
     }
     set_fetch_include(repo_path, fetch_include_paths).await?;
 
-    // format for command line lfs pull format
-    let include_arg = request.files.join(",");
-
     state
         .git()
-        .run(
-            &["lfs", "pull", "--include", &include_arg, "--exclude", ""],
-            Default::default(),
-        )
+        .run(&["lfs", "pull"], Default::default())
         .await?;
 
     Ok(())
@@ -88,7 +83,7 @@ pub async fn del_fetch_include(
         for path in request.files.iter() {
             let full_path = Path::new(&state.app_config.read().repo_path).join(path);
             let local_path = Path::new(path);
-            let flattened_paths = flatten_path(&full_path, local_path);
+            let flattened_paths = flatten_path(&full_path, local_path, true);
             for file_path in flattened_paths {
                 all_paths_vec.retain(|x| x != &file_path);
             }
@@ -131,6 +126,10 @@ pub async fn del_fetch_include(
 }
 
 pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<(), CoreError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
     let config_path = PathBuf::from(repo_path).join(".git/config");
     let mut git_config =
         gix_config::File::from_path_no_includes(config_path.clone(), Source::Local)?;
@@ -186,14 +185,14 @@ pub async fn set_fetch_include(repo_path: String, paths: Vec<String>) -> Result<
     Ok(())
 }
 
-pub fn flatten_path(full_path: &Path, local_path: &Path) -> Vec<String> {
+pub fn flatten_path(full_path: &Path, local_path: &Path, include_wip: bool) -> Vec<String> {
     let mut flat_paths = Vec::new();
-    if full_path.is_dir() {
+    if full_path.is_dir() && (include_wip || !full_path.ends_with("_WIP")) {
         if let Ok(entries) = fs::read_dir(full_path) {
             for entry in entries.filter_map(Result::ok) {
                 let child_path = entry.path();
                 let child_local_path = local_path.join(entry.file_name());
-                flat_paths.extend(flatten_path(&child_path, &child_local_path));
+                flat_paths.extend(flatten_path(&child_path, &child_local_path, include_wip));
             }
         }
     } else if full_path.is_file() {
@@ -224,7 +223,7 @@ mod tests {
         File::create(base_path.join("dir2/file4.txt")).unwrap();
 
         // Test case 1: Flatten the entire directory
-        let result = flatten_path(base_path, Path::new(""));
+        let result = flatten_path(base_path, Path::new(""), false);
         let expected = vec![
             "file1.txt",
             "dir1/file2.txt",
@@ -237,22 +236,26 @@ mod tests {
         }
 
         // Test case 2: Flatten a subdirectory
-        let result = flatten_path(&base_path.join("dir1"), Path::new("dir1"));
+        let result = flatten_path(&base_path.join("dir1"), Path::new("dir1"), true);
         let expected = vec!["dir1/file2.txt", "dir1/subdir/file3.txt"];
         assert_eq!(result, expected);
 
         // Test case 3: Flatten a single file
-        let result = flatten_path(&base_path.join("file1.txt"), Path::new("file1.txt"));
+        let result = flatten_path(&base_path.join("file1.txt"), Path::new("file1.txt"), true);
         let expected = vec!["file1.txt"];
         assert_eq!(result, expected);
 
         // Test case 4: Flatten an empty directory
         fs::create_dir(base_path.join("empty_dir")).unwrap();
-        let result = flatten_path(&base_path.join("empty_dir"), Path::new("empty_dir"));
+        let result = flatten_path(&base_path.join("empty_dir"), Path::new("empty_dir"), true);
         assert!(result.is_empty());
 
         // Test case 5: Flatten a non-existent path
-        let result = flatten_path(&base_path.join("non_existent"), Path::new("non_existent"));
+        let result = flatten_path(
+            &base_path.join("non_existent"),
+            Path::new("non_existent"),
+            true,
+        );
         assert!(result.is_empty());
     }
 }

@@ -14,6 +14,7 @@
 		TableBody,
 		TableBodyCell,
 		TableBodyRow,
+		Toggle,
 		Tooltip
 	} from 'flowbite-svelte';
 	import { onMount, tick } from 'svelte';
@@ -73,6 +74,7 @@
 	let modalLoading: boolean = false;
 	let selectedFiles: LFSFile[] = [];
 	let shiftHeld = false;
+	let includeWip = true;
 
 	// sync and tools
 	let inAsyncOperation = false;
@@ -286,7 +288,7 @@
 		downloadInProgress = true;
 
 		try {
-			await downloadLFSFiles(paths);
+			await downloadLFSFiles(paths, includeWip);
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -693,12 +695,22 @@
 				<Card
 					class="w-full flex flex-col gap-2 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
 				>
-					<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
-						>Download Selected Files
-					</Button>
-					<Tooltip>
-						Downloads selected files on disk and adds them to the automatic downloads list.
-					</Tooltip>
+					<div class="flex justify-between items-center gap-2">
+						<Button
+							color="primary"
+							class="w-full"
+							disabled={loading}
+							on:click={handleDownloadSelectedFiles}
+							>Download Selected Files
+						</Button>
+						<Tooltip>
+							Downloads selected files on disk and adds them to the automatic downloads list.
+						</Tooltip>
+						<Toggle class="whitespace-nowrap" bind:checked={includeWip}>Include WIP</Toggle>
+						<Tooltip>
+							{includeWip ? 'Exclude' : 'Include'} WIP folders
+						</Tooltip>
+					</div>
 					<Button class="w-full" disabled={loading} on:click={handleUnFavoriteSelectedFiles}
 						>Unfavorite Selected Files
 					</Button>
