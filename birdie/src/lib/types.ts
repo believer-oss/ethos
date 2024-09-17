@@ -122,6 +122,7 @@ export interface LockCacheEntry {
 }
 
 export interface LFSFile {
+	path: string;
 	name: string;
 	size: number;
 	fileType: FileType;
@@ -150,6 +151,7 @@ export interface DirectoryMetadata {
 
 // Util types
 export interface Node {
+	parent: Nullable<Node>;
 	value: LFSFile | string;
 	children: Node[];
 }

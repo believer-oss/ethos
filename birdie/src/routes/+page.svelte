@@ -5,29 +5,14 @@
 		Button,
 		ButtonGroup,
 		Card,
-		Checkbox,
 		Input,
 		Modal,
 		Select,
 		Spinner,
-		Table,
-		TableBody,
-		TableBodyCell,
-		TableBodyRow,
 		Tooltip
 	} from 'flowbite-svelte';
 	import { onMount, tick } from 'svelte';
-	import {
-		CheckSolid,
-		CloseSolid,
-		EditOutline,
-		FileCheckOutline,
-		FileCheckSolid,
-		FolderSolid,
-		HeartOutline,
-		HeartSolid,
-		RotateOutline
-	} from 'flowbite-svelte-icons';
+	import { CheckSolid, CloseSolid, EditOutline, RotateOutline } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
@@ -47,11 +32,9 @@
 	} from '$lib/repo';
 	import {
 		type DirectoryMetadata,
-		FileType,
 		type LFSFile,
 		LocalFileLFSState,
-		type Nullable,
-		type Node
+		type Nullable
 	} from '$lib/types';
 	import {
 		appConfig,
@@ -81,7 +64,6 @@
 	let searchInput: HTMLInputElement;
 	let modalLoading: boolean = false;
 	let selectedFiles: LFSFile[] = [];
-	let shiftHeld = false;
 
 	// sync and tools
 	let inAsyncOperation = false;
@@ -205,53 +187,6 @@
 		selectedFile = file;
 
 		await handleShowFileHistory();
-	};
-
-	const handleFileToggled = async (selected: LFSFile) => {
-		if (selected.fileType === FileType.File) {
-			await selectFile(selected);
-		}
-
-		// if ctrl is held, select or unselect everything in between
-		if (shiftHeld) {
-			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
-			const lastSelectedIndex = $currentRootFiles.findIndex(
-				(file) => selectedFiles[selectedFiles.length - 1].name === file.name
-			);
-
-			if (currentIndex > lastSelectedIndex) {
-				for (let i = lastSelectedIndex + 1; i <= currentIndex; i += 1) {
-					if (!selectedFiles.includes($currentRootFiles[i])) {
-						selectedFiles = [...selectedFiles, $currentRootFiles[i]];
-					} else {
-						selectedFiles = selectedFiles.filter((item) => item.name !== $currentRootFiles[i].name);
-					}
-				}
-			} else {
-				for (let i = currentIndex; i < lastSelectedIndex; i += 1) {
-					if (!selectedFiles.includes($currentRootFiles[i])) {
-						selectedFiles = [...selectedFiles, $currentRootFiles[i]];
-					} else {
-						selectedFiles = selectedFiles.filter((item) => item.name !== $currentRootFiles[i].name);
-					}
-				}
-			}
-
-			// if we're unchecking, include the last selected file as well
-			if (!selectedFiles.includes(selected)) {
-				selectedFiles = selectedFiles.filter(
-					(item) => item.name !== $currentRootFiles[lastSelectedIndex].name
-				);
-			}
-
-			return;
-		}
-
-		if (!selectedFiles.includes(selected)) {
-			selectedFiles = [...selectedFiles, selected];
-		} else {
-			selectedFiles = selectedFiles.filter((item) => item.name !== selected.name);
-		}
 	};
 
 	const formatBytes = (bytes: number, decimals = 2): string => {
@@ -424,14 +359,6 @@
 		await refreshFiles();
 	};
 
-	const setCurrentRoot = async (root: string) => {
-		const currRoot = get(currentRoot);
-		$currentRoot = currRoot === '' ? root : `${$currentRoot}/${root}`;
-		selectedFile = null;
-		selectedFiles = [];
-		await refreshFiles();
-	};
-
 	const lockSelectedFile = async () => {
 		if (selectedFile === null) return;
 
@@ -488,11 +415,6 @@
 	};
 
 	const onKeyDown = async (event: KeyboardEvent) => {
-		if (event.key === 'Shift') {
-			shiftHeld = true;
-			return;
-		}
-
 		if (!$enableGlobalSearch) return;
 
 		if (search === '' && event.key.match(/^[a-z]$/) && $appConfig.repoPath !== '') {
@@ -500,12 +422,6 @@
 
 			await tick();
 			searchInput.focus();
-		}
-	};
-
-	const onKeyUp = (e: KeyboardEvent) => {
-		if (e.key === 'Shift') {
-			shiftHeld = false;
 		}
 	};
 
@@ -548,27 +464,6 @@
 		};
 		void setupFetchIncludeList();
 
-		const setupFileTree = async (curr: Node, path: string): Promise<void> => {
-			try {
-				const childFiles: LFSFile[] = await getFiles(path);
-				if (childFiles.length > 0) {
-					childFiles.forEach((child) => {
-						const newChild: Node = {
-							value: child,
-							children: []
-						};
-						curr.children.push(newChild);
-						if (child.fileType === FileType.Directory) {
-							void setupFileTree(newChild, `${path}/${child.name}`);
-						}
-					});
-				}
-			} catch (e) {
-				await emit('error', e);
-			}
-		};
-		void setupFileTree($fileTree, '');
-
 		// refresh every 30 seconds
 		const interval = setInterval(() => {
 			void refreshFiles();
@@ -580,7 +475,7 @@
 	});
 </script>
 
-<svelte:window on:keydown={onKeyDown} on:keyup={onKeyUp} />
+<svelte:window on:keydown={onKeyDown} />
 <div class="flex flex-col h-full gap-2">
 	<div class="flex items-baseline gap-2">
 		<p class="text-2xl mt-2 dark:text-primary-400">Asset Explorer</p>
@@ -644,7 +539,7 @@
 		<CharacterCard metadata={directoryMetadata} onMetadataSaved={handleUpdateDirectoryMetadata} />
 	{/if}
 	<div class="flex gap-2 overflow-hidden w-full max-w-full max-h-[70vh]">
-		<div class="flex flex-col h-full min-h-full w-full">
+		<!-- <div class="flex flex-col h-full min-h-full w-full">
 			<Card
 				class="w-full p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 			>
@@ -717,8 +612,8 @@
 					</div>
 				{/if}
 			</Card>
-		</div>
-		<FileTree bind:files={$fileTree} />
+		</div> -->
+		<FileTree bind:files={$fileTree} bind:selectedFiles />
 
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
 			{#if selectedFiles.length > 0}

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { Card, Table, TableBody } from 'flowbite-svelte';
-	import type { Node } from '$lib/types';
+	import type { LFSFile, Node } from '$lib/types';
 	import TreeNode from '$lib/components/files/TreeNode.svelte';
 
 	export let files: Node;
+	export let selectedFiles: LFSFile[];
 	const level = 0;
 </script>
 
@@ -13,7 +14,7 @@
 	<div class="flex flex-col gap-2 w-full h-full">
 		<Table>
 			<TableBody>
-				<TreeNode {files} {level} />
+				<TreeNode {files} {level} bind:selectedFiles />
 			</TableBody>
 		</Table>
 	</div>

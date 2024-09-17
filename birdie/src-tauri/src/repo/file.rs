@@ -32,6 +32,7 @@ pub enum LocalFileLFSState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
+    pub path: String,
     pub name: String,
     pub size: u64,
     pub file_type: FileType,
@@ -131,6 +132,7 @@ pub async fn get_files(
                 let lock_info = lock_cache.get(&full_path).cloned();
 
                 Some(File {
+                    path: full_path,
                     name: entry.file_name().to_string_lossy().to_string(),
                     size,
                     file_type,
