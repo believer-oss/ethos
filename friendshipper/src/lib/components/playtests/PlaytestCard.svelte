@@ -41,7 +41,7 @@
 	let countdownFinished = false;
 	let syncing = false;
 	let progressModalText = '';
-	let owner: string = '';
+	$: owner = playtest.metadata.annotations?.['believer.dev/owner'] ?? '';
 
 	// if the start time changes, reset the countdown
 	$: playtest.spec.startTime, (countdownFinished = false);
