@@ -50,10 +50,19 @@
 		FileType,
 		type LFSFile,
 		LocalFileLFSState,
-		type Nullable
+		type Nullable,
+		type Node
 	} from '$lib/types';
-	import { appConfig, currentRoot, currentRootFiles, enableGlobalSearch, locks } from '$lib/stores';
+	import {
+		appConfig,
+		currentRoot,
+		currentRootFiles,
+		enableGlobalSearch,
+		fileTree,
+		locks
+	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
+	import FileTree from '$lib/components/files/FileTree.svelte';
 	import CharacterCard from '$lib/components/metadata/CharacterCard.svelte';
 	import {
 		getDirectoryMetadata,
@@ -539,6 +548,27 @@
 		};
 		void setupFetchIncludeList();
 
+		const setupFileTree = async (curr: Node, path: string): Promise<void> => {
+			try {
+				const childFiles: LFSFile[] = await getFiles(path);
+				if (childFiles.length > 0) {
+					childFiles.forEach((child) => {
+						const newChild: Node = {
+							value: child,
+							children: []
+						};
+						curr.children.push(newChild);
+						if (child.fileType === FileType.Directory) {
+							void setupFileTree(newChild, `${path}/${child.name}`);
+						}
+					});
+				}
+			} catch (e) {
+				await emit('error', e);
+			}
+		};
+		void setupFileTree($fileTree, '');
+
 		// refresh every 30 seconds
 		const interval = setInterval(() => {
 			void refreshFiles();
@@ -688,6 +718,8 @@
 				{/if}
 			</Card>
 		</div>
+		<FileTree bind:files={$fileTree} />
+
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
 			{#if selectedFiles.length > 0}
 				<Card

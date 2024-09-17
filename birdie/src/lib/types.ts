@@ -147,3 +147,9 @@ export interface DirectoryMetadata {
 	directoryClass: DirectoryClass;
 	character: Nullable<CharacterMetadata>;
 }
+
+// Util types
+export interface Node {
+	value: LFSFile | string;
+	children: Node[];
+}

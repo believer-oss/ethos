@@ -1,12 +1,21 @@
 import { derived, type Readable, writable } from 'svelte/store';
 import type { Commit, ModifiedFile } from '@ethos/core';
-import type { BirdieConfig, Nullable, RepoStatus, LFSFile, VerifyLocksResponse } from '$lib/types';
+import type {
+	BirdieConfig,
+	Nullable,
+	RepoStatus,
+	LFSFile,
+	VerifyLocksResponse,
+	Node
+} from '$lib/types';
 
 export const updateDismissed = writable(false);
 export const appConfig = writable(<BirdieConfig>{});
 export const commits = writable(<Commit[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const currentRoot = writable('');
+export const fileTree = writable(<Node>{ value: '', children: [] });
+export const fileTreeIndex = writable(<Map<string, Node>>new Map());
 export const commitMessage = writable('');
 export const selectedFiles = writable(<ModifiedFile[]>[]);
 

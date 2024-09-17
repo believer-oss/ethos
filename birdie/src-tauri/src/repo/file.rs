@@ -6,7 +6,7 @@ use axum::extract::{Query, State};
 use axum::Json;
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 use walkdir::{DirEntry, WalkDir};
 
 use ethos_core::types::commits::Commit;
@@ -55,7 +55,6 @@ pub async fn get_files(
     State(state): State<Arc<AppState>>,
     params: Query<FileParams>,
 ) -> Result<Json<Vec<File>>, CoreError> {
-    info!("get_files");
     let repo_path = state.app_config.read().repo_path.clone();
 
     let query_path = if let Some(root) = &params.root {
@@ -64,7 +63,7 @@ pub async fn get_files(
         repo_path
     };
 
-    info!("query_path: {}", query_path);
+    debug!("query_path: {}", query_path);
 
     let files: Vec<File> = {
         let lock_cache = state.lock_cache.read().await;
@@ -154,7 +153,7 @@ pub async fn get_files(
         }
     });
 
-    info!("files: {:?}", files);
+    debug!("files: {:?}", files);
     Ok(Json(files))
 }
 
