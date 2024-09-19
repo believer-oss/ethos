@@ -38,12 +38,15 @@
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
 	import { appWindow } from '@tauri-apps/api/window';
+	import { BaseDirectory } from '@tauri-apps/api/path';
+	import { fs } from '@tauri-apps/api';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
 		allModifiedFiles,
 		appConfig,
 		builds,
+		changeSets,
 		commits,
 		dynamicConfig,
 		engineWorkflows,
@@ -66,6 +69,7 @@
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
 	import { handleError } from '$lib/utils';
+	import { CHANGE_SETS_PATH } from '$lib/consts';
 
 	// Initialization
 	let appVersion = '';
@@ -159,6 +163,15 @@
 		void emit('success', 'Files refreshed!');
 	};
 
+	const initializeChangeSets = async () => {
+		if (await fs.exists(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.LocalData })) {
+			const changeSetsResponse = await fs.readTextFile(CHANGE_SETS_PATH, {
+				dir: BaseDirectory.LocalData
+			});
+			changeSets.set(JSON.parse(changeSetsResponse));
+		}
+	};
+
 	/* eslint-disable no-await-in-loop */
 	const initialize = async () => {
 		initialized = false;
@@ -226,7 +239,8 @@
 					const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
 						getRepoConfig(),
 						getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False),
-						getAllCommits()
+						getAllCommits(),
+						initializeChangeSets()
 					]);
 
 					repoConfig.set(repoConfigResponse);

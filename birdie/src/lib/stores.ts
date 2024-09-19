@@ -1,5 +1,5 @@
 import { derived, type Readable, writable } from 'svelte/store';
-import type { Commit, ModifiedFile } from '@ethos/core';
+import type { ChangeSet, Commit, ModifiedFile } from '@ethos/core';
 import type { BirdieConfig, Nullable, RepoStatus, LFSFile, VerifyLocksResponse } from '$lib/types';
 
 export const updateDismissed = writable(false);
@@ -8,6 +8,7 @@ export const commits = writable(<Commit[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const currentRoot = writable('');
 export const commitMessage = writable('');
+export const changeSets = writable(<ChangeSet[]>[]);
 export const selectedFiles = writable(<ModifiedFile[]>[]);
 
 export const locks = writable(<VerifyLocksResponse>{

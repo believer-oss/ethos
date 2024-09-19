@@ -2,15 +2,15 @@
 	import {
 		Alert,
 		Button,
+		ButtonGroup,
 		Card,
 		Checkbox,
+		Input,
 		Modal,
 		Table,
 		TableBody,
 		TableBodyCell,
 		TableBodyRow,
-		TableHead,
-		TableHeadCell,
 		Tooltip
 	} from 'flowbite-svelte';
 	import {
@@ -20,9 +20,16 @@
 		InfoCircleSolid,
 		PlusOutline,
 		FileCopySolid,
+		TrashBinSolid,
 		ChevronSortOutline
 	} from 'flowbite-svelte-icons';
-	import { ModifiedFileState, SubmitStatus, type ModifiedFile } from '$lib/types/index.js';
+	import { onMount } from 'svelte';
+	import {
+		ModifiedFileState,
+		SubmitStatus,
+		type ModifiedFile,
+		type ChangeSet
+	} from '$lib/types/index.js';
 
 	export let disabled: boolean;
 	export let modifiedFiles: ModifiedFile[];
@@ -34,8 +41,16 @@
 	export let onOpenDirectory: (path: string) => Promise<void>;
 	export let onLockSelected: () => Promise<void>;
 	export let lockSelectedEnabled = true;
+	export let changeSets: ChangeSet[];
+	export let onChangesetsSaved: (changeSets: ChangeSet[]) => Promise<void>;
 
-	let showRevertConfirmation = false;
+	let hoveringSetIndex: number = -1;
+	let hoveringCreateNewChangeset: boolean = false;
+	let editingChangeSetIndex: number = -1;
+	let editingChangeSetValue: string = '';
+	let searchInput: string = '';
+
+	// multi select
 	let shiftHeld = false;
 
 	const onKeyDown = (e: KeyboardEvent) => {
@@ -50,6 +65,72 @@
 		}
 	};
 
+	// filteredChangeSets is changeSets but with the files filtered by searchInput
+	$: filteredChangeSets = changeSets.map((changeSet) => {
+		if (searchInput.length < 3) {
+			return changeSet;
+		}
+
+		return {
+			...changeSet,
+			files: changeSet.files.filter(
+				(file) =>
+					file.path.toLowerCase().includes(searchInput.toLowerCase()) ||
+					file.displayName.toLowerCase().includes(searchInput.toLowerCase())
+			)
+		};
+	});
+
+	// changeSetOrderedFiles is the list of modified files, but ordered the way they appear in the changeSets
+	$: changeSetOrderedFiles = changeSets
+		.map((changeSet) => changeSet.files.map((file) => file))
+		.flat();
+
+	let showRevertConfirmation = false;
+
+	// Ensure there's a "default" changeset containing all unassigned modified files
+	const ensureDefaultChangeset = () => {
+		let defaultChangesetIndex = changeSets.findIndex((cs) => cs.name === 'default');
+
+		if (defaultChangesetIndex === -1) {
+			// If "default" changeset doesn't exist, create it
+			changeSets = [...changeSets, { name: 'default', files: [], open: true }];
+			defaultChangesetIndex = changeSets.length - 1;
+		}
+
+		// Get all files that are not in any changeset
+		const unassignedFiles = modifiedFiles.filter(
+			(file) => !changeSets.some((cs) => cs.files.some((f) => f.path === file.path))
+		);
+
+		// Add unassigned files to the "default" changeset
+		changeSets[defaultChangesetIndex].files = [
+			...changeSets[defaultChangesetIndex].files,
+			...unassignedFiles
+		];
+
+		// Update changeSets
+		changeSets = [...changeSets];
+	};
+
+	// Make sure every file in every changeset is in modifiedFiles
+	const cleanUpChangeSets = async () => {
+		ensureDefaultChangeset();
+
+		for (let i = 0; i < changeSets.length; i += 1) {
+			changeSets[i].files = changeSets[i].files.filter((file) =>
+				modifiedFiles.some((mf) => mf.path === file.path)
+			);
+		}
+
+		await onChangesetsSaved(changeSets);
+	};
+
+	// Set up a listener for changes to modifiedFiles
+	$: if (modifiedFiles) {
+		void cleanUpChangeSets();
+	}
+
 	const promptForRevertConfirmation = () => {
 		showRevertConfirmation = true;
 	};
@@ -61,25 +142,31 @@
 	const handleFileToggled = (selectedFile: ModifiedFile) => {
 		// if ctrl is held, select or unselect everything in between
 		if (shiftHeld) {
-			const currentIndex = modifiedFiles.findIndex((file) => file.path === selectedFile.path);
-			const lastSelectedIndex = modifiedFiles.findIndex(
+			const currentIndex = changeSetOrderedFiles.findIndex(
+				(file) => file.path === selectedFile.path
+			);
+			const lastSelectedIndex = changeSetOrderedFiles.findIndex(
 				(file) => selectedFiles[selectedFiles.length - 1].path === file.path
 			);
 
 			if (currentIndex > lastSelectedIndex) {
 				for (let i = lastSelectedIndex + 1; i <= currentIndex; i += 1) {
-					if (!selectedFiles.includes(modifiedFiles[i])) {
-						selectedFiles = [...selectedFiles, modifiedFiles[i]];
+					if (!selectedFiles.includes(changeSetOrderedFiles[i])) {
+						selectedFiles = [...selectedFiles, changeSetOrderedFiles[i]];
 					} else {
-						selectedFiles = selectedFiles.filter((item) => item.path !== modifiedFiles[i].path);
+						selectedFiles = selectedFiles.filter(
+							(item) => item.path !== changeSetOrderedFiles[i].path
+						);
 					}
 				}
 			} else {
 				for (let i = currentIndex; i < lastSelectedIndex; i += 1) {
-					if (!selectedFiles.includes(modifiedFiles[i])) {
-						selectedFiles = [...selectedFiles, modifiedFiles[i]];
+					if (!selectedFiles.includes(changeSetOrderedFiles[i])) {
+						selectedFiles = [...selectedFiles, changeSetOrderedFiles[i]];
 					} else {
-						selectedFiles = selectedFiles.filter((item) => item.path !== modifiedFiles[i].path);
+						selectedFiles = selectedFiles.filter(
+							(item) => item.path !== changeSetOrderedFiles[i].path
+						);
 					}
 				}
 			}
@@ -87,7 +174,7 @@
 			// if we're unchecking, include the last selected file as well
 			if (!selectedFiles.includes(selectedFile)) {
 				selectedFiles = selectedFiles.filter(
-					(item) => item.path !== modifiedFiles[lastSelectedIndex].path
+					(item) => item.path !== changeSetOrderedFiles[lastSelectedIndex].path
 				);
 			}
 
@@ -101,13 +188,26 @@
 		}
 	};
 
-	const handleSelectAllFiles = (e: Event) => {
-		if ((e.target as HTMLInputElement).checked) {
-			selectAll = true;
-			selectedFiles = modifiedFiles.map((file) => file) ?? [];
+	const handleToggleAllFilesInChangeset = (changeSetIndex: number) => {
+		// if not all files are selected, select all files in the changeset
+		// if all files are selected, unselect all files in the changeset
+		const changeSet = changeSets[changeSetIndex];
+		const allFilesSelected = changeSet.files.every((file) =>
+			selectedFiles.some((selectedFile) => selectedFile.path === file.path)
+		);
+
+		if (allFilesSelected) {
+			selectedFiles = selectedFiles.filter(
+				(file) => !changeSet.files.some((csFile) => csFile.path === file.path)
+			);
 		} else {
-			selectAll = false;
-			selectedFiles = [];
+			// avoid duplicates
+			selectedFiles = [
+				...selectedFiles,
+				...changeSet.files.filter(
+					(file) => !selectedFiles.some((selectedFile) => selectedFile.path === file.path)
+				)
+			];
 		}
 	};
 
@@ -157,27 +257,102 @@
 		return file.state + tooltip;
 	};
 
-	// sorting
-	let sortFunction = (a: ModifiedFile, b: ModifiedFile) =>
-		getFileDisplayString(a).localeCompare(getFileDisplayString(b));
-	let sortKey: string = 'file';
-	let sortDirection: number = 1; // ASC
+	const handleDragEnter = (_e: DragEvent, changeSetIndex: number) => {
+		hoveringSetIndex = changeSetIndex;
+		hoveringCreateNewChangeset = false;
+	};
 
-	$: sortedModifiedFiles = modifiedFiles.sort(sortFunction);
+	const handleCreateNewChangesetDragEnter = (_e: DragEvent) => {
+		hoveringSetIndex = -1;
+		hoveringCreateNewChangeset = true;
+	};
 
-	const changeSortDirection = (newSortKey: string) => {
-		if (newSortKey === sortKey) {
-			sortDirection = -sortDirection;
-		} else {
-			sortDirection = 1;
-			sortKey = newSortKey;
+	const handleFileDragStart = (e: DragEvent, file: ModifiedFile) => {
+		if (selectedFiles.length === 0) {
+			e.dataTransfer?.setData('text/plain', JSON.stringify(file));
 		}
 	};
+
+	const handleCreateNewChangeset = async (e: DragEvent) => {
+		e.preventDefault();
+
+		let filesToMove: ModifiedFile[] = [];
+		if (selectedFiles.length === 0) {
+			const file = JSON.parse(e.dataTransfer?.getData('text/plain') ?? '{}');
+			filesToMove = [file];
+		} else {
+			filesToMove = selectedFiles;
+		}
+
+		// Remove the file from all other changesets
+		changeSets = changeSets.map((changeSet) => ({
+			...changeSet,
+			files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path))
+		}));
+
+		changeSets = [
+			...changeSets,
+			{
+				name: 'New Changeset',
+				files: filesToMove,
+				open: true
+			}
+		];
+
+		await onChangesetsSaved(changeSets);
+		hoveringSetIndex = -1;
+		hoveringCreateNewChangeset = false;
+	};
+
+	const handleDrop = async (e: DragEvent, changeSetIndex: number) => {
+		e.preventDefault();
+
+		let filesToMove: ModifiedFile[] = [];
+		if (selectedFiles.length === 0) {
+			const file = JSON.parse(e.dataTransfer?.getData('text/plain') ?? '{}');
+			filesToMove = [file];
+		} else {
+			filesToMove = selectedFiles;
+		}
+
+		// avoid duplicates
+		changeSets[changeSetIndex].files = [
+			...changeSets[changeSetIndex].files,
+			...filesToMove.filter(
+				(file) => !changeSets[changeSetIndex].files.some((f) => f.path === file.path)
+			)
+		];
+
+		// Remove the file from all other changesets
+		changeSets = changeSets.map((changeSet, index) => {
+			if (index !== changeSetIndex) {
+				return {
+					...changeSet,
+					files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path))
+				};
+			}
+			return changeSet;
+		});
+
+		await onChangesetsSaved(changeSets);
+
+		hoveringSetIndex = -1;
+		hoveringCreateNewChangeset = false;
+	};
+
+	onMount(async () => {
+		await cleanUpChangeSets();
+	});
 </script>
 
-<svelte:window on:keydown={onKeyDown} on:keyup={onKeyup} />
+<svelte:window
+	on:drop|preventDefault
+	on:dragover|preventDefault
+	on:keydown={onKeyDown}
+	on:keyup={onKeyup}
+/>
 <Card
-	class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 h-full overflow-y-hidden border-0 shadow-none"
+	class="w-full relative p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 h-full overflow-y-hidden border-0 shadow-none"
 >
 	<div class="flex justify-between items-center gap-2 pb-2">
 		<h3 class="text-primary-400 text-xl">Modified Files</h3>
@@ -196,162 +371,233 @@
 				>Revert Selected
 			</Button>
 			{#if snapshotsEnabled}
-				<Button size="xs" {disabled} on:click={onSaveSnapshot}
+				<Button size="xs" disabled={modifiedFiles.length === 0} on:click={onSaveSnapshot}
 					>Save Snapshot {selectedFiles.length > 0 ? `(${selectedFiles.length})` : '(all)'}
 				</Button>
 			{/if}
 		</div>
 	</div>
-	<Table color="custom" striped={true}>
-		<TableHead class="w-full border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
-			<TableHeadCell class="p-1 w-8">
-				<Checkbox
-					disabled={modifiedFiles.length === 0}
-					class="!p-1.5"
-					checked={selectAll}
-					on:change={(e) => {
-						handleSelectAllFiles(e);
-					}}
-				/>
-				<Tooltip
-					class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
-					placement="right"
-					>Select/deselect all
-				</Tooltip>
-			</TableHeadCell>
-			<TableHeadCell
-				class="p-1 cursor-pointer"
-				on:click={() => {
-					changeSortDirection('modifiedFileState');
-					sortFunction = (a, b) => sortDirection * a.state.localeCompare(b.state);
+	<div class="flex gap-2 pb-1">
+		<Input
+			class="w-full h-8 text-white bg-secondary-800 dark:bg-space-950"
+			bind:value={searchInput}
+			placeholder="Filter files"
+		/>
+	</div>
+	<div class="overflow-y-auto pr-1 mb-16">
+		{#each filteredChangeSets as changeSet, index}
+			<div
+				on:dragover|preventDefault
+				on:dragenter|preventDefault={(e) => {
+					handleDragEnter(e, index);
 				}}
+				on:drop|preventDefault={(e) => handleDrop(e, index)}
+				class="rounded-md p-1 {hoveringSetIndex === index
+					? 'border border-primary-500'
+					: 'border-0'}"
+				role="button"
+				tabindex="0"
 			>
-				<div class="flex items-center">
-					<ChevronSortOutline size="sm" />
-				</div>
-			</TableHeadCell>
-			<TableHeadCell
-				class="p-1 cursor-pointer"
-				on:click={() => {
-					changeSortDirection('lockedBy');
-					sortFunction = (a, b) => sortDirection * a.lockedBy.localeCompare(b.lockedBy);
-				}}
-			>
-				<div class="flex flex-row w-max items-center">
-					Checked Out
-					<ChevronSortOutline size="sm" />
-				</div>
-			</TableHeadCell>
-			<TableHeadCell
-				class="p-1 cursor-pointer"
-				on:click={() => {
-					changeSortDirection('file');
-					sortFunction = (a, b) =>
-						sortDirection * getFileDisplayString(a).localeCompare(getFileDisplayString(b));
-				}}
-			>
-				<div class="flex items-center">
-					File
-					<ChevronSortOutline size="sm" />
-				</div>
-			</TableHeadCell>
-		</TableHead>
-		<TableBody>
-			{#each sortedModifiedFiles as file, index}
-				<TableBodyRow
-					class="text-left border-b-0 {index % 2 === 0
-						? 'bg-secondary-700 dark:bg-space-900'
-						: 'bg-secondary-800 dark:bg-space-950'}"
-				>
-					<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
-						<Checkbox
-							class="!p-1.5"
-							checked={selectedFiles.some((selectedFile) => selectedFile.path === file.path)}
-							on:change={() => {
-								handleFileToggled(file);
+				<div class="flex gap-2 mb-1 items-center justify-between w-full text-white cursor-default">
+					{#if editingChangeSetIndex === index}
+						<Input
+							bind:value={editingChangeSetValue}
+							on:keydown={async (e) => {
+								if (e.key === 'Enter') {
+									editingChangeSetIndex = -1;
+									changeSet.name = editingChangeSetValue;
+									await onChangesetsSaved(changeSets);
+								}
 							}}
+							class="w-full h-8 text-white bg-secondary-800 dark:bg-space-950"
 						/>
-					</TableBodyCell>
-					<TableBodyCell tdClass="p-1 w-8">
-						{#if file.state === ModifiedFileState.Added}
-							<PlusOutline class="w-4 h-4 text-lime-500" />
-							<Tooltip
-								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
-								placement="right"
-								>{getFileTooltip(file)}
-							</Tooltip>
-						{:else if file.state === ModifiedFileState.Modified}
-							<PenSolid class="w-4 h-4 text-yellow-300" />
-							<Tooltip
-								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
-								placement="right"
-								>{getFileTooltip(file)}
-							</Tooltip>
-						{:else if file.state === ModifiedFileState.Deleted}
-							<CloseCircleSolid class="w-4 h-4 text-red-700" />
-							<Tooltip
-								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
-								placement="right"
-								>{getFileTooltip(file)}
-							</Tooltip>
-						{:else if file.state === ModifiedFileState.Unmerged}
-							<FileCopySolid class="w-4 h-4 text-red-700" />
-							<Tooltip
-								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
-								placement="right"
-								>{getFileTooltip(file)}
-							</Tooltip>
-						{/if}
-					</TableBodyCell>
-					<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
-						{file.lockedBy}
-					</TableBodyCell>
-					<TableBodyCell class="p-1 flex gap-1 items-center h-full whitespace-nowrap font-medium">
-						<Button
-							outline
-							size="xs"
-							class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
-							on:click={async () => onOpenDirectory(file.path)}
-						>
-							<FolderOpenOutline class="w-4 h-4" />
-						</Button>
-						{#if file.submitStatus !== SubmitStatus.Ok}
-							<span> ⚠️ </span>
-							<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
-								{getFileTooltip(file)}
-							</Tooltip>
-						{/if}
-						<Button
-							outline
-							size="xs"
-							class="p-0 w-full active:border-none focus:ring-0 dark:active:border-none dark:focus:ring-0 border-none justify-start items-center text-left {getFileTextClass(
-								file
-							)}
-                                {index % 2 === 0
-								? 'hover:bg-secondary-700 dark:hover:bg-space-900'
-								: 'hover:bg-secondary-800 dark:hover:bg-space-950'}"
-							on:click={() => {
-								handleFileToggled(file);
-							}}
-						>
-							{getFileDisplayString(file)}
-						</Button>
-						{#if file.displayName !== ''}
-							<Tooltip class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl">
-								{file.path}
-							</Tooltip>
-						{/if}
-					</TableBodyCell>
-				</TableBodyRow>
-			{:else}
-				<TableBodyRow class="text-center border-b-0 bg-secondary-700 dark:bg-space-900">
-					<TableBodyCell class="p-1" colspan="3">
-						<p class="text-gray-300">No modified files</p>
-					</TableBodyCell>
-				</TableBodyRow>
-			{/each}
-		</TableBody>
-	</Table>
+					{:else}
+						<span class="flex items-center gap-1"
+							>{changeSet.name}
+							<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
+						</span>
+						<div class="flex gap-1">
+							<ButtonGroup size="xs" class="mx-2 space-x-px ">
+								{#if changeSet.name !== 'default'}
+									<Button
+										color="primary"
+										on:click={() => {
+											editingChangeSetIndex = index;
+											editingChangeSetValue = changeSet.name;
+										}}
+										class="py-0.5 text-xs"
+									>
+										rename
+									</Button>
+								{/if}
+								<Button
+									color="primary"
+									on:click={() => {
+										handleToggleAllFilesInChangeset(index);
+									}}
+									class="py-0.5 text-xs">select all</Button
+								>
+								{#if changeSet.name !== 'default' && changeSet.files.length === 0}
+									<Button
+										color="red"
+										on:click={async () => {
+											changeSets = changeSets.filter((_, i) => i !== index);
+											await onChangesetsSaved(changeSets);
+										}}
+										class="py-0.5 text-xs"
+									>
+										<TrashBinSolid class="w-4 h-4" />
+										delete
+									</Button>
+								{/if}
+							</ButtonGroup>
+							<Button
+								outline
+								color="primary"
+								class="py-0.5 px-1"
+								on:click={() => {
+									changeSet.open = !changeSet.open;
+								}}
+							>
+								{#if changeSet.open}
+									<ChevronSortOutline class="w-3 h-3" />
+								{:else}
+									<PlusOutline class="w-3 h-3" />
+								{/if}
+							</Button>
+						</div>
+					{/if}
+				</div>
+				{#if changeSet.files.length > 0 && changeSet.open}
+					<Table color="custom" striped={true}>
+						<TableBody>
+							{#each changeSet.files as file, fileIndex}
+								<TableBodyRow
+									class="text-left border-b-0 {fileIndex % 2 === 0
+										? 'bg-secondary-800 dark:bg-space-950'
+										: 'bg-secondary-700 dark:bg-space-900'}"
+								>
+									<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
+										<Checkbox
+											class="!p-1.5"
+											checked={selectedFiles.some(
+												(selectedFile) => selectedFile.path === file.path
+											)}
+											on:change={() => {
+												handleFileToggled(file);
+											}}
+										/>
+									</TableBodyCell>
+									<TableBodyCell tdClass="p-1 w-8">
+										{#if file.state === ModifiedFileState.Added}
+											<PlusOutline class="w-4 h-4 text-lime-500" />
+											<Tooltip
+												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												placement="right"
+												>{getFileTooltip(file)}
+											</Tooltip>
+										{:else if file.state === ModifiedFileState.Modified}
+											<PenSolid class="w-4 h-4 text-yellow-300" />
+											<Tooltip
+												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												placement="right"
+												>{getFileTooltip(file)}
+											</Tooltip>
+										{:else if file.state === ModifiedFileState.Deleted}
+											<CloseCircleSolid class="w-4 h-4 text-red-700" />
+											<Tooltip
+												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												placement="right"
+												>{getFileTooltip(file)}
+											</Tooltip>
+										{:else if file.state === ModifiedFileState.Unmerged}
+											<FileCopySolid class="w-4 h-4 text-red-700" />
+											<Tooltip
+												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												placement="right"
+												>{getFileTooltip(file)}
+											</Tooltip>
+										{/if}
+									</TableBodyCell>
+									<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
+										{#if file.lockedBy}
+											{file.lockedBy}
+										{:else}
+											<span class="text-gray-300">Unlocked</span>
+										{/if}
+									</TableBodyCell>
+									<TableBodyCell
+										class="p-1 flex gap-1 items-center h-full whitespace-nowrap font-medium"
+									>
+										<Button
+											outline
+											size="xs"
+											class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
+											on:click={async () => onOpenDirectory(file.path)}
+										>
+											<FolderOpenOutline class="w-4 h-4" />
+										</Button>
+										{#if file.submitStatus !== SubmitStatus.Ok}
+											<span> ⚠️ </span>
+											<Tooltip
+												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+											>
+												{getFileTooltip(file)}
+											</Tooltip>
+										{/if}
+										<div
+											draggable={true}
+											role="button"
+											tabindex="0"
+											class="p-0 w-full justify-start items-center text-left {getFileTextClass(
+												file
+											)}"
+											on:dragstart={(e) => {
+												handleFileDragStart(e, file);
+											}}
+										>
+											{getFileDisplayString(file)}
+										</div>
+										{#if file.displayName !== ''}
+											<Tooltip
+												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+											>
+												{file.path}
+											</Tooltip>
+										{/if}
+									</TableBodyCell>
+								</TableBodyRow>
+							{:else}
+								<TableBodyRow class="text-center border-b-0 bg-secondary-700 dark:bg-space-900">
+									<TableBodyCell class="p-1" colspan="4">
+										<p class="text-gray-300">No modified files</p>
+									</TableBodyCell>
+								</TableBodyRow>
+							{/each}
+						</TableBody>
+					</Table>
+				{/if}
+			</div>
+		{/each}
+	</div>
+	<div
+		class="absolute bottom-0 left-0 w-full p-4 rounded-b-lg border-t border-primary-500 bg-secondary-700 dark:bg-space-900"
+	>
+		<div
+			on:dragover|preventDefault
+			on:dragenter|preventDefault={(e) => {
+				handleCreateNewChangesetDragEnter(e);
+			}}
+			on:drop|preventDefault={(e) => handleCreateNewChangeset(e)}
+			class="rounded-md p-1 {hoveringCreateNewChangeset
+				? 'border border-primary-500 border-solid'
+				: 'border border-gray-300 border-dotted'}"
+			role="button"
+			tabindex="0"
+		>
+			<div class="text-white">drag file(s) here to create a new group</div>
+		</div>
+	</div>
 </Card>
 
 <Modal

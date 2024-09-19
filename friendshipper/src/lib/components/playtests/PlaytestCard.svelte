@@ -314,11 +314,9 @@
 		{/if}
 	</div>
 	<div
-		class="grid gap-4 overflow-y-auto mb-12 pr-2 w-full h-full"
+		class="grid gap-4 overflow-y-auto mb-12 pr-2 w-full h-full xl:grid-cols-4"
 		class:grid-cols-2={compact}
-		class:xl:grid-cols-4={compact}
 		class:grid-cols-4={!compact}
-		class:xl:grid-cols-2={!compact}
 		class:mb-12={compact}
 	>
 		{#if playtest.status != null}

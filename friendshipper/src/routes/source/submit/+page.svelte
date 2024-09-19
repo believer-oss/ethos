@@ -25,8 +25,15 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/shell';
 	import { sendNotification } from '@tauri-apps/api/notification';
-	import { type CommitFileInfo, ModifiedFilesCard, ProgressModal } from '@ethos/core';
+	import {
+		type ChangeSet,
+		type CommitFileInfo,
+		ModifiedFilesCard,
+		ProgressModal
+	} from '@ethos/core';
 	import { get } from 'svelte/store';
+	import { fs } from '@tauri-apps/api';
+	import { BaseDirectory } from '@tauri-apps/api/path';
 	import type {
 		GitHubPullRequest,
 		Nullable,
@@ -51,12 +58,14 @@
 	import {
 		allModifiedFiles,
 		appConfig,
+		changeSets,
 		commitMessage,
 		repoConfig,
 		repoStatus,
 		selectedFiles
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
+	import { CHANGE_SETS_PATH } from '$lib/consts';
 
 	let loading = false;
 	let fetchingPulls = false;
@@ -249,6 +258,11 @@
 	};
 
 	const handleSaveSnapshot = async () => {
+		if (loading) {
+			await emit('error', 'Please wait for the current operation to complete.');
+			return;
+		}
+
 		loading = true;
 		showProgressModal = true;
 		progressModalTitle = 'Saving snapshot';
@@ -322,6 +336,13 @@
 
 		showProgressModal = false;
 		loading = false;
+	};
+
+	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
+		$changeSets = newChangesets;
+		await fs.writeFile(CHANGE_SETS_PATH, JSON.stringify($changeSets, null, 2), {
+			dir: BaseDirectory.LocalData
+		});
 	};
 
 	const handleOpenPreferences = async () => {
@@ -482,6 +503,8 @@
 			disabled={loading}
 			bind:selectedFiles={$selectedFiles}
 			bind:selectAll
+			changeSets={$changeSets}
+			onChangesetsSaved={handleSaveChangesets}
 			modifiedFiles={$allModifiedFiles}
 			onOpenDirectory={handleOpenDirectory}
 			onRevertFiles={handleRevertFiles}
