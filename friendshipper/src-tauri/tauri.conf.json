@@ -17,8 +17,16 @@
 				"open": true
 			},
 			"fs": {
+				"writeFile": true,
+				"exists": true,
 				"readFile": true,
-				"scope": { "allow": ["*/**"], "requireLiteralLeadingDot": false }
+				"scope": {
+					"allow": ["*/**"],
+					"requireLiteralLeadingDot": false
+				}
+			},
+			"path": {
+				"all": true
 			},
 			"shell": {
 				"all": false,
@@ -94,7 +102,8 @@
 				"minHeight": 600,
 				"visible": false,
 				"decorations": false,
-				"transparent": true
+				"transparent": true,
+				"fileDropEnabled": false
 			}
 		]
 	}

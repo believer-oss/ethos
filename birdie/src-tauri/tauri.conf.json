@@ -18,7 +18,12 @@
 			},
 			"fs": {
 				"readFile": true,
+				"writeFile": true,
+				"exists": true,
 				"scope": ["*/**"]
+			},
+			"path": {
+				"all": true
 			},
 			"shell": {
 				"all": false,
@@ -94,7 +99,8 @@
 				"minHeight": 640,
 				"visible": false,
 				"decorations": false,
-				"transparent": true
+				"transparent": true,
+				"fileDropEnabled": false
 			}
 		]
 	}

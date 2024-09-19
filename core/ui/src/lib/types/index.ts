@@ -4,5 +4,6 @@ export {
 	SubmitStatus,
 	type ModifiedFile,
 	type Commit,
-	type CommitFileInfo
+	type CommitFileInfo,
+	type ChangeSet
 } from './repo.js';

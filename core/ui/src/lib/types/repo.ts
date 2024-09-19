@@ -23,6 +23,12 @@ export interface ModifiedFile {
 	submitStatus: SubmitStatus;
 }
 
+export interface ChangeSet {
+	name: string;
+	files: ModifiedFile[];
+	open: boolean;
+}
+
 export interface Commit {
 	sha: string;
 	author: string;

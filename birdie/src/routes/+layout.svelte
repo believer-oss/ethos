@@ -35,6 +35,7 @@
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
 	import { appWindow } from '@tauri-apps/api/window';
+	import { fs } from '@tauri-apps/api';
 	import { page } from '$app/stores';
 	import {
 		commits,
@@ -42,13 +43,15 @@
 		repoStatus,
 		updateDismissed,
 		allModifiedFiles,
-		locks
+		locks,
+		changeSets
 	} from '$lib/stores';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import { getLatestVersion, getLogPath, restart, runUpdate } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig } from '$lib/config';
 	import { getAllCommits, getRepoStatus, verifyLocks } from '$lib/repo';
+	import { CHANGE_SETS_PATH } from '$lib/consts';
 
 	// Initialization
 	let appVersion = '';
@@ -124,6 +127,15 @@
 		updating = false;
 	};
 
+	const initializeChangeSets = async () => {
+		if (await fs.exists(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.LocalData })) {
+			const changeSetsResponse = await fs.readTextFile(CHANGE_SETS_PATH, {
+				dir: fs.BaseDirectory.LocalData
+			});
+			changeSets.set(JSON.parse(changeSetsResponse));
+		}
+	};
+
 	/* eslint-disable no-await-in-loop */
 	const initialize = async () => {
 		appVersion = await getVersion();
@@ -171,6 +183,8 @@
 				repoStatus.set(await getRepoStatus());
 				commits.set(await getAllCommits());
 				locks.set(await verifyLocks());
+
+				await initializeChangeSets();
 			}
 		} catch (e) {
 			await emit('error', e);

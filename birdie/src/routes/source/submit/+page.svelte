@@ -3,12 +3,20 @@
 	import { RotateOutline } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
-	import { ModifiedFilesCard, ProgressModal } from '@ethos/core';
+	import { type ChangeSet, ModifiedFilesCard, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
+	import { fs } from '@tauri-apps/api';
 	import type { PushRequest, RevertFilesRequest } from '$lib/types';
 	import { getRepoStatus, lockFiles, revertFiles, submit, verifyLocks } from '$lib/repo';
-	import { allModifiedFiles, commitMessage, repoStatus, selectedFiles } from '$lib/stores';
+	import {
+		allModifiedFiles,
+		changeSets,
+		commitMessage,
+		repoStatus,
+		selectedFiles
+	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
+	import { CHANGE_SETS_PATH } from '$lib/consts';
 
 	// progress modal
 	let showProgressModal = false;
@@ -27,6 +35,13 @@
 		const fullPath = `Y:/${parent}`;
 
 		await openUrl(fullPath);
+	};
+
+	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
+		$changeSets = newChangesets;
+		await fs.writeFile(CHANGE_SETS_PATH, JSON.stringify($changeSets, null, 2), {
+			dir: fs.BaseDirectory.LocalData
+		});
 	};
 
 	const refreshFiles = async (triggerLoading: boolean) => {
@@ -170,6 +185,8 @@
 			bind:selectAll
 			onOpenDirectory={handleOpenDirectory}
 			modifiedFiles={$allModifiedFiles}
+			changeSets={$changeSets}
+			onChangesetsSaved={handleSaveChangesets}
 			onRevertFiles={handleRevertFiles}
 			snapshotsEnabled={false}
 			onLockSelected={handleLockSelected}
