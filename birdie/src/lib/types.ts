@@ -152,6 +152,6 @@ export interface DirectoryMetadata {
 // Util types
 export interface Node {
 	parent: Nullable<Node>;
-	value: LFSFile | string;
+	value: Nullable<LFSFile>;
 	children: Node[];
 }

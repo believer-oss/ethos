@@ -25,6 +25,12 @@ pub async fn download_files(
     let repo_path = state.app_config.read().repo_path.clone();
     let mut fetch_include_paths: Vec<String> = Vec::new();
     for file_path in request.files.iter() {
+        // if file path starts with a /, remove it to turn into a local path
+        let file_path = if file_path.starts_with('/') {
+            file_path.trim_start_matches('/')
+        } else {
+            file_path
+        };
         // recursively flatten paths into all child files
         let full_path = Path::new(&repo_path).join(file_path);
         let local_path = Path::new(file_path);
@@ -86,6 +92,13 @@ pub async fn del_fetch_include(
 
         // remove unfavorited paths from lfs.fetchinclude if they exist
         for path in request.files.iter() {
+            // if file path starts with a /, remove it to turn into a local path
+            let path = if path.starts_with('/') {
+                path.trim_start_matches('/')
+            } else {
+                path
+            };
+
             let full_path = Path::new(&state.app_config.read().repo_path).join(path);
             let local_path = Path::new(path);
             let flattened_paths = flatten_path(&full_path, local_path);
