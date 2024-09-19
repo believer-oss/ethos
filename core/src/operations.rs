@@ -257,28 +257,11 @@ impl LockOp {
 
             // update file readonly flag for requested paths as appropriate
             // See the GIT_LFS_SET_LOCKABLE_READONLY section at https://www.mankier.com/5/git-lfs-config#List_of_Options-Other_settings
-            let mut should_set_read_flag = true; // this flag defaults to true if it is left unspecified
+            let mut should_set_read_flag = false; // this flag defaults to false if it is left unspecified
 
-            match env::var("GIT_LFS_SET_LOCKABLE_READONLY") {
-                Ok(env_str) => {
-                    if let Ok(env_bool) = git::parse_bool_string(&env_str) {
-                        should_set_read_flag = env_bool;
-                    }
-                }
-                Err(_) => {
-                    let output = self
-                        .git_client
-                        .run_and_collect_output(
-                            &["config", "--get", "lfs.setlockablereadonly"],
-                            Opts::default(),
-                        )
-                        .await;
-
-                    if let Ok(output) = output {
-                        if let Ok(bool_str) = git::parse_bool_string(&output) {
-                            should_set_read_flag = bool_str;
-                        }
-                    }
+            if let Ok(env_str) = env::var("GIT_LFS_SET_LOCKABLE_READONLY") {
+                if let Ok(env_bool) = git::parse_bool_string(&env_str) {
+                    should_set_read_flag = env_bool;
                 }
             }
 
@@ -319,58 +302,61 @@ impl LockOp {
                 }
             }
 
-            if should_set_read_flag {
-                let set_readonly = self.op != LockOperation::Lock;
-                let operation_str = if set_readonly { "set" } else { "clear" };
+            // if we're honoring the GIT_LFS_SET_LOCKABLE_READONLY flag, we set the readonly flag for the locked files
+            // if NOT, we ensure the readonly flag is not set
+            let set_readonly = match should_set_read_flag {
+                true => self.op != LockOperation::Lock,
+                false => false,
+            };
+            let operation_str = if set_readonly { "set" } else { "clear" };
 
-                for path in &self.paths {
-                    if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
-                        let mut absolute_path = PathBuf::from(&repo_path);
-                        absolute_path.push(path);
+            for path in &self.paths {
+                if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
+                    let mut absolute_path = PathBuf::from(&repo_path);
+                    absolute_path.push(path);
 
-                        match absolute_path.try_exists() {
-                            Ok(exists) => {
-                                if exists {
-                                    // canonicalize path (this cleans up the path and ensures existence)
-                                    match absolute_path.canonicalize() {
-                                        Ok(canonical_path) => {
-                                            // set readonly flag for the canonical path (not the original path
-                                            match std::fs::metadata(&canonical_path) {
-                                                Ok(metadata) => {
-                                                    let mut perms = metadata.permissions().clone();
-                                                    if perms.readonly() != set_readonly {
-                                                        perms.set_readonly(set_readonly);
+                    match absolute_path.try_exists() {
+                        Ok(exists) => {
+                            if exists {
+                                // canonicalize path (this cleans up the path and ensures existence)
+                                match absolute_path.canonicalize() {
+                                    Ok(canonical_path) => {
+                                        // set readonly flag for the canonical path (not the original path
+                                        match std::fs::metadata(&canonical_path) {
+                                            Ok(metadata) => {
+                                                let mut perms = metadata.permissions().clone();
+                                                if perms.readonly() != set_readonly {
+                                                    perms.set_readonly(set_readonly);
 
-                                                        if let Err(e) = std::fs::set_permissions(
-                                                            &canonical_path,
-                                                            perms,
-                                                        ) {
-                                                            error!(
+                                                    if let Err(e) = std::fs::set_permissions(
+                                                        &canonical_path,
+                                                        perms,
+                                                    ) {
+                                                        error!(
                                                     "Failed to {} readonly flag for file {:?}: {}",
                                                     operation_str, &canonical_path, e
                                                 );
-                                                        }
                                                     }
                                                 }
-                                                Err(e) => error!(
-                                                    "Failed to {} readonly flag for file {:?}: {}",
-                                                    operation_str, &canonical_path, e
-                                                ),
                                             }
+                                            Err(e) => error!(
+                                                "Failed to {} readonly flag for file {:?}: {}",
+                                                operation_str, &canonical_path, e
+                                            ),
                                         }
-                                        Err(e) => error!(
+                                    }
+                                    Err(e) => error!(
                                         "Failed to canonicalize path {:?} for readonly flag: {}",
                                         &absolute_path, e
                                     ),
-                                    }
                                 }
                             }
-                            Err(e) => {
-                                error!(
-                                    "Failed to check existence of path {:?} for readonly flag: {}",
-                                    &absolute_path, e
-                                );
-                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to check existence of path {:?} for readonly flag: {}",
+                                &absolute_path, e
+                            );
                         }
                     }
                 }
