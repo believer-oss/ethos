@@ -520,7 +520,7 @@
 										{/if}
 									</TableBodyCell>
 									<TableBodyCell tdClass="p-1 w-8 whitespace-nowrap font-medium">
-										{#if file.lockedBy}
+										{#if file.lockedBy !== ''}
 											{file.lockedBy}
 										{:else}
 											<span class="text-gray-300">Unlocked</span>

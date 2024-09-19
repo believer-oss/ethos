@@ -128,9 +128,9 @@
 	};
 
 	const initializeChangeSets = async () => {
-		if (await fs.exists(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.LocalData })) {
+		if (await fs.exists(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
 			const changeSetsResponse = await fs.readTextFile(CHANGE_SETS_PATH, {
-				dir: fs.BaseDirectory.LocalData
+				dir: fs.BaseDirectory.AppLocalData
 			});
 			changeSets.set(JSON.parse(changeSetsResponse));
 		}
