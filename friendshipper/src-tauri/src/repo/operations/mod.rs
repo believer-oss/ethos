@@ -1,4 +1,4 @@
-pub use checkout::{checkout_trunk_handler, CheckoutOp};
+pub use checkout::{checkout_commit_handler, checkout_trunk_handler, CheckoutOp};
 pub use clone::clone_handler;
 pub use diff::{diff_handler, DiffOp};
 pub use download_dlls::{download_dlls_handler, DownloadDllsOp};

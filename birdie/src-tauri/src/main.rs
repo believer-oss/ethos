@@ -102,7 +102,7 @@ fn main() {
     let client = match clients::command::new_reqwest_client() {
         Ok(client) => client,
         Err(e) => {
-            error!("Failed to create reqwest client: {:?}", e);
+            error!("Failed to create request client: {:?}", e);
             std::process::exit(1);
         }
     };
@@ -118,6 +118,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             checkout_trunk,
+            checkout_commit,
             clone_repo,
             configure_git_user,
             download_lfs_files,

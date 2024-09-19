@@ -1,6 +1,8 @@
 <script lang="ts">
 	import {
 		Button,
+		Dropdown,
+		DropdownItem,
 		Spinner,
 		Table,
 		TableBody,
@@ -65,6 +67,10 @@
 
 		return '';
 	};
+
+	const checkoutCommit = async (sha: string) => {
+		await showFilesHandler(sha, true);
+	};
 </script>
 
 <Table color="custom" striped={true}>
@@ -124,6 +130,9 @@
 							<ChevronUpOutline size="xs" />
 						{/if}
 					</Button>
+					<Dropdown>
+						<DropdownItem on:click={() => checkoutCommit(commit.sha)}>Sync</DropdownItem>
+					</Dropdown>
 				</TableBodyCell>
 			</TableBodyRow>
 			<Tooltip

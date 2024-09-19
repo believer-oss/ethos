@@ -314,6 +314,11 @@ pub struct LockRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutCommitRequest {
+    pub commit: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PullResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conflicts: Option<Vec<String>>,

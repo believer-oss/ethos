@@ -139,6 +139,7 @@ fn main() {
             assign_user_to_group,
             check_login_required,
             checkout_trunk,
+            checkout_commit,
             clone_repo,
             configure_git_user,
             create_playtest,

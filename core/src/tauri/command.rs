@@ -4,8 +4,8 @@ use crate::types::commits::Commit;
 use crate::types::config::{AppConfig, RepoConfig};
 use crate::types::logs::LogEntry;
 use crate::types::repo::{
-    CloneRequest, ConfigureUserRequest, LockRequest, PullResponse, RebaseStatusResponse,
-    RevertFilesRequest,
+    CheckoutCommitRequest, CloneRequest, ConfigureUserRequest, LockRequest, PullResponse,
+    RebaseStatusResponse, RevertFilesRequest,
 };
 
 use tauri::api::process::current_binary;
@@ -329,6 +329,26 @@ pub async fn checkout_trunk(state: tauri::State<'_, State>) -> Result<(), TauriE
     let res = state
         .client
         .post(format!("{}/repo/checkout/trunk", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn checkout_commit(
+    state: tauri::State<'_, State>,
+    commit: String,
+) -> Result<(), TauriError> {
+    let request_data = CheckoutCommitRequest { commit };
+    let res = state
+        .client
+        .post(format!("{}/repo/checkout/commit", state.server_url))
+        .json(&request_data)
         .send()
         .await?;
 
