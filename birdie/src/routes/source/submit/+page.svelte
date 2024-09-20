@@ -40,7 +40,7 @@
 	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
 		$changeSets = newChangesets;
 		await fs.writeFile(CHANGE_SETS_PATH, JSON.stringify($changeSets, null, 2), {
-			dir: fs.BaseDirectory.LocalData
+			dir: fs.BaseDirectory.AppLocalData
 		});
 	};
 
