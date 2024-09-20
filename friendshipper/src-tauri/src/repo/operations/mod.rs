@@ -7,7 +7,7 @@ pub use install_git_hooks::{install_git_hooks_handler, InstallGitHooksOp};
 pub use locks::{acquire_locks_handler, release_locks_handler};
 pub use log::log_handler;
 pub use pull::{pull_handler, PullOp};
-pub use reset::reset_repo;
+pub use reset::{reset_repo, reset_repo_to_commit};
 pub use revert::{revert_files_handler, RevertFilesOp};
 pub use show::show_commit_files;
 pub use snapshot::{
