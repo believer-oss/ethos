@@ -353,7 +353,7 @@ where
             github_username: self.github_client.username.clone(),
             aws_client: None,
             storage: None,
-            allow_offline_communication: true,
+            allow_offline_communication: false,
             skip_engine_update: false,
         };
 
