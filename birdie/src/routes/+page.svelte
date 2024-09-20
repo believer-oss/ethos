@@ -53,7 +53,16 @@
 		LocalFileLFSState,
 		type Nullable
 	} from '$lib/types';
-	import { appConfig, currentRoot, currentRootFiles, enableGlobalSearch, locks } from '$lib/stores';
+	import {
+		appConfig,
+		currentRoot,
+		currentRootFiles,
+		enableGlobalSearch,
+		fetchIncludeList,
+		locks,
+		rootNode,
+		selectedFile
+	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 	import CharacterCard from '$lib/components/metadata/CharacterCard.svelte';
 	import {
@@ -63,10 +72,10 @@
 	} from '$lib/metadata';
 	import { getAppConfig } from '$lib/config';
 	import { runSetEnv, syncTools } from '$lib/tools';
+	import FileTree from '$lib/components/files/FileTree.svelte';
 
 	let loading = false;
 	let allFiles: string[] = [];
-	let selectedFile: Nullable<LFSFile> = null;
 	let downloadInProgress: boolean = false;
 	let search: string = '';
 	let showSearchModal: boolean = false;
@@ -141,9 +150,6 @@
 		inAsyncOperation = false;
 	};
 
-	// git config
-	let fetchIncludeList: string[] = [];
-
 	const handleGetDirectoryMetadata = async () => {
 		try {
 			directoryMetadata = await getDirectoryMetadata($currentRoot);
@@ -190,12 +196,12 @@
 
 	const handleShowFileHistory = async () => {
 		loadingFileHistory = true;
-		commits = await getFileHistory(`${$currentRoot}/${selectedFile?.name}`);
+		commits = await getFileHistory(`${$currentRoot}/${$selectedFile?.name}`);
 		loadingFileHistory = false;
 	};
 
 	const selectFile = async (file: LFSFile) => {
-		selectedFile = file;
+		$selectedFile = file;
 
 		await handleShowFileHistory();
 	};
@@ -276,7 +282,7 @@
 			allFiles = await getAllFiles();
 
 			await handleGetDirectoryMetadata();
-			fetchIncludeList = await getFetchInclude();
+			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -299,14 +305,14 @@
 	};
 
 	const handleDownloadFile = async (selected: Nullable<LFSFile>) => {
-		if (selected === null || selectedFile === null) return;
+		if (selected === null || $selectedFile === null) return;
 		const fullPath = `${$currentRoot}/${selected.name}`;
 
 		try {
 			await downloadFiles([fullPath]);
 
-			selectedFile.lfsState = LocalFileLFSState.Local;
-			fetchIncludeList = await getFetchInclude();
+			$selectedFile.lfsState = LocalFileLFSState.Local;
+			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -323,7 +329,7 @@
 			await downloadFiles(paths);
 
 			selectedFiles = [];
-			fetchIncludeList = await getFetchInclude();
+			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -340,7 +346,7 @@
 		try {
 			await delFetchInclude([fullPath]);
 
-			fetchIncludeList = await getFetchInclude();
+			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -357,7 +363,7 @@
 			await delFetchInclude(paths);
 
 			selectedFiles = [];
-			fetchIncludeList = await getFetchInclude();
+			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -404,7 +410,7 @@
 
 	const goHome = async () => {
 		$currentRoot = '';
-		selectedFile = null;
+		$selectedFile = null;
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -412,7 +418,7 @@
 	const goBack = async (index: number) => {
 		ancestry = ancestry.slice(0, index + 1);
 		$currentRoot = ancestry.join('/');
-		selectedFile = null;
+		$selectedFile = null;
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -420,17 +426,17 @@
 	const setCurrentRoot = async (root: string) => {
 		const currRoot = get(currentRoot);
 		$currentRoot = currRoot === '' ? root : `${$currentRoot}/${root}`;
-		selectedFile = null;
+		$selectedFile = null;
 		selectedFiles = [];
 		await refreshFiles();
 	};
 
 	const lockSelectedFile = async () => {
-		if (selectedFile === null) return;
+		if ($selectedFile === null) return;
 
 		loading = true;
 
-		const fullPath = `${$currentRoot}/${selectedFile.name}`;
+		const fullPath = `${$currentRoot}/${$selectedFile.name}`;
 
 		try {
 			await lockFiles([fullPath]);
@@ -441,17 +447,17 @@
 		}
 
 		await refreshFiles();
-		selectedFile = $currentRootFiles.find((f) => f.name === selectedFile?.name) ?? null;
+		$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
 
 		loading = false;
 	};
 
 	const unlockSelectedFile = async () => {
-		if (selectedFile === null) return;
+		if ($selectedFile === null) return;
 
 		loading = true;
 
-		const fullPath = `${$currentRoot}/${selectedFile.name}`;
+		const fullPath = `${$currentRoot}/${$selectedFile.name}`;
 
 		try {
 			await unlockFiles([fullPath], false);
@@ -462,7 +468,7 @@
 		}
 
 		await refreshFiles();
-		selectedFile = $currentRootFiles.find((f) => f.name === selectedFile?.name) ?? null;
+		$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
 
 		loading = false;
 	};
@@ -537,7 +543,7 @@
 		void refreshFiles();
 
 		const setupFetchIncludeList = async (): Promise<void> => {
-			fetchIncludeList = await getFetchInclude();
+			$fetchIncludeList = await getFetchInclude();
 		};
 		void setupFetchIncludeList();
 
@@ -645,7 +651,7 @@
 										</TableBodyCell>
 										<TableBodyCell class="p-2 w-4">
 											{#if file.fileType === FileType.File}
-												{#if fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
+												{#if $fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
 													<HeartSolid class="w-4 h-4 text-green-500" />
 												{:else}
 													<HeartOutline class="w-4 h-4 text-gray-500" />
@@ -690,6 +696,9 @@
 				{/if}
 			</Card>
 		</div>
+
+		<FileTree bind:fileNode={$rootNode} />
+
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
 			{#if selectedFiles.length > 0}
 				<Card
@@ -772,58 +781,58 @@
 				<div class="flex items-center gap-2">
 					<p class="text-xl my-2 dark:text-primary-400">File Details</p>
 				</div>
-				{#if selectedFile === null}
+				{#if $selectedFile === null}
 					<p class="text-gray-500 dark:text-gray-400 pb-4">No file selected.</p>
 				{:else}
 					<div class="flex flex-col gap-2 w-full h-full">
 						<div class="w-full h-full">
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Name:</span>
-								<p class="dark:text-primary-400 w-64 break-all">{selectedFile.name}</p>
+								<p class="dark:text-primary-400 w-64 break-all">{$selectedFile.name}</p>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Size:</span>
-								<span class="dark:text-primary-400 w-64">{formatBytes(selectedFile.size)}</span>
+								<span class="dark:text-primary-400 w-64">{formatBytes($selectedFile.size)}</span>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">On disk:</span>
 								<span class="dark:text-primary-400 w-64"
-									>{selectedFile.lfsState === LocalFileLFSState.Stub ? 'No' : 'Yes'}</span
+									>{$selectedFile.lfsState === LocalFileLFSState.Stub ? 'No' : 'Yes'}</span
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Favorited:</span>
 								<span class="dark:text-primary-400 w-64"
-									>{!fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)
+									>{!$fetchIncludeList.includes(`${$currentRoot}/${$selectedFile.name}`)
 										? 'No'
 										: 'Yes'}</span
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Locked by:</span>
-								<span class="dark:text-primary-400 w-64">{getLockOwner(selectedFile)}</span>
+								<span class="dark:text-primary-400 w-64">{getLockOwner($selectedFile)}</span>
 							</div>
 						</div>
-						<Button on:click={() => showInExplorer(selectedFile)}>Show in Explorer</Button>
-						{#if selectedFile.lfsState === LocalFileLFSState.Stub || !fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
+						<Button on:click={() => showInExplorer($selectedFile)}>Show in Explorer</Button>
+						{#if $selectedFile.lfsState === LocalFileLFSState.Stub || !$fetchIncludeList.includes(`${$currentRoot}/${$selectedFile.name}`)}
 							<Button
 								class="w-full"
 								color="primary"
-								on:click={() => handleDownloadFile(selectedFile)}>Download</Button
+								on:click={() => handleDownloadFile($selectedFile)}>Download</Button
 							>
 							<Tooltip
 								>Downloads selected files on disk and adds them to the automatic downloads list.
 							</Tooltip>
-						{:else if fetchIncludeList.includes(`${$currentRoot}/${selectedFile.name}`)}
+						{:else if $fetchIncludeList.includes(`${$currentRoot}/${$selectedFile.name}`)}
 							<Button
 								class="w-full"
 								color="primary"
-								on:click={() => handleUnFavoriteFile(selectedFile)}>Unfavorite</Button
+								on:click={() => handleUnFavoriteFile($selectedFile)}>Unfavorite</Button
 							>
 							<Tooltip>Removes any favorited files from the automatic downloads list.</Tooltip>{/if}
-						{#if selectedFile.lfsState === LocalFileLFSState.Local && selectedFile.lockInfo?.ours}
+						{#if $selectedFile.lfsState === LocalFileLFSState.Local && $selectedFile.lockInfo?.ours}
 							<Button disabled={loading} on:click={unlockSelectedFile}>Unlock File</Button>
-						{:else if selectedFile.lfsState === LocalFileLFSState.Local && !selectedFile.locked}
+						{:else if $selectedFile.lfsState === LocalFileLFSState.Local && !$selectedFile.locked}
 							<Button disabled={loading} on:click={lockSelectedFile}>Lock File</Button>
 						{/if}
 					</div>

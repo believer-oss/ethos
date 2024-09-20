@@ -32,6 +32,7 @@ pub enum LocalFileLFSState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
+    pub path: String,
     pub name: String,
     pub size: u64,
     pub file_type: FileType,
@@ -42,7 +43,10 @@ pub struct File {
 
 impl PartialEq for File {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.size == other.size && self.file_type == other.file_type
+        self.path == other.path
+            && self.name == other.name
+            && self.size == other.size
+            && self.file_type == other.file_type
     }
 }
 
@@ -131,7 +135,14 @@ pub async fn get_files(
 
                 let lock_info = lock_cache.get(&full_path).cloned();
 
+                let local_path: String = if full_path.starts_with('/') {
+                    full_path.trim_start_matches('/').to_string()
+                } else {
+                    full_path
+                };
+
                 Some(File {
+                    path: local_path,
                     name: entry.file_name().to_string_lossy().to_string(),
                     size,
                     file_type,
