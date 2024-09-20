@@ -113,10 +113,9 @@
 		changeSets = [...changeSets];
 	};
 
-	const isDeletable = (changeSetName: string): boolean => (
-			changeSetName !== 'default' &&
-			changeSets.find((cs) => cs.name === changeSetName)?.files.length === 0
-		);
+	const isDeletable = (changeSetName: string): boolean =>
+		changeSetName !== 'default' &&
+		changeSets.find((cs) => cs.name === changeSetName)?.files.length === 0;
 
 	// Make sure every file in every changeset is in modifiedFiles
 	const cleanUpChangeSets = async () => {
