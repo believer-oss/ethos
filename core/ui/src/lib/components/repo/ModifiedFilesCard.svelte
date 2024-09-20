@@ -120,13 +120,18 @@
 	// Make sure every file in every changeset is in modifiedFiles
 	const cleanUpChangeSets = async () => {
 		ensureDefaultChangeset();
-
 		for (let i = 0; i < changeSets.length; i += 1) {
-			changeSets[i].files = changeSets[i].files.filter((file) =>
-				modifiedFiles.some((mf) => mf.path === file.path)
-			);
+			// update data for each file in the changeset
+			for (let j = 0; j < changeSets[i].files.length; j += 1) {
+				const file = changeSets[i].files[j];
+				const modifiedFile = modifiedFiles.find((mf) => mf.path === file.path);
+				if (!modifiedFile) {
+					changeSets[i].files = changeSets[i].files.filter((f) => f.path !== file.path);
+				} else {
+					changeSets[i].files[j] = modifiedFile;
+				}
+			}
 		}
-
 		await onChangesetsSaved(changeSets);
 	};
 
@@ -365,8 +370,9 @@
 				<Button
 					size="xs"
 					disabled={disabled || selectedFiles.length === 0}
-					on:click={onLockSelected}>Lock Selected</Button
-				>
+					on:click={onLockSelected}
+					>Lock Selected
+				</Button>
 			{/if}
 			<Button
 				size="xs"
@@ -439,8 +445,9 @@
 									on:click={() => {
 										handleToggleAllFilesInChangeset(index);
 									}}
-									class="py-0.5 text-xs">select all</Button
-								>
+									class="py-0.5 text-xs"
+									>select all
+								</Button>
 								{#if isDeletable(changeSet.name)}
 									<Button
 										color="red"
