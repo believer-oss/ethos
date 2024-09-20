@@ -113,6 +113,11 @@
 		changeSets = [...changeSets];
 	};
 
+	const isDeletable = (changeSetName: string): boolean => (
+			changeSetName !== 'default' &&
+			changeSets.find((cs) => cs.name === changeSetName)?.files.length === 0
+		);
+
 	// Make sure every file in every changeset is in modifiedFiles
 	const cleanUpChangeSets = async () => {
 		ensureDefaultChangeset();
@@ -437,7 +442,7 @@
 									}}
 									class="py-0.5 text-xs">select all</Button
 								>
-								{#if changeSet.name !== 'default' && changeSet.files.length === 0}
+								{#if isDeletable(changeSet.name)}
 									<Button
 										color="red"
 										on:click={async () => {
