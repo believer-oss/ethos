@@ -32,6 +32,7 @@ export const rootNode = writable(<Node>{
 		locked: false,
 		lockInfo: null
 	},
+	open: false,
 	children: []
 });
 export const selectedFile = writable(<Nullable<LFSFile>>null);

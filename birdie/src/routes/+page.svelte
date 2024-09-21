@@ -24,9 +24,11 @@
 		EditOutline,
 		FileCheckOutline,
 		FileCheckSolid,
+		FolderDuplicateOutline,
 		FolderSolid,
 		HeartOutline,
 		HeartSolid,
+		ListOutline,
 		RotateOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
@@ -84,6 +86,7 @@
 	let selectedFiles: LFSFile[] = [];
 	let shiftHeld = false;
 	let includeWip = true;
+	let useFileTreeView = false;
 
 	// sync and tools
 	let inAsyncOperation = false;
@@ -195,8 +198,10 @@
 	let commits: Commit[] = [];
 
 	const handleShowFileHistory = async () => {
+		if ($selectedFile === null) return;
+
 		loadingFileHistory = true;
-		commits = await getFileHistory(`${$currentRoot}/${$selectedFile?.name}`);
+		commits = await getFileHistory(`${$selectedFile.path}`);
 		loadingFileHistory = false;
 	};
 
@@ -267,6 +272,7 @@
 
 	const refreshFiles = async () => {
 		// do nothing if we have no repo path
+		console.log('Refreshing $currentRootFiles');
 		if ($appConfig.repoPath === '') return;
 
 		loading = true;
@@ -306,7 +312,7 @@
 
 	const handleDownloadFile = async (selected: Nullable<LFSFile>) => {
 		if (selected === null || $selectedFile === null) return;
-		const fullPath = `${$currentRoot}/${selected.name}`;
+		const fullPath = `${selected.path}`;
 
 		try {
 			await downloadFiles([fullPath]);
@@ -323,7 +329,7 @@
 
 		if (selectedFiles.length === 0) return;
 
-		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+		const paths = selectedFiles.map((file) => `${file.path}`);
 
 		try {
 			await downloadFiles(paths);
@@ -341,7 +347,7 @@
 		if (selected === null) return;
 		loading = true;
 
-		const fullPath = `${$currentRoot}/${selected.name}`;
+		const fullPath = `${selected.path}`;
 
 		try {
 			await delFetchInclude([fullPath]);
@@ -357,7 +363,7 @@
 		if (selectedFiles.length === 0) return;
 		loading = true;
 
-		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+		const paths = selectedFiles.map((file) => `${file.path}`);
 
 		try {
 			await delFetchInclude(paths);
@@ -374,7 +380,7 @@
 		if (selectedFiles.length === 0) return;
 		loading = true;
 
-		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+		const paths = selectedFiles.map((file) => `${file.path}`);
 
 		try {
 			await lockFiles(paths);
@@ -393,7 +399,7 @@
 		loading = true;
 		if (selectedFiles.length === 0) return;
 
-		const paths = selectedFiles.map((file) => `${$currentRoot}/${file.name}`);
+		const paths = selectedFiles.map((file) => `${file.path}`);
 
 		try {
 			await unlockFiles(paths, false);
@@ -436,7 +442,7 @@
 
 		loading = true;
 
-		const fullPath = `${$currentRoot}/${$selectedFile.name}`;
+		const fullPath = `${$selectedFile.path}`;
 
 		try {
 			await lockFiles([fullPath]);
@@ -447,7 +453,10 @@
 		}
 
 		await refreshFiles();
-		$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
+		if (!useFileTreeView) {
+			// causes selected file to be null if using file tree view since currentRootFiles isn't updated
+			$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
+		}
 
 		loading = false;
 	};
@@ -457,7 +466,7 @@
 
 		loading = true;
 
-		const fullPath = `${$currentRoot}/${$selectedFile.name}`;
+		const fullPath = `${$selectedFile.path}`;
 
 		try {
 			await unlockFiles([fullPath], false);
@@ -468,7 +477,10 @@
 		}
 
 		await refreshFiles();
-		$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
+		if (!useFileTreeView) {
+			// causes selected file to be null if using file tree view since currentRootFiles isn't updated
+			$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
+		}
 
 		loading = false;
 	};
@@ -535,6 +547,15 @@
 		showSearchModal = false;
 	};
 
+	const switchView = async (switchTo: boolean) => {
+		useFileTreeView = switchTo;
+		$currentRoot = '/';
+		$selectedFile = null;
+		selectedFiles = [];
+		commits = [];
+		await refreshFiles();
+	};
+
 	void listen('refresh-files', () => {
 		void refreshFiles();
 	});
@@ -562,6 +583,24 @@
 <div class="flex flex-col h-full gap-2">
 	<div class="flex items-baseline gap-2">
 		<p class="text-2xl mt-2 dark:text-primary-400">Asset Explorer</p>
+		<Button
+			class="w-4 h-8"
+			outline={useFileTreeView}
+			on:click={async () => {
+				await switchView(false);
+			}}
+		>
+			<FolderDuplicateOutline class="w-4 h-4" />
+		</Button>
+		<Button
+			class="w-4 h-8"
+			outline={!useFileTreeView}
+			on:click={async () => {
+				await switchView(true);
+			}}
+		>
+			<ListOutline class="w-4 h-4" />
+		</Button>
 		<span class="text-sm text-gray-300 italic tracking-wide"
 			>(Start typing to search all files!)</span
 		>
@@ -622,83 +661,84 @@
 		<CharacterCard metadata={directoryMetadata} onMetadataSaved={handleUpdateDirectoryMetadata} />
 	{/if}
 	<div class="flex gap-2 overflow-hidden w-full max-w-full max-h-[70vh]">
-		<div class="flex flex-col h-full min-h-full w-full">
-			<Card
-				class="w-full p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
-			>
-				{#if loading && $currentRootFiles.length === 0}
-					<Spinner class="w-12 h-12 dark:text-gray-500 fill-white" />
-				{:else if $currentRootFiles.length === 0}
-					<p class="text-center text-gray-500 dark:text-gray-400">No files found</p>
-				{:else}
-					<div class="flex flex-col gap-2 w-full h-full">
-						<Table>
-							<TableBody>
-								{#each $currentRootFiles as file, index}
-									<TableBodyRow
-										class="text-left border-b-0 {index % 2 === 0
-											? 'bg-secondary-700 dark:bg-space-900'
-											: 'bg-secondary-800 dark:bg-space-950'}"
-									>
-										<TableBodyCell class="p-1 w-8">
-											<Checkbox
-												class="!p-1.5 mr-0"
-												checked={selectedFiles.some((selected) => selected.name === file.name)}
-												on:change={async () => {
-													await handleFileToggled(file);
-												}}
-											/>
-										</TableBodyCell>
-										<TableBodyCell class="p-2 w-4">
-											{#if file.fileType === FileType.File}
-												{#if $fetchIncludeList.includes(`${$currentRoot}/${file.name}`)}
-													<HeartSolid class="w-4 h-4 text-green-500" />
-												{:else}
-													<HeartOutline class="w-4 h-4 text-gray-500" />
-												{/if}
-											{/if}
-										</TableBodyCell>
-										<TableBodyCell class="p-2">
-											{#if file.fileType === FileType.Directory}
-												<Button
-													outline
-													disabled={loading}
-													class="flex justify-start items-center py-0.5 pl-2 border-0 w-full"
-													on:click={async () => {
-														await setCurrentRoot(file.name);
+		{#if useFileTreeView}
+			<FileTree bind:fileNode={$rootNode} bind:loading />
+		{:else}
+			<div class="flex flex-col h-full min-h-full w-full">
+				<Card
+					class="w-full p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
+				>
+					{#if loading && $currentRootFiles.length === 0}
+						<Spinner class="w-12 h-12 dark:text-gray-500 fill-white" />
+					{:else if $currentRootFiles.length === 0}
+						<p class="text-center text-gray-500 dark:text-gray-400">No files found</p>
+					{:else}
+						<div class="flex flex-col gap-2 w-full h-full">
+							<Table>
+								<TableBody>
+									{#each $currentRootFiles as file, index}
+										<TableBodyRow
+											class="text-left border-b-0 {index % 2 === 0
+												? 'bg-secondary-700 dark:bg-space-900'
+												: 'bg-secondary-800 dark:bg-space-950'}"
+										>
+											<TableBodyCell class="p-1 w-8">
+												<Checkbox
+													class="!p-1.5 mr-0"
+													checked={selectedFiles.some((selected) => selected.name === file.name)}
+													on:change={async () => {
+														await handleFileToggled(file);
 													}}
-												>
-													<FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
-												>
-											{:else}
-												<div class="flex gap-2 items-center justify-start w-full">
+												/>
+											</TableBodyCell>
+											<TableBodyCell class="p-2 w-4">
+												{#if file.fileType === FileType.File}
+													{#if $fetchIncludeList.includes(`${file.path}`)}
+														<HeartSolid class="w-4 h-4 text-green-500" />
+													{:else}
+														<HeartOutline class="w-4 h-4 text-gray-500" />
+													{/if}
+												{/if}
+											</TableBodyCell>
+											<TableBodyCell class="p-2">
+												{#if file.fileType === FileType.Directory}
 													<Button
 														outline
-														class="justify-start border-0 py-0.5 pl-2 rounded-md w-full"
-														on:click={() => selectFile(file)}
+														disabled={loading}
+														class="flex justify-start items-center py-0.5 pl-2 border-0 w-full"
+														on:click={async () => {
+															await setCurrentRoot(file.name);
+														}}
 													>
-														{#if file.lfsState === LocalFileLFSState.Local}
-															<FileCheckSolid class="w-4 h-4 text-green-500" />
-														{:else}
-															<FileCheckOutline class="w-4 h-4 text-gray-500" />
-														{/if}
-														<div class="w-3 mr-3">{file.locked ? '🔒' : ''}</div>
-														{file.name}
-													</Button>
-												</div>
-											{/if}
-										</TableBodyCell>
-									</TableBodyRow>
-								{/each}
-							</TableBody>
-						</Table>
-					</div>
-				{/if}
-			</Card>
-		</div>
-
-		<FileTree bind:fileNode={$rootNode} />
-
+														<FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
+													>
+												{:else}
+													<div class="flex gap-2 items-center justify-start w-full">
+														<Button
+															outline
+															class="justify-start border-0 py-0.5 pl-2 rounded-md w-full"
+															on:click={() => selectFile(file)}
+														>
+															{#if file.lfsState === LocalFileLFSState.Local}
+																<FileCheckSolid class="w-4 h-4 text-green-500" />
+															{:else}
+																<FileCheckOutline class="w-4 h-4 text-gray-500" />
+															{/if}
+															<div class="w-3 mr-3">{file.locked ? '🔒' : ''}</div>
+															{file.name}
+														</Button>
+													</div>
+												{/if}
+											</TableBodyCell>
+										</TableBodyRow>
+									{/each}
+								</TableBody>
+							</Table>
+						</div>
+					{/if}
+				</Card>
+			</div>
+		{/if}
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
 			{#if selectedFiles.length > 0}
 				<Card
@@ -732,49 +772,51 @@
 					</Button>
 				</Card>
 			{/if}
-			<Card
-				class="w-full h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
-			>
-				<div class="flex items-center gap-4 h-full">
-					<p class="text-lg my-2 dark:text-primary-400">Directory Class</p>
-					{#if editingDirectoryClass}
-						<div class="flex gap-2">
-							<Select
-								size="sm"
-								class="w-32 text-center"
-								items={directoryClassOptions}
-								bind:value={tempDirectoryClass}
-							/>
+			{#if !useFileTreeView}
+				<Card
+					class="w-full h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
+				>
+					<div class="flex items-center gap-4 h-full">
+						<p class="text-lg my-2 dark:text-primary-400">Directory Class</p>
+						{#if editingDirectoryClass}
+							<div class="flex gap-2">
+								<Select
+									size="sm"
+									class="w-32 text-center"
+									items={directoryClassOptions}
+									bind:value={tempDirectoryClass}
+								/>
 
-							<Button
-								disabled={updatingDirectoryClass}
-								size="xs"
-								class="my-1"
-								on:click={saveDirectoryClass}
-							>
-								<CheckSolid class="w-4 h-4" />
-							</Button>
-							<Button
-								disabled={updatingDirectoryClass}
-								size="xs"
-								class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
-								on:click={cancelEditDirectoryClass}
-							>
-								<CloseSolid class="w-4 h-4" />
-							</Button>
-						</div>
-					{:else}
-						<div class="flex gap-2">
-							<code class="dark:bg-secondary-700 px-2 py-1 w-32 text-center text-white"
-								>{selectedDirectoryClass}</code
-							>
-							<Button size="xs" on:click={handleEditDirectoryClass}>
-								<EditOutline class="w-4 h-4" />
-							</Button>
-						</div>
-					{/if}
-				</div>
-			</Card>
+								<Button
+									disabled={updatingDirectoryClass}
+									size="xs"
+									class="my-1"
+									on:click={saveDirectoryClass}
+								>
+									<CheckSolid class="w-4 h-4" />
+								</Button>
+								<Button
+									disabled={updatingDirectoryClass}
+									size="xs"
+									class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
+									on:click={cancelEditDirectoryClass}
+								>
+									<CloseSolid class="w-4 h-4" />
+								</Button>
+							</div>
+						{:else}
+							<div class="flex gap-2">
+								<code class="dark:bg-secondary-700 px-2 py-1 w-32 text-center text-white"
+									>{selectedDirectoryClass}</code
+								>
+								<Button size="xs" on:click={handleEditDirectoryClass}>
+									<EditOutline class="w-4 h-4" />
+								</Button>
+							</div>
+						{/if}
+					</div>
+				</Card>
+			{/if}
 			<Card
 				class="flex flex-col w-full h-full p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none overflow-hidden"
 			>
@@ -803,9 +845,7 @@
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Favorited:</span>
 								<span class="dark:text-primary-400 w-64"
-									>{!$fetchIncludeList.includes(`${$currentRoot}/${$selectedFile.name}`)
-										? 'No'
-										: 'Yes'}</span
+									>{!$fetchIncludeList.includes(`${$selectedFile.path}`) ? 'No' : 'Yes'}</span
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
@@ -814,7 +854,7 @@
 							</div>
 						</div>
 						<Button on:click={() => showInExplorer($selectedFile)}>Show in Explorer</Button>
-						{#if $selectedFile.lfsState === LocalFileLFSState.Stub || !$fetchIncludeList.includes(`${$currentRoot}/${$selectedFile.name}`)}
+						{#if $selectedFile.lfsState === LocalFileLFSState.Stub || !$fetchIncludeList.includes(`${$selectedFile.path}`)}
 							<Button
 								class="w-full"
 								color="primary"
@@ -823,7 +863,7 @@
 							<Tooltip
 								>Downloads selected files on disk and adds them to the automatic downloads list.
 							</Tooltip>
-						{:else if $fetchIncludeList.includes(`${$currentRoot}/${$selectedFile.name}`)}
+						{:else if $fetchIncludeList.includes(`${$selectedFile.path}`)}
 							<Button
 								class="w-full"
 								color="primary"
@@ -840,7 +880,7 @@
 			</Card>
 		</div>
 	</div>
-	{#if selectedFile}
+	{#if !useFileTreeView && selectedFile}
 		<Card
 			class="w-full p-4 sm:p-4 max-w-full max-h-[30vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 		>

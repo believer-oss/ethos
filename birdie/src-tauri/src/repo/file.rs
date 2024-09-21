@@ -1,12 +1,12 @@
-use std::fs;
-use std::io::{BufRead, BufReader, Read};
-use std::sync::Arc;
-
 use axum::extract::{Query, State};
 use axum::Json;
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use std::fs;
+use std::io::{BufRead, BufReader, Read};
+use std::path::Path;
+use std::sync::Arc;
+use tracing::{debug, info};
 use walkdir::{DirEntry, WalkDir};
 
 use ethos_core::types::commits::Commit;
@@ -51,6 +51,91 @@ impl PartialEq for File {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SingleFileRequest {
+    pub path: String,
+}
+
+pub async fn get_file(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SingleFileRequest>,
+) -> Result<Json<File>, CoreError> {
+    debug!("get_file: {:?}", request.path);
+    let repo_path = state.app_config.read().repo_path.clone();
+
+    let file_path = format!("{}/{}", repo_path, request.path.clone());
+
+    let file: File = {
+        let lock_cache = state.lock_cache.read().await;
+
+        let metadata = fs::metadata(file_path.clone())?;
+
+        let file_type = if metadata.is_dir() {
+            FileType::Directory
+        } else {
+            FileType::File
+        };
+
+        let lfs_state = match file_type {
+            FileType::File => {
+                let mut f = fs::File::open(file_path.clone())?;
+                // 19 bytes gets "version https://git", which is convincing
+                // enough to determine if a file is an LFS stub
+                let mut buffer = [0; 19];
+
+                f.read_exact(&mut buffer).ok();
+                if buffer.eq(b"version https://git") {
+                    LocalFileLFSState::Stub
+                } else {
+                    LocalFileLFSState::Local
+                }
+            }
+            FileType::Directory => LocalFileLFSState::None,
+        };
+
+        let size = match lfs_state {
+            LocalFileLFSState::Stub => {
+                let reader = BufReader::new(fs::File::open(file_path)?);
+
+                // get 3rd line, split by space, get 2nd element, parse to u64
+                let size: u64 = reader
+                    .lines()
+                    .nth(2)
+                    .unwrap()
+                    .unwrap()
+                    .split(' ')
+                    .nth(1)
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+
+                size
+            }
+            _ => metadata.len(),
+        };
+
+        let lock_info = lock_cache.get(&request.path.clone()).cloned();
+
+        let name = Path::new(&request.path)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        File {
+            path: request.path.clone(),
+            name,
+            size,
+            file_type,
+            lfs_state,
+            locked: lock_info.is_some(),
+            lock_info,
+        }
+    };
+
+    Ok(Json(file))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileParams {
     pub root: Option<String>,
 }
@@ -59,7 +144,6 @@ pub async fn get_files(
     State(state): State<Arc<AppState>>,
     params: Query<FileParams>,
 ) -> Result<Json<Vec<File>>, CoreError> {
-    info!("get_files");
     let repo_path = state.app_config.read().repo_path.clone();
 
     let query_path = if let Some(root) = &params.root {
@@ -68,7 +152,7 @@ pub async fn get_files(
         repo_path
     };
 
-    info!("query_path: {}", query_path);
+    debug!("query_path: {}", query_path);
 
     let files: Vec<File> = {
         let lock_cache = state.lock_cache.read().await;
@@ -165,7 +249,7 @@ pub async fn get_files(
         }
     });
 
-    info!("files: {:?}", files);
+    debug!("files: {:?}", files);
     Ok(Json(files))
 }
 

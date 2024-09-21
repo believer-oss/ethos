@@ -13,9 +13,8 @@
 	import { fetchIncludeList, selectedFile } from '$lib/stores';
 
 	export let fileNode: Node;
+	export let loading: boolean;
 	export let level: number;
-
-	let open = false;
 
 	const getChildren = async () => {
 		if (fileNode.value.fileType === FileType.File) {
@@ -23,22 +22,39 @@
 		}
 		fileNode.children = [];
 		const childFiles = await getFiles(fileNode.value.path);
-		childFiles.forEach((child) => {
-			const newChild: Node = {
-				value: child,
-				children: []
-			};
-			fileNode.children.push(newChild);
-		});
+		const newChildren = childFiles.map(
+			(child) =>
+				({
+					value: child,
+					open: false,
+					children: []
+				} as Node)
+		);
+
+		fileNode = {
+			...fileNode, // spread the existing fileNode
+			children: newChildren
+		};
 	};
 
 	const handleOnClick = () => {
-		open = !open;
+		loading = true;
+		console.log('loading', loading);
+		fileNode = {
+			...fileNode,
+			open: !fileNode.open
+		};
+		if (fileNode.open) {
+			void getChildren();
+		} else {
+			fileNode.children = [];
+		}
 		if (fileNode.value.fileType === FileType.File) {
 			$selectedFile = fileNode.value;
 		} else {
 			$selectedFile = null;
 		}
+		loading = false;
 	};
 
 	onMount(() => {
@@ -59,32 +75,33 @@
 		<TableBodyCell class="p-2 w-full">
 			<Button
 				outline={$selectedFile?.path !== fileNode.value.path}
+				disabled={loading}
 				class="flex justify-start items-center border-0 gap-3 py-0.5 pl-2 rounded-md w-full"
 				on:click={handleOnClick}
 			>
 				{#if fileNode.value.fileType === FileType.File}
 					{#if $fetchIncludeList.includes(fileNode.value.path)}
-						<HeartSolid />
+						<HeartSolid class="w-4 h-4" />
 					{:else}
-						<HeartOutline />
+						<HeartOutline class="w-4 h-4" />
 					{/if}
 					{#if fileNode.value.lfsState === LocalFileLFSState.Stub}
-						<FileCheckOutline />
+						<FileCheckOutline class="w-4 h-4" />
 					{:else}
-						<FileCheckSolid />
+						<FileCheckSolid class="w-4 h-4" />
 					{/if}
 					<div class="w-3 mr-3">{fileNode.value.locked ? '🔒' : ''}</div>
 					{fileNode.value.name}
 				{:else}
-					<FolderSolid />
+					<FolderSolid class="w-4 h-4" />
 					{fileNode.value.name}
 				{/if}
 			</Button>
 		</TableBodyCell>
 	</TableBodyRow>
-	{#if open}
+	{#if fileNode.open}
 		{#each fileNode.children as child}
-			<svelte:self bind:fileNode={child} level={level + 1} />
+			<svelte:self bind:fileNode={child} bind:loading level={level + 1} />
 		{/each}
 	{/if}
 </div>

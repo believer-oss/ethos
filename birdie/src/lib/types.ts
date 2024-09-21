@@ -151,5 +151,6 @@ export interface DirectoryMetadata {
 
 export interface Node {
 	value: LFSFile;
+	open: boolean;
 	children: Node[];
 }

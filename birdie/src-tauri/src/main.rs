@@ -128,6 +128,7 @@ fn main() {
             get_commits,
             get_all_files,
             get_files,
+            get_file,
             get_directory_metadata,
             get_file_history,
             get_latest_version,
