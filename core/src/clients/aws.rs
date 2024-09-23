@@ -9,13 +9,14 @@ use aws_credential_types::{
 };
 use aws_sdk_ecr::{types::ImageIdentifier, Client as EcrClient};
 use aws_sdk_eks::Client as EksClient;
-use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use aws_sdk_sso::Client as SsoClient;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SignatureLocation, SigningSettings};
 use aws_smithy_runtime_api::client::identity::Identity;
 use aws_types::region::Region;
 use aws_types::SdkConfig;
 use base64::prelude::{Engine as _, BASE64_STANDARD, BASE64_URL_SAFE_NO_PAD};
+use bytes::Buf;
 use chrono::{DateTime, Utc};
 use http::Request;
 use serde::{Deserialize, Serialize};
@@ -378,6 +379,68 @@ impl AWSClient {
                 std::process::exit(1);
             }
         }
+    }
+
+    pub async fn download_object_to_path(
+        &self,
+        path: &str,
+        object_key: &str,
+    ) -> Result<String, CoreError> {
+        self.check_config().await?;
+
+        let client = S3Client::new(&self.get_sdk_config().await);
+        let aws_config = self.config.clone().unwrap();
+
+        let get_object_output = client
+            .get_object()
+            .bucket(aws_config.artifact_bucket_name)
+            .key(object_key)
+            .send()
+            .await
+            .map_err(|e| CoreError::Internal(anyhow!("Failed to get object from S3: {}", e)))?;
+
+        let body =
+            get_object_output.body.collect().await.map_err(|e| {
+                CoreError::Internal(anyhow!("Failed to collect object body: {}", e))
+            })?;
+
+        let mut file = std::fs::File::create(path)
+            .map_err(|e| CoreError::Internal(anyhow!("Failed to create file: {}", e)))?;
+
+        let mut reader = body.into_bytes().reader();
+        std::io::copy(&mut reader, &mut file)
+            .map_err(|e| CoreError::Internal(anyhow!("Failed to write to file: {}", e)))?;
+
+        Ok(path.to_string())
+    }
+
+    pub async fn upload_object(
+        &self,
+        file_path: &str,
+        destination_prefix: &str,
+    ) -> Result<String, CoreError> {
+        self.check_config().await?;
+
+        let client = S3Client::new(&self.get_sdk_config().await);
+        let aws_config = self.config.clone().unwrap();
+
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| CoreError::Internal(anyhow!("Invalid file path")))?;
+
+        let object_key = format!("{}/{}", destination_prefix.trim_end_matches('/'), file_name);
+
+        client
+            .put_object()
+            .bucket(aws_config.artifact_bucket_name)
+            .key(&object_key)
+            .body(ByteStream::from_path(file_path).await?)
+            .send()
+            .await
+            .map_err(|e| CoreError::Internal(anyhow!("Failed to upload object to S3: {}", e)))?;
+
+        Ok(object_key)
     }
 
     // TODO: This is used by the updater to identify new releases based on the semver. Should we

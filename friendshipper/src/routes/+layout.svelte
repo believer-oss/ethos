@@ -500,7 +500,7 @@
 			</Button>
 		</div>
 	</div>
-	{#if !initialized}
+	{#if !initialized || loginRequired}
 		{#if loginRequired && loginPrompted}
 			<div
 				class="flex flex-col p-4 align-middle justify-around h-full w-full bg-secondary-800 dark:bg-space-950"
