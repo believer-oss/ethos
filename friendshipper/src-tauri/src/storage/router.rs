@@ -1,6 +1,7 @@
 use axum::{extract::State, routing::post, Json, Router};
 use ethos_core::{clients::aws::ensure_aws_client, types::errors::CoreError};
 use serde::{Deserialize, Serialize};
+use tracing::instrument;
 
 use crate::{engine::EngineProvider, state::AppState};
 
@@ -19,6 +20,7 @@ pub struct DownloadFileRequest {
     pub key: String,
 }
 
+#[instrument(skip(state))]
 pub async fn download_file<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<DownloadFileRequest>,
@@ -37,6 +39,7 @@ pub struct UploadFileRequest {
     pub prefix: String,
 }
 
+#[instrument(skip(state))]
 pub async fn upload_file<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<UploadFileRequest>,
