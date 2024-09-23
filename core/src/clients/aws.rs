@@ -381,6 +381,7 @@ impl AWSClient {
         }
     }
 
+    #[instrument(skip(self), err)]
     pub async fn download_object_to_path(
         &self,
         path: &str,
@@ -397,7 +398,12 @@ impl AWSClient {
             .key(object_key)
             .send()
             .await
-            .map_err(|e| CoreError::Internal(anyhow!("Failed to get object from S3: {}", e)))?;
+            .map_err(|e| {
+                CoreError::Internal(anyhow!(
+                    "Failed to get object from S3: {}",
+                    e.into_service_error().to_string()
+                ))
+            })?;
 
         let body =
             get_object_output.body.collect().await.map_err(|e| {
@@ -414,6 +420,7 @@ impl AWSClient {
         Ok(path.to_string())
     }
 
+    #[instrument(skip(self), err)]
     pub async fn upload_object(
         &self,
         file_path: &str,
@@ -438,7 +445,12 @@ impl AWSClient {
             .body(ByteStream::from_path(file_path).await?)
             .send()
             .await
-            .map_err(|e| CoreError::Internal(anyhow!("Failed to upload object to S3: {}", e)))?;
+            .map_err(|e| {
+                CoreError::Internal(anyhow!(
+                    "Failed to upload object to S3: {}",
+                    e.into_service_error().to_string()
+                ))
+            })?;
 
         Ok(object_key)
     }
