@@ -4,6 +4,8 @@
 		Button,
 		ButtonGroup,
 		Card,
+		Dropdown,
+		DropdownItem,
 		Input,
 		Label,
 		Modal,
@@ -20,7 +22,13 @@
 		Textarea,
 		Tooltip
 	} from 'flowbite-svelte';
-	import { LinkOutline, QuestionCircleOutline, RefreshOutline } from 'flowbite-svelte-icons';
+	import {
+		LinkOutline,
+		QuestionCircleOutline,
+		RefreshOutline,
+		FileCodeSolid,
+		ChevronDownOutline
+	} from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/shell';
@@ -45,15 +53,24 @@
 	import {
 		acquireLocks,
 		deleteSnapshot,
+		forceDownloadDlls,
+		forceDownloadEngine,
+		generateSln,
 		getCommitFileTextClass,
 		getPullRequests,
 		getRepoStatus,
 		listSnapshots,
+		openProject,
+		openSln,
 		quickSubmit,
+		reinstallGitHooks,
 		restoreSnapshot,
 		revertFiles,
 		saveSnapshot,
-		showCommitFiles
+		showCommitFiles,
+		syncEngineCommitWithUproject,
+		syncLatest,
+		syncUprojectWithEngineCommit
 	} from '$lib/repo';
 	import {
 		allModifiedFiles,
@@ -66,6 +83,7 @@
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 	import { CHANGE_SETS_PATH } from '$lib/consts';
+	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 
 	let loading = false;
 	let fetchingPulls = false;
@@ -93,6 +111,8 @@
 
 	let loadingSnapshots = false;
 	let snapshots: Snapshot[] = [];
+
+	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
 
 	const validateCommitMessage = (): boolean => {
 		const message = get(commitMessage);
@@ -345,6 +365,148 @@
 		});
 	};
 
+	const handleSyncClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Pulling latest with git';
+
+			await syncLatest();
+			await refreshFiles(true);
+
+			if (!$appConfig.pullDlls) {
+				progressModalTitle = 'Generating projects';
+				await generateSln();
+			} else if ($appConfig.openUprojectAfterSync) {
+				progressModalTitle = 'Launching Unreal Engine';
+				await openProject();
+			}
+
+			await emit('success', 'Sync complete!');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		showProgressModal = false;
+		loading = false;
+	};
+
+	const handleOpenUprojectClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Launching Unreal Engine';
+			await openProject();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleOpenSolutionClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Opening Solution';
+			await openSln();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleGenerateProjectFiles = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Generating project files';
+			await generateSln();
+			await emit('success', 'Visual Studio projects generated successfully');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleForceDownloadGameDllsClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Downloading game DLLs';
+			await forceDownloadDlls();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleForceDownloadEngineClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Downloading engine DLLs';
+			await forceDownloadEngine();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleSyncUprojectWithEngineRepo = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Syncing uproject with engine commit...';
+			const commit = await syncUprojectWithEngineCommit();
+			await emit('success', `UProject EngineAssociation synced to commit ${commit}`);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleSyncEngineRepoWithUproject = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Syncing uproject with engine commit...';
+			const commit = await syncEngineCommitWithUproject();
+			await emit('success', `Engine repo synced to commit ${commit}`);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	const handleReinstallGitHooksClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Reinstalling Git hooks';
+			await reinstallGitHooks();
+			await emit('success', 'Git hooks installed successfully.');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
 	const handleOpenPreferences = async () => {
 		promptForPAT = false;
 		preferencesOpen = true;
@@ -486,7 +648,7 @@
 </script>
 
 <div class="flex items-center justify-between gap-2">
-	<div class="flex items-center gap-2">
+	<div class="flex items-center gap-2 justify-between">
 		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Submit Changes</p>
 		<Button disabled={loading} class="!p-1.5" primary on:click={() => refreshFiles(true)}>
 			{#if loading}
@@ -496,21 +658,111 @@
 			{/if}
 		</Button>
 	</div>
+	<ButtonGroup size="xs" class="space-x-px">
+		<Button
+			size="xs"
+			color="primary"
+			disabled={loading || conflictsDetected}
+			on:click={async () => handleSyncClicked()}
+		>
+			<RefreshOutline class="w-3 h-3 mr-2" />
+			Sync
+		</Button>
+		{#if conflictsDetected}
+			<Tooltip
+				class="ml-2 w-36 text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
+				placement="bottom"
+				>Conflicts detected!
+			</Tooltip>
+		{/if}
+		<Button
+			size="xs"
+			color="primary"
+			disabled={loading}
+			on:click={async () => handleOpenUprojectClicked()}
+		>
+			<UnrealEngineLogoNoCircle class="w-3 h-3 mr-2" />
+			Open Editor
+		</Button>
+		{#if !$appConfig.pullDlls}
+			<Button
+				size="xs"
+				color="primary"
+				disabled={loading}
+				on:click={async () => handleOpenSolutionClicked()}
+			>
+				<FileCodeSolid class="w-3.5 h-3.5 mr-2" />
+				Open .sln
+			</Button>
+		{/if}
+		<Button size="xs" color="primary" id="advancedDropdown" disabled={loading}>
+			<ChevronDownOutline size="xs" />
+		</Button>
+	</ButtonGroup>
+	<Dropdown placement="bottom-start" triggeredBy="#advancedDropdown">
+		{#if $appConfig.pullDlls}
+			<DropdownItem class="text-xs" on:click={handleForceDownloadGameDllsClicked}
+				>Redownload game DLLs</DropdownItem
+			>
+			<Tooltip class="text-xs w-[22rem]" placement="left"
+				>Downloads game DLLs for your current commit and installs them into the game repo. Use if
+				you are getting incompatible binaries errors.</Tooltip
+			>
+		{:else}
+			<DropdownItem class="text-xs" on:click={handleGenerateProjectFiles}
+				>Generate project files</DropdownItem
+			>
+			<Tooltip class="text-xs w-[22rem]" placement="left"
+				>Generates Visual Studio solution and project files for the uproject.</Tooltip
+			>
+		{/if}
+		{#if $appConfig.engineType === 'Prebuilt'}
+			<DropdownItem class="text-xs" on:click={handleForceDownloadEngineClicked}
+				>Redownload engine</DropdownItem
+			>
+			<Tooltip class="text-xs w-[22rem]" placement="left"
+				>Redownloads the entire engine archive. Use if you suspect you have a corrupt engine
+				install.</Tooltip
+			>
+		{:else}
+			<DropdownItem class="text-xs" on:click={handleSyncUprojectWithEngineRepo}
+				>Sync UProject with engine commit</DropdownItem
+			>
+			<Tooltip class="text-xs w-[22rem]" placement="left"
+				>Updates the EngineAssociation item in the .uproject to reflect the current engine commit.</Tooltip
+			>
+			<DropdownItem class="text-xs" on:click={handleSyncEngineRepoWithUproject}
+				>Sync engine commit with UProject</DropdownItem
+			>
+			<Tooltip class="text-xs w-[22rem]" placement="left"
+				>Updates the engine commit to the version currently set in the .uproject's EngineAssociation
+				item.</Tooltip
+			>
+		{/if}
+		<DropdownItem class="text-xs" on:click={handleReinstallGitHooksClicked}
+			>Reinstall Git hooks</DropdownItem
+		>
+		<Tooltip class="text-xs w-[22rem]" placement="left"
+			>For engineers. Helps iterate on the git hooks workflow.</Tooltip
+		>
+	</Dropdown>
 </div>
 <div class="flex flex-row h-full gap-2 overflow-auto">
 	<div class="flex flex-col gap-2 w-full h-full overflow-x-auto">
-		<ModifiedFilesCard
-			disabled={loading}
-			bind:selectedFiles={$selectedFiles}
-			bind:selectAll
-			changeSets={$changeSets}
-			onChangesetsSaved={handleSaveChangesets}
-			modifiedFiles={$allModifiedFiles}
-			onOpenDirectory={handleOpenDirectory}
-			onRevertFiles={handleRevertFiles}
-			onSaveSnapshot={handleSaveSnapshot}
-			onLockSelected={handleLockSelected}
-		/>
+		{#key $repoStatus}
+			<ModifiedFilesCard
+				disabled={loading}
+				bind:selectedFiles={$selectedFiles}
+				bind:selectAll
+				changeSets={$changeSets}
+				onChangesetsSaved={handleSaveChangesets}
+				modifiedFiles={$allModifiedFiles}
+				onOpenDirectory={handleOpenDirectory}
+				onRevertFiles={handleRevertFiles}
+				onSaveSnapshot={handleSaveSnapshot}
+				onLockSelected={handleLockSelected}
+			/>
+		{/key}
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[32rem]">
 		<Card
