@@ -1903,6 +1903,7 @@ dependencies = [
  "aws-types",
  "axum 0.7.6",
  "base64 0.21.7",
+ "bytes",
  "chrono",
  "config",
  "directories-next",

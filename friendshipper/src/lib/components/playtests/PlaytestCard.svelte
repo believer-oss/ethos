@@ -285,6 +285,13 @@
 						>{playtest.spec.playersPerGroup}</span
 					>
 				</span>
+				{#if playtest.metadata.creationTimestamp}
+					<span class="text-center font-bold text-sm"
+						>created: <span class="text-primary-400 font-normal"
+							>{new Date(playtest.metadata.creationTimestamp).toLocaleString()}</span
+						>
+					</span>
+				{/if}
 			{/if}
 		</div>
 		{#if playtest.spec.feedbackURL !== '' && !compact}

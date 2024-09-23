@@ -123,7 +123,13 @@ impl SsoAccessTokenProvider {
             .client_secret(device_client.client_secret.as_str())
             .start_url(start_url)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                anyhow!(
+                    "Error starting device authorization: {}",
+                    e.into_service_error()
+                )
+            })?;
 
         open::that(auth_response.verification_uri_complete().unwrap())?;
 
