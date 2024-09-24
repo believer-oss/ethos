@@ -2,10 +2,11 @@ use crate::engine::EngineProvider;
 use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::Json;
+use ethos_core::clients::github::CommitStatusMap;
 use ethos_core::operations::{LogOp, LogResponse};
 use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 use crate::state::AppState;
 
@@ -38,8 +39,35 @@ where
         git_client: state.git(),
     };
 
+    let owner = state.repo_status.read().repo_owner.clone();
+    let repo = state.repo_status.read().repo_name.clone();
+
+    let github_client = state.github_client.read().clone();
+    let statuses: Option<CommitStatusMap> = match github_client {
+        Some(github_client) => match github_client.get_commit_statuses(&owner, &repo, 100).await {
+            Ok(statuses) => Some(statuses),
+            Err(e) => {
+                warn!("Error getting commit statuses: {}", e.to_string());
+                None
+            }
+        },
+        None => None,
+    };
+
     match log_op.run().await {
-        Ok(output) => Ok(Json(output)),
+        Ok(mut output) => {
+            return if let Some(statuses) = statuses {
+                output.iter_mut().for_each(|commit| {
+                    if let Some(status) = statuses.get(&commit.sha) {
+                        commit.status = Some(status.clone());
+                    }
+                });
+
+                Ok(Json(output))
+            } else {
+                Ok(Json(output))
+            }
+        }
         Err(e) => Err(CoreError::Internal(anyhow!(
             "Error executing log: {}",
             e.to_string()

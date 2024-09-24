@@ -284,6 +284,7 @@
 		commits={$commits}
 		latestLocalCommit={$latestLocalCommit}
 		showFilesHandler={showCommitFiles}
+		showBuildStatus
 	/>
 </Card>
 
