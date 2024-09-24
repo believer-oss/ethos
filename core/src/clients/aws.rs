@@ -382,6 +382,45 @@ impl AWSClient {
     }
 
     #[instrument(skip(self), err)]
+    pub async fn list_all_objects(&self, prefix: &str) -> Result<Vec<String>, CoreError> {
+        self.check_config().await?;
+
+        let mut output = vec![];
+        let client = S3Client::new(&self.get_sdk_config().await);
+        let aws_config = self.config.clone().unwrap();
+        let mut paginator = client
+            .list_objects_v2()
+            .bucket(aws_config.artifact_bucket_name.clone())
+            .prefix(prefix)
+            .into_paginator()
+            .send();
+
+        while let Some(resp) = paginator.next().await {
+            if resp.is_err() {
+                debug!("Resp: [{:?}", resp);
+                return Err(CoreError::Internal(anyhow!(
+                    "Error listing objects: {:?}",
+                    resp
+                )));
+            };
+            for object in resp.unwrap().contents() {
+                let entry = object.clone().key;
+                match entry {
+                    Some(entry) => output.push(entry.clone()),
+                    None => {
+                        return Err(CoreError::Internal(anyhow!(
+                            "Error getting key from object: {:?}",
+                            object
+                        )))
+                    }
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
+    #[instrument(skip(self), err)]
     pub async fn download_object_to_path(
         &self,
         path: &str,

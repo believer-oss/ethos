@@ -12,6 +12,24 @@ where
     Router::new()
         .route("/download", post(download_file))
         .route("/upload", post(upload_file))
+        .route("/list", post(list_files))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListFilesRequest {
+    pub prefix: String,
+}
+
+#[instrument(skip(state))]
+pub async fn list_files<T>(
+    State(state): State<AppState<T>>,
+    Json(request): Json<ListFilesRequest>,
+) -> Result<Json<Vec<String>>, CoreError> {
+    ensure_aws_client(state.aws_client.read().await.clone())?;
+
+    let aws_client = state.aws_client.read().await.clone().unwrap();
+    let files = aws_client.list_all_objects(&request.prefix).await;
+    Ok(Json(files?))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
