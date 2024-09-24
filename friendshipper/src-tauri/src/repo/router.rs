@@ -38,6 +38,10 @@ where
         .route("/revert", post(operations::revert_files_handler::<T>))
         .route("/locks/lock", post(operations::acquire_locks_handler))
         .route("/locks/unlock", post(operations::release_locks_handler))
+        .route(
+            "/gh/commit-statuses",
+            get(operations::gh::get_commit_statuses),
+        )
         .route("/gh/queue", get(operations::gh::get_merge_queue))
         .route("/gh/submit", post(operations::gh::submit_handler))
         .route("/gh/pulls", get(operations::gh::get_pull_requests))

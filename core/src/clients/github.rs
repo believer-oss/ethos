@@ -1,3 +1,5 @@
+use crate::types::github::commits::get_commit_statuses::GetCommitStatusesRepositoryDefaultBranchRefTarget;
+use crate::types::github::commits::{get_commit_statuses, GetCommitStatuses};
 use crate::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use crate::types::github::merge_queue::{get_merge_queue, GetMergeQueue};
 use crate::types::github::pulls::dequeue_pull_request;
@@ -13,6 +15,7 @@ use crate::types::github::user::{get_username, GetUsername};
 use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
 use reqwest::Client;
+use std::collections::HashMap;
 use tracing::instrument;
 
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
@@ -22,6 +25,8 @@ pub struct GraphQLClient {
     pub username: String,
     client: Client,
 }
+
+pub type CommitStatusMap = HashMap<String, String>;
 
 impl GraphQLClient {
     #[instrument(skip(token))]
@@ -261,6 +266,75 @@ impl GraphQLClient {
                 Ok(merge_queue)
             }
             Err(e) => Err(anyhow!("Error getting merge queue: {}", e)),
+        }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_commit_statuses(
+        &self,
+        owner: &str,
+        repo: &str,
+        limit: i64,
+    ) -> Result<CommitStatusMap> {
+        let mut map = HashMap::new();
+        match post_graphql::<GetCommitStatuses, _>(
+            &self.client,
+            GITHUB_GRAPHQL_URL,
+            get_commit_statuses::Variables {
+                owner: owner.to_string(),
+                name: repo.to_string(),
+                limit,
+            },
+        )
+        .await
+        {
+            Ok(res) => {
+                let target: GetCommitStatusesRepositoryDefaultBranchRefTarget = res
+                    .data
+                    .ok_or(anyhow!("Failed to get valid response data"))?
+                    .repository
+                    .ok_or(anyhow!("Failed to get valid repository"))?
+                    .default_branch_ref
+                    .ok_or(anyhow!("Failed to get valid default branch ref"))?
+                    .target
+                    .ok_or(anyhow!("Failed to get valid target"))?;
+
+                match target {
+                    GetCommitStatusesRepositoryDefaultBranchRefTarget::Commit(commit) => {
+                        commit
+                            .history
+                            .nodes
+                            .ok_or(anyhow!("Failed to get valid nodes"))?
+                            .into_iter()
+                            .for_each(|node| {
+                                if let Some(node) = node {
+                                    let oid = node.oid.clone();
+                                    if let Some(status) = node.status {
+                                        let short_oid = oid.chars().take(8).collect::<String>();
+                                        let status_str: &str = match status.state {
+                                            get_commit_statuses::StatusState::SUCCESS => "success",
+                                            get_commit_statuses::StatusState::FAILURE => "failure",
+                                            get_commit_statuses::StatusState::ERROR => "error",
+                                            get_commit_statuses::StatusState::EXPECTED => {
+                                                "expected"
+                                            }
+                                            get_commit_statuses::StatusState::PENDING => "pending",
+                                            get_commit_statuses::StatusState::Other(_) => "other",
+                                        };
+
+                                        map.insert(short_oid, status_str.to_string());
+                                    }
+                                }
+                            });
+                        Ok(map)
+                    }
+                    GetCommitStatusesRepositoryDefaultBranchRefTarget::Tag => {
+                        Err(anyhow!("Default branch ref is a tag"))
+                    }
+                    _ => Err(anyhow!("Default branch ref is not a commit")),
+                }
+            }
+            Err(e) => Err(anyhow!("Error getting commit statuses: {}", e)),
         }
     }
 }

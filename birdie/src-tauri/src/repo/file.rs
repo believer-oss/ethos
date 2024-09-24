@@ -227,6 +227,7 @@ pub async fn get_file_history(
                 message: Some(parts[1].to_string()),
                 author: Some(parts[2].to_string()),
                 timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
+                status: None,
             }
         })
         .collect::<Vec<_>>();

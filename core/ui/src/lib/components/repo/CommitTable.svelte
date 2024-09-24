@@ -15,6 +15,7 @@
 
 	export let commits: Commit[];
 	export let latestLocalCommit: Nullable<Commit> = null;
+	export let showBuildStatus: boolean = false;
 
 	export let showFilesHandler: (commit: string, stash: boolean) => Promise<CommitFileInfo[]>;
 
@@ -69,7 +70,10 @@
 
 <Table color="custom" striped={true}>
 	<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
-		<TableHeadCell class="p-1 w-8" />
+		<TableHeadCell class="p-1 w-8 min-w-4" />
+		{#if showBuildStatus}
+			<TableHeadCell class="p-1 w-8" />
+		{/if}
 		<TableHeadCell class="pl-1">SHA</TableHeadCell>
 		<TableHeadCell>Message</TableHeadCell>
 		<TableHeadCell>Timestamp</TableHeadCell>
@@ -83,13 +87,46 @@
 					? 'bg-secondary-700 dark:bg-space-900'
 					: 'bg-secondary-800 dark:bg-space-950'}"
 			>
-				<TableBodyCell class="px-2 w-3 max-w-3">
+				<TableBodyCell class="px-0.5 w-4 max-w-4">
 					{#if isCommitLatestLocal(commit.sha)}
 						<ChevronRightOutline class="w-3 h-3" />
 					{/if}
 				</TableBodyCell>
+				{#if showBuildStatus}
+					<TableBodyCell class="px-1 w-3 max-w-3 h-full items-center">
+						{#if commit.status === 'success'}
+							<span class="text-xs">🟢</span>
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="bottom"
+								>Commit has successful build
+							</Tooltip>
+						{:else if commit.status === 'pending'}
+							<span class="text-xs">🟡</span>
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="bottom"
+								>Commit has build in progress
+							</Tooltip>
+						{:else if commit.status === 'error' || commit.status === 'failure'}
+							<span class="text-xs">🔴</span>
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="bottom"
+								>Commit build failed
+							</Tooltip>
+						{:else}
+							<div class="w-2 h-2" />
+							<Tooltip
+								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+								placement="bottom"
+								>Commit has no build
+							</Tooltip>
+						{/if}
+					</TableBodyCell>
+				{/if}
 				<TableBodyCell
-					class="h-full items-center pl-1 py-2 {isCommitLatestLocal(commit.sha)
+					class="h-full items-center pl-1 py-2 pr-4 {isCommitLatestLocal(commit.sha)
 						? 'font-bold'
 						: 'font-light'}"
 				>
@@ -97,7 +134,7 @@
 				>
 				<TableBodyCell
 					id="sha-{commit.sha}"
-					class="py-2 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-3/4 max-w-[22vw]"
+					class="py-2 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-3/4 max-w-[20vw]"
 					><span
 						class:font-bold={isCommitLatestLocal(commit.sha)}
 						class:font-light={!isCommitLatestLocal(commit.sha)}

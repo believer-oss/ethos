@@ -14,6 +14,7 @@ pub struct Commit {
     pub author: Option<String>,
     pub message: Option<String>,
     pub timestamp: Option<String>,
+    pub status: Option<String>,
 }
 
 impl fmt::Display for Commit {
@@ -32,6 +33,7 @@ impl TryFrom<String> for Commit {
                 author: None,
                 message: None,
                 timestamp: None,
+                status: None,
             })
         } else {
             Err("Must pass valid short sha for commit")

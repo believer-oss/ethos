@@ -35,6 +35,7 @@ export interface Commit {
 	message: string;
 	timestamp: string;
 	local?: boolean;
+	status?: string;
 }
 
 export interface CommitFileInfo {

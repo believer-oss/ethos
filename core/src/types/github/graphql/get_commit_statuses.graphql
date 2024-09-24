@@ -1,0 +1,23 @@
+query GetCommitStatuses($owner: String!, $name: String!, $limit: Int!) {
+    repository(owner: $owner, name: $name) {
+        defaultBranchRef {
+            __typename
+            target {
+                __typename
+                ... on Commit {
+                    history(first: $limit) {
+                        __typename
+                        nodes {
+                            __typename
+                            oid
+                            status {
+                                __typename
+                                state
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
