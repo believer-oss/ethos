@@ -1,12 +1,15 @@
 <script lang="ts">
-	import { Button, Hr, Input, Modal, Spinner } from 'flowbite-svelte';
+	import { Button, Hr, Input, Modal, Spinner, Tooltip } from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
+	import { writeText } from '@tauri-apps/api/clipboard';
+	import { FileCopySolid } from 'flowbite-svelte-icons';
 	import type { Workflow, WorkflowNode } from '$lib/types';
 	import { getWorkflowNodeLogs } from '$lib/builds';
 
 	export let showModal: boolean;
 	export let workflow: Workflow;
 	let loading: boolean = false;
+	let rawLogs: string = '';
 	let lines: string[] = [];
 	let searchTerm: string = '';
 	let selectedNode: string = '';
@@ -35,6 +38,7 @@
 		const logs = await getWorkflowNodeLogs(uid, nodeId);
 
 		if (logs) {
+			rawLogs = logs;
 			lines = logs.split('\n').reverse();
 		}
 	};
@@ -82,6 +86,14 @@
 			await refreshLogs(importantNode.id);
 		}
 	};
+
+	const copyLogToClipboard = async () => {
+		try {
+			await writeText(rawLogs);
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
 </script>
 
 <Modal
@@ -107,6 +119,18 @@
 				class="w-1/4 tracking-wider"
 				bind:value={searchTerm}
 			/>
+			<Button
+				disabled={loading || rawLogs === ''}
+				on:click={() => copyLogToClipboard()}
+				class="px-3 py-2 focus:outline-none"
+			>
+				<FileCopySolid />
+			</Button>
+			<Tooltip
+				class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+				placement="bottom"
+				>Copy entire log to clipboard
+			</Tooltip>
 		</div>
 		<div class="flex gap-2">
 			{#each filteredNodes as node}
