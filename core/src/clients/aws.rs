@@ -179,6 +179,16 @@ impl AWSClient {
         auth_context.login_required
     }
 
+    pub async fn logout(&self) -> Result<(), CoreError> {
+        let mut auth_context = self.auth_context.write().await;
+
+        Self::delete_stored_token()?;
+
+        auth_context.sso_config = None;
+        auth_context.login_required = true;
+        Ok(())
+    }
+
     pub async fn get_sdk_config(&self) -> SdkConfig {
         self.auth_context.read().await.sdkconfig.clone()
     }
@@ -245,8 +255,7 @@ impl AWSClient {
                                 .get_new_token(AWS_SSO_START_URL, self.verification_tx.clone())
                                 .await?
                         } else {
-                            warn!("Token can not automatically be refreshed, prompting for login.");
-                            auth_context.login_required = true;
+                            self.logout().await?;
 
                             return Err(CoreError::Unauthorized);
                         }
@@ -736,6 +745,25 @@ impl AWSClient {
         let device_secret_second_entry =
             keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_SECOND)?;
         device_secret_second_entry.set_password(device_client_second)?;
+
+        Ok(())
+    }
+
+    #[instrument]
+    fn delete_stored_token() -> Result<()> {
+        let token_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_TOKEN)?;
+        token_entry.delete_password()?;
+
+        let device_client_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_CLIENT)?;
+        device_client_entry.delete_password()?;
+
+        let device_secret_first_entry =
+            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_FIRST)?;
+        device_secret_first_entry.delete_password()?;
+
+        let device_secret_second_entry =
+            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_SECOND)?;
+        device_secret_second_entry.delete_password()?;
 
         Ok(())
     }

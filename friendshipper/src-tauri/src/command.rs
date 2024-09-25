@@ -872,3 +872,19 @@ pub async fn open_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> 
     )
     .await
 }
+
+// logout
+#[tauri::command]
+pub async fn logout(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/auth/logout", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}

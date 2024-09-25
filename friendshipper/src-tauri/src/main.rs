@@ -182,6 +182,7 @@ fn main() -> Result<(), CoreError> {
                 install_git,
                 launch_server,
                 list_snapshots,
+                logout,
                 open_logs_folder,
                 open_system_logs_folder,
                 open_terminal_to_path,
