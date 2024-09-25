@@ -5,3 +5,7 @@ export const checkLoginRequired = async (): Promise<boolean> => invoke('check_lo
 export const refreshLogin = async (): Promise<void> => {
 	await invoke('refresh_login');
 };
+
+export const logout = async (): Promise<void> => {
+	await invoke('logout');
+};

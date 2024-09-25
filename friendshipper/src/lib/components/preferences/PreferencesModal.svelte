@@ -35,6 +35,7 @@
 	import { resetRepo } from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
+	import { logout } from '$lib/auth';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -128,6 +129,22 @@
 	const onDiscardClicked = () => {
 		showModal = false;
 		void emit('preferences-closed');
+	};
+
+	const onLogoutClicked = async () => {
+		try {
+			showProgressModal = true;
+			progressModalTitle = 'Logging out...';
+			await logout();
+			showModal = false;
+
+			// wait 5 seconds before closing the modal
+			setTimeout(() => {
+				showProgressModal = false;
+			}, 5000);
+		} catch (e) {
+			await emit('error', e);
+		}
 	};
 
 	const handleResetConfig = async () => {
@@ -620,9 +637,12 @@
 	<div
 		class="absolute bottom-0 left-0 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900"
 	>
-		<div class="flex flex-row-reverse gap-2">
-			<Button outline on:click={onDiscardClicked}>Discard</Button>
-			<Button on:click={onApplyClicked}>Apply</Button>
+		<div class="flex flex-row-reverse justify-between gap-2">
+			<div class="flex gap-2">
+				<Button on:click={onApplyClicked}>Apply</Button>
+				<Button outline on:click={onDiscardClicked}>Discard</Button>
+			</div>
+			<Button color="red" on:click={onLogoutClicked}>Logout</Button>
 		</div>
 	</div>
 </Modal>

@@ -112,7 +112,7 @@
 	$: activeUrl = $page.url.pathname;
 
 	const refreshInterval = 60 * 1000;
-	const authRefreshInterval = 30 * 1000;
+	const authRefreshInterval = 10 * 1000;
 
 	let loading = false;
 	const loadingText = 'Refreshing data...';
@@ -172,9 +172,24 @@
 		}
 	};
 
+	const checkAuth = async () => {
+		if (!$appConfig.initialized || $onboardingInProgress) return;
+
+		const updatedLoginRequired = await checkLoginRequired();
+		if (updatedLoginRequired !== loginRequired) {
+			loginRequired = updatedLoginRequired;
+			if (loginRequired) {
+				loginPrompted = true;
+			} else {
+				loginPrompted = false;
+			}
+		}
+	};
+
 	/* eslint-disable no-await-in-loop */
 	const initialize = async () => {
-		initialized = false;
+		if (initialized) return;
+
 		appVersion = await getVersion();
 		for (;;) {
 			try {
@@ -203,12 +218,8 @@
 			}
 		}
 
-		loginRequired = await checkLoginRequired();
+		await checkAuth();
 		if (loginRequired && !loginPrompted) {
-			setTimeout(() => {
-				loginPrompted = true;
-			}, 3000);
-
 			try {
 				await refreshLogin();
 				await initialize();
@@ -344,12 +355,6 @@
 			}
 
 			loading = false;
-		};
-
-		const checkAuth = async () => {
-			if (!$appConfig.initialized || $onboardingInProgress) return;
-
-			loginRequired = await checkLoginRequired();
 		};
 
 		void appWindow.onFocusChanged(({ payload: focused }) => {

@@ -18,6 +18,7 @@ where
     Router::new()
         .route("/status", get(get_status))
         .route("/refresh", post(refresh_aws_credentials))
+        .route("/logout", post(logout))
 }
 
 async fn get_status<T>(State(state): State<AppState<T>>) -> Json<bool>
@@ -38,42 +39,42 @@ async fn refresh_aws_credentials<T>(State(state): State<AppState<T>>) -> Result<
 where
     T: EngineProvider,
 {
-    if state.aws_client.read().await.is_none() {
-        let aws_config = match state.app_config.read().aws_config.clone() {
-            Some(config) => config,
-            None => {
-                return Err(CoreError::Internal(anyhow!(
-                    "No AWS config found in app config"
-                )));
-            }
-        };
+    let aws_config = match state.app_config.read().aws_config.clone() {
+        Some(config) => config,
+        None => {
+            return Err(CoreError::Internal(anyhow!(
+                "No AWS config found in app config"
+            )));
+        }
+    };
 
-        let new_aws_client = AWSClient::new(
-            Some(state.notification_tx.clone()),
-            APP_NAME.to_string(),
-            aws_config,
+    let new_aws_client = AWSClient::new(
+        Some(state.notification_tx.clone()),
+        APP_NAME.to_string(),
+        aws_config,
+    )
+    .await?;
+
+    let username = state.app_config.read().user_display_name.clone();
+    let playtest_region = state.app_config.read().playtest_region.clone();
+    state
+        .replace_aws_client(
+            new_aws_client,
+            playtest_region,
+            &username,
+            state.app_config.clone(),
+            state.config_file.clone(),
         )
         .await?;
 
-        let username = state.app_config.read().user_display_name.clone();
-        let playtest_region = state.app_config.read().playtest_region.clone();
-        state
-            .replace_aws_client(
-                new_aws_client,
-                playtest_region,
-                &username,
-                state.app_config.clone(),
-                state.config_file.clone(),
-            )
-            .await?;
-    };
+    Ok(())
+}
 
+async fn logout<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
-    match aws_client.refresh_token(true).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(CoreError::Internal(anyhow!(
-            "Failed to refresh AWS credentials: {}",
-            e
-        ))),
-    }
+    aws_client.logout().await?;
+    Ok(())
 }
