@@ -50,7 +50,7 @@ impl EngineProvider for UnrealEngineProvider {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, status))]
     async fn send_status_update(&self, status: &RepoStatus) {
         let client = reqwest::Client::new();
         _ = client
