@@ -99,10 +99,8 @@ impl<T> StatusOp<T>
 where
     T: EngineProvider,
 {
-    #[instrument(name = "StatusOp::run", skip_all)]
+    #[instrument(name = "StatusOp::run", err, skip_all)]
     pub(crate) async fn run(&self) -> Result<RepoStatus, CoreError> {
-        info!("StatusOp: running git status and getting locks...");
-
         let locks_future = self.git_client.verify_locks();
         let status_future = self.git_client.status(vec![]);
 
@@ -111,8 +109,6 @@ where
         let status_output = status_output?;
 
         let status_lines = status_output.lines().collect::<Vec<_>>();
-
-        info!("StatusOp: parsing status state...");
 
         let mut status = RepoStatus::new();
         let pull_dlls = self.app_config.read().pull_dlls;
@@ -143,6 +139,8 @@ where
             );
         }
 
+        info!(%status.branch, %status.remote_branch, "branch");
+
         // check modified files in local commits
         let mut modified_committed: Vec<String> = vec![];
         if status.commits_ahead > 0 {
@@ -152,16 +150,20 @@ where
         }
 
         {
-            info!("StatusOp: getting locks");
             status.lock_user.clone_from(&self.github_username);
             status.locks_ours = locks.ours;
             status.locks_theirs = locks.theirs;
+
+            info!(
+                %status.lock_user,
+                ?status.locks_ours,
+                ?status.locks_theirs,
+                "locks"
+            );
         }
 
         // get display names if available
         {
-            info!("StatusOp: fetching asset display names...");
-
             // combine all the requested names into a single batch - this will avoid multiple potentially slow requests
             let mut all_filenames: Vec<String> = vec![];
             for file in status.modified_files.0.iter() {
@@ -228,8 +230,6 @@ where
         }
 
         {
-            info!("StatusOp: checking HEAD SHA and remote URL info...");
-
             status.commit_head_origin = self
                 .git_client
                 .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
@@ -267,6 +267,13 @@ where
                     .to_string();
             }
 
+            info!(
+                status.remote_url = ?remote_url,
+                ?status.repo_owner,
+                ?status.repo_name,
+                ?status.commit_head_origin,
+                "remote info");
+
             // Since we aren't likely to have much contention on this lock, it's likely
             // cheaper to write than to read and then sometimes write.
             let new_selected_artifact_project = format!(
@@ -281,8 +288,6 @@ where
         }
 
         if let Some(aws_client) = &self.aws_client {
-            info!("StatusOp: searching for remote DLL archives...");
-
             let storage = self
                 .storage
                 .as_ref()
@@ -292,21 +297,28 @@ where
             self.find_dll_archive_url_info(&mut status, aws_client, storage)
                 .await?;
             status.pull_dlls = pull_dlls;
+
+            info!(
+                %status.dll_commit_local,
+                %status.dll_commit_remote,
+                %status.origin_has_new_dlls,
+                "editor binary archives");
         }
 
         {
-            info!("StatusOp: finding upstream modified files...");
             status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
 
             status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
             if !status.conflicts.is_empty() {
                 status.conflict_upstream = true;
             }
+
+            info!(?status.modified_upstream,
+                ?status.conflicts,
+                "upstream");
         }
 
         {
-            info!("Updating file submit status");
-
             let update_files_submit_status = |files: &mut [File]| {
                 for file in files.iter_mut() {
                     if file.state == FileState::Unmerged {
@@ -329,6 +341,12 @@ where
 
             update_files_submit_status(&mut status.untracked_files.0);
             update_files_submit_status(&mut status.modified_files.0);
+
+            info!(
+                status.untracked_files = ?status.untracked_files.0,
+                status.modified_files = ?status.modified_files.0,
+                "changes"
+            );
         }
 
         if !self.skip_engine_update {
