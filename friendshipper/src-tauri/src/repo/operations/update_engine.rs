@@ -27,7 +27,7 @@ use crate::system::unreal;
 use crate::AppState;
 
 #[derive(Clone)]
-pub struct UpdateEngineOp {
+pub struct UpdateEngineOp<T> {
     pub engine_path: PathBuf,
     pub old_uproject: Option<UProject>,
     pub new_uproject: UProject,
@@ -39,10 +39,14 @@ pub struct UpdateEngineOp {
     pub download_symbols: bool,
     pub storage: ArtifactStorage,
     pub project: Project,
+    pub engine: T,
 }
 
 #[async_trait]
-impl Task for UpdateEngineOp {
+impl<T> Task for UpdateEngineOp<T>
+where
+    T: EngineProvider,
+{
     #[instrument(name = "UpdateEngineOp::execute", skip(self), ret)]
     async fn execute(&self) -> Result<(), CoreError> {
         // If there's no match we assume it's using an Epic distribution of the engine build so we don't have any work to do
@@ -129,6 +133,8 @@ impl Task for UpdateEngineOp {
                         )));
                     }
                 }
+
+                T::post_download(&self.engine_path).await;
             } else {
                 assert_eq!(self.engine_type, EngineType::Source);
 
@@ -308,6 +314,7 @@ where
             download_symbols: app_config.engine_download_symbols,
             storage,
             project,
+            engine: state.engine.clone(),
         }
     };
 

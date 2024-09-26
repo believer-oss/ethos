@@ -25,6 +25,10 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
     /// Loads any internal caches the provider needs from disk
     async fn load_caches(&mut self);
 
+    /// Performs any post-download fixups necessary. Note that you must provide the path as
+    /// the user could be downloading a packaged build as well as the engine.
+    async fn post_download(path: &Path);
+
     /// Sends repo status updates to the engine
     async fn send_status_update(&self, status: &RepoStatus);
 
