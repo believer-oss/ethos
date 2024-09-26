@@ -18,18 +18,18 @@ export const getCommits = async (
 ): Promise<Commit[]> => invoke('get_commits', { limit, remote, update });
 
 // "All" here refers to the combination of local and upstream, not every commit.
-// Right now we're just pulling 250.
+// Right now we're just pulling 500.
 export const getAllCommits = async (): Promise<Commit[]> => {
 	let localCommits: Commit[];
 	try {
-		localCommits = await getCommits(250, false, false);
+		localCommits = await getCommits(500, false, false);
 	} catch (_) {
 		localCommits = [];
 	}
 
 	let remoteCommits: Commit[];
 	try {
-		remoteCommits = await getCommits(250, true, false);
+		remoteCommits = await getCommits(500, true, false);
 	} catch (_) {
 		remoteCommits = [];
 	}

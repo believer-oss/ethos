@@ -2,7 +2,7 @@
 	import {
 		Button,
 		Spinner,
-		Table,
+		TableSearch,
 		TableBody,
 		TableBodyCell,
 		TableBodyRow,
@@ -19,10 +19,26 @@
 
 	export let showFilesHandler: (commit: string, stash: boolean) => Promise<CommitFileInfo[]>;
 
+	let searchTerm = '';
+
 	// commit file details
 	let expandedCommit = '';
 	let loadingCommitFiles = false;
 	let commitFiles: CommitFileInfo[] = [];
+
+	$: filteredCommits = commits.filter((commit) => {
+		const searchTerms = searchTerm
+			.toLowerCase()
+			.split(' ')
+			.filter((term) => term.length > 0);
+
+		return searchTerms.every(
+			(term) =>
+				commit.author.toLowerCase().includes(term) ||
+				commit.message.toLowerCase().includes(term) ||
+				commit.sha.toLowerCase().includes(term)
+		);
+	});
 
 	const getFileDisplayName = (file: CommitFileInfo): string => {
 		if (file.displayName === '') {
@@ -68,7 +84,15 @@
 	};
 </script>
 
-<Table color="custom" striped={true}>
+<TableSearch
+	color="custom"
+	striped={true}
+	placeholder="Search by message, author, or SHA (use spaces to separate terms)"
+	divClass="relative overflow-x-auto sm:rounded-lg"
+	innerDivClass="p-2 pt-0"
+	inputClass="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2 pl-10 bg-gray-700 dark:bg-gray-700 border-gray-300 dark:border-gray-300 placeholder-gray-400 dark:placeholder-gray-400 text-white dark:text-white focus:ring-primary-500 dark:focus:ring-primary-500 focus:border-primary-500 dark:focus:border-primary-500"
+	bind:inputValue={searchTerm}
+>
 	<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 		<TableHeadCell class="p-1 w-8 min-w-4" />
 		{#if showBuildStatus}
@@ -81,7 +105,7 @@
 		<TableHeadCell />
 	</TableHead>
 	<TableBody>
-		{#each commits as commit, index}
+		{#each filteredCommits as commit, index}
 			<TableBodyRow
 				class="text-left border-b-0 p-2 {index % 2 === 0
 					? 'bg-secondary-700 dark:bg-space-900'
@@ -198,4 +222,4 @@
 			</TableBodyRow>
 		{/each}
 	</TableBody>
-</Table>
+</TableSearch>
