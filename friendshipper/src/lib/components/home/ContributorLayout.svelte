@@ -248,7 +248,7 @@
 <div class="flex flex-col h-full gap-2">
 	<div class="flex flex-row h-full gap-2 max-h-[60vh]">
 		{#if $nextPlaytest !== null}
-			<div class="flex flex-col gap-2 w-full h-full overflow-x-auto overflow-y-hidden pb-12">
+			<div class="flex flex-col gap-2 w-full h-full overflow-x-auto overflow-y-hidden">
 				<div class="flex mt-2 items-center gap-2">
 					<p class="text-2xl text-primary-400 dark:text-primary-400">Next Playtest</p>
 					<Button

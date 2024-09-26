@@ -427,7 +427,11 @@
 							<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
 						</span>
 						<div class="flex gap-1">
-							<ButtonGroup size="xs" class="mx-2 space-x-px ">
+							<ButtonGroup
+								size="xs"
+								class="mx-2 space-x-px"
+								divClass="inline-flex rounded-lg shadow-sm"
+							>
 								{#if changeSet.name !== 'default'}
 									<Button
 										color="primary"
