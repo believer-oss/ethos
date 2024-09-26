@@ -577,6 +577,40 @@ impl Git {
             .to_string())
     }
 
+    pub async fn get_ahead_behind(
+        &self,
+        from_ref: &str,
+        to_ref: &str,
+    ) -> anyhow::Result<(u32, u32)> {
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "rev-list",
+                    "--count",
+                    "--left-only",
+                    &format!("{}...{}", from_ref, to_ref),
+                ],
+                Opts::default(),
+            )
+            .await?;
+        let behind_count = output.lines().next().unwrap_or("0").parse::<u32>().unwrap();
+
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "rev-list",
+                    "--count",
+                    "--right-only",
+                    &format!("{}...{}", from_ref, to_ref),
+                ],
+                Opts::default(),
+            )
+            .await?;
+        let ahead_count = output.lines().next().unwrap_or("0").parse::<u32>().unwrap();
+
+        Ok((ahead_count, behind_count))
+    }
+
     pub async fn diff_filenames(&self, range: &str) -> anyhow::Result<Vec<String>> {
         let output = self
             .run_and_collect_output(&["diff", "--name-only", range], Opts::new_without_logs())

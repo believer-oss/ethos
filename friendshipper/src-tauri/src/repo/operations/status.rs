@@ -141,6 +141,21 @@ where
 
         info!(%status.branch, %status.remote_branch, "branch");
 
+        // if we're not on the main branch, we need to get the ahead/behind counts
+        let trunk_branch = self.repo_config.read().trunk_branch.clone();
+        let remote_trunk_branch = format!("origin/{}", trunk_branch);
+        if status.branch != trunk_branch {
+            let (commits_ahead, commits_behind) = self
+                .git_client
+                .get_ahead_behind(&remote_trunk_branch, &status.branch)
+                .await?;
+            status.commits_ahead_of_trunk = commits_ahead;
+            status.commits_behind_trunk = commits_behind;
+        } else {
+            status.commits_ahead_of_trunk = status.commits_ahead;
+            status.commits_behind_trunk = status.commits_behind;
+        }
+
         // check modified files in local commits
         let mut modified_committed: Vec<String> = vec![];
         if status.commits_ahead > 0 {
