@@ -111,6 +111,9 @@ impl StatusOp {
             );
         }
 
+        status.commits_ahead_of_trunk = status.commits_ahead;
+        status.commits_behind_trunk = status.commits_behind;
+
         // check modified files in local commits
         let mut modified_committed: Vec<String> = vec![];
         if status.commits_ahead > 0 {

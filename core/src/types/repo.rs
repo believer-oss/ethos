@@ -146,6 +146,8 @@ pub struct RepoStatus {
     // commits
     pub commits_ahead: u32,
     pub commits_behind: u32,
+    pub commits_ahead_of_trunk: u32,
+    pub commits_behind_trunk: u32,
     pub commit_head_origin: String,
 
     // DLLs
@@ -185,6 +187,8 @@ impl RepoStatus {
             repo_name: String::new(),
             commits_ahead: 0,
             commits_behind: 0,
+            commits_ahead_of_trunk: 0,
+            commits_behind_trunk: 0,
             commit_head_origin: String::new(),
             origin_has_new_dlls: false,
             pull_dlls: false,

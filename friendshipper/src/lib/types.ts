@@ -177,6 +177,8 @@ export interface RepoStatus {
 	repoName: string;
 	commitsAhead: number;
 	commitsBehind: number;
+	commitsAheadOfTrunk: number;
+	commitsBehindTrunk: number;
 	commitHeadOrigin: string;
 	originHasNewDlls: boolean;
 	pullDlls: boolean;

@@ -33,6 +33,7 @@
 		builds,
 		nextPlaytest,
 		playtests,
+		repoConfig,
 		repoStatus
 	} from '$lib/stores';
 	import { getPlaytestGroupForUser, getPlaytests } from '$lib/playtests';
@@ -272,7 +273,7 @@
 				<Button size="xs" href="/playtests">Playtests<LinkOutline class="ml-2 h-4 w-4" /></Button>
 			</div>
 		{/if}
-		<div class="flex flex-col gap-2 h-full max-w-[20rem] w-80">
+		<div class="flex flex-col gap-2 h-full max-w-[24rem] w-96">
 			<div class="flex mt-2 items-center gap-2">
 				<p class="text-2xl text-primary-400 dark:text-primary-400">Repo Status</p>
 				<Button disabled={loadingRepoStatus} class="!p-1.5" primary on:click={refreshRepo}>
@@ -293,9 +294,11 @@
 							<p class="w-60 text-primary-400 dark:text-primary-400">{$repoStatus?.branch}</p>
 						</div>
 						<div class="flex gap-2 items-center">
-							<p class="w-full text-white">Commits behind:</p>
+							<p class="w-full text-white">
+								Commits behind <code>{$repoConfig?.trunkBranch}</code>:
+							</p>
 							<p class="w-full text-primary-400 dark:text-primary-400">
-								{$repoStatus?.commitsBehind}
+								{$repoStatus?.commitsBehindTrunk}
 							</p>
 						</div>
 						<div class="flex gap-2 items-center">
