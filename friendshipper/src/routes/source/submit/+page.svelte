@@ -87,7 +87,8 @@
 
 	let loading = false;
 	let fetchingPulls = false;
-	const quickSubmitting = false;
+	let quickSubmitting = false;
+	let syncing = false;
 	let promptForPAT = false;
 	let preferencesOpen = false;
 
@@ -113,6 +114,7 @@
 	let snapshots: Snapshot[] = [];
 
 	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
+	$: canSync = !quickSubmitting && !syncing;
 
 	const validateCommitMessage = (): boolean => {
 		const message = get(commitMessage);
@@ -197,6 +199,7 @@
 	const handleRestoreSnapshot = async (commit: string) => {
 		loadingSnapshots = true;
 		showProgressModal = true;
+		syncing = true;
 		progressModalTitle = 'Restoring snapshot';
 
 		try {
@@ -214,11 +217,12 @@
 
 		loadingSnapshots = false;
 		showProgressModal = false;
+		syncing = false;
 	};
 
 	const handleDeleteSnapshot = async (commit: string) => {
 		loadingSnapshots = true;
-
+		syncing = true;
 		try {
 			await deleteSnapshot(commit);
 
@@ -233,6 +237,7 @@
 		}
 
 		loadingSnapshots = false;
+		syncing = false;
 	};
 
 	const setExpandedCommit = async (commit: string) => {
@@ -250,6 +255,7 @@
 
 	const handleRevertFiles = async () => {
 		loading = true;
+		syncing = true;
 		showProgressModal = true;
 		progressModalTitle = 'Reverting files';
 
@@ -275,6 +281,7 @@
 
 		loading = false;
 		showProgressModal = false;
+		syncing = false;
 	};
 
 	const handleSaveSnapshot = async () => {
@@ -284,6 +291,7 @@
 		}
 
 		loading = true;
+		syncing = true;
 		showProgressModal = true;
 		progressModalTitle = 'Saving snapshot';
 
@@ -313,10 +321,12 @@
 
 		loading = false;
 		showProgressModal = false;
+		syncing = false;
 	};
 
 	const handleQuickSubmit = async () => {
 		loading = true;
+		quickSubmitting = true;
 		showProgressModal = true;
 		progressModalTitle = 'Opening pull request';
 
@@ -356,6 +366,7 @@
 
 		showProgressModal = false;
 		loading = false;
+		quickSubmitting = false;
 	};
 
 	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
@@ -368,6 +379,7 @@
 	const handleSyncClicked = async () => {
 		try {
 			loading = true;
+			syncing = true;
 			showProgressModal = true;
 			progressModalTitle = 'Pulling latest with git';
 
@@ -389,6 +401,7 @@
 
 		showProgressModal = false;
 		loading = false;
+		syncing = false;
 	};
 
 	const handleOpenUprojectClicked = async () => {
@@ -662,7 +675,7 @@
 		<Button
 			size="xs"
 			color="primary"
-			disabled={loading || conflictsDetected}
+			disabled={loading || conflictsDetected || !canSync}
 			on:click={async () => handleSyncClicked()}
 		>
 			<RefreshOutline class="w-3 h-3 mr-2" />
@@ -678,7 +691,7 @@
 		<Button
 			size="xs"
 			color="primary"
-			disabled={loading}
+			disabled={!canSync}
 			on:click={async () => handleOpenUprojectClicked()}
 		>
 			<UnrealEngineLogoNoCircle class="w-3 h-3 mr-2" />
@@ -688,14 +701,14 @@
 			<Button
 				size="xs"
 				color="primary"
-				disabled={loading}
+				disabled={!canSync}
 				on:click={async () => handleOpenSolutionClicked()}
 			>
 				<FileCodeSolid class="w-3.5 h-3.5 mr-2" />
 				Open .sln
 			</Button>
 		{/if}
-		<Button size="xs" color="primary" id="advancedDropdown" disabled={loading}>
+		<Button size="xs" color="primary" id="advancedDropdown" disabled={!canSync}>
 			<ChevronDownOutline size="xs" />
 		</Button>
 	</ButtonGroup>
