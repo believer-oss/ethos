@@ -253,6 +253,10 @@ where
         };
 
         if app_config.pull_dlls {
+            let uproject = UProject::load(&uproject_path)?;
+
+            let engine_path = self.app_config.read().get_engine_path(&uproject);
+
             match RepoConfig::get_project_name(&uproject_path_relative) {
                 Some(project_name) => {
                     let download_op = DownloadDllsOp {
@@ -266,6 +270,7 @@ where
                         aws_client: self.aws_client.clone(),
                         artifact_prefix,
                         engine: self.engine.clone(),
+                        engine_path,
                     };
                     download_op.execute().await?
                 }
@@ -331,6 +336,7 @@ where
                     download_symbols: app_config.engine_download_symbols,
                     storage: self.storage.clone(),
                     project,
+                    engine: self.engine.clone(),
                 };
                 update_engine_op.execute().await?;
             }

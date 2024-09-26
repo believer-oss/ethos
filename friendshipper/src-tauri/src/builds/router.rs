@@ -190,6 +190,8 @@ where
         Err(e) => return Err(CoreError::Internal(e.into())),
     }
 
+    T::post_download(&local_path).await;
+
     if let Some(launch_options) = payload.launch_options {
         info!(
             "Launching game client with server host {}:{}",
