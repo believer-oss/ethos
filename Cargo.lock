@@ -785,9 +785,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-types"
-version = "1.2.6"
+version = "1.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03701449087215b5369c7ea17fef0dd5d24cb93439ec5af0c7615f58c3f22605"
+checksum = "147100a7bea70fa20ef224a6bad700358305f5dc0f84649c53769761395b355b"
 dependencies = [
  "base64-simd",
  "bytes",
@@ -2169,9 +2169,9 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flate2"
-version = "1.0.33"
+version = "1.0.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "324a1be68054ef05ad64b861cc9eaf1d623d2d8cb25b4bf2cb9cdd902b4bf253"
+checksum = "a1b589b4dc103969ad3cf85c950899926ec64300a1a46d76c03a6072957036f0"
 dependencies = [
  "crc32fast",
  "miniz_oxide 0.8.0",
@@ -2245,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.6.15"
+version = "4.6.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2644,7 +2644,7 @@ dependencies = [
  "gix-utils",
  "itoa 1.0.11",
  "thiserror",
- "winnow 0.6.19",
+ "winnow 0.6.20",
 ]
 
 [[package]]
@@ -2665,7 +2665,7 @@ dependencies = [
  "smallvec",
  "thiserror",
  "unicode-bom",
- "winnow 0.6.19",
+ "winnow 0.6.20",
 ]
 
 [[package]]
@@ -2768,7 +2768,7 @@ dependencies = [
  "itoa 1.0.11",
  "smallvec",
  "thiserror",
- "winnow 0.6.19",
+ "winnow 0.6.20",
 ]
 
 [[package]]
@@ -2802,7 +2802,7 @@ dependencies = [
  "gix-validate",
  "memmap2",
  "thiserror",
- "winnow 0.6.19",
+ "winnow 0.6.20",
 ]
 
 [[package]]
@@ -6229,9 +6229,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "0.6.7"
+version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb5b1b31579f3811bf615c144393417496f152e12ac8b7663bf664f4a815306d"
+checksum = "87607cb1398ed59d48732e575a4c28a7a8ebf2454b964fe3f224f2afc07909e1"
 dependencies = [
  "serde",
 ]
@@ -7332,7 +7332,7 @@ dependencies = [
  "serde",
  "serde_spanned",
  "toml_datetime",
- "winnow 0.6.19",
+ "winnow 0.6.20",
 ]
 
 [[package]]
@@ -8562,9 +8562,9 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "0.6.19"
+version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c52ac009d615e79296318c1bcce2d422aaca15ad08515e344feeda07df67a587"
+checksum = "36c1fec1a2bb5866f07c25f68c26e565c4c200aebb96d7e55710c19d3e8ac49b"
 dependencies = [
  "memchr",
 ]
