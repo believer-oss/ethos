@@ -2,7 +2,6 @@
 	import {
 		Alert,
 		Button,
-		ButtonGroup,
 		Card,
 		Checkbox,
 		Input,
@@ -21,7 +20,8 @@
 		PlusOutline,
 		FileCopySolid,
 		TrashBinSolid,
-		ChevronSortOutline
+		ChevronSortOutline,
+		EditOutline
 	} from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import {
@@ -349,6 +349,17 @@
 		hoveringCreateNewChangeset = false;
 	};
 
+	const isChecked = (changeSet: ChangeSet) =>
+		changeSet.files.every((file) =>
+			selectedFiles.some((selectedFile) => selectedFile.path === file.path)
+		);
+
+	const isIndeterminate = (changeSet: ChangeSet) =>
+		!isChecked(changeSet) &&
+		changeSet.files.some((file) =>
+			selectedFiles.some((selectedFile) => selectedFile.path === file.path)
+		);
+
 	onMount(async () => {
 		await cleanUpChangeSets();
 	});
@@ -422,46 +433,37 @@
 							class="w-full h-8 text-white bg-secondary-800 dark:bg-space-950"
 						/>
 					{:else}
-						<span class="flex items-center gap-1"
-							>{changeSet.name}
-							<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
-						</span>
 						<div class="flex gap-1">
-							<ButtonGroup size="xs" class="mx-2 space-x-px ">
-								{#if changeSet.name !== 'default'}
-									<Button
-										color="primary"
-										on:click={() => {
-											editingChangeSetIndex = index;
-											editingChangeSetValue = changeSet.name;
-										}}
-										class="py-0.5 text-xs"
-									>
-										rename
-									</Button>
-								{/if}
+							<span class="flex items-center gap-1"
+								>{changeSet.name}
+								<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
+							</span>
+							<Button
+								class="p-1 w-auto h-auto"
+								color="primary"
+								on:click={() => {
+									editingChangeSetIndex = index;
+									editingChangeSetValue = changeSet.name;
+								}}
+							>
+								<EditOutline class="w-4 h-4" />
+							</Button>
+							<Tooltip>Rename</Tooltip>
+							{#if isDeletable(changeSet.name)}
 								<Button
-									color="primary"
-									on:click={() => {
-										handleToggleAllFilesInChangeset(index);
+									color="red"
+									on:click={async () => {
+										changeSets = changeSets.filter((_, i) => i !== index);
+										await onChangesetsSaved(changeSets);
 									}}
-									class="py-0.5 text-xs"
-									>select all
+									class="p-1 w-auto h-auto"
+								>
+									<TrashBinSolid class="w-4 h-4" />
 								</Button>
-								{#if isDeletable(changeSet.name)}
-									<Button
-										color="red"
-										on:click={async () => {
-											changeSets = changeSets.filter((_, i) => i !== index);
-											await onChangesetsSaved(changeSets);
-										}}
-										class="py-0.5 text-xs"
-									>
-										<TrashBinSolid class="w-4 h-4" />
-										delete
-									</Button>
-								{/if}
-							</ButtonGroup>
+								<Tooltip>Delete</Tooltip>
+							{/if}
+						</div>
+						<div class="flex gap-1">
 							<Button
 								outline
 								color="primary"
@@ -482,6 +484,23 @@
 				{#if changeSet.files.length > 0 && changeSet.open}
 					<Table color="custom" striped={true}>
 						<TableBody>
+							{#if changeSet.files.length > 0}
+								<TableBodyRow class="text-left border-b-0">
+									<TableBodyCell
+										tdClass="p-1 flex gap-1 w-8 border-b-0 whitespace-nowrap font-medium"
+									>
+										<Checkbox
+											class="!p-1.5"
+											checked={isChecked(changeSet)}
+											indeterminate={isIndeterminate(changeSet)}
+											on:click={() => {
+												handleToggleAllFilesInChangeset(index);
+											}}
+										/>
+										Select All
+									</TableBodyCell>
+								</TableBodyRow>
+							{/if}
 							{#each changeSet.files as file, fileIndex}
 								<TableBodyRow
 									class="text-left border-b-0 {fileIndex % 2 === 0
