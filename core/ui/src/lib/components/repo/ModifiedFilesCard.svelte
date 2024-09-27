@@ -478,19 +478,21 @@
 										changeSet.indeterminate = isIndeterminate(changeSet.files);
 									}}
 								/>
+								<Tooltip>Select All</Tooltip>
 							{/if}
-							<Tooltip>Select All</Tooltip>
-							<Button
-								class="p-1 px-2 w-auto h-auto"
-								color="primary"
-								on:click={() => {
-									editingChangeSetIndex = index;
-									editingChangeSetValue = changeSet.name;
-								}}
-							>
-								<EditOutline class="w-4 h-4" />
-							</Button>
-							<Tooltip>Rename</Tooltip>
+							{#if changeSet.name !== 'default'}
+								<Button
+									class="p-1 px-2 w-auto h-auto"
+									color="primary"
+									on:click={() => {
+										editingChangeSetIndex = index;
+										editingChangeSetValue = changeSet.name;
+									}}
+								>
+									<EditOutline class="w-4 h-4" />
+								</Button>
+								<Tooltip>Rename</Tooltip>
+							{/if}
 							{#if isDeletable(changeSet.name)}
 								<Button
 									color="red"
