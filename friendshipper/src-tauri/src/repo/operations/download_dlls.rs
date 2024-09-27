@@ -47,6 +47,7 @@ pub struct DownloadDllsOp<T> {
     pub aws_client: AWSClient,
     pub artifact_prefix: String,
     pub engine: T,
+    pub engine_path: PathBuf,
 }
 
 #[async_trait]
@@ -169,6 +170,8 @@ where
             }
         }
 
+        T::post_download(&self.engine_path).await;
+
         info!(
             "download done. copying binaries from '{:?}' to: '{:?}'",
             binaries_staging_path, &self.git_client.repo_path
@@ -225,6 +228,11 @@ where
             .selected_artifact_project
             .context("Project not configured. Repo may still be initializing.")?;
 
+        let engine_path = state
+            .app_config
+            .read()
+            .load_engine_path_from_repo(&state.repo_config.read())?;
+
         DownloadDllsOp {
             git_client: state.git(),
             project_name,
@@ -236,6 +244,7 @@ where
             aws_client: aws_client.clone(),
             artifact_prefix,
             engine: state.engine.clone(),
+            engine_path,
         }
     };
 

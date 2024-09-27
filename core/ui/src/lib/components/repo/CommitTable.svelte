@@ -94,9 +94,9 @@
 	bind:inputValue={searchTerm}
 >
 	<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
-		<TableHeadCell class="p-1 w-8 min-w-4" />
+		<TableHeadCell class="p-1" />
 		{#if showBuildStatus}
-			<TableHeadCell class="p-1 w-8" />
+			<TableHeadCell class="p-1" />
 		{/if}
 		<TableHeadCell class="pl-1">SHA</TableHeadCell>
 		<TableHeadCell>Message</TableHeadCell>
@@ -111,36 +111,36 @@
 					? 'bg-secondary-700 dark:bg-space-900'
 					: 'bg-secondary-800 dark:bg-space-950'}"
 			>
-				<TableBodyCell class="px-0.5 w-4 max-w-4">
+				<TableBodyCell class="px-0.5">
 					{#if isCommitLatestLocal(commit.sha)}
 						<ChevronRightOutline class="w-3 h-3" />
 					{/if}
 				</TableBodyCell>
 				{#if showBuildStatus}
-					<TableBodyCell class="px-1 w-3 max-w-3 h-full items-center">
+					<TableBodyCell class="px-1 h-full items-center">
 						{#if commit.status === 'success'}
-							<span class="text-xs">🟢</span>
+							<span class="text-xs px-0.5">🟢</span>
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="bottom"
 								>Commit has successful build
 							</Tooltip>
 						{:else if commit.status === 'pending'}
-							<span class="text-xs">🟡</span>
+							<span class="text-xs px-0.5">🟡</span>
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="bottom"
 								>Commit has build in progress
 							</Tooltip>
 						{:else if commit.status === 'error' || commit.status === 'failure'}
-							<span class="text-xs">🔴</span>
+							<span class="text-xs px-0.5">🔴</span>
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="bottom"
 								>Commit build failed
 							</Tooltip>
 						{:else}
-							<div class="w-2 h-2" />
+							<div class="w-3 h-3" />
 							<Tooltip
 								class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 								placement="bottom"

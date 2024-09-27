@@ -50,6 +50,31 @@ impl EngineProvider for UnrealEngineProvider {
         }
     }
 
+    #[instrument]
+    async fn post_download(path: &Path) {
+        // Create the sentinel file Engine/Restricted/NotForLicensees/Build/EpicInternal.txt, which
+        // signals to Unreal that the build can contain PII in crash uploads. Since Friendshipper
+        // is only used in dev contexts, this is a safe thing to do and helps engineers debug
+        // crashes and understand who is experiencing them.
+        if path.exists() {
+            let mut dest_path = PathBuf::from(path);
+            dest_path.push("Engine/Restricted/NotForLicensees/Build/");
+
+            if !dest_path.exists() {
+                if let Err(e) = std::fs::create_dir_all(&dest_path) {
+                    warn!("Failed to create path '{:?}': {}", &dest_path, e);
+                }
+            }
+
+            dest_path.push("EpicInternal.txt");
+            if !dest_path.exists() {
+                if let Err(e) = std::fs::File::create(&dest_path) {
+                    warn!("Failed to create file '{:?}': {}", &dest_path, e);
+                }
+            }
+        }
+    }
+
     #[instrument(skip(self, status))]
     async fn send_status_update(&self, status: &RepoStatus) {
         let client = reqwest::Client::new();
