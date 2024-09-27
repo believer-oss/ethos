@@ -65,6 +65,13 @@
 		}
 	};
 
+	const isChecked = (files: ModifiedFile[]) =>
+		files.every((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
+
+	const isIndeterminate = (files: ModifiedFile[]) =>
+		!isChecked(files) &&
+		files.some((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
+
 	// filteredChangeSets is changeSets but with the files filtered by searchInput
 	$: filteredChangeSets = changeSets.map((changeSet) => {
 		if (searchInput.length < 3) {
@@ -94,7 +101,10 @@
 
 		if (defaultChangesetIndex === -1) {
 			// If "default" changeset doesn't exist, create it
-			changeSets = [...changeSets, { name: 'default', files: [], open: true }];
+			changeSets = [
+				...changeSets,
+				{ name: 'default', files: [], open: true, checked: false, indeterminate: false }
+			];
 			defaultChangesetIndex = changeSets.length - 1;
 		}
 
@@ -282,6 +292,14 @@
 		}
 	};
 
+	const refreshCheckboxes = () => {
+		changeSets = changeSets.map((changeSet) => ({
+			...changeSet,
+			checked: isChecked(changeSet.files),
+			indeterminate: isIndeterminate(changeSet.files)
+		}));
+	};
+
 	const handleCreateNewChangeset = async (e: DragEvent) => {
 		e.preventDefault();
 
@@ -299,16 +317,34 @@
 			files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path))
 		}));
 
+		// if there already exists a changeset named "New Changeset" rename the new one to "New Changeset(i)"
+		let newName = 'New Changeset';
+		if (changeSets.some((cs) => cs.name.startsWith('New Changeset'))) {
+			let i = 1;
+			newName = `New Changeset(${i})`;
+
+			const isDuplicateName = (name: string) => changeSets.some((cs) => cs.name === name);
+
+			while (isDuplicateName(newName)) {
+				i += 1;
+				newName = `New Changeset(${i})`;
+			}
+		}
+
 		changeSets = [
 			...changeSets,
 			{
-				name: 'New Changeset',
+				name: newName,
 				files: filesToMove,
-				open: true
+				open: true,
+				checked: false,
+				indeterminate: false
 			}
 		];
 
 		await onChangesetsSaved(changeSets);
+		refreshCheckboxes();
+
 		hoveringSetIndex = -1;
 		hoveringCreateNewChangeset = false;
 	};
@@ -337,28 +373,20 @@
 			if (index !== changeSetIndex) {
 				return {
 					...changeSet,
-					files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path))
+					files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path)),
+					checked: false,
+					indeterminate: false
 				};
 			}
 			return changeSet;
 		});
 
 		await onChangesetsSaved(changeSets);
+		refreshCheckboxes();
 
 		hoveringSetIndex = -1;
 		hoveringCreateNewChangeset = false;
 	};
-
-	const isChecked = (changeSet: ChangeSet) =>
-		changeSet.files.every((file) =>
-			selectedFiles.some((selectedFile) => selectedFile.path === file.path)
-		);
-
-	const isIndeterminate = (changeSet: ChangeSet) =>
-		!isChecked(changeSet) &&
-		changeSet.files.some((file) =>
-			selectedFiles.some((selectedFile) => selectedFile.path === file.path)
-		);
 
 	onMount(async () => {
 		await cleanUpChangeSets();
@@ -438,8 +466,22 @@
 								>{changeSet.name}
 								<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
 							</span>
+							{#if changeSet.files.length > 0}
+								<Checkbox
+									class="align-middle"
+									disabled={isDeletable(changeSet.name)}
+									checked={changeSet.checked}
+									indeterminate={changeSet.indeterminate}
+									on:click={() => {
+										handleToggleAllFilesInChangeset(index);
+										changeSet.checked = isChecked(changeSet.files);
+										changeSet.indeterminate = isIndeterminate(changeSet.files);
+									}}
+								/>
+							{/if}
+							<Tooltip>Select All</Tooltip>
 							<Button
-								class="p-1 w-auto h-auto"
+								class="p-1 px-2 w-auto h-auto"
 								color="primary"
 								on:click={() => {
 									editingChangeSetIndex = index;
@@ -484,23 +526,6 @@
 				{#if changeSet.files.length > 0 && changeSet.open}
 					<Table color="custom" striped={true}>
 						<TableBody>
-							{#if changeSet.files.length > 0}
-								<TableBodyRow class="text-left border-b-0">
-									<TableBodyCell
-										tdClass="p-1 flex gap-1 w-8 border-b-0 whitespace-nowrap font-medium"
-									>
-										<Checkbox
-											class="!p-1.5"
-											checked={isChecked(changeSet)}
-											indeterminate={isIndeterminate(changeSet)}
-											on:click={() => {
-												handleToggleAllFilesInChangeset(index);
-											}}
-										/>
-										Select All
-									</TableBodyCell>
-								</TableBodyRow>
-							{/if}
 							{#each changeSet.files as file, fileIndex}
 								<TableBodyRow
 									class="text-left border-b-0 {fileIndex % 2 === 0
@@ -515,6 +540,8 @@
 											)}
 											on:change={() => {
 												handleFileToggled(file);
+												changeSet.checked = isChecked(changeSet.files);
+												changeSet.indeterminate = isIndeterminate(changeSet.files);
 											}}
 										/>
 									</TableBodyCell>

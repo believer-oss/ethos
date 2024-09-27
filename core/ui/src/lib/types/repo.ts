@@ -27,6 +27,8 @@ export interface ChangeSet {
 	name: string;
 	files: ModifiedFile[];
 	open: boolean;
+	checked: boolean;
+	indeterminate: boolean;
 }
 
 export interface Commit {
