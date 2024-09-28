@@ -500,7 +500,7 @@
 										changeSets = changeSets.filter((_, i) => i !== index);
 										await onChangesetsSaved(changeSets);
 									}}
-									class="p-1 w-auto h-auto"
+									class="p-1 px-2 w-auto h-auto"
 								>
 									<TrashBinSolid class="w-4 h-4" />
 								</Button>
