@@ -23,7 +23,7 @@ impl From<reqwest::Error> for TauriError {
                 };
                 (msg.to_string(), code)
             }
-            None => ("Error contacting Friendshipper backend".to_string(), 500),
+            None => ("Error contacting local backend".to_string(), 500),
         };
 
         TauriError {
