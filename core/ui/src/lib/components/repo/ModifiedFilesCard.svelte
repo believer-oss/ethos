@@ -2,7 +2,6 @@
 	import {
 		Alert,
 		Button,
-		ButtonGroup,
 		Card,
 		Checkbox,
 		Input,
@@ -21,7 +20,8 @@
 		PlusOutline,
 		FileCopySolid,
 		TrashBinSolid,
-		ChevronSortOutline
+		ChevronSortOutline,
+		EditOutline
 	} from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import {
@@ -65,6 +65,13 @@
 		}
 	};
 
+	const isChecked = (files: ModifiedFile[]) =>
+		files.every((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
+
+	const isIndeterminate = (files: ModifiedFile[]) =>
+		!isChecked(files) &&
+		files.some((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
+
 	// filteredChangeSets is changeSets but with the files filtered by searchInput
 	$: filteredChangeSets = changeSets.map((changeSet) => {
 		if (searchInput.length < 3) {
@@ -94,7 +101,10 @@
 
 		if (defaultChangesetIndex === -1) {
 			// If "default" changeset doesn't exist, create it
-			changeSets = [...changeSets, { name: 'default', files: [], open: true }];
+			changeSets = [
+				...changeSets,
+				{ name: 'default', files: [], open: true, checked: false, indeterminate: false }
+			];
 			defaultChangesetIndex = changeSets.length - 1;
 		}
 
@@ -282,6 +292,14 @@
 		}
 	};
 
+	const refreshCheckboxes = () => {
+		changeSets = changeSets.map((changeSet) => ({
+			...changeSet,
+			checked: isChecked(changeSet.files),
+			indeterminate: isIndeterminate(changeSet.files)
+		}));
+	};
+
 	const handleCreateNewChangeset = async (e: DragEvent) => {
 		e.preventDefault();
 
@@ -299,16 +317,34 @@
 			files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path))
 		}));
 
+		// if there already exists a changeset named "New Changeset" rename the new one to "New Changeset(i)"
+		let newName = 'New Changeset';
+		if (changeSets.some((cs) => cs.name.startsWith('New Changeset'))) {
+			let i = 1;
+			newName = `New Changeset(${i})`;
+
+			const isDuplicateName = (name: string) => changeSets.some((cs) => cs.name === name);
+
+			while (isDuplicateName(newName)) {
+				i += 1;
+				newName = `New Changeset(${i})`;
+			}
+		}
+
 		changeSets = [
 			...changeSets,
 			{
-				name: 'New Changeset',
+				name: newName,
 				files: filesToMove,
-				open: true
+				open: true,
+				checked: false,
+				indeterminate: false
 			}
 		];
 
 		await onChangesetsSaved(changeSets);
+		refreshCheckboxes();
+
 		hoveringSetIndex = -1;
 		hoveringCreateNewChangeset = false;
 	};
@@ -337,13 +373,16 @@
 			if (index !== changeSetIndex) {
 				return {
 					...changeSet,
-					files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path))
+					files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path)),
+					checked: false,
+					indeterminate: false
 				};
 			}
 			return changeSet;
 		});
 
 		await onChangesetsSaved(changeSets);
+		refreshCheckboxes();
 
 		hoveringSetIndex = -1;
 		hoveringCreateNewChangeset = false;
@@ -422,50 +461,61 @@
 							class="w-full h-8 text-white bg-secondary-800 dark:bg-space-950"
 						/>
 					{:else}
-						<span class="flex items-center gap-1"
-							>{changeSet.name}
-							<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
-						</span>
 						<div class="flex gap-1">
-							<ButtonGroup
-								size="xs"
-								class="mx-2 space-x-px"
-								divClass="inline-flex rounded-lg shadow-sm"
-							>
-								{#if changeSet.name !== 'default'}
-									<Button
-										color="primary"
-										on:click={() => {
-											editingChangeSetIndex = index;
-											editingChangeSetValue = changeSet.name;
-										}}
-										class="py-0.5 text-xs"
-									>
-										rename
-									</Button>
-								{/if}
-								<Button
-									color="primary"
+							<span class="flex items-center gap-1"
+								>{changeSet.name}
+								<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
+							</span>
+							{#if changeSet.files.length > 0}
+								<Checkbox
+									class="align-middle"
+									disabled={isDeletable(changeSet.name)}
+									checked={changeSet.checked}
+									indeterminate={changeSet.indeterminate}
 									on:click={() => {
 										handleToggleAllFilesInChangeset(index);
+										changeSet.checked = isChecked(changeSet.files);
+										changeSet.indeterminate = isIndeterminate(changeSet.files);
 									}}
-									class="py-0.5 text-xs"
-									>select all
+								/>
+
+								<style>
+									/* Override indeterminate checkbox icons with a minus, since current version of flowbite ("^0.44.18") doesn't set the icon properly. Maybe could be fixed with an update. */
+									[type='checkbox']:indeterminate {
+										background-image: url("data:image/svg+xml,%3csvg aria-hidden='true' xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 16 12'%3e %3cpath stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='M0.5 6h14'/%3e %3c/svg%3e");
+									}
+								</style>
+
+								<Tooltip>Select All</Tooltip>
+							{/if}
+							{#if changeSet.name !== 'default'}
+								<Button
+									class="p-1 px-2 w-auto h-auto"
+									color="primary"
+									on:click={() => {
+										editingChangeSetIndex = index;
+										editingChangeSetValue = changeSet.name;
+									}}
+								>
+									<EditOutline class="w-4 h-4" />
 								</Button>
-								{#if isDeletable(changeSet.name)}
-									<Button
-										color="red"
-										on:click={async () => {
-											changeSets = changeSets.filter((_, i) => i !== index);
-											await onChangesetsSaved(changeSets);
-										}}
-										class="py-0.5 text-xs"
-									>
-										<TrashBinSolid class="w-4 h-4" />
-										delete
-									</Button>
-								{/if}
-							</ButtonGroup>
+								<Tooltip>Rename</Tooltip>
+							{/if}
+							{#if isDeletable(changeSet.name)}
+								<Button
+									color="red"
+									on:click={async () => {
+										changeSets = changeSets.filter((_, i) => i !== index);
+										await onChangesetsSaved(changeSets);
+									}}
+									class="p-1 px-2 w-auto h-auto"
+								>
+									<TrashBinSolid class="w-4 h-4" />
+								</Button>
+								<Tooltip>Delete</Tooltip>
+							{/if}
+						</div>
+						<div class="flex gap-1">
 							<Button
 								outline
 								color="primary"
@@ -500,6 +550,8 @@
 											)}
 											on:change={() => {
 												handleFileToggled(file);
+												changeSet.checked = isChecked(changeSet.files);
+												changeSet.indeterminate = isIndeterminate(changeSet.files);
 											}}
 										/>
 									</TableBodyCell>
