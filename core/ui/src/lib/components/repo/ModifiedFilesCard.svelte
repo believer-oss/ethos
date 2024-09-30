@@ -478,6 +478,14 @@
 										changeSet.indeterminate = isIndeterminate(changeSet.files);
 									}}
 								/>
+
+								<style>
+									/* Override indeterminate checkbox icons with a minus, since current version of flowbite ("^0.44.18") doesn't set the icon properly. Maybe could be fixed with an update. */
+									[type='checkbox']:indeterminate {
+										background-image: url("data:image/svg+xml,%3csvg aria-hidden='true' xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 16 12'%3e %3cpath stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='M0.5 6h14'/%3e %3c/svg%3e");
+									}
+								</style>
+
 								<Tooltip>Select All</Tooltip>
 							{/if}
 							{#if changeSet.name !== 'default'}
