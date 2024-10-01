@@ -16,20 +16,19 @@
 		if (!node.open || node.value.fileType === FileType.File) {
 			return node;
 		}
-
 		const updatedChildFiles = await getFiles(node.value.path);
 		let updatedChildNodes: Node[] = [];
 		// deleted children will not be considered since they will not exist inside updatedChildFiles
 		updatedChildFiles.forEach((child) => {
 			const existingChild = node.children.find((c) => c.value.path === child.path);
 			if (existingChild) {
-				// update the existing child's value
+				// if this file already exists as a child, simply update it's LFSFile value
 				updatedChildNodes.push({
 					...existingChild,
 					value: child
 				});
 			} else {
-				// create a new node for a new child
+				// otherwise, create a new node for a new child
 				updatedChildNodes.push({
 					value: child,
 					open: false,
@@ -39,6 +38,7 @@
 		});
 		updatedChildNodes = await Promise.all(updatedChildNodes.map((child) => updateTree(child)));
 
+		// overwrite the children of the current node with the updated children
 		return { ...node, children: updatedChildNodes };
 	};
 

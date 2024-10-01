@@ -32,19 +32,19 @@
 		);
 
 		fileNode = {
-			...fileNode, // spread the existing fileNode
+			...fileNode,
 			children: newChildren
 		};
 	};
 
-	const handleOnClick = () => {
+	const handleOnClick = async () => {
 		loading = true;
 		fileNode = {
 			...fileNode,
 			open: !fileNode.open
 		};
 		if (fileNode.open) {
-			void getChildren();
+			await getChildren();
 		} else {
 			fileNode.children = [];
 		}
@@ -56,8 +56,10 @@
 		loading = false;
 	};
 
-	onMount(() => {
-		void getChildren();
+	onMount(async () => {
+		loading = true;
+		await getChildren();
+		loading = false;
 	});
 
 	onDestroy(() => {

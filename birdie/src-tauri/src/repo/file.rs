@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::Json;
 use chrono::DateTime;
@@ -100,13 +101,10 @@ pub async fn get_file(
                 let size: u64 = reader
                     .lines()
                     .nth(2)
-                    .unwrap()
-                    .unwrap()
-                    .split(' ')
-                    .nth(1)
-                    .unwrap()
-                    .parse()
-                    .unwrap();
+                    .and_then(|line| line.ok())
+                    .and_then(|line| line.clone().split(' ').nth(1).map(String::from))
+                    .and_then(|size_str| size_str.parse().ok())
+                    .ok_or(CoreError::Input(anyhow!("Failed to parse LFS size")))?;
 
                 size
             }
