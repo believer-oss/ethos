@@ -201,7 +201,7 @@
 		if ($selectedFile === null) return;
 
 		loadingFileHistory = true;
-		commits = await getFileHistory(`${$selectedFile.path}`);
+		commits = await getFileHistory($selectedFile.path);
 		loadingFileHistory = false;
 	};
 
@@ -311,7 +311,7 @@
 
 	const handleDownloadFile = async (selected: Nullable<LFSFile>) => {
 		if (selected === null || $selectedFile === null) return;
-		const fullPath = `${selected.path}`;
+		const fullPath = selected.path;
 
 		try {
 			await downloadFiles([fullPath]);
@@ -328,7 +328,7 @@
 
 		if (selectedFiles.length === 0) return;
 
-		const paths = selectedFiles.map((file) => `${file.path}`);
+		const paths = selectedFiles.map((file) => file.path);
 
 		try {
 			await downloadFiles(paths);
@@ -346,7 +346,7 @@
 		if (selected === null) return;
 		loading = true;
 
-		const fullPath = `${selected.path}`;
+		const fullPath = selected.path;
 
 		try {
 			await delFetchInclude([fullPath]);
@@ -362,7 +362,7 @@
 		if (selectedFiles.length === 0) return;
 		loading = true;
 
-		const paths = selectedFiles.map((file) => `${file.path}`);
+		const paths = selectedFiles.map((file) => file.path);
 
 		try {
 			await delFetchInclude(paths);
@@ -379,7 +379,7 @@
 		if (selectedFiles.length === 0) return;
 		loading = true;
 
-		const paths = selectedFiles.map((file) => `${file.path}`);
+		const paths = selectedFiles.map((file) => file.path);
 
 		try {
 			await lockFiles(paths);
@@ -398,7 +398,7 @@
 		loading = true;
 		if (selectedFiles.length === 0) return;
 
-		const paths = selectedFiles.map((file) => `${file.path}`);
+		const paths = selectedFiles.map((file) => file.path);
 
 		try {
 			await unlockFiles(paths, false);
@@ -441,7 +441,7 @@
 
 		loading = true;
 
-		const fullPath = `${$selectedFile.path}`;
+		const fullPath = $selectedFile.path;
 
 		try {
 			await lockFiles([fullPath]);
@@ -465,7 +465,7 @@
 
 		loading = true;
 
-		const fullPath = `${$selectedFile.path}`;
+		const fullPath = $selectedFile.path;
 
 		try {
 			await unlockFiles([fullPath], false);
@@ -489,7 +489,7 @@
 
 		const directory = `${$appConfig.repoPath}/${$currentRoot}`;
 
-		await openUrl(`${directory}`);
+		await openUrl(directory);
 	};
 
 	const getLockOwner = (selected: LFSFile): string => {
@@ -692,7 +692,7 @@
 											</TableBodyCell>
 											<TableBodyCell class="p-2 w-4">
 												{#if file.fileType === FileType.File}
-													{#if $fetchIncludeList.includes(`${file.path}`)}
+													{#if $fetchIncludeList.includes(file.path)}
 														<HeartSolid class="w-4 h-4 text-green-500" />
 													{:else}
 														<HeartOutline class="w-4 h-4 text-gray-500" />
@@ -844,7 +844,7 @@
 							<div class="flex gap-2 w-full dark:text-white">
 								<span class="w-20">Favorited:</span>
 								<span class="dark:text-primary-400 w-64"
-									>{!$fetchIncludeList.includes(`${$selectedFile.path}`) ? 'No' : 'Yes'}</span
+									>{!$fetchIncludeList.includes($selectedFile.path) ? 'No' : 'Yes'}</span
 								>
 							</div>
 							<div class="flex gap-2 w-full dark:text-white">
@@ -853,7 +853,7 @@
 							</div>
 						</div>
 						<Button on:click={() => showInExplorer($selectedFile)}>Show in Explorer</Button>
-						{#if $selectedFile.lfsState === LocalFileLFSState.Stub || !$fetchIncludeList.includes(`${$selectedFile.path}`)}
+						{#if $selectedFile.lfsState === LocalFileLFSState.Stub || !$fetchIncludeList.includes($selectedFile.path)}
 							<Button
 								class="w-full"
 								color="primary"
@@ -862,7 +862,7 @@
 							<Tooltip
 								>Downloads selected files on disk and adds them to the automatic downloads list.
 							</Tooltip>
-						{:else if $fetchIncludeList.includes(`${$selectedFile.path}`)}
+						{:else if $fetchIncludeList.includes($selectedFile.path)}
 							<Button
 								class="w-full"
 								color="primary"
