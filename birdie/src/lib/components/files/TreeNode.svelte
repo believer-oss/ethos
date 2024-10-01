@@ -39,7 +39,6 @@
 
 	const handleOnClick = () => {
 		loading = true;
-		console.log('loading', loading);
 		fileNode = {
 			...fileNode,
 			open: !fileNode.open

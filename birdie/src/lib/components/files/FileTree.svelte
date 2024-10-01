@@ -18,7 +18,6 @@
 		}
 
 		const updatedChildFiles = await getFiles(node.value.path);
-		console.log('updatedChildFiles', updatedChildFiles);
 		let updatedChildNodes: Node[] = [];
 		// deleted children will not be considered since they will not exist inside updatedChildFiles
 		updatedChildFiles.forEach((child) => {

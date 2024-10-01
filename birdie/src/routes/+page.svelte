@@ -272,7 +272,6 @@
 
 	const refreshFiles = async () => {
 		// do nothing if we have no repo path
-		console.log('Refreshing $currentRootFiles');
 		if ($appConfig.repoPath === '') return;
 
 		loading = true;
@@ -549,7 +548,7 @@
 
 	const switchView = async (switchTo: boolean) => {
 		useFileTreeView = switchTo;
-		$currentRoot = '/';
+		$currentRoot = '';
 		$selectedFile = null;
 		selectedFiles = [];
 		commits = [];
