@@ -1,7 +1,7 @@
 use birdie::metadata::{
     DirectoryClass, DirectoryMetadata, UpdateMetadataClassRequest, UpdateMetadataRequest,
 };
-use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File};
+use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File, SingleFileRequest};
 use birdie::types::config::BirdieConfig;
 use std::path::PathBuf;
 
@@ -252,6 +252,22 @@ pub async fn del_fetch_include(
 }
 
 // Birdie commands
+#[tauri::command]
+pub async fn get_file(state: tauri::State<'_, State>, path: String) -> Result<File, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/file", state.server_url))
+        .json(&SingleFileRequest { path })
+        .send()
+        .await?;
+
+    if res.status().is_client_error() {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
 #[tauri::command]
 pub async fn get_files(
     state: tauri::State<'_, State>,

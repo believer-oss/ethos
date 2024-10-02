@@ -65,6 +65,7 @@ export const rebase = async (): Promise<void> => invoke('rebase');
 // Birdie
 export const getAllFiles = async (): Promise<string[]> => invoke('get_all_files');
 export const getFiles = async (root?: string): Promise<LFSFile[]> => invoke('get_files', { root });
+export const getFile = async (path: string): Promise<LFSFile> => invoke('get_file', { path });
 export const getFileHistory = async (file: string): Promise<Commit[]> =>
 	invoke('get_file_history', { file });
 
