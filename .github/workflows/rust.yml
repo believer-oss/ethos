@@ -2,12 +2,12 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
-    types: [ "labeled", "opened", "reopened", "synchronize" ]
+    branches: ["main"]
+    types: ["labeled", "opened", "reopened", "synchronize"]
   release:
-    types: [ "published" ]
+    types: ["published"]
   workflow_dispatch:
 
 env:
@@ -18,7 +18,7 @@ jobs:
     if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     strategy:
       matrix:
-        app: [ "core/ui", "friendshipper", "birdie" ]
+        app: ["core/ui", "friendshipper", "birdie"]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -53,7 +53,7 @@ jobs:
       group: ethos-linux
     strategy:
       matrix:
-        app: [ friendshipper, birdie ]
+        app: [friendshipper, birdie]
     permissions:
       contents: write
 
@@ -120,6 +120,9 @@ jobs:
 
       - name: Build
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
           cd ${{ matrix.app }}
           yarn
@@ -144,7 +147,7 @@ jobs:
       group: ethos-windows
     strategy:
       matrix:
-        app: [ friendshipper, birdie ]
+        app: [friendshipper, birdie]
     permissions:
       contents: write
 
@@ -197,6 +200,9 @@ jobs:
 
       - name: Build
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
           cd ${{ matrix.app }}
           yarn

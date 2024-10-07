@@ -14,7 +14,6 @@ use std::fs;
 use tracing::{debug, info};
 
 use super::unreal::check_unreal_file_association;
-use super::update::{get_latest_version, run_update};
 
 pub fn router<T>() -> Router<AppState<T>>
 where
@@ -28,7 +27,6 @@ where
         .route("/open-logs", post(open_system_logs_folder))
         .route("/terminal", post(open_terminal_to_path))
         .route("/status", get(status))
-        .route("/update", get(get_latest_version).post(run_update))
         .route(
             "/diagnostics/unrealversionselector",
             get(get_unrealversionselector_diags),

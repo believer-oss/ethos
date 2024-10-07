@@ -49,43 +49,6 @@ pub async fn get_log_path(state: tauri::State<'_, State>) -> Result<String, Taur
 }
 
 #[tauri::command]
-pub async fn get_latest_version(state: tauri::State<'_, State>) -> Result<String, TauriError> {
-    let res = state
-        .client
-        .get(format!("{}/system/update", state.server_url))
-        .send()
-        .await?;
-
-    if res.status().is_client_error() || res.status().is_server_error() {
-        let status_code = res.status().as_u16();
-        let body = res.text().await?;
-        return Err(TauriError {
-            message: body,
-            status_code,
-        });
-    }
-
-    Ok(res.text().await?)
-}
-
-#[tauri::command]
-pub async fn run_update(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/system/update", state.server_url))
-        .send()
-        .await;
-
-    match res {
-        Ok(_) => Ok(()),
-        Err(e) => Err(TauriError {
-            message: e.to_string(),
-            status_code: 500, // Internal Server Error as a default
-        }),
-    }
-}
-
-#[tauri::command]
 pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     use std::process::Command;
 

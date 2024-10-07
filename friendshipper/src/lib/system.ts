@@ -1,10 +1,6 @@
 import { invoke } from '@tauri-apps/api/tauri';
 import type { LogEvent, UnrealVersionSelectorStatus } from '$lib/types';
 
-export const getLatestVersion = async (): Promise<string> => invoke('get_latest_version');
-
-export const runUpdate = async (): Promise<void> => invoke('run_update');
-
 export const restart = async (): Promise<void> => invoke('restart');
 
 export const configureGitUser = async (name: string, email: string): Promise<void> =>
