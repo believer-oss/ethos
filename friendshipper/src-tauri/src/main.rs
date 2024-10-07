@@ -205,6 +205,7 @@ fn main() -> Result<(), CoreError> {
                 sync_engine_commit_with_uproject,
                 sync_uproject_commit_with_engine,
                 reset_repo,
+                reset_repo_to_commit,
                 restart,
                 run_update,
                 generate_sln,

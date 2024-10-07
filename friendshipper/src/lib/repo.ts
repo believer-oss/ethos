@@ -126,6 +126,9 @@ export const rebase = async (): Promise<void> => invoke('rebase');
 
 export const resetRepo = async (): Promise<void> => invoke('reset_repo');
 
+export const resetRepoToCommit = async (commit: string): Promise<void> =>
+	invoke('reset_repo_to_commit', { commit });
+
 export const showCommitFiles = async (
 	commit: string,
 	stash: boolean = false

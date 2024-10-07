@@ -22,7 +22,7 @@
 	let searchTerm = '';
 
 	// commit file details
-	let expandedCommit = '';
+	export let expandedCommit = '';
 	let loadingCommitFiles = false;
 	let commitFiles: CommitFileInfo[] = [];
 

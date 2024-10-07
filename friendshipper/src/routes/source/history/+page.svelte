@@ -23,7 +23,8 @@
 		syncEngineCommitWithUproject,
 		syncUprojectWithEngineCommit,
 		getRepoStatus,
-		showCommitFiles
+		showCommitFiles,
+		resetRepoToCommit
 	} from '$lib/repo';
 	import { appConfig, commits, latestLocalCommit, repoStatus } from '$lib/stores';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
@@ -33,6 +34,8 @@
 	let asyncModalText = '';
 
 	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus.conflicts.length > 0;
+
+	let selectedCommit = '';
 
 	const refresh = async () => {
 		loading = true;
@@ -167,6 +170,29 @@
 	const refreshAndWait = async () => {
 		await refresh();
 	};
+
+	const handleResetRepoToCommit = async (commit: string) => {
+		try {
+			inAsyncOperation = true;
+			asyncModalText = 'Resetting repo to commit...';
+			await resetRepoToCommit(commit);
+			selectedCommit = '';
+			await emit('success', 'Repo reset to commit');
+
+			await refresh();
+			if (!$appConfig.pullDlls) {
+				asyncModalText = 'Generating projects';
+				await generateSln();
+			} else if ($appConfig.openUprojectAfterSync) {
+				asyncModalText = 'Launching Unreal Engine';
+				await openProject();
+			}
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		inAsyncOperation = false;
+	};
 </script>
 
 <div class="flex items-center justify-between gap-2">
@@ -190,6 +216,17 @@
 			<RefreshOutline class="w-3 h-3 mr-2" />
 			Sync
 		</Button>
+		{#if selectedCommit !== ''}
+			<Button
+				size="xs"
+				color="primary"
+				disabled={inAsyncOperation}
+				on:click={async () => handleResetRepoToCommit(selectedCommit)}
+			>
+				<RefreshOutline class="w-3 h-3 mr-2" />
+				Reset to commit
+			</Button>
+		{/if}
 		{#if conflictsDetected}
 			<Tooltip
 				class="ml-2 w-36 text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
@@ -224,49 +261,49 @@
 	<Dropdown placement="bottom-start" triggeredBy="#advancedDropdown">
 		{#if $appConfig.pullDlls}
 			<DropdownItem class="text-xs" on:click={handleForceDownloadGameDllsClicked}
-				>Redownload game DLLs</DropdownItem
-			>
+				>Redownload game DLLs
+			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left"
 				>Downloads game DLLs for your current commit and installs them into the game repo. Use if
-				you are getting incompatible binaries errors.</Tooltip
-			>
+				you are getting incompatible binaries errors.
+			</Tooltip>
 		{:else}
 			<DropdownItem class="text-xs" on:click={handleGenerateProjectFiles}
-				>Generate project files</DropdownItem
-			>
+				>Generate project files
+			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left"
-				>Generates Visual Studio solution and project files for the uproject.</Tooltip
-			>
+				>Generates Visual Studio solution and project files for the uproject.
+			</Tooltip>
 		{/if}
 		{#if $appConfig.engineType === 'Prebuilt'}
 			<DropdownItem class="text-xs" on:click={handleForceDownloadEngineClicked}
-				>Redownload engine</DropdownItem
-			>
+				>Redownload engine
+			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left"
 				>Redownloads the entire engine archive. Use if you suspect you have a corrupt engine
-				install.</Tooltip
-			>
+				install.
+			</Tooltip>
 		{:else}
 			<DropdownItem class="text-xs" on:click={handleSyncUprojectWithEngineRepo}
-				>Sync UProject with engine commit</DropdownItem
-			>
+				>Sync UProject with engine commit
+			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left"
-				>Updates the EngineAssociation item in the .uproject to reflect the current engine commit.</Tooltip
-			>
+				>Updates the EngineAssociation item in the .uproject to reflect the current engine commit.
+			</Tooltip>
 			<DropdownItem class="text-xs" on:click={handleSyncEngineRepoWithUproject}
-				>Sync engine commit with UProject</DropdownItem
-			>
+				>Sync engine commit with UProject
+			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left"
 				>Updates the engine commit to the version currently set in the .uproject's EngineAssociation
-				item.</Tooltip
-			>
+				item.
+			</Tooltip>
 		{/if}
 		<DropdownItem class="text-xs" on:click={handleReinstallGitHooksClicked}
-			>Reinstall Git hooks</DropdownItem
-		>
+			>Reinstall Git hooks
+		</DropdownItem>
 		<Tooltip class="text-xs w-[22rem]" placement="left"
-			>For engineers. Helps iterate on the git hooks workflow.</Tooltip
-		>
+			>For engineers. Helps iterate on the git hooks workflow.
+		</Tooltip>
 	</Dropdown>
 </div>
 <Card
@@ -281,6 +318,7 @@
 		</div>
 	</div>
 	<CommitTable
+		bind:expandedCommit={selectedCommit}
 		commits={$commits}
 		latestLocalCommit={$latestLocalCommit}
 		showFilesHandler={showCommitFiles}

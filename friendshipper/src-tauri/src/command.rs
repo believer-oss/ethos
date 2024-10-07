@@ -241,6 +241,25 @@ pub async fn reset_repo(state: tauri::State<'_, State>) -> Result<(), TauriError
     Ok(())
 }
 
+#[tauri::command]
+pub async fn reset_repo_to_commit(
+    state: tauri::State<'_, State>,
+    commit: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/reset/{}", state.server_url, commit))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        error!("Error resetting repo to commit {}: {}", commit, err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 // Argo
 #[tauri::command]
 pub async fn get_workflows(
