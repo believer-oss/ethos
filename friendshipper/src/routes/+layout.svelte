@@ -31,7 +31,6 @@
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { Canvas } from '@threlte/core';
 	import { get } from 'svelte/store';
-	import semver from 'semver';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { invoke } from '@tauri-apps/api/tauri';
 
@@ -40,6 +39,8 @@
 	import { appWindow } from '@tauri-apps/api/window';
 	import { BaseDirectory } from '@tauri-apps/api/path';
 	import { fs } from '@tauri-apps/api';
+	import { checkUpdate, installUpdate } from '@tauri-apps/api/updater';
+	import { relaunch } from '@tauri-apps/api/process';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -65,7 +66,7 @@
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import { getAllCommits, getRepoStatus, SkipDllCheck, AllowOfflineCommunication } from '$lib/repo';
-	import { getLatestVersion, openSystemLogsFolder, restart, runUpdate } from '$lib/system';
+	import { openSystemLogsFolder } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
 	import { handleError } from '$lib/utils';
@@ -134,12 +135,17 @@
 	};
 
 	const handleCheckForUpdates = async () => {
-		latest = await getLatestVersion();
-		updateAvailable = semver.gt(latest, await getVersion());
+		try {
+			const { shouldUpdate, manifest } = await checkUpdate();
+			latest = manifest?.version ?? '';
+			updateAvailable = shouldUpdate;
 
-		if (updateAvailable) {
-			showPreferencesModal = false;
-			updateDismissed.set(false);
+			if (updateAvailable) {
+				showPreferencesModal = false;
+				updateDismissed.set(false);
+			}
+		} catch (e) {
+			await emit('error', e);
 		}
 	};
 
@@ -147,10 +153,10 @@
 		updating = true;
 
 		try {
-			await runUpdate();
+			await installUpdate();
 			updateAvailable = false;
 
-			await restart();
+			await relaunch();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -348,8 +354,9 @@
 			}
 
 			try {
-				latest = await getLatestVersion();
-				updateAvailable = semver.gt(latest, await getVersion());
+				const { shouldUpdate, manifest } = await checkUpdate();
+				latest = manifest?.version ?? '';
+				updateAvailable = shouldUpdate;
 			} catch (e) {
 				await emit('error', e);
 			}

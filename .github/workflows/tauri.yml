@@ -21,12 +21,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-latest" # for Arm based macs (M1 and above).
-            runner: "macos-latest"
+          - platform: "macos-latest-xlarge" # for Arm based macs (M1 and above).
+            runner: "macos-latest-xlarge"
             args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest" # for Intel based macs.
-            runner: "macos-latest"
-            args: "--target x86_64-apple-darwin"
+          #   - platform: "macos-latest-xlarge" # for Intel based macs.
+          #     runner: "macos-latest-xlarge"
+          #     args: "--target x86_64-apple-darwin"
           - platform: "ubuntu-22.04" # for Tauri v1 you could replace this with ubuntu-20.04.
             runner: "linux-8cores"
             args: ""
@@ -41,13 +41,15 @@ jobs:
       - name: setup node
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: "20"
+          cache: "yarn"
+          cache-dependency-path: "${{ github.event.inputs.app }}/yarn.lock"
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest-xlarge' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04' # This must match the platform value defined above.
@@ -67,14 +69,26 @@ jobs:
         # webkitgtk 4.0 is for Tauri v1 - webkitgtk 4.1 is for Tauri v2.
         # You can remove the one that doesn't apply to your app to speed up the workflow a bit.
 
+      - name: Build core ui
+        run: |
+          cd core/ui
+          yarn
+          yarn package
+
       - name: install frontend dependencies
-        run: yarn install # change this to npm, pnpm or bun depending on which one you use.
+        run: |
+          cd ${{ github.event.inputs.app }}
+          yarn install # change this to npm, pnpm or bun depending on which one you use.
 
       - uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: "--max_old_space_size=4096"
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
-          projectDir: ${{ github.event.inputs.app }}
+          projectPath: ${{ github.event.inputs.app }}
+          includeUpdaterJson: true
           tagName: ${{ github.event.inputs.app }}-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version.
           releaseName: "${{ github.event.inputs.app }} v__VERSION__"
           releaseBody: "See the assets to download this version and install."

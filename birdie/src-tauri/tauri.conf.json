@@ -73,7 +73,7 @@
 			},
 			"resources": [],
 			"shortDescription": "",
-			"targets": ["msi"],
+			"targets": ["msi", "dmg", "deb", "rpm", "updater"],
 			"windows": {
 				"certificateThumbprint": null,
 				"digestAlgorithm": "sha256",
@@ -88,7 +88,13 @@
 			"iconAsTemplate": true
 		},
 		"updater": {
-			"active": false
+			"active": true,
+			"endpoints": ["https://github.com/believer-oss/ethos/releases/latest/download/latest.json"],
+			"dialog": false,
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxODk1OTAyOTMzQjk0MTEKUldRUmxEdVRBbG1Kd1FMdHNlc21rQ3UwTXQ3MStJL2VZYnBUYnhuYkxteStHQ0hTeXNQNFVZS20K",
+			"windows": {
+				"installMode": "passive"
+			}
 		},
 		"windows": [
 			{
