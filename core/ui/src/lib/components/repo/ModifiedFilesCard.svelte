@@ -462,10 +462,6 @@
 						/>
 					{:else}
 						<div class="flex gap-1">
-							<span class="flex items-center gap-1"
-								>{changeSet.name}
-								<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
-							</span>
 							{#if changeSet.files.length > 0}
 								<Checkbox
 									class="align-middle"
@@ -488,6 +484,10 @@
 
 								<Tooltip>Select All</Tooltip>
 							{/if}
+							<span class="flex items-center gap-1"
+								>{changeSet.name}
+								<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
+							</span>
 							{#if changeSet.name !== 'default'}
 								<Button
 									class="p-1 px-2 w-auto h-auto"
