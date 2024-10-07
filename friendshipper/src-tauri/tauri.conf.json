@@ -79,7 +79,7 @@
 			},
 			"resources": [],
 			"shortDescription": "",
-			"targets": ["msi"],
+			"targets": ["msi", "dmg"],
 			"windows": {
 				"certificateThumbprint": null,
 				"digestAlgorithm": "sha256",

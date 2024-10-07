@@ -86,6 +86,10 @@ fn main() -> Result<(), CoreError> {
         let _ = tauri_plugin_deep_link::set_identifier("com.believer.friendshipper");
     }
 
+    // MacOS .app files don't inherit any PATH variables
+    #[cfg(target_os = "macos")]
+    let _ = fix_path_env::fix();
+
     if let (Some(config_file), Some(config)) = Server::initialize_app_config()? {
         let (log_path, otel_reload_handle) = match tauri::async_runtime::block_on(async {
             logging::init(

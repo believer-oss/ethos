@@ -18,3 +18,6 @@ node_modules
 
 # eslint
 .eslintcache
+
+# macos
+.DS_Store
