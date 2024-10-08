@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      appVersion: ${{ steps.tauri_action.outputs.appVersion }}
+      appVersion: ${{ steps.tauri.outputs.appVersion }}
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +83,7 @@ jobs:
           yarn install # change this to npm, pnpm or bun depending on which one you use.
 
       - uses: tauri-apps/tauri-action@v0
+        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: "--max_old_space_size=4096"
@@ -103,15 +104,20 @@ jobs:
   rename-latest-json:
     needs: publish-tauri
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - name: Rename latest.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG=${{ github.event.inputs.app }}-v${{ needs.publish-tauri.outputs.appVersion }}
-          gh release download $TAG --dir . --pattern "latest.json"
+          gh release download $TAG --pattern "latest.json"
           mv latest.json ${{ github.event.inputs.app }}.json
           gh release upload $TAG ${{ github.event.inputs.app }}.json
+          gh release delete-asset $TAG latest.json
 
       - name: Upload other app JSON files
         env:
