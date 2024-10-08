@@ -127,7 +127,7 @@ jobs:
           CURRENT_APP=${{ github.event.inputs.app }}.json
 
           # Get the latest release
-          LATEST_RELEASE=$(gh release list --limit 1 | awk '{print $3}')
+          LATEST_RELEASE=$(gh release list --exclude-drafts --limit 1 | awk '{print $3}')
 
           # Download all JSON files from the latest release
           gh release download $LATEST_RELEASE --dir temp --pattern "*.json" || exit 0
