@@ -223,4 +223,3 @@ jobs:
         with:
           files: |
             ${{ matrix.app }}.exe
-            *.msi
