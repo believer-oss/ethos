@@ -91,9 +91,7 @@ export interface ArtifactListResponse {
 }
 
 export interface LaunchOptions {
-	ip: string;
-	port: number;
-	netimguiPort: number;
+	name: string;
 }
 
 export interface SyncClientRequest {

@@ -193,66 +193,71 @@ where
     T::post_download(&local_path).await;
 
     if let Some(launch_options) = payload.launch_options {
-        info!(
-            "Launching game client with server host {}:{}",
-            launch_options.ip, launch_options.port
-        );
+        let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+        let game_server = kube_client.get_gameserver(&launch_options.name).await?;
 
-        // Assume this GameServerResults type will become an engine-specific type in the future.
-        // Right now, we're asking the client to basically look up game servers, then send us back
-        // the IP, port, and netimgui port, and that seems inefficient. We should be able to have the client
-        // send us a unique identifier for the server, and then we can call a generic GameServer -> LaunchConfig
-        // style method.
-        let game_server_results = GameServerResults {
-            // these fields don't matter
-            name: "".to_string(),
-            display_name: "".to_string(),
-            version: "".to_string(),
-            creation_timestamp: Time(Utc::now()),
+        if let Some(status) = game_server.status {
+            info!(
+                "Launching game client with server host {:?}:{}",
+                status.ip, status.port
+            );
 
-            // these fields matter
-            ip: Some(launch_options.ip),
-            port: launch_options.port,
-            netimgui_port: launch_options.netimgui_port,
-        };
+            // Assume this GameServerResults type will become an engine-specific type in the future.
+            // Right now, we're asking the client to basically look up game servers, then send us back
+            // the IP, port, and netimgui port, and that seems inefficient. We should be able to have the client
+            // send us a unique identifier for the server, and then we can call a generic GameServer -> LaunchConfig
+            // style method.
+            let game_server_results = GameServerResults {
+                // these fields don't matter
+                name: "".to_string(),
+                display_name: "".to_string(),
+                version: "".to_string(),
+                creation_timestamp: Time(Utc::now()),
 
-        let args = state.engine.create_launch_args(
-            state.app_config.read().clone(),
-            state.repo_config.read().clone(),
-            game_server_results,
-        );
-        let child = match state.engine.launch(local_path, args) {
-            Ok(child) => child,
-            Err(e) => {
-                error!("Failed to launch game client with error: {}", e);
-                return Err(CoreError::Internal(e));
-            }
-        };
+                // these fields matter
+                ip: status.ip,
+                port: status.port,
+                netimgui_port: status.netimgui_port,
+            };
 
-        if let Some(mut child) = child {
-            if state.app_config.read().record_play {
-                let client = obs::Client::default();
-                match client.start_recording().await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        return Err(e);
-                    }
-                };
+            let args = state.engine.create_launch_args(
+                state.app_config.read().clone(),
+                state.repo_config.read().clone(),
+                game_server_results,
+            );
+            let child = match state.engine.launch(local_path, args) {
+                Ok(child) => child,
+                Err(e) => {
+                    error!("Failed to launch game client with error: {}", e);
+                    return Err(CoreError::Internal(e));
+                }
+            };
 
-                tokio::spawn(async move {
-                    match child.wait() {
+            if let Some(mut child) = child {
+                if state.app_config.read().record_play {
+                    let client = obs::Client::default();
+                    match client.start_recording().await {
                         Ok(_) => {}
                         Err(e) => {
-                            error!("Error waiting for child: {}", e);
+                            return Err(e);
                         }
-                    }
-                    match client.stop_recording().await {
-                        Ok(_) => {}
-                        Err(_) => {
-                            error!("Error stopping recording");
+                    };
+
+                    tokio::spawn(async move {
+                        match child.wait() {
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("Error waiting for child: {}", e);
+                            }
                         }
-                    }
-                });
+                        match client.stop_recording().await {
+                            Ok(_) => {}
+                            Err(_) => {
+                                error!("Error stopping recording");
+                            }
+                        }
+                    });
+                }
             }
         }
     }

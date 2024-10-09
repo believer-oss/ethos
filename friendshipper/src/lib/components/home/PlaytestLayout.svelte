@@ -143,6 +143,7 @@
 			artifactEntry: entry,
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
+				name: server.name,
 				ip: server.ip,
 				port: server.port,
 				netimguiPort: server.netimguiPort
