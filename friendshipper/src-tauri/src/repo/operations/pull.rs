@@ -6,7 +6,6 @@ use axum::{async_trait, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info, instrument};
 
-use crate::engine::EngineProvider;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
@@ -22,6 +21,7 @@ use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
 use crate::config::RepoConfigRef;
+use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::repo::operations::UpdateEngineOp;
 use crate::state::AppState;
@@ -49,6 +49,29 @@ where
 {
     #[instrument(name = "PullOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
+        // We stash changes when switching back to main to avoid cases where local changes may conflict
+        // with changes on main. If the stash wasn't restored for whatever reason (e.g. early out due
+        // to no changes, or an error)
+        let mut did_stash: bool = false;
+        let result = self.execute_internal(&mut did_stash).await;
+
+        if did_stash {
+            self.git_client.stash(git::StashAction::Pop).await?;
+        }
+
+        result
+    }
+
+    fn get_name(&self) -> String {
+        String::from("RepoPull")
+    }
+}
+
+impl<T> PullOp<T>
+where
+    T: EngineProvider,
+{
+    async fn execute_internal(&self, did_stash: &mut bool) -> Result<(), CoreError> {
         info!("Pulling repo");
         let github_username = self
             .github_client
@@ -65,8 +88,8 @@ where
                 engine: self.engine.clone(),
                 git_client: self.git_client.clone(),
                 github_username: github_username.clone(),
-                aws_client: Some(self.aws_client.clone()),
-                storage: Some(self.storage.clone()),
+                aws_client: None,
+                storage: None,
                 allow_offline_communication: false,
                 skip_engine_update: false,
             };
@@ -102,7 +125,6 @@ where
         // whatever commits happened locally. This lets us cleanly resolve the commits made in the local
         // Quick Submit branch with the commits that have flowed through the merge queue, and avoids
         // potential conflicts when making another Quick Submit.
-        let mut did_stash: bool = false;
         if is_quicksubmit_branch(&branch) {
             let github_client = match &self.github_client {
                 Some(c) => c,
@@ -117,7 +139,7 @@ where
                 )));
             }
 
-            did_stash = self.git_client.stash(git::StashAction::Push).await?;
+            *did_stash = self.git_client.stash(git::StashAction::Push).await?;
             let trunk_branch = self.repo_config.read().trunk_branch.clone();
             self.git_client.checkout(&trunk_branch).await?;
 
@@ -149,22 +171,14 @@ where
                 status_op.execute().await?;
             }
         } else {
-            // If we're not on a Quick Submit branch, update the status and check for conflicts.
-            let status_op = StatusOp {
-                repo_status: self.repo_status.clone(),
-                repo_config: self.repo_config.clone(),
-                engine: self.engine.clone(),
-                app_config: self.app_config.clone(),
-                git_client: self.git_client.clone(),
-                github_username: github_username.clone(),
-                aws_client: Some(self.aws_client.clone()),
-                storage: Some(self.storage.clone()),
-                allow_offline_communication: false,
-                skip_engine_update: true,
-            };
-
-            status_op.execute().await?;
-
+            // If we're not on a Quick Submit branch, just check for conflicts from the last status check
+            //
+            // Note that we do NOT check to see if there are upstream conflicts if this is a Quick Submit branch. Typically
+            // this shouldn't be an issue since most content creators will be using Quick Submit to submit changes, and checking for
+            // conflicts after switching over from a Quick Submit branch will always yield false positives, as the commits from the
+            // f11r branch will almost always have a different SHA since there will likely have been other changes that have gone in
+            // since the submitter synced. Since we pull using a rebase, the local commits will be safely merged with the upstream ones
+            // and essentially disappear.
             let repo_status = self.repo_status.read();
             if !repo_status.conflicts.is_empty() {
                 return Err(CoreError::Input(anyhow!(
@@ -174,13 +188,6 @@ where
         }
 
         // Check repo status to see if we need to pull at all.
-        //
-        // Note that we do NOT check to see if there are upstream conflicts if this is a Quick Submit branch. Typically
-        // this shouldn't be an issue since most content creators will be using Quick Submit to submit changes, and checking for
-        // conflicts after switching over from a Quick Submit branch will always yield false positives, as the commits from the
-        // f11r branch will almost always have a different SHA since there will likely have been other changes that have gone in
-        // since the submitter synced. Since we pull using a rebase, the local commits will be safely merged with the upstream ones
-        // and essentially disappear.
         {
             let repo_status = self.repo_status.read().clone();
             if repo_status.commits_behind == 0 {
@@ -220,7 +227,8 @@ where
             }
         }
 
-        if did_stash {
+        if *did_stash {
+            *did_stash = false; // don't let the outer code run another 'stash pop' since we're handling it here
             self.git_client.stash(git::StashAction::Pop).await?;
         }
 
@@ -343,10 +351,6 @@ where
         }
 
         Ok(())
-    }
-
-    fn get_name(&self) -> String {
-        String::from("RepoPull")
     }
 }
 
