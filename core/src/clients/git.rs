@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use tempfile::NamedTempFile;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
@@ -373,17 +375,25 @@ impl Git {
             bail!("Cannot manually snapshot deleted files");
         }
 
-        let mut args = vec!["add", "--"];
-
         if paths.is_empty() {
-            args.push(".");
-        }
+            self.run(&["add", "--", "."], Opts::default()).await?;
+        } else {
+            let mut temp_file = NamedTempFile::new()?;
+            for path in &paths {
+                writeln!(temp_file, "{}", path)?;
+            }
+            temp_file.flush()?;
 
-        for path in &paths {
-            args.push(path);
+            self.run(
+                &[
+                    "add",
+                    "--pathspec-from-file",
+                    temp_file.path().to_str().unwrap(),
+                ],
+                Opts::default(),
+            )
+            .await?;
         }
-
-        self.run(&args, Opts::default()).await?;
 
         let stash_message = format!("{} {}", SNAPSHOT_PREFIX, message);
         let mut stash_create_args = vec!["stash", "create"];
@@ -391,15 +401,19 @@ impl Git {
             stash_create_args.push("--keep-index");
         }
 
-        stash_create_args.push("--");
-
         // if paths is empty, stash everything
+        let mut temp_file = NamedTempFile::new()?;
         if paths.is_empty() {
             stash_create_args.push(".");
-        }
+        } else {
+            // set up a temp file
+            for path in &paths {
+                writeln!(temp_file, "{}", path)?;
+            }
+            temp_file.flush()?;
 
-        for path in &paths {
-            stash_create_args.push(path);
+            stash_create_args.push("--pathspec-from-file");
+            stash_create_args.push(temp_file.path().to_str().unwrap());
         }
 
         // We use the stash create and store commands because stash push modifies the working
@@ -427,10 +441,15 @@ impl Git {
             }
         }
 
-        let mut args = vec!["reset", "--"];
+        let mut temp_file = NamedTempFile::new()?;
         for path in &paths {
-            args.push(path);
+            writeln!(temp_file, "{}", path)?;
         }
+        temp_file.flush()?;
+
+        let mut args = vec!["reset"];
+        args.push("--pathspec-from-file");
+        args.push(temp_file.path().to_str().unwrap());
 
         self.run(&args, Opts::default()).await?;
 
@@ -476,12 +495,22 @@ impl Git {
         self.run(&apply_args, Opts::default()).await?;
 
         // reset so everything is unstaged
-        let mut args = vec!["reset", "--"];
-        for file in files.lines() {
-            args.push(file);
+        let mut temp_file = NamedTempFile::new()?;
+        for path in files.lines() {
+            writeln!(temp_file, "{}", path)?;
         }
+        temp_file.flush()?;
 
-        self.run(&args, Opts::default()).await
+        self.run(
+            &[
+                "reset",
+                "--pathspec-from-file",
+                temp_file.path().to_str().unwrap(),
+            ],
+            Opts::default(),
+        )
+        .await
+        .map_err(|e| anyhow!("Failed to reset: {}", e))
     }
 
     pub async fn delete_branch(&self, branch: &str, branch_type: BranchType) -> anyhow::Result<()> {
