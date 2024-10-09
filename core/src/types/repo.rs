@@ -144,6 +144,7 @@ pub struct RepoStatus {
     pub repo_name: String,
 
     // commits
+    pub commit_head: String,
     pub commits_ahead: u32,
     pub commits_behind: u32,
     pub commits_ahead_of_trunk: u32,
@@ -185,6 +186,7 @@ impl RepoStatus {
             remote_branch: String::new(),
             repo_owner: String::new(),
             repo_name: String::new(),
+            commit_head: String::new(),
             commits_ahead: 0,
             commits_behind: 0,
             commits_ahead_of_trunk: 0,

@@ -111,6 +111,11 @@ impl StatusOp {
             );
         }
 
+        status.commit_head = self
+            .git_client
+            .head_commit(git::CommitFormat::Long, git::CommitHead::Local)
+            .await?;
+
         status.commits_ahead_of_trunk = status.commits_ahead;
         status.commits_behind_trunk = status.commits_behind;
 
