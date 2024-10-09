@@ -14,7 +14,5 @@ pub struct SyncClientRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchOptions {
-    pub ip: String,
-    pub port: i32,
-    pub netimgui_port: i32,
+    pub name: String,
 }

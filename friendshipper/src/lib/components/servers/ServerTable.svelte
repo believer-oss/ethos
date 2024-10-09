@@ -53,14 +53,13 @@
 			return;
 		}
 
+		console.log(server);
 		syncing = true;
 		const req: SyncClientRequest = {
 			artifactEntry: entry,
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
-				ip: server.ip,
-				port: server.port,
-				netimguiPort: server.netimguiPort
+				name: server.name
 			}
 		};
 
