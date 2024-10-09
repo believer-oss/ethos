@@ -487,7 +487,13 @@
 	const showInExplorer = async (file: Nullable<LFSFile>) => {
 		if (file === null) return;
 
-		const directory = `${$appConfig.repoPath}/${$currentRoot}`;
+		let directory: string;
+		if (useFileTreeView) {
+			const parentPath = file.path.substring(0, file.path.lastIndexOf('/'));
+			directory = `${$appConfig.repoPath}/${parentPath}`;
+		} else {
+			directory = `${$appConfig.repoPath}/${$currentRoot}`;
+		}
 
 		await openUrl(directory);
 	};
