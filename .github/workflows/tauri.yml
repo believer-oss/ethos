@@ -23,9 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          #   - platform: "macos-latest-xlarge" # for Arm based macs (M1 and above).
-          #     runner: "macos-latest-xlarge"
-          #     args: "--target aarch64-apple-darwin"
+          - platform: "macos-latest-xlarge" # for Arm based macs (M1 and above).
+            runner: "macos-latest-xlarge"
+            args: "--target aarch64-apple-darwin"
           #   - platform: "macos-latest-xlarge" # for Intel based macs.
           #     runner: "macos-latest-xlarge"
           #     args: "--target x86_64-apple-darwin"
