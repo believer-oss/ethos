@@ -341,7 +341,7 @@ where
                     .await?;
             }
         } else {
-            f11r_branch = prev_branch;
+            f11r_branch.clone_from(&prev_branch);
         }
 
         let status_op = StatusOp {
@@ -407,150 +407,168 @@ where
 
             commit_op.execute().await?;
 
+            // push up the branch - this way the commit's files are saved to the remote
+            self.git_client.push(&f11r_branch).await?;
+
             // update status now that the files have been committed and there aren't any more
             // staged files
             status_op.execute().await?;
         }
 
-        let worktree_path: PathBuf = 'path: {
-            let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
+        if is_quicksubmit_branch(&prev_branch) {
+            let worktree_path: PathBuf = 'path: {
+                let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
 
-            let worktrees = self.git_client.list_worktrees().await?;
-            for tree in worktrees.iter() {
-                if tree.directory != repo_path {
-                    // if the directory exists on disk, break
-                    if tree.directory.exists() {
-                        break 'path tree.directory.clone();
+                let worktrees = self.git_client.list_worktrees().await?;
+                for tree in worktrees.iter() {
+                    if tree.directory != repo_path {
+                        // if the directory exists on disk, break
+                        if tree.directory.exists() {
+                            break 'path tree.directory.clone();
+                        }
+
+                        // if the directory doesn't exist, remove the worktree
+                        self.git_client
+                            .run(
+                                &[
+                                    "worktree",
+                                    "remove",
+                                    tree.directory.to_string_lossy().as_ref(),
+                                ],
+                                Default::default(),
+                            )
+                            .await?;
                     }
+                }
 
-                    // if the directory doesn't exist, remove the worktree
-                    self.git_client
-                        .run(
-                            &[
-                                "worktree",
-                                "remove",
-                                tree.directory.to_string_lossy().as_ref(),
-                            ],
-                            Default::default(),
-                        )
+                let repo_folder_name: String = repo_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+
+                // create worktree if it doesn't exist yet
+                let mut worktree_path = repo_path.clone();
+                worktree_path.pop();
+                worktree_path.push(format!(".{}-wt", repo_folder_name));
+
+                self.git_client
+                    .run(
+                        &[
+                            "worktree",
+                            "add",
+                            "--detach",
+                            &worktree_path.to_string_lossy(),
+                        ],
+                        git::Opts::default().with_lfs_stubs(),
+                    )
+                    .await?;
+
+                worktree_path.clone()
+            };
+
+            let worktree_branch = format!("{}-wt", f11r_branch);
+
+            let mut git_client_worktree = self.git_client.clone();
+            git_client_worktree.repo_path.clone_from(&worktree_path);
+
+            // To make the worktree as cheap as possible, we need to make sure no LFS files are checked out and
+            // they remain stubs
+            let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
+
+            // resolve changes with latest main and push up to the remote
+            {
+                let worktree_prev_branch = git_client_worktree.current_branch().await?;
+
+                // delete the worktree branch if it exists - we need to make one that matches the state of
+                // f11r_branch exactly, and the old worktree branch will likely have changes from main mixed
+                // up into it.
+                if worktree_branch == worktree_prev_branch {
+                    _ = git_client_worktree
+                        .run(&["checkout", "--detach"], git_opts_lfs_stubs)
+                        .await;
+                    _ = git_client_worktree
+                        .delete_branch(&worktree_branch, git::BranchType::Local)
+                        .await;
+                }
+
+                // Checkout a new branch for the worktree in the same state as the f11r branch
+                self.git_client
+                    .run(&["branch", &worktree_branch], git::Opts::default())
+                    .await?;
+
+                // now we can resolve any new changes in main with the current changes and push up to the remote
+                git_client_worktree
+                    .run(&["checkout", &worktree_branch], git_opts_lfs_stubs)
+                    .await?;
+                git_client_worktree
+                    .run(&["fetch", "origin", &base_branch], git_opts_lfs_stubs)
+                    .await?;
+                git_client_worktree
+                    .run(
+                        &["rebase", &format!("origin/{}", base_branch)],
+                        git_opts_lfs_stubs,
+                    )
+                    .await?;
+
+                // force is needed when pushing changes because we may be reusing a remote branch
+                git_client_worktree
+                    .run(
+                        &["push", "-f", "origin", &worktree_branch],
+                        git::Opts::default(),
+                    )
+                    .await?;
+
+                // cleanup old branch
+                if worktree_branch != worktree_prev_branch
+                    && is_quicksubmit_branch(&worktree_prev_branch)
+                {
+                    git_client_worktree
+                        .delete_branch(&worktree_prev_branch, git::BranchType::Local)
                         .await?;
                 }
             }
 
-            let repo_folder_name: String = repo_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            // If we already have a PR, requeue it. Otherwise just make a new PR and submit it to the merge queue
+            match quicksubmit_pr_id {
+                Some(pr_id) => {
+                    self.github_client.enqueue_pull_request(pr_id).await?;
+                }
+                None => {
+                    let gh_op = GitHubSubmitOp {
+                        head_branch: worktree_branch.clone(),
+                        base_branch: base_branch.clone(),
+                        token: self.token.clone(),
+                        commit_message: self.commit_message.clone(),
+                        repo_status: self.repo_status.clone(),
+                        client: self.github_client.clone(),
+                    };
 
-            // create worktree if it doesn't exist yet
-            let mut worktree_path = repo_path.clone();
-            worktree_path.pop();
-            worktree_path.push(format!(".{}-wt", repo_folder_name));
+                    gh_op.execute().await?;
+                }
+            }
 
-            self.git_client
-                .run(
-                    &[
-                        "worktree",
-                        "add",
-                        "--detach",
-                        &worktree_path.to_string_lossy(),
-                    ],
-                    git::Opts::default().with_lfs_stubs(),
-                )
-                .await?;
+            // cleanup worktree branch
+            _ = git_client_worktree
+                .run(&["checkout", "--detach"], git_opts_lfs_stubs)
+                .await;
+            _ = git_client_worktree
+                .delete_branch(&worktree_branch, git::BranchType::Local)
+                .await;
 
-            worktree_path.clone()
+            return Ok(());
+        }
+
+        let gh_op = GitHubSubmitOp {
+            head_branch: f11r_branch.clone(),
+            base_branch: base_branch.clone(),
+            token: self.token.clone(),
+            commit_message: self.commit_message.clone(),
+            repo_status: self.repo_status.clone(),
+            client: self.github_client.clone(),
         };
 
-        let worktree_branch = format!("{}-wt", f11r_branch);
-
-        let mut git_client_worktree = self.git_client.clone();
-        git_client_worktree.repo_path.clone_from(&worktree_path);
-
-        // To make the worktree as cheap as possible, we need to make sure no LFS files are checked out and
-        // they remain stubs
-        let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
-
-        // resolve changes with latest main and push up to the remote
-        {
-            let worktree_prev_branch = git_client_worktree.current_branch().await?;
-
-            // delete the worktree branch if it exists - we need to make one that matches the state of
-            // f11r_branch exactly, and the old worktree branch will likely have changes from main mixed
-            // up into it.
-            if worktree_branch == worktree_prev_branch {
-                _ = git_client_worktree
-                    .run(&["checkout", "--detach"], git_opts_lfs_stubs)
-                    .await;
-                _ = git_client_worktree
-                    .delete_branch(&worktree_branch, git::BranchType::Local)
-                    .await;
-            }
-
-            // Checkout a new branch for the worktree in the same state as the f11r branch
-            self.git_client
-                .run(&["branch", &worktree_branch], git::Opts::default())
-                .await?;
-
-            // now we can resolve any new changes in main with the current changes and push up to the remote
-            git_client_worktree
-                .run(&["checkout", &worktree_branch], git_opts_lfs_stubs)
-                .await?;
-            git_client_worktree
-                .run(&["fetch", "origin", &base_branch], git_opts_lfs_stubs)
-                .await?;
-            git_client_worktree
-                .run(
-                    &["rebase", &format!("origin/{}", base_branch)],
-                    git_opts_lfs_stubs,
-                )
-                .await?;
-
-            // force is needed when pushing changes because we may be reusing a remote branch
-            git_client_worktree
-                .run(
-                    &["push", "-f", "origin", &worktree_branch],
-                    git::Opts::default(),
-                )
-                .await?;
-
-            // cleanup old branch
-            if worktree_branch != worktree_prev_branch
-                && is_quicksubmit_branch(&worktree_prev_branch)
-            {
-                git_client_worktree
-                    .delete_branch(&worktree_prev_branch, git::BranchType::Local)
-                    .await?;
-            }
-        }
-
-        // If we already have a PR, requeue it. Otherwise just make a new PR and submit it to the merge queue
-        match quicksubmit_pr_id {
-            Some(pr_id) => {
-                self.github_client.enqueue_pull_request(pr_id).await?;
-            }
-            None => {
-                let gh_op = GitHubSubmitOp {
-                    head_branch: worktree_branch.clone(),
-                    base_branch: base_branch.clone(),
-                    token: self.token.clone(),
-                    commit_message: self.commit_message.clone(),
-                    repo_status: self.repo_status.clone(),
-                    client: self.github_client.clone(),
-                };
-
-                gh_op.execute().await?;
-            }
-        }
-
-        // cleanup worktree branch
-        _ = git_client_worktree
-            .run(&["checkout", "--detach"], git_opts_lfs_stubs)
-            .await;
-        _ = git_client_worktree
-            .delete_branch(&worktree_branch, git::BranchType::Local)
-            .await;
+        gh_op.execute().await?;
 
         Ok(())
     }

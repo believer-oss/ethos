@@ -13,6 +13,7 @@ use tempfile::NamedTempFile;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
+use tracing::warn;
 use tracing::{debug, error, info, instrument};
 
 use crate::types::errors::CoreError;
@@ -351,6 +352,7 @@ impl Git {
         Ok(snapshots)
     }
 
+    #[instrument(name = "save_snapshot_all", skip_all, fields(message, keep_index))]
     pub async fn save_snapshot_all(
         &self,
         message: &str,
@@ -359,6 +361,7 @@ impl Git {
         self.save_snapshot(message, vec![], keep_index).await
     }
 
+    #[instrument(name = "save_snapshot", skip_all, fields(message, keep_index))]
     pub async fn save_snapshot(
         &self,
         message: &str,
@@ -779,6 +782,19 @@ impl Git {
         opts: Opts<'a>,
         output: &mut Option<String>,
     ) -> anyhow::Result<()> {
+        let message = if args.len() <= 8 {
+            format!("Running 'git {}'", args.join(" "))
+        } else {
+            format!(
+                "Running 'git {} (+ {} more)'",
+                args[..8].join(" "),
+                args.len() - 8
+            )
+        };
+
+        if let Err(e) = self.tx.send(message) {
+            warn!("Failed to send git command message: {}", e);
+        }
         let mut cmd = Command::new("git");
         for arg in args {
             cmd.arg(arg);
@@ -830,7 +846,6 @@ impl Git {
         let out_lines: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(vec![]));
         let err_lines: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(vec![]));
 
-        let tx = self.tx.clone();
         let out_lines_thread = out_lines.clone();
         let is_collecting_out_lines = output.is_some();
         let should_log_stdout = opts.should_log_stdout;
@@ -850,18 +865,15 @@ impl Git {
                 }
                 if should_log_stdout {
                     info!("{}", line);
-                    tx.send(line).expect("Failed to send git stdout line");
                 }
             }
         });
 
-        let tx = self.tx.clone();
         let err_lines_thread = err_lines.clone();
         tokio::spawn(async move {
             while let Some(line) = err_reader.next_line().await.unwrap() {
                 err_lines_thread.write().push(line.clone());
                 info!("{}", line);
-                tx.send(line).expect("Failed to send git stderr line");
             }
         });
 
