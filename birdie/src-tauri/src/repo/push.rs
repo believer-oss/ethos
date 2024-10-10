@@ -59,15 +59,13 @@ pub async fn push_handler(
     info!("push request: {:?}", request);
 
     // start by adding our files
-    for chunk in request.files.chunks(50) {
-        let add_op = AddOp {
-            files: chunk.to_vec(),
-            git_client: state.git(),
-        };
+    let add_op = AddOp {
+        files: request.files.clone(),
+        git_client: state.git(),
+    };
 
-        // block on add
-        add_op.execute().await?;
-    }
+    // block on add
+    add_op.execute().await?;
 
     // unstage any files that are staged but not in the request
     let mut staged_files = Vec::new();
@@ -87,15 +85,13 @@ pub async fn push_handler(
         .collect();
 
     if !files_to_unstage.is_empty() {
-        for chunk in files_to_unstage.chunks(50) {
-            let restore_op = RestoreOp {
-                files: chunk.to_vec(),
-                git_client: state.git(),
-            };
+        let restore_op = RestoreOp {
+            files: files_to_unstage,
+            git_client: state.git(),
+        };
 
-            // block on restore
-            restore_op.execute().await?;
-        }
+        // block on restore
+        restore_op.execute().await?;
     }
 
     // force a status update

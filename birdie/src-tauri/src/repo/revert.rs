@@ -1,9 +1,11 @@
 use std::fs;
+use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, debug_handler, Json};
+use tempfile::NamedTempFile;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{info, instrument};
 
@@ -33,11 +35,18 @@ impl Task for RevertFilesOp {
         }
 
         let branch = self.repo_status.read().branch.clone();
-        let mut args: Vec<&str> = vec!["checkout", &branch, "--"];
-
+        let mut temp_file = NamedTempFile::new()?;
         for file in &self.files {
-            args.push(file);
+            writeln!(temp_file, "{}", file)?;
         }
+        temp_file.flush()?;
+
+        let args = vec![
+            "checkout",
+            &branch,
+            "--pathspec-from-file",
+            temp_file.path().to_str().unwrap(),
+        ];
 
         self.git_client.run(&args, git::Opts::default()).await?;
 
@@ -107,17 +116,13 @@ pub async fn revert_files_handler(
     }
 
     if !modified.is_empty() {
-        for chunk in modified.chunks(50) {
-            let op = {
-                RevertFilesOp {
-                    git_client: state.git(),
-                    repo_status: state.repo_status.clone(),
-                    files: chunk.iter().map(|f| f.path.clone()).collect(),
-                }
-            };
+        let op = RevertFilesOp {
+            git_client: state.git(),
+            repo_status: state.repo_status.clone(),
+            files: modified.iter().map(|f| f.path.clone()).collect(),
+        };
 
-            sequence.push(Box::new(op));
-        }
+        sequence.push(Box::new(op));
     }
 
     let github_pat = state

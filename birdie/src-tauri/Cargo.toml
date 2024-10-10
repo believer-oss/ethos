@@ -31,6 +31,7 @@ serde_with = { workspace = true }
 serde_yaml = { workspace = true }
 sysinfo = { workspace = true }
 tauri = { workspace = true, features = ["fs-read-file"] }
+tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tower-http = { workspace = true }
@@ -50,9 +51,6 @@ gix-config = "0.38.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
-
-[dev-dependencies]
-tempfile = { workspace = true }
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }

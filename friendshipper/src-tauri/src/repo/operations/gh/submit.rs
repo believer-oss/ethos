@@ -359,15 +359,12 @@ where
 
         // commit changes
         {
-            // need to chunk the adds due to commandline length limitations
-            for chunk in self.files.chunks(50) {
-                let add_op = AddOp {
-                    files: chunk.to_vec(),
-                    git_client: self.git_client.clone(),
-                };
+            let add_op = AddOp {
+                files: self.files.clone(),
+                git_client: self.git_client.clone(),
+            };
 
-                add_op.execute().await?;
-            }
+            add_op.execute().await?;
 
             // unstage any files that are staged but not in the request
             let mut staged_files = Vec::new();
@@ -387,14 +384,12 @@ where
                 .collect();
 
             if !files_to_unstage.is_empty() {
-                for chunk in files_to_unstage.chunks(50) {
-                    let restore_op = RestoreOp {
-                        files: chunk.to_vec(),
-                        git_client: self.git_client.clone(),
-                    };
+                let restore_op = RestoreOp {
+                    files: files_to_unstage,
+                    git_client: self.git_client.clone(),
+                };
 
-                    restore_op.execute().await?;
-                }
+                restore_op.execute().await?;
             }
 
             // We can skip the status check because we know for a fact that there are staged files
