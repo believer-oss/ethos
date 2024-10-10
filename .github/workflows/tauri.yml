@@ -122,7 +122,7 @@ jobs:
           TAG=${{ github.event.inputs.app }}-v${{ needs.publish-tauri.outputs.appVersion }}
           gh release download $TAG --pattern "latest.json"
           mv latest.json ${{ github.event.inputs.app }}.json
-          gh release upload $TAG ${{ github.event.inputs.app }}.json
+          gh release upload $TAG ${{ github.event.inputs.app }}.json --clobber
           gh release delete-asset $TAG latest.json
 
       - name: Upload other app JSON files
@@ -141,7 +141,7 @@ jobs:
           # Upload all JSON files except the current app's JSON
           for file in temp/*.json; do
             if [ "$(basename $file)" != "$CURRENT_APP" ]; then
-              gh release upload $TAG $file
+              gh release upload $TAG $file --clobber
             fi
           done
 
