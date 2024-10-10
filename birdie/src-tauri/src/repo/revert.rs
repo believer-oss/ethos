@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, debug_handler, Json};
 use tokio::sync::oneshot::error::RecvError;
-use tracing::info;
+use tracing::{info, instrument};
 
 use ethos_core::clients::git;
 use ethos_core::operations::LockOp;
@@ -26,6 +26,7 @@ pub struct RevertFilesOp {
 // Note: This is not "git revert", it's "git checkout -- <files>"
 #[async_trait]
 impl Task for RevertFilesOp {
+    #[instrument(name = "RevertFilesOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         if self.files.is_empty() {
             return Err(CoreError::Input(anyhow!("no files provided")));
@@ -49,6 +50,7 @@ impl Task for RevertFilesOp {
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn revert_files_handler(
     State(state): State<Arc<AppState>>,
     Json(request): Json<RevertFilesRequest>,

@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::{debug_handler, Json};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as TokioRwLock;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 use walkdir::WalkDir;
 
 use ethos_core::clients::git;
@@ -66,6 +66,7 @@ impl LockCache {
         self.repo_path = repo_path;
     }
 
+    #[instrument(name = "LockCache::populate_cache", skip(self))]
     pub async fn populate_cache(&mut self) -> Result<(), anyhow::Error> {
         if self.repo_path.is_empty() {
             warn!("No repo path currently configured, skipping lock cache population.");
@@ -102,6 +103,7 @@ impl LockCache {
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn lock_files(
     State(state): State<Arc<AppState>>,
     Json(request): Json<LockRequest>,
@@ -195,6 +197,7 @@ pub async fn lock_files(
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn unlock_files(
     State(state): State<Arc<AppState>>,
     Json(request): Json<LockRequest>,
@@ -229,6 +232,7 @@ pub async fn unlock_files(
     Ok(resp)
 }
 
+#[instrument(skip(state))]
 async fn internal_lock_handler(
     state: Arc<AppState>,
     request: LockRequest,
