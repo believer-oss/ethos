@@ -105,6 +105,23 @@ fn main() -> Result<(), CoreError> {
 
         let (log_path, _otel_reload_handle) = match repo_config {
             Some(repo_config) => {
+                // if either oltp_endpoint or otlp_headers are Some and empty, return an error
+                if let Some(endpoint) = &repo_config.otlp_endpoint {
+                    if endpoint.is_empty() {
+                        return Err(CoreError::Input(anyhow::anyhow!(
+                            "otlp_endpoint cannot be empty"
+                        )));
+                    }
+                }
+
+                if let Some(headers) = &repo_config.otlp_headers {
+                    if headers.is_empty() {
+                        return Err(CoreError::Input(anyhow::anyhow!(
+                            "otlp_headers cannot be empty"
+                        )));
+                    }
+                }
+
                 let init_result = tauri::async_runtime::block_on(async {
                     // get username from git config
                     let (tx, rx) = std::sync::mpsc::channel::<String>();
