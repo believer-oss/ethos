@@ -139,8 +139,6 @@ where
             );
         }
 
-        info!(%status.branch, %status.remote_branch, "branch");
-
         // if we're not on the main branch, we need to get the ahead/behind counts
         let trunk_branch = self.repo_config.read().trunk_branch.clone();
         let remote_trunk_branch = format!("origin/{}", trunk_branch);
@@ -155,6 +153,21 @@ where
             status.commits_ahead_of_trunk = status.commits_ahead;
             status.commits_behind_trunk = status.commits_behind;
         }
+
+        status.commit_head = self
+            .git_client
+            .head_commit(git::CommitFormat::Long, git::CommitHead::Local)
+            .await?;
+
+        info!(
+                %status.branch,
+                %status.remote_branch,
+                %status.commit_head,
+                %status.detached_head,
+                %status.commits_ahead_of_trunk,
+                ?status.commits_behind_trunk,
+                "local state"
+        );
 
         // check modified files in local commits
         let mut modified_committed: Vec<String> = vec![];
