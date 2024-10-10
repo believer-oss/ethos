@@ -77,12 +77,14 @@ impl EngineProvider for UnrealEngineProvider {
 
     #[instrument(skip(self, status))]
     async fn send_status_update(&self, status: &RepoStatus) {
-        let client = reqwest::Client::new();
-        _ = client
-            .post("http://localhost:8091/friendshipper-ue/status/update".to_string())
-            .json(status)
-            .send()
-            .await;
+        if self.is_editor_process_running() {
+            let client = reqwest::Client::new();
+            _ = client
+                .post("http://localhost:8091/friendshipper-ue/status/update".to_string())
+                .json(status)
+                .send()
+                .await;
+        }
     }
 
     async fn check_ready_to_sync_repo(&self) -> Result<()> {
