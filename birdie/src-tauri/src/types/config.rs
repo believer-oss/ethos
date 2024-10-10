@@ -28,3 +28,12 @@ pub struct BirdieConfig {
     #[serde(default)]
     pub initialized: bool,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BirdieRepoConfig {
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_endpoint")]
+    pub otlp_endpoint: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_headers")]
+    pub otlp_headers: Option<String>,
+}

@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::Json;
 use gix_config::Source;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, instrument};
 
 use ethos_core::types::errors::CoreError;
 
@@ -19,6 +19,7 @@ pub struct DownloadFilesRequest {
     pub include_wip: bool,
 }
 
+#[instrument(skip(state))]
 pub async fn download_files(
     State(state): State<Arc<AppState>>,
     Json(request): Json<DownloadFilesRequest>,
@@ -41,6 +42,7 @@ pub async fn download_files(
     Ok(())
 }
 
+#[instrument(skip(state))]
 pub async fn get_fetch_include(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<String>>, CoreError> {
@@ -63,6 +65,7 @@ pub struct DeleteFetchIncludeRequest {
     pub files: Vec<String>,
 }
 
+#[instrument(skip(state))]
 pub async fn del_fetch_include(
     State(state): State<Arc<AppState>>,
     Json(request): Json<DeleteFetchIncludeRequest>,

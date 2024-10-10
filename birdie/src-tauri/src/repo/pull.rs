@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::{async_trait, debug_handler, extract::State, Json};
 use tokio::sync::oneshot::error::RecvError;
-use tracing::info;
+use tracing::{info, instrument};
 
 use crate::types::config::BirdieConfig;
 use ethos_core::clients::git;
@@ -28,6 +28,7 @@ pub struct PullOp {
 
 #[async_trait]
 impl Task for PullOp {
+    #[instrument(skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         {
             let status_op = {

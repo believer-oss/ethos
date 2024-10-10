@@ -1014,6 +1014,7 @@ dependencies = [
  "config",
  "directories-next",
  "ethos-core",
+ "fix-path-env",
  "fs_extra",
  "futures",
  "gix-config",

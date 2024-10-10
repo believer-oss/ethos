@@ -3,14 +3,14 @@ use std::sync::Arc;
 use axum::extract::{Query, State};
 use axum::{debug_handler, Json};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, instrument};
 
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{CommitFileInfo, ShowCommitFilesResponse};
 
 use crate::state::AppState;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ShowCommitFilesParams {
     commit: String,
 
@@ -19,6 +19,7 @@ pub struct ShowCommitFilesParams {
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn show_commit_files(
     State(state): State<Arc<AppState>>,
     params: Query<ShowCommitFilesParams>,
