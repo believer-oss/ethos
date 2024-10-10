@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{debug_handler, Json};
-use tracing::info;
+use tracing::{info, instrument};
 
 use ethos_core::operations::RebaseOp;
 use ethos_core::types::errors::CoreError;
@@ -14,6 +14,7 @@ use ethos_core::worker::TaskSequence;
 use crate::state::AppState;
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
@@ -32,6 +33,7 @@ pub async fn rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), Co
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn rebase_status_handler(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RebaseStatusResponse>, CoreError> {
@@ -47,6 +49,7 @@ pub async fn rebase_status_handler(
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn remediate_rebase_handler(State(state): State<Arc<AppState>>) -> Result<(), CoreError> {
     if state.git().abort_rebase().await.is_ok() {
         info!("Rebase aborted successfully");

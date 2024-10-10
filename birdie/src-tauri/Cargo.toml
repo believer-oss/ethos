@@ -48,6 +48,9 @@ futures = "0.3.30"
 structopt = "0.3.26"
 gix-config = "0.38.0"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

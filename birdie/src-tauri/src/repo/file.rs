@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 use walkdir::{DirEntry, WalkDir};
 
 use ethos_core::types::commits::Commit;
@@ -56,6 +56,7 @@ pub struct SingleFileRequest {
     pub path: String,
 }
 
+#[instrument(skip(state))]
 pub async fn get_file(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SingleFileRequest>,
@@ -138,6 +139,7 @@ pub struct FileParams {
     pub root: Option<String>,
 }
 
+#[instrument(skip(state))]
 pub async fn get_files(
     State(state): State<Arc<AppState>>,
     params: Query<FileParams>,
@@ -259,6 +261,7 @@ fn is_not_hidden(entry: &DirEntry) -> bool {
         .unwrap_or(false)
 }
 
+#[instrument(skip(state))]
 pub async fn get_all_files(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<String>>, CoreError> {
@@ -290,6 +293,7 @@ pub struct FileHistoryParams {
     pub file: String,
 }
 
+#[instrument(skip(state))]
 pub async fn get_file_history(
     State(state): State<Arc<AppState>>,
     params: Query<FileHistoryParams>,

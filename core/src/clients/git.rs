@@ -711,6 +711,13 @@ impl Git {
         self.run(&["config", key, value], Opts::default()).await
     }
 
+    pub async fn get_username(&self) -> anyhow::Result<String> {
+        let username = self
+            .run_and_collect_output(&["config", "user.name"], Opts::default())
+            .await?;
+        Ok(username)
+    }
+
     pub async fn run_and_collect_output<'a>(
         &self,
         args: &[&str],

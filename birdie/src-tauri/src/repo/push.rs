@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::{async_trait, debug_handler, extract::State, Json};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, instrument};
 
 use ethos_core::clients::git;
 use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
@@ -38,6 +38,7 @@ pub struct PushOp {
 
 #[async_trait]
 impl Task for PushOp {
+    #[instrument(name = "PushOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         self.git_client.push(&self.trunk_branch).await?;
 
@@ -50,6 +51,7 @@ impl Task for PushOp {
 }
 
 #[debug_handler]
+#[instrument(skip(state))]
 pub async fn push_handler(
     State(state): State<Arc<AppState>>,
     Json(request): Json<PushRequest>,
