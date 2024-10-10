@@ -13,7 +13,9 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use reqwest::StatusCode;
 use std::env;
+use std::io::Write;
 use std::path::PathBuf;
+use tempfile::NamedTempFile;
 use tracing::{debug, error, info, instrument, warn};
 
 #[derive(Clone)]
@@ -119,9 +121,14 @@ impl Task for AddOp {
     async fn execute(&self) -> Result<(), CoreError> {
         let mut args = vec!["add"];
 
+        let mut temp_file = NamedTempFile::new()?;
         for file in &self.files {
-            args.push(file);
+            writeln!(temp_file, "{}", file)?;
         }
+        temp_file.flush()?;
+
+        args.push("--pathspec-from-file");
+        args.push(temp_file.path().to_str().unwrap());
 
         self.git_client
             .run(args.as_slice(), Opts::new_without_logs())
@@ -147,9 +154,14 @@ impl Task for RestoreOp {
     async fn execute(&self) -> Result<(), CoreError> {
         let mut args = vec!["restore", "--staged"];
 
+        let mut temp_file = NamedTempFile::new()?;
         for file in &self.files {
-            args.push(file);
+            writeln!(temp_file, "{}", file)?;
         }
+        temp_file.flush()?;
+
+        args.push("--pathspec-from-file");
+        args.push(temp_file.path().to_str().unwrap());
 
         self.git_client
             .run(args.as_slice(), Default::default())

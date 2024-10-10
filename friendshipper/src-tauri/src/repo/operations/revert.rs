@@ -3,6 +3,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use std::fs;
 use std::io::Write;
+use tempfile::NamedTempFile;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
 use tracing::{error, instrument};
@@ -62,13 +63,20 @@ where
             }
         }
 
-        for chunk in self.files.chunks(50) {
-            let mut args: Vec<&str> = vec!["checkout", &branch, "--"];
-            for file in chunk {
-                args.push(file);
-            }
-            self.git_client.run(&args, git::Opts::default()).await?;
+        let mut temp_file = NamedTempFile::new()?;
+        for file in &self.files {
+            writeln!(temp_file, "{}", file)?;
         }
+        temp_file.flush()?;
+
+        let args = vec![
+            "checkout",
+            &branch,
+            "--pathspec-from-file",
+            temp_file.path().to_str().unwrap(),
+        ];
+
+        self.git_client.run(&args, git::Opts::default()).await?;
 
         Ok(())
     }
