@@ -277,6 +277,7 @@ impl Server {
                 git.set_config("maintenance.auto", "0").await?;
                 git.set_config("lfs.setlockablereadonly", "false").await?;
                 git.set_config("http.postBuffer", "524288000").await?;
+                git.configure_untracked_cache().await?;
 
                 startup_tx.send("Installing git hooks".to_string())?;
                 if let Some(git_hooks_path) = git_hooks_path {
