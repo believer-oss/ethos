@@ -34,6 +34,7 @@
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
+	import { fs } from '@tauri-apps/api';
 	import {
 		cloneRepo,
 		delFetchInclude,
@@ -75,6 +76,7 @@
 	import { getAppConfig } from '$lib/config';
 	import { runSetEnv, syncTools } from '$lib/tools';
 	import FileTree from '$lib/components/files/FileTree.svelte';
+	import { FILE_TREE_PATH } from '$lib/consts';
 
 	let loading = false;
 	let allFiles: string[] = [];
@@ -552,13 +554,28 @@
 		showSearchModal = false;
 	};
 
-	const switchView = async (switchTo: boolean) => {
+	const handleSaveFileTree = async () => {
+		await fs.writeFile(FILE_TREE_PATH, JSON.stringify($rootNode, null, 2), {
+			dir: fs.BaseDirectory.AppLocalData
+		});
+	};
+
+	const handleLoadFileTree = async () => {
+		if (await fs.exists(FILE_TREE_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
+			const fileTreeResponse = await fs.readTextFile(FILE_TREE_PATH, {
+				dir: fs.BaseDirectory.AppLocalData
+			});
+			const parsedFileTree = JSON.parse(fileTreeResponse);
+			rootNode.set(parsedFileTree);
+		}
+	};
+
+	const switchView = (switchTo: boolean) => {
 		useFileTreeView = switchTo;
 		$currentRoot = '';
 		$selectedFile = null;
 		selectedFiles = [];
 		commits = [];
-		await refreshFiles();
 	};
 
 	void listen('refresh-files', () => {
@@ -592,7 +609,12 @@
 			class="w-4 h-8"
 			outline={useFileTreeView}
 			on:click={async () => {
-				await switchView(false);
+				if (useFileTreeView) {
+					// only do something if we change views
+					await handleSaveFileTree();
+					switchView(false);
+					await refreshFiles();
+				}
 			}}
 		>
 			<FolderDuplicateOutline class="w-4 h-4" />
@@ -601,7 +623,11 @@
 			class="w-4 h-8"
 			outline={!useFileTreeView}
 			on:click={async () => {
-				await switchView(true);
+				if (!useFileTreeView) {
+					// only do something if we change views
+					await handleLoadFileTree();
+					switchView(true);
+				}
 			}}
 		>
 			<ListOutline class="w-4 h-4" />

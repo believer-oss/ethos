@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { Button, TableBodyCell, TableBodyRow } from 'flowbite-svelte';
 	import {
 		FileCheckOutline,
@@ -55,12 +55,6 @@
 		}
 		loading = false;
 	};
-
-	onMount(async () => {
-		loading = true;
-		await getChildren();
-		loading = false;
-	});
 
 	onDestroy(() => {
 		fileNode.children = [];

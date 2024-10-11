@@ -10,7 +10,6 @@ type URI = String;
     query_path = "src/types/github/graphql/get_pull_request_id.graphql",
     response_derives = "Debug"
 )]
-
 pub struct GetPullRequestId;
 
 #[derive(GraphQLQuery)]
