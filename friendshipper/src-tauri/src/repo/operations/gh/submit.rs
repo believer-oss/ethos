@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
-use octocrab::models::pulls::MergeableState;
+use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::Octocrab;
 use std::path::PathBuf;
 use tracing::{info, instrument, warn};
@@ -89,13 +89,42 @@ impl Task for GitHubSubmitOp {
             .send()
             .await?;
 
-        while let Some(state) = pr.mergeable_state {
+        pr = self
+            .poll_for_mergeable(octocrab, pr, owner.clone(), repo.clone())
+            .await?;
+
+        let id = self
+            .client
+            .get_pull_request_id(owner.clone(), repo.clone(), pr.number as i64)
+            .await?;
+
+        self.client.enqueue_pull_request(id).await?;
+
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        "GitHubSubmitOp".to_string()
+    }
+}
+
+impl GitHubSubmitOp {
+    #[instrument(name = "GitHubSubmitOp::poll_for_mergeable", skip(self))]
+    async fn poll_for_mergeable(
+        &self,
+        octocrab: Octocrab,
+        pr: PullRequest,
+        owner: String,
+        repo: String,
+    ) -> Result<PullRequest, CoreError> {
+        let mut pr = pr.clone();
+        while let Some(state) = pr.mergeable_state.clone() {
             match state {
                 MergeableState::Blocked | MergeableState::Behind | MergeableState::Unknown => {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     pr = octocrab
                         .pulls(owner.clone(), repo.clone())
-                        .get(pr.number)
+                        .get(pr.clone().number)
                         .await?;
                 }
                 MergeableState::Dirty => {
@@ -110,18 +139,7 @@ impl Task for GitHubSubmitOp {
             }
         }
 
-        let id = self
-            .client
-            .get_pull_request_id(owner.clone(), repo.clone(), pr.number as i64)
-            .await?;
-
-        self.client.enqueue_pull_request(id).await?;
-
-        Ok(())
-    }
-
-    fn get_name(&self) -> String {
-        "GitHubSubmitOp".to_string()
+        Ok(pr)
     }
 }
 
@@ -216,11 +234,19 @@ where
             }
         }
 
-        // save a snapshot before submitting
+        // save a snapshot before submitting with all modified/added files
         // make sure we have a temp dir for copying our files
+        let status = self.repo_status.read().clone();
+        let modified_files = status.modified_files.0.clone();
+        let untracked_files = status.untracked_files.0.clone();
+        let all_files = modified_files
+            .into_iter()
+            .chain(untracked_files.into_iter())
+            .map(|file| file.path.clone())
+            .collect();
         let snapshot = self
             .git_client
-            .save_snapshot_all("pre-submit", SaveSnapshotIndexOption::KeepIndex)
+            .save_snapshot("pre-submit", all_files, SaveSnapshotIndexOption::KeepIndex)
             .await?;
 
         match self.execute_internal().await {
