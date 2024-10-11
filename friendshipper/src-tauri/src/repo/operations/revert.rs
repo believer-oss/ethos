@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
 use std::fs;
@@ -6,7 +6,7 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
-use tracing::{error, instrument};
+use tracing::instrument;
 
 use crate::engine::EngineProvider;
 use crate::state::AppState;
@@ -43,25 +43,7 @@ where
             return Err(CoreError::Input(anyhow!("no files provided")));
         }
 
-        let mut num_chars = 0;
-        for f in self.files.iter() {
-            num_chars += f.len();
-        }
-
         let branch = self.repo_status.read().branch.clone();
-
-        // windows command line length limit is 8191, so if we're close to that, checking using a file instead
-        if num_chars > 8000 {
-            match self.revert_with_listfile(&branch).await {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    error!(
-                        "Revert files with listfile failed, falling back to chunked batches: {}",
-                        e
-                    )
-                }
-            }
-        }
 
         let mut temp_file = NamedTempFile::new()?;
         for file in &self.files {
@@ -83,68 +65,6 @@ where
 
     fn get_name(&self) -> String {
         "RevertFilesOp".to_string()
-    }
-}
-
-impl<T> RevertFilesOp<T>
-where
-    T: EngineProvider,
-{
-    async fn revert_with_listfile(&self, branch: &str) -> anyhow::Result<()> {
-        let mut listfile_path = std::env::temp_dir();
-        listfile_path.push("Friendshipper");
-
-        if !listfile_path.exists() {
-            if let Err(e) = fs::create_dir(&listfile_path) {
-                bail!(
-                    "Failed to create directory for storing temp file: {:?}. Reason: {}",
-                    listfile_path,
-                    e
-                );
-            }
-        }
-
-        listfile_path.push("revert_files.txt");
-
-        match fs::File::create(&listfile_path) {
-            Err(e) => {
-                bail!(
-                    "Failed to create listfile '{:?}' for RevertFilesOp: {}",
-                    listfile_path,
-                    e
-                );
-            }
-            Ok(file) => {
-                let mut writer = std::io::BufWriter::new(file);
-                for path in &self.files {
-                    if let Err(e) = writeln!(writer, "{}", &path) {
-                        bail!(
-                            "Failed to write '{}' to file {:?}: {}",
-                            path,
-                            listfile_path,
-                            e
-                        );
-                    }
-                }
-                match writer.flush() {
-                    Ok(_) => {}
-                    Err(e) => {
-                        bail!(
-                            "Failed to write listfile '{:?}' for RevertFilesOp: {}",
-                            listfile_path,
-                            e
-                        );
-                    }
-                }
-            }
-        }
-
-        let pathspec_arg = format!("--pathspec-from-file={}", listfile_path.to_string_lossy());
-        let args: Vec<&str> = vec!["checkout", &branch, &pathspec_arg];
-
-        self.git_client.run(&args, git::Opts::default()).await?;
-
-        Ok(())
     }
 }
 
