@@ -722,9 +722,13 @@ impl Git {
     #[instrument]
     pub async fn configure_untracked_cache(&self) -> anyhow::Result<()> {
         // get current setting for core.untrackedCache
-        let current_setting = self
+        let current_setting = match self
             .run_and_collect_output(&["config", "core.untrackedCache"], Opts::default())
-            .await?;
+            .await
+        {
+            Ok(output) => output,
+            Err(_) => "false".to_string(),
+        };
 
         // if it's already true, do nothing
         if current_setting.trim() == "true" {
