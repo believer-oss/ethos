@@ -719,6 +719,33 @@ impl Git {
         self.run(&["config", key, value], Opts::default()).await
     }
 
+    #[instrument]
+    pub async fn configure_untracked_cache(&self) -> anyhow::Result<()> {
+        // get current setting for core.untrackedCache
+        let current_setting = self
+            .run_and_collect_output(&["config", "core.untrackedCache"], Opts::default())
+            .await?;
+
+        // if it's already true, do nothing
+        if current_setting.trim() == "true" {
+            return Ok(());
+        }
+
+        // we need to check if the system supports mtime first
+        let status = self
+            .run(&["update-index", "--test-untracked-cache"], Opts::default())
+            .await;
+
+        // if it does, enable untracked cache
+        if status.is_ok() {
+            self.run(&["update-index", "--untracked-cache"], Opts::default())
+                .await?;
+            self.set_config("core.untrackedCache", "true").await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn get_username(&self) -> anyhow::Result<String> {
         let username = self
             .run_and_collect_output(&["config", "user.name"], Opts::default())
