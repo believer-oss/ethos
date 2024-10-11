@@ -16,7 +16,7 @@ use std::env;
 use std::io::Write;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn, Instrument};
 
 #[derive(Clone)]
 pub struct CommitOp {
@@ -254,15 +254,22 @@ impl LockOp {
             unique.dedup();
             unique
         };
-        let response = client
-            .post(format!("{}/{}", server_url, endpoint))
-            .bearer_auth(&self.github_pat)
-            .json(&LockRequest {
-                paths: unique_paths,
-                force: self.force,
-            })
-            .send()
-            .await?;
+
+        let span = tracing::info_span!("lfs_batch_request");
+        let request_url = format!("{}/{}", server_url.clone(), endpoint);
+        let response = async move {
+            client
+                .post(request_url)
+                .bearer_auth(&self.github_pat)
+                .json(&LockRequest {
+                    paths: unique_paths,
+                    force: self.force,
+                })
+                .send()
+                .await
+        }
+        .instrument(span)
+        .await?;
 
         let status = response.status();
         if status.is_success() {
@@ -323,6 +330,7 @@ impl LockOp {
             };
             let operation_str = if set_readonly { "set" } else { "clear" };
 
+            let span = tracing::info_span!("set_readonly").entered();
             for path in &self.paths {
                 if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
                     let mut absolute_path = PathBuf::from(&repo_path);
@@ -374,6 +382,7 @@ impl LockOp {
                     }
                 }
             }
+            span.exit();
 
             if let Some(response_tx) = &self.response_tx {
                 response_tx.send(lock_response.clone()).await?;
