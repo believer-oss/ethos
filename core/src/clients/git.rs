@@ -530,6 +530,14 @@ impl Git {
         .await
     }
 
+    pub async fn has_remote_branch(&self, branch: &str) -> anyhow::Result<bool> {
+        let output = self
+            .run_and_collect_output(&["ls-remote", "--heads", "origin", branch], Opts::default())
+            .await?;
+
+        Ok(!output.is_empty())
+    }
+
     pub async fn verify_locks(&self) -> anyhow::Result<VerifyLocksResponse> {
         let output = match self
             .run_and_collect_output(

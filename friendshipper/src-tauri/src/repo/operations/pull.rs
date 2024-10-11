@@ -144,9 +144,11 @@ where
             self.git_client.checkout(&trunk_branch).await?;
 
             // cleanup the old quicksubmit branch
-            self.git_client
-                .delete_branch(&branch, git::BranchType::Remote)
-                .await?;
+            if self.git_client.has_remote_branch(&branch).await? {
+                self.git_client
+                    .delete_branch(&branch, git::BranchType::Remote)
+                    .await?;
+            }
             self.git_client
                 .delete_branch(&branch, git::BranchType::Local)
                 .await?;
