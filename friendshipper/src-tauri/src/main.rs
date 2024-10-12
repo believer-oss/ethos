@@ -79,11 +79,14 @@ fn force_window_to_front(window: Window) {
 const PORT: u16 = 8484;
 
 fn main() -> Result<(), CoreError> {
-    let arg = std::env::args().nth(1).unwrap_or_default();
-    if arg.starts_with("friendshipper://") {
-        tauri_plugin_deep_link::prepare("com.believer.friendshipper");
-    } else {
-        let _ = tauri_plugin_deep_link::set_identifier("com.believer.friendshipper");
+    #[cfg(not(target_os = "macos"))]
+    {
+        let arg = std::env::args().nth(1).unwrap_or_default();
+        if arg.starts_with("friendshipper://") {
+            tauri_plugin_deep_link::prepare("com.believer.friendshipper");
+        } else {
+            let _ = tauri_plugin_deep_link::set_identifier("com.believer.friendshipper");
+        }
     }
 
     // MacOS .app files don't inherit any PATH variables
@@ -358,28 +361,31 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
-                let deep_link_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let deep_link_request = move |request| {
-                        info!("Received deep link: {:?}", request);
-                        match deep_link_handle.emit_all("scheme-request-received", request) {
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let deep_link_handle = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let deep_link_request = move |request| {
+                            info!("Received deep link: {:?}", request);
+                            match deep_link_handle.emit_all("scheme-request-received", request) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("Failed to emit scheme-request-received: {:?}", e);
+                                }
+                            }
+
+                            if let Some(window) = deep_link_handle.get_window("main") {
+                                force_window_to_front(window);
+                            }
+                        };
+                        match tauri_plugin_deep_link::register("friendshipper", deep_link_request) {
                             Ok(_) => {}
                             Err(e) => {
-                                error!("Failed to emit scheme-request-received: {:?}", e);
+                                error!("Failed to register deep link handler: {:?}", e);
                             }
                         }
-
-                        if let Some(window) = deep_link_handle.get_window("main") {
-                            force_window_to_front(window);
-                        }
-                    };
-                    match tauri_plugin_deep_link::register("friendshipper", deep_link_request) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("Failed to register deep link handler: {:?}", e);
-                        }
-                    }
-                });
+                    });
+                }
 
                 Ok(())
             })
