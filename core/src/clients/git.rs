@@ -125,7 +125,7 @@ impl Default for Opts<'_> {
 }
 
 impl Opts<'_> {
-    pub fn new_with_ignored<'a>(ignored_errors: &'a [&'a str]) -> Opts {
+    pub fn new_with_ignored<'a>(ignored_errors: &'a [&'a str]) -> Opts<'a> {
         Opts {
             ignored_errors,
             should_log_stdout: true,

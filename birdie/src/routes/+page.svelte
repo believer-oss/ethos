@@ -34,6 +34,7 @@
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { type Commit, CommitTable, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
+	import { fs } from '@tauri-apps/api';
 	import {
 		cloneRepo,
 		delFetchInclude,
@@ -63,7 +64,8 @@
 		fetchIncludeList,
 		locks,
 		rootNode,
-		selectedFile
+		selectedFile,
+		useFileTreeView
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 	import CharacterCard from '$lib/components/metadata/CharacterCard.svelte';
@@ -75,6 +77,7 @@
 	import { getAppConfig } from '$lib/config';
 	import { runSetEnv, syncTools } from '$lib/tools';
 	import FileTree from '$lib/components/files/FileTree.svelte';
+	import { CURRENT_ROOT_PATH, FILE_TREE_PATH } from '$lib/consts';
 
 	let loading = false;
 	let allFiles: string[] = [];
@@ -86,7 +89,6 @@
 	let selectedFiles: LFSFile[] = [];
 	let shiftHeld = false;
 	let includeWip = true;
-	let useFileTreeView = false;
 
 	// sync and tools
 	let inAsyncOperation = false;
@@ -452,7 +454,7 @@
 		}
 
 		await refreshFiles();
-		if (!useFileTreeView) {
+		if (!$useFileTreeView) {
 			// causes selected file to be null if using file tree view since currentRootFiles isn't updated
 			$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
 		}
@@ -476,7 +478,7 @@
 		}
 
 		await refreshFiles();
-		if (!useFileTreeView) {
+		if (!$useFileTreeView) {
 			// causes selected file to be null if using file tree view since currentRootFiles isn't updated
 			$selectedFile = $currentRootFiles.find((f) => f.name === $selectedFile?.name) ?? null;
 		}
@@ -488,7 +490,7 @@
 		if (file === null) return;
 
 		let directory: string;
-		if (useFileTreeView) {
+		if ($useFileTreeView) {
 			const parentPath = file.path.substring(0, file.path.lastIndexOf('/'));
 			directory = `${$appConfig.repoPath}/${parentPath}`;
 		} else {
@@ -552,13 +554,50 @@
 		showSearchModal = false;
 	};
 
+	const handleSaveFileTree = async () => {
+		await fs.writeFile(FILE_TREE_PATH, JSON.stringify($rootNode, null, 2), {
+			dir: fs.BaseDirectory.AppLocalData
+		});
+	};
+
+	const handleLoadFileTree = async () => {
+		if (await fs.exists(FILE_TREE_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
+			const fileTreeResponse = await fs.readTextFile(FILE_TREE_PATH, {
+				dir: fs.BaseDirectory.AppLocalData
+			});
+			const parsedFileTree = JSON.parse(fileTreeResponse);
+			rootNode.set(parsedFileTree);
+		}
+	};
+
+	const handleSaveCurrentRoot = async () => {
+		await fs.writeFile(CURRENT_ROOT_PATH, $currentRoot, { dir: fs.BaseDirectory.AppLocalData });
+	};
+
+	const handleLoadCurrentRoot = async () => {
+		if (await fs.exists(CURRENT_ROOT_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
+			const currentRootResponse = await fs.readTextFile(CURRENT_ROOT_PATH, {
+				dir: fs.BaseDirectory.AppLocalData
+			});
+			currentRoot.set(currentRootResponse);
+		}
+		await refreshFiles();
+	};
+
 	const switchView = async (switchTo: boolean) => {
-		useFileTreeView = switchTo;
-		$currentRoot = '';
+		if (switchTo === $useFileTreeView) return;
+		$useFileTreeView = switchTo;
+		if ($useFileTreeView) {
+			await handleSaveCurrentRoot();
+			await handleLoadFileTree();
+			$currentRoot = '';
+		} else {
+			await handleSaveFileTree();
+			await handleLoadCurrentRoot();
+		}
 		$selectedFile = null;
 		selectedFiles = [];
 		commits = [];
-		await refreshFiles();
 	};
 
 	void listen('refresh-files', () => {
@@ -572,6 +611,12 @@
 			$fetchIncludeList = await getFetchInclude();
 		};
 		void setupFetchIncludeList();
+
+		const setupAssetExplorerViews = async (): Promise<void> => {
+			await handleLoadFileTree();
+			await handleLoadCurrentRoot();
+		};
+		void setupAssetExplorerViews();
 
 		// refresh every 30 seconds
 		const interval = setInterval(() => {
@@ -590,7 +635,7 @@
 		<p class="text-2xl mt-2 dark:text-primary-400">Asset Explorer</p>
 		<Button
 			class="w-4 h-8"
-			outline={useFileTreeView}
+			outline={$useFileTreeView}
 			on:click={async () => {
 				await switchView(false);
 			}}
@@ -599,7 +644,7 @@
 		</Button>
 		<Button
 			class="w-4 h-8"
-			outline={!useFileTreeView}
+			outline={!$useFileTreeView}
 			on:click={async () => {
 				await switchView(true);
 			}}
@@ -666,7 +711,7 @@
 		<CharacterCard metadata={directoryMetadata} onMetadataSaved={handleUpdateDirectoryMetadata} />
 	{/if}
 	<div class="flex gap-2 overflow-hidden w-full max-w-full max-h-[70vh]">
-		{#if useFileTreeView}
+		{#if $useFileTreeView}
 			<FileTree bind:fileNode={$rootNode} bind:loading />
 		{:else}
 			<div class="flex flex-col h-full min-h-full w-full">
@@ -777,7 +822,7 @@
 					</Button>
 				</Card>
 			{/if}
-			{#if !useFileTreeView}
+			{#if !$useFileTreeView}
 				<Card
 					class="w-full h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
 				>
@@ -885,7 +930,7 @@
 			</Card>
 		</div>
 	</div>
-	{#if !useFileTreeView && selectedFile}
+	{#if !$useFileTreeView && selectedFile}
 		<Card
 			class="w-full p-4 sm:p-4 max-w-full max-h-[30vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 		>

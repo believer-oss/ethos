@@ -19,6 +19,7 @@ export const currentRoot = writable('');
 export const commitMessage = writable('');
 export const changeSets = writable(<ChangeSet[]>[]);
 export const selectedFiles = writable(<ModifiedFile[]>[]);
+export const useFileTreeView = writable(false);
 
 // file tree
 export const rootNode = writable(<Node>{
