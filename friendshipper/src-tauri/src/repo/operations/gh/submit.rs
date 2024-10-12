@@ -79,7 +79,7 @@ impl Task for GitHubSubmitOp {
             repo = status.repo_name.clone();
         }
 
-        let mut pr = octocrab
+        let pr = octocrab
             .pulls(owner.clone(), repo.clone())
             .create(
                 format!("{} {}", SUBMIT_PREFIX, truncated_message),
@@ -89,16 +89,38 @@ impl Task for GitHubSubmitOp {
             .send()
             .await?;
 
-        pr = self
-            .poll_for_mergeable(octocrab, pr, owner.clone(), repo.clone())
-            .await?;
+        let octocrab_clone = octocrab.clone();
+        let owner_clone = owner.clone();
+        let repo_clone = repo.clone();
+        let client_clone = self.client.clone();
+        let self_clone = self.clone();
 
-        let id = self
-            .client
-            .get_pull_request_id(owner.clone(), repo.clone(), pr.number as i64)
-            .await?;
-
-        self.client.enqueue_pull_request(id).await?;
+        // There's a lot of variability in how long this takes, so we give the frontend
+        // a chance to return control to the user before it starts polling
+        tokio::spawn(async move {
+            match self_clone
+                .poll_for_mergeable(octocrab_clone, pr, owner_clone.clone(), repo_clone.clone())
+                .await
+            {
+                Ok(updated_pr) => {
+                    if let Ok(id) = client_clone
+                        .get_pull_request_id(
+                            owner_clone.clone(),
+                            repo_clone.clone(),
+                            updated_pr.number as i64,
+                        )
+                        .await
+                    {
+                        if let Err(e) = client_clone.enqueue_pull_request(id).await {
+                            warn!("Failed to enqueue pull request: {:?}", e);
+                        }
+                    } else {
+                        warn!("Failed to get pull request ID");
+                    }
+                }
+                Err(e) => warn!("Failed to poll for mergeable state: {:?}", e),
+            }
+        });
 
         Ok(())
     }
