@@ -77,9 +77,41 @@ impl Server {
         refresh_tx: STDSender<()>,
         mut shutdown_rx: mpsc::Receiver<()>,
     ) -> Result<(), CoreError> {
+        let pause_background_tasks = Arc::new(AtomicBool::new(false));
+
         let (app, address, shared_state) = self
-            .initialize_server(config, config_file, startup_tx.clone(), refresh_tx)
+            .initialize_server(
+                config,
+                config_file,
+                startup_tx.clone(),
+                pause_background_tasks.clone(),
+            )
             .await?;
+
+        // configure file watcher
+        let watcher_status = shared_state.repo_status.clone();
+        let watcher_git = shared_state.git().clone();
+
+        // this debouncer must stay in scope for the duration of the server run
+        let mut debouncer = self.create_file_watcher(
+            watcher_status,
+            watcher_git,
+            shared_state.engine.clone(),
+            pause_background_tasks.clone(),
+            refresh_tx,
+        )?;
+
+        let repo_path = shared_state.app_config.read().repo_path.clone();
+        if !repo_path.is_empty() {
+            let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
+                .join(shared_state.engine.get_default_content_subdir());
+
+            let inner_span = tracing::info_span!("watcher_start_watch").entered();
+            debouncer
+                .watcher()
+                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
+            inner_span.exit();
+        }
 
         info!("starting server at {}", address);
         startup_tx.send("Starting server".to_string())?;
@@ -122,18 +154,16 @@ impl Server {
 
     #[instrument(
         level = "info",
-        skip(self, config, config_file, startup_tx, refresh_tx)
+        skip(self, config, config_file, startup_tx, pause_background_tasks)
     )]
     async fn initialize_server(
         &self,
         config: AppConfig,
         config_file: PathBuf,
         startup_tx: STDSender<String>,
-        refresh_tx: STDSender<()>,
+        pause_background_tasks: Arc<AtomicBool>,
     ) -> Result<(Router, String, AppState<UnrealEngineProvider>), CoreError> {
         startup_tx.send("Initializing application config".to_string())?;
-
-        let pause_background_tasks = Arc::new(AtomicBool::new(false));
 
         let app_config = Arc::new(RwLock::new(config.clone()));
         let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
@@ -193,17 +223,6 @@ impl Server {
         )
         .await?;
 
-        // configure file watcher
-        let watcher_status = shared_state.repo_status.clone();
-        let watcher_git = shared_state.git().clone();
-        let mut debouncer = self.create_file_watcher(
-            watcher_status,
-            watcher_git,
-            shared_state.engine.clone(),
-            pause_background_tasks.clone(),
-            refresh_tx,
-        )?;
-
         // start the maintenance runner if we have a repo path
         let span = tracing::info_span!("acquire_config_lock").entered();
         let repo_path = shared_state.app_config.read().repo_path.clone();
@@ -239,22 +258,6 @@ impl Server {
                     }
                 };
             });
-
-            // start file watcher
-            let span = tracing::info_span!("start_file_watcher").entered();
-
-            let inner_span = tracing::info_span!("acquire_config_lock").entered();
-            let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
-                .join(shared_state.engine.get_default_content_subdir());
-            inner_span.exit();
-
-            let inner_span = tracing::info_span!("watcher_start_watch").entered();
-            debouncer
-                .watcher()
-                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
-            inner_span.exit();
-
-            span.exit();
         }
 
         // install git hooks + set initial git config
