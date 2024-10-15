@@ -111,7 +111,7 @@
 				"title": "Friendshipper",
 				"minWidth": 980,
 				"minHeight": 600,
-				"visible": false,
+				"visible": true,
 				"decorations": false,
 				"transparent": true,
 				"fileDropEnabled": false

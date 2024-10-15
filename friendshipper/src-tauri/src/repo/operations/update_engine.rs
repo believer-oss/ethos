@@ -155,7 +155,9 @@ where
                     );
 
                     let did_stash = self.git_client.stash(git::StashAction::Push).await?;
-                    self.git_client.fetch(git::ShouldPrune::Yes).await?;
+                    self.git_client
+                        .fetch(git::ShouldPrune::Yes, git::Opts::default())
+                        .await?;
                     self.git_client.checkout(&commit_sha_short).await?;
                     if did_stash {
                         self.git_client.stash(git::StashAction::Pop).await?;
