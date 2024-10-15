@@ -370,14 +370,6 @@ impl Git {
     ) -> anyhow::Result<Snapshot> {
         self.wait_for_lock().await;
 
-        // if any deleted files are manually chosen, return an error
-        if paths.clone().into_iter().any(|p| {
-            let path = self.repo_path.join(p);
-            !path.exists()
-        }) {
-            bail!("Cannot manually snapshot deleted files");
-        }
-
         if paths.is_empty() {
             self.run(&["add", "--", "."], Opts::default()).await?;
         } else {
