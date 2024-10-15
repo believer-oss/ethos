@@ -10,7 +10,7 @@
 	} from 'flowbite-svelte-icons';
 	import { FileType, LocalFileLFSState, type Node } from '$lib/types';
 	import { getFiles } from '$lib/repo';
-	import { fetchIncludeList, selectedFile } from '$lib/stores';
+	import { currentRoot, fetchIncludeList, selectedFile } from '$lib/stores';
 
 	export let fileNode: Node;
 	export let loading: boolean;
@@ -48,10 +48,11 @@
 		} else {
 			fileNode.children = [];
 		}
+		$selectedFile = fileNode.value;
 		if (fileNode.value.fileType === FileType.File) {
-			$selectedFile = fileNode.value;
+			$currentRoot = fileNode.value.path.substring(0, fileNode.value.path.lastIndexOf('/'));
 		} else {
-			$selectedFile = null;
+			$currentRoot = fileNode.value.path;
 		}
 		loading = false;
 	};
