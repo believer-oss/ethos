@@ -201,7 +201,9 @@ where
     );
 
     let git_client = git::Git::new(engine_path, state.git_tx.clone());
-    git_client.fetch(ShouldPrune::No).await?;
+    git_client
+        .fetch(ShouldPrune::No, git::Opts::default())
+        .await?;
     git_client.checkout(&engine_commit).await?;
 
     let solution = SolutionParams {

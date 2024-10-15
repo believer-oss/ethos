@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use super::git::Opts;
+
 pub struct GitMaintenanceRunner {
     git: Git,
     config: MaintenanceConfig,
@@ -52,7 +54,13 @@ impl GitMaintenanceRunner {
         let fetch_task = tokio::task::spawn(async move {
             loop {
                 if !pause.clone().load(std::sync::atomic::Ordering::Relaxed) {
-                    match git.fetch(ShouldPrune::Yes).await {
+                    match git
+                        .fetch(
+                            ShouldPrune::Yes,
+                            Opts::default().with_skip_notify_frontend(),
+                        )
+                        .await
+                    {
                         Ok(_) => {}
                         Err(e) => {
                             warn!("Error fetching: {:?}", e);

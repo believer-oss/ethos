@@ -104,6 +104,7 @@ pub struct Opts<'a> {
     pub should_log_stdout: bool,
     pub return_complete_error: bool,
     pub lfs_mode: LfsMode,
+    pub skip_notify_frontend: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -120,6 +121,7 @@ impl Default for Opts<'_> {
             should_log_stdout: true,
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
+            skip_notify_frontend: false,
         }
     }
 }
@@ -131,6 +133,7 @@ impl Opts<'_> {
             should_log_stdout: true,
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
+            skip_notify_frontend: false,
         }
     }
 
@@ -140,6 +143,7 @@ impl Opts<'_> {
             should_log_stdout: false,
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
+            skip_notify_frontend: false,
         }
     }
 
@@ -149,6 +153,7 @@ impl Opts<'_> {
             should_log_stdout: true,
             return_complete_error: true,
             lfs_mode: LfsMode::Inflated,
+            skip_notify_frontend: false,
         }
     }
 
@@ -159,6 +164,11 @@ impl Opts<'_> {
 
     pub fn with_lfs_stubs(mut self) -> Self {
         self.lfs_mode = LfsMode::Stubs;
+        self
+    }
+
+    pub fn with_skip_notify_frontend(mut self) -> Self {
+        self.skip_notify_frontend = true;
         self
     }
 }
@@ -209,7 +219,7 @@ impl Git {
         Ok(commit.to_string())
     }
 
-    pub async fn fetch(&self, prune: ShouldPrune) -> anyhow::Result<()> {
+    pub async fn fetch<'a>(&self, prune: ShouldPrune, opts: Opts<'a>) -> anyhow::Result<()> {
         if prune == ShouldPrune::Yes {
             self.run(
                 &[
@@ -218,13 +228,13 @@ impl Git {
                     "--no-auto-maintenance",
                     "--show-forced-updates",
                 ],
-                Opts::default(),
+                opts,
             )
             .await
         } else {
             self.run(
                 &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
-                Opts::default(),
+                opts,
             )
             .await
         }
@@ -665,6 +675,18 @@ impl Git {
             .await
     }
 
+    pub async fn run_gc(&self) -> anyhow::Result<()> {
+        self.run(&["gc", "--prune=now"], Opts::default()).await
+    }
+
+    pub async fn expire_reflog(&self) -> anyhow::Result<()> {
+        self.run(
+            &["reflog", "expire", "--expire=now", "--all"],
+            Opts::default(),
+        )
+        .await
+    }
+
     // sample output of: git worktree list --porcelain
     // worktree D:/repos/fellowship
     // HEAD 6ca1438e074b664470df54319cd6272a4d4d565d
@@ -682,6 +704,7 @@ impl Git {
                     should_log_stdout: false,
                     return_complete_error: true,
                     lfs_mode: LfsMode::Stubs,
+                    skip_notify_frontend: false,
                 },
             )
             .await?;
@@ -830,9 +853,12 @@ impl Git {
             )
         };
 
-        if let Err(e) = self.tx.send(message) {
-            warn!("Failed to send git command message: {}", e);
+        if !opts.skip_notify_frontend {
+            if let Err(e) = self.tx.send(message) {
+                warn!("Failed to send git command message: {}", e);
+            }
         }
+
         let mut cmd = Command::new("git");
         for arg in args {
             cmd.arg(arg);

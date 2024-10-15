@@ -282,6 +282,10 @@ impl Server {
                 git.set_config("http.postBuffer", "524288000").await?;
                 git.configure_untracked_cache().await?;
 
+                startup_tx.send("Performing git repo maintenance".to_string())?;
+                git.run_gc().await?;
+                git.expire_reflog().await?;
+
                 startup_tx.send("Installing git hooks".to_string())?;
                 if let Some(git_hooks_path) = git_hooks_path {
                     tokio::spawn(async move {
