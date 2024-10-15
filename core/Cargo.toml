@@ -87,3 +87,4 @@ walkdir = "2.5.0"
 octocrab = "0.39.0"
 bytes = "1.7.2"
 tempfile = { workspace = true }
+serde-xml-rs = "0.6.0"

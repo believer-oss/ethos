@@ -1,6 +1,7 @@
 pub mod commit;
 pub use commit::*;
 pub mod json;
+pub mod junit;
 pub mod logging;
 pub mod process;
 pub mod serde;
