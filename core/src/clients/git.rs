@@ -1,4 +1,7 @@
+use std::fmt::Display;
+use std::fmt::Formatter;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -106,6 +109,23 @@ pub struct Opts<'a> {
     pub lfs_mode: LfsMode,
 }
 
+#[derive(Debug)]
+pub enum Mirror {
+    Windows,
+    // Wsl,
+}
+
+impl Display for Mirror {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub enum IntegrityMismatch {
+    MissingFile { path: PathBuf, source: Mirror },
+    SizeMismatch { path: PathBuf },
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorktreeInfo {
     pub directory: PathBuf,
@@ -183,14 +203,27 @@ impl Git {
         format: CommitFormat,
         commit_head: CommitHead,
     ) -> anyhow::Result<String> {
-        let mut log = Command::new("git");
-        log.arg("log");
-        log.arg("-1");
-        log.arg("--format=\"%H\"");
-        if commit_head == CommitHead::Remote {
-            log.arg("FETCH_HEAD");
-        }
-        log.current_dir(&self.repo_path.canonicalize()?);
+        let mut log = if cfg!(target_os = "windows") {
+            let mut cmd = Command::new("wsl");
+            let git_command = format!(
+                "git -C /home/friendshipper/repo log -1 --format=\"%H\" {}",
+                if commit_head == CommitHead::Remote {
+                    "FETCH_HEAD"
+                } else {
+                    ""
+                }
+            );
+            cmd.args(["bash", "-c", &git_command]);
+            cmd
+        } else {
+            let mut cmd = Command::new("git");
+            cmd.args(["log", "-1", "--format=\"%H\""]);
+            if commit_head == CommitHead::Remote {
+                cmd.arg("FETCH_HEAD");
+            }
+            cmd.current_dir(&self.repo_path.canonicalize()?);
+            cmd
+        };
 
         #[cfg(windows)]
         log.creation_flags(CREATE_NO_WINDOW);
@@ -311,7 +344,7 @@ impl Git {
     pub async fn list_snapshots(&self) -> anyhow::Result<Vec<Snapshot>> {
         let output = self
             .run_and_collect_output(
-                &["stash", "list", "--pretty=format:%gd|%gs|%H|%aI"],
+                &["stash", "list", "--pretty='format:%gd|%gs|%H|%aI'"],
                 Opts::new_without_logs(),
             )
             .await?;
@@ -382,20 +415,10 @@ impl Git {
             self.run(&["add", "--", "."], Opts::default()).await?;
         } else {
             let mut temp_file = NamedTempFile::new()?;
-            for path in &paths {
-                writeln!(temp_file, "{}", path)?;
-            }
-            temp_file.flush()?;
+            let pathspec = self.create_pathspec_from_file(&mut temp_file, paths.clone())?;
 
-            self.run(
-                &[
-                    "add",
-                    "--pathspec-from-file",
-                    temp_file.path().to_str().unwrap(),
-                ],
-                Opts::default(),
-            )
-            .await?;
+            self.run(&["add", "--pathspec-from-file", &pathspec], Opts::default())
+                .await?;
         }
 
         let stash_message = format!("{} {}", SNAPSHOT_PREFIX, message);
@@ -406,17 +429,12 @@ impl Git {
 
         // if paths is empty, stash everything
         let mut temp_file = NamedTempFile::new()?;
+        let pathspec = self.create_pathspec_from_file(&mut temp_file, paths.clone())?;
         if paths.is_empty() {
             stash_create_args.push(".");
         } else {
-            // set up a temp file
-            for path in &paths {
-                writeln!(temp_file, "{}", path)?;
-            }
-            temp_file.flush()?;
-
             stash_create_args.push("--pathspec-from-file");
-            stash_create_args.push(temp_file.path().to_str().unwrap());
+            stash_create_args.push(&pathspec);
         }
 
         // We use the stash create and store commands because stash push modifies the working
@@ -428,7 +446,13 @@ impl Git {
             .run_and_collect_output(&stash_create_args, Opts::default())
             .await?;
 
-        let stash_store_args = &["stash", "store", "--message", &stash_message, &stash_sha];
+        let stash_store_args = &[
+            "stash",
+            "store",
+            "--message",
+            &format!("'{}'", &stash_message),
+            &stash_sha,
+        ];
         self.run(stash_store_args, Opts::default()).await?;
 
         let snapshots = self.list_snapshots().await?;
@@ -445,14 +469,11 @@ impl Git {
         }
 
         let mut temp_file = NamedTempFile::new()?;
-        for path in &paths {
-            writeln!(temp_file, "{}", path)?;
-        }
-        temp_file.flush()?;
+        let pathspec = self.create_pathspec_from_file(&mut temp_file, paths.clone())?;
 
         let mut args = vec!["reset"];
         args.push("--pathspec-from-file");
-        args.push(temp_file.path().to_str().unwrap());
+        args.push(&pathspec);
 
         self.run(&args, Opts::default()).await?;
 
@@ -499,17 +520,13 @@ impl Git {
 
         // reset so everything is unstaged
         let mut temp_file = NamedTempFile::new()?;
-        for path in files.lines() {
-            writeln!(temp_file, "{}", path)?;
-        }
-        temp_file.flush()?;
+        let pathspec = self.create_pathspec_from_file(
+            &mut temp_file,
+            files.lines().map(|s| s.to_string()).collect(),
+        )?;
 
         self.run(
-            &[
-                "reset",
-                "--pathspec-from-file",
-                temp_file.path().to_str().unwrap(),
-            ],
+            &["reset", "--pathspec-from-file", &pathspec],
             Opts::default(),
         )
         .await
@@ -576,7 +593,7 @@ impl Git {
                 "--no-pager",
                 "log",
                 &format!("-{}", limit),
-                "--pretty=format:%H|%s|%an|%aI",
+                "--pretty='format:%H|%s|%an|%aI'",
                 git_ref,
             ],
             Opts::new_without_logs(),
@@ -671,6 +688,99 @@ impl Git {
     pub async fn run_maintenance(&self) -> anyhow::Result<()> {
         self.run(&["maintenance", "run", "--auto"], Opts::default())
             .await
+    }
+
+    pub fn create_pathspec_from_file(
+        &self,
+        temp_file: &mut NamedTempFile,
+        paths: Vec<String>,
+    ) -> anyhow::Result<String> {
+        for path in &paths {
+            writeln!(temp_file, "{}", path)?;
+        }
+        temp_file.flush()?;
+
+        error!("temp_file: {}", temp_file.path().to_str().unwrap());
+
+        // if we're in windows, convert to a wsl path
+        if cfg!(target_os = "windows") {
+            // replace with /mnt/....
+            Ok(temp_file
+                .path()
+                .to_str()
+                .unwrap()
+                .replace('\\', "/")
+                .replace("C:", "/mnt/c"))
+        } else {
+            Ok(temp_file.path().to_str().unwrap().to_string())
+        }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn verify_repo_integrity(&self) -> Result<Vec<IntegrityMismatch>, CoreError> {
+        let mut mismatches = Vec::new();
+
+        let repo_path = Path::new(&self.repo_path);
+        let j_drive_path = Path::new("J:/home/friendshipper/repo");
+
+        if !repo_path.exists() || !j_drive_path.exists() {
+            return Err(CoreError::Internal(anyhow!(
+                "One or both directories do not exist"
+            )));
+        }
+
+        let mut counted_files = 0;
+
+        let files = jwalk::WalkDir::new(repo_path);
+
+        let span = tracing::info_span!("count_files").entered();
+        let total_files = files.into_iter().count();
+        span.exit();
+
+        for entry in jwalk::WalkDir::new(repo_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            let relative_path = path.strip_prefix(repo_path).unwrap();
+            let j_drive_equivalent = j_drive_path.join(relative_path);
+
+            if entry.file_type().is_file() {
+                counted_files += 1;
+                self.tx.send(format!(
+                    "Files verified: {} / {} ({:.0}%)",
+                    counted_files,
+                    total_files,
+                    (counted_files as f32 / total_files as f32) * 100.0
+                ))?;
+                if !j_drive_equivalent.exists() {
+                    mismatches.push(IntegrityMismatch::MissingFile {
+                        path: relative_path.to_path_buf(),
+                        source: Mirror::Windows,
+                    });
+                } else {
+                    // You might want to add more thorough file comparison here,
+                    // such as comparing file contents or metadata
+                    // compare size and last modified time
+                    let metadata_default = entry.metadata()?;
+                    let metadata_j = j_drive_equivalent.metadata()?;
+                    if metadata_default.len() != metadata_j.len()
+                        || metadata_default.modified()? != metadata_j.modified()?
+                    {
+                        mismatches.push(IntegrityMismatch::SizeMismatch {
+                            path: relative_path.to_path_buf(),
+                        });
+                    }
+                }
+            } else if entry.file_type().is_dir() && !j_drive_equivalent.exists() {
+                mismatches.push(IntegrityMismatch::MissingFile {
+                    path: relative_path.to_path_buf(),
+                    source: Mirror::Windows,
+                });
+            }
+        }
+
+        Ok(mismatches)
     }
 
     // sample output of: git worktree list --porcelain
@@ -841,25 +951,43 @@ impl Git {
         if let Err(e) = self.tx.send(message) {
             warn!("Failed to send git command message: {}", e);
         }
-        let mut cmd = Command::new("git");
-        for arg in args {
-            cmd.arg(arg);
-        }
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut cmd = Command::new("wsl");
+
+            // hack: let's assume we're not cloning right now
+            let bash_cmd: String = format!(
+                "git -C /home/friendshipper/repo {}",
+                args.iter()
+                    .map(|arg| arg.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            );
+
+            cmd.args(["bash", "-c", &bash_cmd]);
+            cmd
+        } else {
+            let mut cmd = Command::new("git");
+            for arg in args {
+                cmd.arg(arg);
+            }
+
+            if !&self.repo_path.as_os_str().is_empty() {
+                // if the first arg is clone, set current dir to the parent, then canonicalize
+                if args[0] == "clone" {
+                    cmd.current_dir(&self.repo_path.parent().unwrap().canonicalize()?);
+                } else {
+                    cmd.current_dir(&self.repo_path.canonicalize()?);
+                }
+            }
+
+            cmd
+        };
 
         // disable clone protection
         cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
 
         if opts.lfs_mode == LfsMode::Stubs {
             cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
-        }
-
-        if !&self.repo_path.as_os_str().is_empty() {
-            // if the first arg is clone, set current dir to the parent, then canonicalize
-            if args[0] == "clone" {
-                cmd.current_dir(&self.repo_path.parent().unwrap().canonicalize()?);
-            } else {
-                cmd.current_dir(&self.repo_path.canonicalize()?);
-            }
         }
 
         #[cfg(windows)]

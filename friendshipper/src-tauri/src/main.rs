@@ -322,10 +322,6 @@ fn main() -> Result<(), CoreError> {
                 tauri::async_runtime::spawn(async move {
                     while let Ok(msg) = startup_rx.recv() {
                         startup_handle.emit_all("startup-message", &msg).unwrap();
-
-                        if msg.eq("Starting server") {
-                            break;
-                        }
                     }
                 });
 

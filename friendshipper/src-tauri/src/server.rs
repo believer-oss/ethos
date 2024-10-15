@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail, Result};
 use axum::Router;
 use config::Config;
 use directories_next::BaseDirs;
-use ethos_core::clients::git::Git;
+use ethos_core::clients::git::{Git, IntegrityMismatch};
 use ethos_core::clients::GitMaintenanceRunner;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
@@ -111,6 +111,19 @@ impl Server {
                 .watcher()
                 .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
             inner_span.exit();
+        }
+
+        startup_tx.send("Verifying repo integrity".to_string())?;
+        let mismatches = shared_state.git().verify_repo_integrity().await?;
+        for mismatch in mismatches {
+            match mismatch {
+                IntegrityMismatch::MissingFile { path, source } => {
+                    warn!("Missing file: {}, source: {}", path.display(), source);
+                }
+                IntegrityMismatch::SizeMismatch { path } => {
+                    warn!("Size mismatch: {}", path.display());
+                }
+            }
         }
 
         info!("starting server at {}", address);
@@ -355,8 +368,16 @@ impl Server {
                     // get unique paths in events
                     let modified = event
                         .iter()
-                        .flat_map(|e| e.paths.iter())
-                        .filter(|p| p.is_file())
+                        .filter_map(|event| {
+                            match event.kind {
+                                notify::EventKind::Create(_) |
+                                notify::EventKind::Modify(_) |
+                                notify::EventKind::Remove(_) => {
+                                    event.paths.iter().find(|p| p.is_file()).cloned()
+                                },
+                                _ => None,
+                            }
+                        })
                         .collect::<HashSet<_>>();
 
                     {
@@ -364,6 +385,32 @@ impl Server {
                         if pause_rx.load(std::sync::atomic::Ordering::Relaxed) {
                             debug!("File watcher paused, skipping this event");
                             return;
+                        }
+
+                        // for each path, from within wsl copy the file into wsl
+                        if cfg!(target_os = "windows") {
+                            let modified = modified.clone();
+                            for path in modified {
+                                let wsl_source_path = format!("/mnt/{}", path.to_str().unwrap()).to_lowercase().replace('\\', "/").replace(':', "");
+
+                                // get file path without repo path
+                                let file_path = path.to_str().unwrap().strip_prefix(git_client.repo_path.to_str().unwrap()).unwrap().replace('\\', "/");
+                                let wsl_target_path = format!("/home/friendshipper/repo/{}", file_path);
+
+                                info!("Copying {} to {}", wsl_source_path, wsl_target_path);
+                                let cp_cmd = format!("cp {} {}", wsl_source_path, wsl_target_path);
+                                let mut cmd = std::process::Command::new("wsl");
+                                cmd.arg("sh").arg("-c").arg(cp_cmd);
+
+                                match cmd.output() {
+                                    Ok(output) => {
+                                        info!("Command output: {}", String::from_utf8_lossy(&output.stdout));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to execute command: {}", e);
+                                    }
+                                }
+                            }
                         }
 
                         let mut status = status.write();

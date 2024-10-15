@@ -2,7 +2,6 @@ use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
 use std::fs;
-use std::io::Write;
 use tempfile::NamedTempFile;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
@@ -46,17 +45,11 @@ where
         let branch = self.repo_status.read().branch.clone();
 
         let mut temp_file = NamedTempFile::new()?;
-        for file in &self.files {
-            writeln!(temp_file, "{}", file)?;
-        }
-        temp_file.flush()?;
+        let pathspec = self
+            .git_client
+            .create_pathspec_from_file(&mut temp_file, self.files.clone())?;
 
-        let args = vec![
-            "checkout",
-            &branch,
-            "--pathspec-from-file",
-            temp_file.path().to_str().unwrap(),
-        ];
+        let args = vec!["checkout", &branch, "--pathspec-from-file", &pathspec];
 
         self.git_client.run(&args, git::Opts::default()).await?;
 

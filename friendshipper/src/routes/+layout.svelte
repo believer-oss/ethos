@@ -79,6 +79,7 @@
 	let loginPrompted = false;
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
+	let gitStartupMessage = '';
 
 	// Refresh timer
 	let lastRefresh = new Date().getTime();
@@ -303,6 +304,10 @@
 			await appWindow.show();
 		};
 
+		const unlisten = listen('startup-message', (e) => {
+			startupMessage = e.payload as string;
+		});
+
 		void setupAppWindow();
 
 		const refresh = async () => {
@@ -394,6 +399,12 @@
 					void emit('error', e);
 				}
 			});
+
+		return () => {
+			void unlisten.then((f) => {
+				f();
+			});
+		};
 	});
 
 	void listen('error', (e) => {
@@ -406,13 +417,18 @@
 		}
 	});
 
+	void listen('git-log', (event) => {
+		// git-log "Updating files: 1%" etc too long, filter out and show static string
+		if (event.payload.startsWith('Updating files: ')) {
+			gitStartupMessage = 'Updating files...';
+		} else {
+			gitStartupMessage = event.payload as string;
+		}
+	});
+
 	void listen('success', (e) => {
 		successMessage = e.payload as string;
 		hasSuccess = true;
-	});
-
-	void listen('startup-message', (e) => {
-		startupMessage = e.payload as string;
 	});
 
 	void listen('git-refresh', () => {
@@ -548,6 +564,11 @@
 					<span class="text-gray-300 text-xl">{startupMessage}...</span>
 					<Spinner size="4" />
 				</div>
+				{#if gitStartupMessage}
+					<div class="rounded-md p-2 bg-secondary-800 dark:bg-space-950">
+						<code class="text-sm text-gray-300 dark:text-gray-300 m-0">{gitStartupMessage}</code>
+					</div>
+				{/if}
 				<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
 			</div>
 		{/if}
