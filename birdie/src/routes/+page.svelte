@@ -213,6 +213,8 @@
 
 		if (file.fileType === FileType.File) {
 			await handleShowFileHistory();
+		} else {
+			commits = [];
 		}
 	};
 
@@ -419,6 +421,7 @@
 	const goHome = async () => {
 		$currentRoot = '';
 		$selectedFile = null;
+		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -427,6 +430,7 @@
 		ancestry = ancestry.slice(0, index + 1);
 		$currentRoot = ancestry.join('/');
 		$selectedFile = null;
+		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -435,6 +439,7 @@
 		const currRoot = get(currentRoot);
 		$currentRoot = currRoot === '' ? folder.name : `${$currentRoot}/${folder.name}`;
 		$selectedFile = folder;
+		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -632,7 +637,7 @@
 			});
 			currentRoot.set(currentRootResponse);
 		}
-		if ($selectedFile) {
+		if ($selectedFile?.fileType === FileType.File) {
 			commits = await getFileHistory($selectedFile.path);
 		} else {
 			commits = [];
