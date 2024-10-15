@@ -54,6 +54,7 @@
 		FileType,
 		type LFSFile,
 		LocalFileLFSState,
+		type Node,
 		type Nullable
 	} from '$lib/types';
 	import {
@@ -210,13 +211,15 @@
 	const selectFile = async (file: LFSFile) => {
 		$selectedFile = file;
 
-		await handleShowFileHistory();
+		if (file.fileType === FileType.File) {
+			await handleShowFileHistory();
+		} else {
+			commits = [];
+		}
 	};
 
 	const handleFileToggled = async (selected: LFSFile) => {
-		if (selected.fileType === FileType.File) {
-			await selectFile(selected);
-		}
+		await selectFile(selected);
 
 		// if ctrl is held, select or unselect everything in between
 		if (shiftHeld) {
@@ -418,6 +421,7 @@
 	const goHome = async () => {
 		$currentRoot = '';
 		$selectedFile = null;
+		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -426,14 +430,16 @@
 		ancestry = ancestry.slice(0, index + 1);
 		$currentRoot = ancestry.join('/');
 		$selectedFile = null;
+		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
 	};
 
-	const setCurrentRoot = async (root: string) => {
+	const setCurrentRoot = async (folder: LFSFile) => {
 		const currRoot = get(currentRoot);
-		$currentRoot = currRoot === '' ? root : `${$currentRoot}/${root}`;
-		$selectedFile = null;
+		$currentRoot = currRoot === '' ? folder.name : `${$currentRoot}/${folder.name}`;
+		$selectedFile = folder;
+		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
 	};
@@ -560,13 +566,60 @@
 		});
 	};
 
+	const addCurrentRootToFileTree = async (node: Node, subFolders: string[]): Promise<Node> => {
+		if (node.value.fileType === FileType.File) return node;
+		const updatedChildFiles = await getFiles(node.value.path);
+		let updatedChildNodes: Node[] = [];
+		if (subFolders.length === 0) {
+			// we're at the deepest level of the current root
+			// update our children and "forget" anything deeper than this
+			updatedChildFiles.forEach((child) => {
+				updatedChildNodes.push({
+					value: child,
+					open: false,
+					children: []
+				});
+			});
+		} else {
+			// some extra steps here to ensure we don't overwrite any sibling/deeper nodes
+			updatedChildFiles.forEach((child) => {
+				const existingChild = node.children.find((c) => c.value.path === child.path);
+				if (existingChild) {
+					updatedChildNodes.push({
+						...existingChild,
+						value: child
+					});
+				} else {
+					updatedChildNodes.push({
+						value: child,
+						open: false,
+						children: []
+					});
+				}
+			});
+			// recursively call on the child node that matches the next subfolder
+			updatedChildNodes = await Promise.all(
+				updatedChildNodes.map((child) => {
+					if (child.value.name === subFolders[0]) {
+						return addCurrentRootToFileTree(child, subFolders.slice(1));
+					}
+					return child;
+				})
+			);
+		}
+		return { ...node, open: true, children: updatedChildNodes };
+	};
+
 	const handleLoadFileTree = async () => {
 		if (await fs.exists(FILE_TREE_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
 			const fileTreeResponse = await fs.readTextFile(FILE_TREE_PATH, {
 				dir: fs.BaseDirectory.AppLocalData
 			});
-			const parsedFileTree = JSON.parse(fileTreeResponse);
+			const parsedFileTree: Node = JSON.parse(fileTreeResponse);
 			rootNode.set(parsedFileTree);
+		}
+		if ($selectedFile) {
+			$rootNode = await addCurrentRootToFileTree(get(rootNode), $selectedFile.path.split('/'));
 		}
 	};
 
@@ -575,11 +628,19 @@
 	};
 
 	const handleLoadCurrentRoot = async () => {
-		if (await fs.exists(CURRENT_ROOT_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
+		if (
+			!$currentRoot &&
+			(await fs.exists(CURRENT_ROOT_PATH, { dir: fs.BaseDirectory.AppLocalData }))
+		) {
 			const currentRootResponse = await fs.readTextFile(CURRENT_ROOT_PATH, {
 				dir: fs.BaseDirectory.AppLocalData
 			});
 			currentRoot.set(currentRootResponse);
+		}
+		if ($selectedFile?.fileType === FileType.File) {
+			commits = await getFileHistory($selectedFile.path);
+		} else {
+			commits = [];
 		}
 		await refreshFiles();
 	};
@@ -590,14 +651,11 @@
 		if ($useFileTreeView) {
 			await handleSaveCurrentRoot();
 			await handleLoadFileTree();
-			$currentRoot = '';
 		} else {
 			await handleSaveFileTree();
 			await handleLoadCurrentRoot();
 		}
-		$selectedFile = null;
 		selectedFiles = [];
-		commits = [];
 	};
 
 	void listen('refresh-files', () => {
@@ -691,6 +749,7 @@
 					outline
 					size="xs"
 					class="mx-0 py-1 dark:focus-within:ring-0"
+					disabled={$useFileTreeView}
 					on:click={async () => goHome()}
 					>/
 				</Button>
@@ -701,6 +760,7 @@
 						outline
 						size="xs"
 						class="py-1 mx-0 dark:focus-within:ring-0"
+						disabled={$useFileTreeView}
 						on:click={async () => goBack(i)}>{path}</Button
 					>
 				</BreadcrumbItem>
@@ -757,7 +817,7 @@
 														disabled={loading}
 														class="flex justify-start items-center py-0.5 pl-2 border-0 w-full"
 														on:click={async () => {
-															await setCurrentRoot(file.name);
+															await setCurrentRoot(file);
 														}}
 													>
 														<FolderSolid class="h-6 w-6 pr-2" />{file.name}</Button
