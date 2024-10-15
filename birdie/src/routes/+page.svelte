@@ -744,6 +744,7 @@
 					outline
 					size="xs"
 					class="mx-0 py-1 dark:focus-within:ring-0"
+					disabled={$useFileTreeView}
 					on:click={async () => goHome()}
 					>/
 				</Button>
@@ -754,6 +755,7 @@
 						outline
 						size="xs"
 						class="py-1 mx-0 dark:focus-within:ring-0"
+						disabled={$useFileTreeView}
 						on:click={async () => goBack(i)}>{path}</Button
 					>
 				</BreadcrumbItem>
