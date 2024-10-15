@@ -48,7 +48,11 @@
 		} else {
 			fileNode.children = [];
 		}
-		$selectedFile = fileNode.value;
+		if (fileNode.value.name !== '/') {
+			$selectedFile = fileNode.value;
+		} else {
+			$selectedFile = null;
+		}
 		if (fileNode.value.fileType === FileType.File) {
 			$currentRoot = fileNode.value.path.substring(0, fileNode.value.path.lastIndexOf('/'));
 		} else {

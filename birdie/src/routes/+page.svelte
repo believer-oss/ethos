@@ -623,17 +623,19 @@
 	};
 
 	const handleLoadCurrentRoot = async () => {
-		if ($selectedFile) {
-			$currentRoot =
-				$selectedFile.fileType === FileType.Directory
-					? $selectedFile.path
-					: $selectedFile.path.substring(0, $selectedFile.path.lastIndexOf('/'));
-			await handleShowFileHistory();
-		} else if (await fs.exists(CURRENT_ROOT_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
+		if (
+			!$currentRoot &&
+			(await fs.exists(CURRENT_ROOT_PATH, { dir: fs.BaseDirectory.AppLocalData }))
+		) {
 			const currentRootResponse = await fs.readTextFile(CURRENT_ROOT_PATH, {
 				dir: fs.BaseDirectory.AppLocalData
 			});
 			currentRoot.set(currentRootResponse);
+		}
+		if ($selectedFile) {
+			commits = await getFileHistory($selectedFile.path);
+		} else {
+			commits = [];
 		}
 		await refreshFiles();
 	};
