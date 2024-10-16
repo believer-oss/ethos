@@ -5,6 +5,7 @@ use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
+use ethos_core::utils::junit::JunitOutput;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, instrument, warn};
@@ -41,6 +42,7 @@ where
         .route("/server/verify", get(verify_server_image))
         .route("/workflows", get(get_workflows))
         .route("/workflows/logs", get(get_logs_for_workflow_node))
+        .route("/workflows/junit", get(get_workflow_junit_artifact))
         .route("/workflows/stop", post(stop_workflow))
 }
 
@@ -433,6 +435,27 @@ where
         .get_logs_for_workflow_node(&params.uid, &params.node_id)
         .await?;
     Ok(logs)
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetWorkflowJunitArtifactParams {
+    pub uid: String,
+    pub node_id: String,
+}
+
+pub async fn get_workflow_junit_artifact<T>(
+    State(state): State<AppState<T>>,
+    params: Query<GetWorkflowJunitArtifactParams>,
+) -> Result<Json<JunitOutput>, CoreError>
+where
+    T: EngineProvider,
+{
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let junit_output = kube_client
+        .get_junit_artifact_for_workflow_node(&params.uid, &params.node_id)
+        .await?;
+    Ok(Json(junit_output))
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]

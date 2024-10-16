@@ -314,6 +314,11 @@ export interface WorkflowOutputs {
 
 export interface WorkflowArtifact {
 	name: string;
+	s3: Nullable<S3Artifact>;
+}
+
+export interface S3Artifact {
+	key: string;
 }
 
 export interface WorkflowNode {
@@ -355,4 +360,30 @@ export interface UnrealVersionSelectorStatus {
 	version_selector_msg: string;
 	uproject_file_assoc: boolean;
 	uproject_file_assoc_msg: string[];
+}
+
+// Junit types
+export interface JunitFailure {
+	message: string;
+	failure_type: string;
+	content: Nullable<string>;
+}
+
+export interface JunitTestCase {
+	name: string;
+	className: string;
+	time: Nullable<number>;
+	failure: Nullable<JunitFailure>;
+}
+
+export interface JunitOutput {
+	time: Nullable<number>;
+	testsuite: JunitTestSuite[];
+}
+
+export interface JunitTestSuite {
+	name: string;
+	time: Nullable<number>;
+	testcase: Nullable<JunitTestCase[]>;
+	testsuite: Nullable<JunitTestSuite[]>;
 }
