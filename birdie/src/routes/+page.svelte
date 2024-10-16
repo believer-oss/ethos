@@ -569,12 +569,12 @@
 		});
 	};
 
-	const addCurrentRootToFileTree = async (node: Node, subFolders: string[]): Promise<Node> => {
+	const addSelectedFilePathToFileTree = async (node: Node, subFolders: string[]): Promise<Node> => {
 		if (node.value.fileType === FileType.File) return node;
 		const updatedChildFiles = await getFiles(node.value.path);
 		let updatedChildNodes: Node[] = [];
 		if (subFolders.length === 0) {
-			// we're at the deepest level of the current root
+			// we're at the deepest subfolder level
 			// update our children and "forget" anything deeper than this
 			updatedChildFiles.forEach((child) => {
 				updatedChildNodes.push({
@@ -604,7 +604,7 @@
 			updatedChildNodes = await Promise.all(
 				updatedChildNodes.map((child) => {
 					if (child.value.name === subFolders[0]) {
-						return addCurrentRootToFileTree(child, subFolders.slice(1));
+						return addSelectedFilePathToFileTree(child, subFolders.slice(1));
 					}
 					return child;
 				})
@@ -622,7 +622,7 @@
 			rootNode.set(parsedFileTree);
 		}
 		if ($selectedFile) {
-			$rootNode = await addCurrentRootToFileTree(get(rootNode), $selectedFile.path.split('/'));
+			$rootNode = await addSelectedFilePathToFileTree(get(rootNode), $selectedFile.path.split('/'));
 		}
 	};
 
