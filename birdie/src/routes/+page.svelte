@@ -429,7 +429,10 @@
 	const goBack = async (index: number) => {
 		ancestry = ancestry.slice(0, index + 1);
 		$currentRoot = ancestry.join('/');
-		$selectedFile = null;
+
+		const parentFiles = await getFiles(ancestry.slice(0, index).join('/'));
+		$selectedFile = parentFiles.find((f) => f.name === ancestry[index]) ?? null;
+
 		commits = [];
 		selectedFiles = [];
 		await refreshFiles();
