@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context};
 
 use crate::types::argo::workflow::Workflow;
 use crate::types::errors::CoreError;
+use crate::utils::junit::{JunitOutput, TEST_JUNIT_XML};
 
 // Save some data by filtering fields
 const ARGO_WORKFLOW_DEFAULT_FIELDS: &str = "items.metadata.name,items.metadata.annotations,items.metadata.labels,items.metadata.creationTimestamp,items.metadata.uid,items.status.phase,items.status.finishedAt,items.status.estimatedDuration,items.status.progress,items.status";
@@ -116,6 +117,29 @@ impl ArgoClient {
             .await?;
 
         Ok(response.text().await?)
+    }
+
+    pub async fn get_junit_artifact_for_workflow_node(
+        &self,
+        _uid: &str,
+        _node_id: &str,
+    ) -> Result<JunitOutput, CoreError> {
+        // let url = format!(
+        //     "{}/artifact-files/{}/archived-workflows/{}/{}/outputs/junit-xml",
+        //     self.host, self.namespace, uid, node_id
+        // );
+        // let response = self
+        //     .client
+        //     .get(&url)
+        //     .header("Authorization", format!("Bearer {}", self.auth))
+        //     .send()
+        //     .await?;
+
+        // let text = response.text().await?;
+        // info!("response: {}", text);
+
+        let junit_output = JunitOutput::new_from_xml_str(TEST_JUNIT_XML)?;
+        Ok(junit_output)
     }
 
     pub async fn stop_workflow(&self, workflow: &str) -> Result<String, CoreError> {

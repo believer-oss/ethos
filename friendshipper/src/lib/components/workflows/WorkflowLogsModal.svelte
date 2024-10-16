@@ -3,16 +3,25 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { writeText } from '@tauri-apps/api/clipboard';
 	import { FileCopySolid } from 'flowbite-svelte-icons';
-	import type { Workflow, WorkflowNode } from '$lib/types';
-	import { getWorkflowNodeLogs } from '$lib/builds';
+	import type { JunitOutput, Nullable, Workflow, WorkflowNode } from '$lib/types';
+	import { getWorkflowJunitArtifact, getWorkflowNodeLogs } from '$lib/builds';
+	import JunitDisplay from './junit/JunitDisplay.svelte';
 
 	export let showModal: boolean;
 	export let workflow: Workflow;
 	let loading: boolean = false;
 	let rawLogs: string = '';
 	let lines: string[] = [];
+	let junitOutput: Nullable<JunitOutput> = null;
 	let searchTerm: string = '';
 	let selectedNode: string = '';
+
+	enum DisplayType {
+		Logs,
+		Junit
+	}
+
+	let displayType: DisplayType = DisplayType.Logs;
 
 	$: filteredLogs = lines
 		.filter((line) => {
@@ -43,9 +52,22 @@
 		}
 	};
 
-	const refreshLogs = async (nodeId: string) => {
+	const refreshLogs = async (node: WorkflowNode) => {
 		loading = true;
-		selectedNode = nodeId;
+		selectedNode = node.id;
+
+		// if the node has an artifact called junit-xml, get it
+		const junitArtifact = node.outputs?.artifacts?.find((artifact) =>
+			artifact.name.endsWith('junit-xml')
+		);
+		if (junitArtifact) {
+			try {
+				const output = await getWorkflowJunitArtifact(workflow.metadata.uid, selectedNode);
+				junitOutput = output;
+			} catch (e) {
+				await emit('error', e);
+			}
+		}
 
 		try {
 			await getLogs(workflow.metadata.uid, selectedNode);
@@ -54,6 +76,10 @@
 		}
 
 		loading = false;
+	};
+
+	const toggleDisplayType = () => {
+		displayType = displayType === DisplayType.Logs ? DisplayType.Junit : DisplayType.Logs;
 	};
 
 	const getNodeColor = (node: WorkflowNode): string => {
@@ -83,7 +109,7 @@
 		);
 
 		if (importantNode) {
-			await refreshLogs(importantNode.id);
+			await refreshLogs(importantNode);
 		}
 	};
 
@@ -110,7 +136,7 @@
 	on:close={onClose}
 >
 	<div class="flex flex-col space-y-2 overflow-y-hidden h-full justify-between">
-		<div class="flex flex-row gap-4 items-center pb-2">
+		<div class="flex flex-row gap-4 items-center pb-2 h-full">
 			<h2 class="text-lg font-semibold text-primary-400 pb-0">Logs for {workflow.metadata.name}</h2>
 			<Input
 				type="text"
@@ -139,32 +165,47 @@
 					class="text-xs px-2 py-1 rounded-md text-white hover:bg-gray-500 dark:hover:bg-gray-500 disabled:opacity-100 {getNodeColor(
 						node
 					)} {selectedNode === node.id && 'border border-white'}"
-					on:click={() => refreshLogs(node.id)}
+					on:click={() => refreshLogs(node)}
 				>
 					{node.displayName}
 				</Button>
 			{/each}
 		</div>
 		<Hr />
-		{#if loading}
-			<div class="flex justify-center items-center">
-				<Spinner class="h-8 w-8" />
+		{#if junitOutput}
+			<div class="flex justify-center gap-2 h-full">
+				{#if displayType === DisplayType.Logs}
+					<Button size="xs" class="py-1" on:click={toggleDisplayType}>Show Test Results</Button>
+				{:else if displayType === DisplayType.Junit}
+					<Button size="xs" class="py-1" on:click={toggleDisplayType}>Show Logs</Button>
+				{/if}
 			</div>
-		{:else if filteredLogs.length > 0}
-			<div
-				class="p-2 flex flex-col-reverse bg-secondary-800 dark:bg-space-950 overflow-x-auto overflow-y-auto rounded-md border border-secondary-600"
-			>
-				<code class="text-sm">
-					{#each filteredLogs as line}
-						{line}<br />
-					{/each}
-				</code>
-			</div>
-		{:else}
-			<code class="text-sm">Select a build phase above!</code>
 		{/if}
-		<div class="flex justify-end items-end">
-			<code class="text-xs align-right">{filteredLogs.length} entries</code>
-		</div>
+		{#if displayType === DisplayType.Logs}
+			{#if loading}
+				<div class="flex justify-center items-center">
+					<Spinner class="h-8 w-8" />
+				</div>
+			{:else if filteredLogs.length > 0}
+				<div
+					class="p-2 flex flex-col-reverse bg-secondary-800 dark:bg-space-950 overflow-x-auto overflow-y-auto rounded-md border border-secondary-600"
+				>
+					<code class="text-sm text-gray-300 dark:text-gray-300">
+						{#each filteredLogs as line}
+							{line}<br />
+						{/each}
+					</code>
+				</div>
+			{:else}
+				<code class="text-sm">Select a build phase above!</code>
+			{/if}
+			<div class="flex justify-end items-end">
+				<code class="text-xs align-right">{filteredLogs.length} entries</code>
+			</div>
+		{:else if displayType === DisplayType.Junit && junitOutput}
+			<div class="flex flex-col gap-2 h-full overflow-y-none">
+				<JunitDisplay {junitOutput} />
+			</div>
+		{/if}
 	</div>
 </Modal>

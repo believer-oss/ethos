@@ -1,3 +1,4 @@
+use ethos_core::utils::junit::JunitOutput;
 use tracing::error;
 
 use ethos_core::storage::ArtifactList;
@@ -302,6 +303,28 @@ pub async fn get_workflow_node_logs(
     }
 
     Ok(res.text().await?)
+}
+
+#[tauri::command]
+pub async fn get_workflow_junit_artifact(
+    state: tauri::State<'_, State>,
+    uid: String,
+    node_id: String,
+) -> Result<JunitOutput, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/builds/workflows/junit?uid={}&nodeId={}",
+            state.server_url, uid, node_id
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
 }
 
 #[tauri::command]

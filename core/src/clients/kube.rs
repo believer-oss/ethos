@@ -27,6 +27,7 @@ use crate::types::playtests::{
     CreatePlaytestRequest, Group, GroupFullError, Playtest, UpdatePlaytestRequest,
 };
 use crate::types::project::ProjectConfig;
+use crate::utils::junit::JunitOutput;
 use crate::{AWSClient, KUBE_SHA_LABEL_KEY};
 
 static SHA_LABEL_KEY: &str = KUBE_SHA_LABEL_KEY;
@@ -694,6 +695,20 @@ impl KubeClient {
 
         let argo_client = self.argo_client.read().await;
         argo_client.get_logs_for_workflow_node(uid, node_id).await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_junit_artifact_for_workflow_node(
+        &self,
+        uid: &str,
+        node_id: &str,
+    ) -> Result<JunitOutput, CoreError> {
+        self.kubeconfig().await?;
+
+        let argo_client = self.argo_client.read().await;
+        argo_client
+            .get_junit_artifact_for_workflow_node(uid, node_id)
+            .await
     }
 
     #[instrument(skip(self))]

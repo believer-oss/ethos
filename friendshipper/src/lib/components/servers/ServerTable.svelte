@@ -53,7 +53,6 @@
 			return;
 		}
 
-		console.log(server);
 		syncing = true;
 		const req: SyncClientRequest = {
 			artifactEntry: entry,
