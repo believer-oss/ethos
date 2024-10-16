@@ -351,11 +351,21 @@ fn main() -> Result<(), CoreError> {
                     );
 
                     match server
-                        .run(config, config_file, startup_tx, refresh_tx, shutdown_rx)
+                        .run(
+                            config,
+                            config_file,
+                            startup_tx.clone(),
+                            refresh_tx,
+                            shutdown_rx,
+                        )
                         .await
                     {
                         Ok(_) => {}
                         Err(e) => {
+                            startup_tx
+                                .send("Warning: Server failed to start".to_string())
+                                .unwrap();
+                            git_tx.send(e.to_string()).unwrap();
                             error!("Server error: {:?}", e);
                         }
                     }
