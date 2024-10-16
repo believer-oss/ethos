@@ -1,6 +1,6 @@
 [package]
 name = "birdie"
-version = "1.2.2"
+version = "1.2.3"
 description = "Birdie"
 authors = ["you"]
 license = ""
