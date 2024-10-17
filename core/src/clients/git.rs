@@ -681,7 +681,13 @@ impl Git {
 
     pub async fn expire_reflog(&self) -> anyhow::Result<()> {
         self.run(
-            &["reflog", "expire", "--expire=now", "--all"],
+            &[
+                "reflog",
+                "expire",
+                "--expire-unreachable=30.days",
+                "--expire=30.days",
+                "--all",
+            ],
             Opts::default(),
         )
         .await
