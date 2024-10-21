@@ -12,6 +12,7 @@ use aws_sdk_eks::Client as EksClient;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use aws_sdk_sso::Client as SsoClient;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SignatureLocation, SigningSettings};
+use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use aws_smithy_runtime_api::client::identity::Identity;
 use aws_types::region::Region;
 use aws_types::SdkConfig;
@@ -79,6 +80,7 @@ impl AWSClient {
         config: AWSConfig,
     ) -> Result<Self> {
         let sso_config = SdkConfig::builder()
+            .http_client(create_hyper_client())
             .region(Region::new(crate::AWS_REGION))
             .build();
 
@@ -159,6 +161,7 @@ impl AWSClient {
         let session_token = session_token.map(|t| t.to_string());
         let creds = Credentials::from_keys(access_key, secret_key, session_token);
         let shared_config = SdkConfig::builder()
+            .http_client(create_hyper_client())
             .credentials_provider(SharedCredentialsProvider::new(creds.clone()))
             .region(Region::new(crate::AWS_REGION))
             .build();
@@ -344,6 +347,7 @@ impl AWSClient {
                 info!("Role credentials: {:?}", role_credentials.expiration);
 
                 Ok(SdkConfig::builder()
+                    .http_client(create_hyper_client())
                     .credentials_provider(SharedCredentialsProvider::new(creds.clone()))
                     .region(Region::new(crate::AWS_REGION))
                     .build())
@@ -631,6 +635,7 @@ impl AWSClient {
         let current_sdk_config = self.get_sdk_config().await;
         let region = Region::new(region);
         let sdk_config = SdkConfig::builder()
+            .http_client(create_hyper_client())
             .credentials_provider(current_sdk_config.credentials_provider().unwrap())
             .region(region)
             .build();
@@ -780,4 +785,15 @@ pub fn ensure_aws_client(client: Option<AWSClient>) -> Result<AWSClient, CoreErr
             )))
         }
     }
+}
+
+pub fn create_hyper_client() -> aws_sdk_ssooidc::config::SharedHttpClient {
+    let tls_connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_only()
+        .enable_http1()
+        .enable_http2()
+        .build();
+
+    HyperClientBuilder::new().build(tls_connector)
 }
