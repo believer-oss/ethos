@@ -43,4 +43,12 @@ pub struct Outputs {
 #[serde(rename_all = "camelCase")]
 pub struct Artifact {
     pub name: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3Artifact>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct S3Artifact {
+    pub key: String,
 }
