@@ -67,6 +67,9 @@
 			} catch (e) {
 				await emit('error', e);
 			}
+		} else {
+			junitOutput = null;
+			displayType = DisplayType.Logs;
 		}
 
 		try {
@@ -136,7 +139,7 @@
 	on:close={onClose}
 >
 	<div class="flex flex-col space-y-2 overflow-y-hidden h-full justify-between">
-		<div class="flex flex-row gap-4 items-center pb-2 h-full">
+		<div class="flex flex-row gap-4 items-center pb-2">
 			<h2 class="text-lg font-semibold text-primary-400 pb-0">Logs for {workflow.metadata.name}</h2>
 			<Input
 				type="text"

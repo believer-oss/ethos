@@ -23,7 +23,7 @@
 
 <div class="flex flex-col gap-2">
 	<div class="flex gap-2 w-full justify-between">
-		<span class="text-sm text-gray-300 dark:text-gray-300 w-36 min-w-36">
+		<span class="text-sm text-gray-300 dark:text-gray-300 w-full">
 			{#if testcase.failure}
 				<span>⚠️</span>
 			{/if}
@@ -38,7 +38,7 @@
 	{#if testcase.failure}
 		<div class="rounded-md p-2 border border-white dark:border-white">
 			<code class="text-sm font-medium text-gray-300 dark:text-gray-300 w-full"
-				>{testcase.failure.message}</code
+				>{testcase.failure.$value}</code
 			>
 		</div>
 	{/if}

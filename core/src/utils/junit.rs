@@ -29,7 +29,7 @@ pub const TEST_JUNIT_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JunitOutput {
     #[serde(rename = "time")]
-    pub time: f64,
+    pub time: Option<f64>,
     #[serde(rename = "testsuite")]
     pub testsuites: Vec<TestSuite>,
 }
@@ -39,7 +39,7 @@ pub struct TestSuite {
     #[serde(rename = "name")]
     pub name: String,
     #[serde(rename = "time")]
-    pub time: f64,
+    pub time: Option<f64>,
     #[serde(rename = "testcase")]
     pub testcases: Vec<TestCase>,
     #[serde(rename = "testsuite")]
@@ -60,9 +60,9 @@ pub struct TestCase {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Failure {
     #[serde(rename = "message")]
-    pub message: String,
+    pub message: Option<String>,
     #[serde(rename = "type")]
-    pub failure_type: String,
+    pub failure_type: Option<String>,
     #[serde(rename = "$value")]
     pub content: Option<String>,
 }

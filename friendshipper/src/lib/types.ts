@@ -366,7 +366,7 @@ export interface UnrealVersionSelectorStatus {
 export interface JunitFailure {
 	message: string;
 	failure_type: string;
-	content: Nullable<string>;
+	$value: Nullable<string>;
 }
 
 export interface JunitTestCase {
