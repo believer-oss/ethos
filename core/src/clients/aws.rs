@@ -72,6 +72,7 @@ pub struct StoredDeviceClientInfo {
 }
 
 impl AWSClient {
+    #[instrument(skip(verification_tx), err)]
     pub async fn new(
         verification_tx: Option<Sender<String>>,
         client_name: String,
