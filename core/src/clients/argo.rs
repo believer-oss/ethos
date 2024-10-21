@@ -1,6 +1,7 @@
 use kube::api::ObjectList;
 
 use anyhow::{anyhow, Context};
+use tracing::warn;
 
 use crate::types::argo::workflow::Workflow;
 use crate::types::errors::CoreError;
@@ -123,7 +124,7 @@ impl ArgoClient {
         &self,
         uid: &str,
         node_id: &str,
-    ) -> Result<JunitOutput, CoreError> {
+    ) -> Result<Option<JunitOutput>, CoreError> {
         let url = format!(
             "{}/artifact-files/{}/archived-workflows/{}/{}/outputs/junit-xml",
             self.host, self.namespace, uid, node_id
@@ -133,12 +134,21 @@ impl ArgoClient {
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.auth))
             .send()
-            .await?;
+            .await;
 
-        let text = response.text().await?;
+        match response {
+            Ok(resp) => {
+                if resp.status() == 404 {
+                    warn!("No junit artifact found for workflow node {}", node_id);
+                    return Ok(None);
+                }
 
-        let junit_output = JunitOutput::new_from_xml_str(&text)?;
-        Ok(junit_output)
+                let text = resp.text().await?;
+                let junit_output = JunitOutput::new_from_xml_str(&text)?;
+                Ok(Some(junit_output))
+            }
+            Err(e) => Err(CoreError::Internal(anyhow!(e))),
+        }
     }
 
     pub async fn stop_workflow(&self, workflow: &str) -> Result<String, CoreError> {

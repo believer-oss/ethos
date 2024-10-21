@@ -101,6 +101,7 @@
 	};
 
 	const onClose = () => {
+		junitOutput = null;
 		lines = [];
 	};
 

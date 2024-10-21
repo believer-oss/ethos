@@ -310,7 +310,7 @@ pub async fn get_workflow_junit_artifact(
     state: tauri::State<'_, State>,
     uid: String,
     node_id: String,
-) -> Result<JunitOutput, TauriError> {
+) -> Result<Option<JunitOutput>, TauriError> {
     let res = state
         .client
         .get(format!(

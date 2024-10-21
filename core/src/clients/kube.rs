@@ -702,7 +702,7 @@ impl KubeClient {
         &self,
         uid: &str,
         node_id: &str,
-    ) -> Result<JunitOutput, CoreError> {
+    ) -> Result<Option<JunitOutput>, CoreError> {
         self.kubeconfig().await?;
 
         let argo_client = self.argo_client.read().await;

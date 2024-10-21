@@ -447,7 +447,7 @@ pub struct GetWorkflowJunitArtifactParams {
 pub async fn get_workflow_junit_artifact<T>(
     State(state): State<AppState<T>>,
     params: Query<GetWorkflowJunitArtifactParams>,
-) -> Result<Json<JunitOutput>, CoreError>
+) -> Result<Json<Option<JunitOutput>>, CoreError>
 where
     T: EngineProvider,
 {
