@@ -53,6 +53,7 @@ aws-types = { version = "1" }
 aws-smithy-http = { version = "0.60.1" }
 aws-smithy-types-convert = { version = "0.60.1", features = ["convert-time"] }
 aws-smithy-runtime-api = { version = "1.1.1" }
+aws-smithy-runtime = { version = "1.1.1", features = ["client"] }
 aws-credential-types = { version = "1.1.1", features = [
     "hardcoded-credentials",
 ] }
@@ -88,3 +89,6 @@ octocrab = "0.39.0"
 bytes = "1.7.2"
 tempfile = { workspace = true }
 serde-xml-rs = "0.6.0"
+hyper-rustls = { version = "0.24.2", features = ["webpki-roots"] }
+hyper = { version = "0.14.31", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
