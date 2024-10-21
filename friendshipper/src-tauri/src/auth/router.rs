@@ -3,6 +3,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use ethos_core::AWSClient;
+use tracing::error;
 
 use crate::engine::EngineProvider;
 use crate::APP_NAME;
@@ -57,7 +58,7 @@ where
 
     let username = state.app_config.read().user_display_name.clone();
     let playtest_region = state.app_config.read().playtest_region.clone();
-    state
+    match state
         .replace_aws_client(
             new_aws_client,
             playtest_region,
@@ -65,7 +66,13 @@ where
             state.app_config.clone(),
             state.config_file.clone(),
         )
-        .await?;
+        .await
+    {
+        Ok(_) => (),
+        Err(e) => {
+            error!("Failed to replace AWS client: {}", e);
+        }
+    }
 
     Ok(())
 }
