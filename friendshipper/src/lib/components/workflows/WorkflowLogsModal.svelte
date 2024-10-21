@@ -63,6 +63,10 @@
 		if (junitArtifact) {
 			try {
 				const output = await getWorkflowJunitArtifact(workflow.metadata.uid, selectedNode);
+				if (!output) {
+					// immediately switch to logs view if this junit output not found
+					displayType = DisplayType.Logs;
+				}
 				junitOutput = output;
 			} catch (e) {
 				await emit('error', e);
@@ -101,6 +105,7 @@
 	};
 
 	const onClose = () => {
+		selectedNode = '';
 		junitOutput = null;
 		lines = [];
 	};
