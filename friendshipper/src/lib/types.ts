@@ -373,7 +373,7 @@ export interface JunitTestCase {
 	name: string;
 	className: string;
 	time: Nullable<number>;
-	failure: Nullable<JunitFailure>;
+	failure: Nullable<JunitFailure[]>;
 }
 
 export interface JunitOutput {

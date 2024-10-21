@@ -54,7 +54,7 @@ pub struct TestCase {
     pub classname: String,
     #[serde(rename = "time", default)]
     pub time: Option<f64>,
-    pub failure: Option<Failure>,
+    pub failure: Option<Vec<Failure>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -118,6 +118,10 @@ mod tests {
         // test the failure message
         let second_testsuite = parsed.testsuites[1].clone();
         let failure = second_testsuite.testcases[2].failure.clone();
-        assert_eq!(failure.unwrap().content.unwrap(), "AAAA HELP WE FAILED");
+        assert!(failure.is_some() && failure.as_ref().unwrap().len() == 1);
+        assert_eq!(
+            failure.as_ref().unwrap()[0].content,
+            Some("AAAA HELP WE FAILED".to_string())
+        );
     }
 }

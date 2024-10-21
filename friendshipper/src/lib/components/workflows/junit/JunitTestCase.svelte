@@ -36,10 +36,12 @@
 		</div>
 	</div>
 	{#if testcase.failure}
-		<div class="rounded-md p-2 border border-white dark:border-white">
-			<code class="text-sm font-medium text-gray-300 dark:text-gray-300 w-full"
-				>{testcase.failure.$value}</code
-			>
-		</div>
+		{#each testcase.failure as failure}
+			<div class="rounded-md p-2 border border-white dark:border-white">
+				<code class="text-sm font-medium text-gray-300 dark:text-gray-300 w-full"
+					>{failure.$value}</code
+				>
+			</div>
+		{/each}
 	{/if}
 </div>
