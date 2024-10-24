@@ -9,7 +9,7 @@ use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::config::{DynamicConfig, UnrealVerSelDiagResponse};
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
 use ethos_core::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
-use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
+use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsSearchEdgesNodeOnPullRequest;
 use ethos_core::types::playtests::{
     AssignUserRequest, CreatePlaytestRequest, Playtest, UnassignUserRequest, UpdatePlaytestRequest,
 };
@@ -491,7 +491,7 @@ pub async fn get_pull_request(
 pub async fn get_pull_requests(
     state: tauri::State<'_, State>,
     limit: i64,
-) -> Result<Vec<GetPullRequestsRepositoryPullRequestsNodes>, TauriError> {
+) -> Result<Vec<GetPullRequestsSearchEdgesNodeOnPullRequest>, TauriError> {
     let res = state
         .client
         .get(format!(

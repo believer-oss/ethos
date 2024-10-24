@@ -887,7 +887,7 @@
 	</div>
 </div>
 <Card
-	class="w-full p-4 mt-2 sm:p-4 max-w-full min-h-[16rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+	class="w-full p-4 mt-2 sm:p-4 max-w-full min-h-[20rem] h-[20rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 >
 	<Tabs
 		style="underline"

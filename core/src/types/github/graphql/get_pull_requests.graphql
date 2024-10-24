@@ -1,29 +1,43 @@
-query GetPullRequests($owner: String!, $name: String!, $limit: Int!) {
-    repository(owner: $owner, name: $name) {
-        pullRequests(first: $limit, orderBy: { field: CREATED_AT, direction: DESC }) {
+query GetPullRequests($query: String!, $limit: Int!) {
+  search(query: $query, type: ISSUE, first: $limit) {
+    __typename
+    edges {
+      __typename
+      node {
+        ... on PullRequest {
+          __typename
+          number
+          createdAt
+          mergedAt
+          headRefName
+          state
+          mergeable
+          mergeQueueEntry {
             __typename
-            nodes {
-                __typename
-                number
-                createdAt
-                mergedAt
-                headRefName
-                state
-                mergeable
-                mergeQueueEntry {
-                    __typename
-                    estimatedTimeToMerge
-                    state
-                }
-                author {
-                    __typename
-                    login
-                }
-                merged
-                permalink
-                title
+            estimatedTimeToMerge
+            state
+          }
+          author {
+            __typename
+            login
+          }
+          merged
+          permalink
+          title
+          repository {
+            __typename
+            name
+            owner {
+              __typename
+              login
             }
-            totalCount
+          }
         }
+        __typename
+      }
+      __typename
     }
+    issueCount
+    __typename
+  }
 }
