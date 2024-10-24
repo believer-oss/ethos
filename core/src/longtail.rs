@@ -249,6 +249,30 @@ impl Longtail {
             &archives, path
         );
 
+        match cache {
+            None => self.get_archive_internal(path, cache.as_ref(), archives, &tx, &credentials),
+            Some(cache) => {
+                let mut result: Result<()> =
+                    self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials);
+                if result.is_err() {
+                    warn!("Longtail download failed. Attempting to clear cache and retrying download. Original error was: {:?}", result);
+                    std::fs::remove_dir_all(&cache.path)?;
+                    result =
+                        self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials);
+                }
+                result
+            }
+        }
+    }
+
+    pub fn get_archive_internal(
+        &self,
+        path: &Path,
+        cache: Option<&CacheControl>,
+        archives: &[String],
+        tx: &Sender<LongtailMsg>,
+        credentials: &Credentials,
+    ) -> Result<()> {
         let cmd = self.exec_path.clone().context("No exec path set")?;
         let pipe = Stdio::piped();
         let errpipe = Stdio::piped();
@@ -269,7 +293,7 @@ impl Longtail {
             exec.arg("--cache-path").arg(&cache.path);
         }
 
-        send_msg(&tx, LongtailMsg::ExecEvt(format!("{:?}", exec)));
+        send_msg(tx, LongtailMsg::ExecEvt(format!("{:?}", exec)));
 
         // Add creds separately so they aren't logged in the above msg
         exec.env("AWS_ACCESS_KEY_ID", credentials.access_key_id())
@@ -295,7 +319,7 @@ impl Longtail {
             .for_each(|line| {
                 let line = std::str::from_utf8(&line).unwrap_or("").replace('\n', "");
                 if !line.is_empty() {
-                    send_msg(&tx, LongtailMsg::Log(line));
+                    send_msg(tx, LongtailMsg::Log(line));
                 }
             });
 
@@ -304,7 +328,7 @@ impl Longtail {
             .lines()
             .map_while(|line| line.ok())
             .for_each(|line| {
-                send_msg(&tx, LongtailMsg::ErrEvt(line.clone()));
+                send_msg(tx, LongtailMsg::ErrEvt(line.clone()));
                 error_lines.push(line);
             });
 
@@ -320,7 +344,7 @@ impl Longtail {
             ));
         }
 
-        send_msg(&tx, LongtailMsg::DoneArcSyncEvt);
+        send_msg(tx, LongtailMsg::DoneArcSyncEvt);
 
         if let Some(cache) = &cache {
             let mut all_files = FileCacheData::collect(&cache.path.join("chunks"));
