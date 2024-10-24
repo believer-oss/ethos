@@ -2,10 +2,11 @@ use crate::types::github::commits::get_commit_statuses::GetCommitStatusesReposit
 use crate::types::github::commits::{get_commit_statuses, GetCommitStatuses};
 use crate::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use crate::types::github::merge_queue::{get_merge_queue, GetMergeQueue};
-use crate::types::github::pulls::dequeue_pull_request;
 use crate::types::github::pulls::get_pull_request::GetPullRequestRepositoryPullRequest;
-use crate::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
-use crate::types::github::pulls::DequeuePullRequest;
+use crate::types::github::pulls::get_pull_requests::{
+    GetPullRequestsSearchEdgesNode, GetPullRequestsSearchEdgesNodeOnPullRequest,
+};
+use crate::types::github::pulls::{dequeue_pull_request, DequeuePullRequest};
 use crate::types::github::pulls::{
     enqueue_pull_request, get_pull_request, get_pull_request_id, get_pull_requests,
     is_branch_pr_open, EnqueuePullRequest, GetPullRequest, GetPullRequestId, GetPullRequests,
@@ -16,7 +17,7 @@ use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
 use reqwest::Client;
 use std::collections::HashMap;
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
@@ -129,40 +130,32 @@ impl GraphQLClient {
         owner: String,
         repo: String,
         limit: i64,
-    ) -> Result<Vec<GetPullRequestsRepositoryPullRequestsNodes>> {
+    ) -> Result<Vec<GetPullRequestsSearchEdgesNodeOnPullRequest>> {
+        let query = format!("is:pr author:{} repo:{}/{}", self.username, owner, repo);
         match post_graphql::<GetPullRequests, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
-            get_pull_requests::Variables {
-                owner: owner.clone().to_string(),
-                name: repo.clone().to_string(),
-                limit,
-            },
+            get_pull_requests::Variables { query, limit },
         )
         .await
         {
             Ok(res) => {
-                let nodes: Vec<Option<GetPullRequestsRepositoryPullRequestsNodes>> = res
+                warn!("get_pull_requests: {:?}", res);
+                let edges = res
                     .data
                     .ok_or(anyhow!("Failed to get valid response data"))?
-                    .repository
-                    .ok_or(anyhow!("Failed to get valid PR repository"))?
-                    .pull_requests
-                    .nodes
-                    .ok_or(anyhow!("Failed to get valid PR nodes"))?;
-
-                let mut prs: Vec<GetPullRequestsRepositoryPullRequestsNodes> = vec![];
-
-                for pr in nodes.iter() {
-                    let pr = pr.clone().ok_or(anyhow!("Failed to get valid PR"))?;
-                    let author = &pr
-                        .author
-                        .clone()
-                        .ok_or(anyhow!("Failed to get valid author"))?;
-                    if author.login == self.username {
-                        prs.push(pr.clone());
-                    }
-                }
+                    .search
+                    .edges
+                    .ok_or(anyhow!("Failed to get valid search edges"))?;
+                let prs: Vec<GetPullRequestsSearchEdgesNodeOnPullRequest> = edges
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|edge| edge.node)
+                    .filter_map(|node| match node {
+                        GetPullRequestsSearchEdgesNode::PullRequest(pr) => Some(pr),
+                        _ => None,
+                    })
+                    .collect();
 
                 Ok(prs)
             }

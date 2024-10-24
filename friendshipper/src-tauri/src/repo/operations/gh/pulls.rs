@@ -4,11 +4,10 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::engine::EngineProvider;
+use crate::state::AppState;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::pulls::get_pull_request::GetPullRequestRepositoryPullRequest;
-use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsRepositoryPullRequestsNodes;
-
-use crate::state::AppState;
+use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsSearchEdgesNodeOnPullRequest;
 
 pub async fn get_pull_request<T>(
     State(state): State<AppState<T>>,
@@ -45,7 +44,7 @@ pub struct GetPullRequestsParams {
 pub async fn get_pull_requests<T>(
     State(state): State<AppState<T>>,
     params: Query<GetPullRequestsParams>,
-) -> Result<Json<Vec<GetPullRequestsRepositoryPullRequestsNodes>>, CoreError>
+) -> Result<Json<Vec<GetPullRequestsSearchEdgesNodeOnPullRequest>>, CoreError>
 where
     T: EngineProvider,
 {
