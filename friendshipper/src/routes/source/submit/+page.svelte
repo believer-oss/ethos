@@ -162,7 +162,7 @@
 	const refreshPulls = async () => {
 		fetchingPulls = true;
 		try {
-			const newPulls = await getPullRequests(10);
+			const newPulls = await getPullRequests(100);
 
 			// check if any pull requests have been merged
 			const currentMergedPulls = pulls.filter((pull) => pull.state === 'MERGED');
