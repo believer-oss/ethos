@@ -10,11 +10,23 @@
 	} from 'flowbite-svelte-icons';
 	import { FileType, LocalFileLFSState, type Node } from '$lib/types';
 	import { getFiles } from '$lib/repo';
-	import { currentRoot, fetchIncludeList, selectedFile } from '$lib/stores';
+	import {
+		currentRoot,
+		fetchIncludeList,
+		multiSelectEnd,
+		selectedFile,
+		selectedTreeFiles
+	} from '$lib/stores';
 
 	export let fileNode: Node;
 	export let loading: boolean;
+	export let shiftHeld: boolean;
 	export let level: number;
+
+	$: selected =
+		$selectedFile?.path === fileNode.value.path ||
+		$multiSelectEnd?.path === fileNode.value.path ||
+		$selectedTreeFiles.some((f) => f.path === fileNode.value.path);
 
 	const getChildren = async () => {
 		if (fileNode.value.fileType === FileType.File) {
@@ -38,27 +50,39 @@
 	};
 
 	const handleOnClick = async () => {
-		loading = true;
-		fileNode = {
-			...fileNode,
-			open: !fileNode.open
-		};
-		if (fileNode.open) {
-			await getChildren();
+		if (fileNode.value.path !== '/' && shiftHeld) {
+			if (!$selectedFile) {
+				$selectedFile = fileNode.value;
+			} else {
+				$multiSelectEnd = fileNode.value;
+			}
 		} else {
-			fileNode.children = [];
+			// open or close the node
+			fileNode = {
+				...fileNode,
+				open: !fileNode.open
+			};
+			if (fileNode.open) {
+				await getChildren();
+			} else {
+				fileNode.children = [];
+			}
+			// set selectedFile
+			if (fileNode.value.name !== '/') {
+				$selectedFile = fileNode.value;
+			} else {
+				$selectedFile = null;
+			}
+			// clear multi select state
+			$selectedTreeFiles = [];
+			$multiSelectEnd = null;
+			// update currentRoot
+			if (fileNode.value.fileType === FileType.File) {
+				$currentRoot = fileNode.value.path.substring(0, fileNode.value.path.lastIndexOf('/'));
+			} else {
+				$currentRoot = fileNode.value.path;
+			}
 		}
-		if (fileNode.value.name !== '/') {
-			$selectedFile = fileNode.value;
-		} else {
-			$selectedFile = null;
-		}
-		if (fileNode.value.fileType === FileType.File) {
-			$currentRoot = fileNode.value.path.substring(0, fileNode.value.path.lastIndexOf('/'));
-		} else {
-			$currentRoot = fileNode.value.path;
-		}
-		loading = false;
 	};
 
 	onDestroy(() => {
@@ -74,7 +98,7 @@
 		{/each}
 		<TableBodyCell class="p-2 w-full">
 			<Button
-				outline={$selectedFile?.path !== fileNode.value.path}
+				outline={!selected}
 				disabled={loading}
 				class="flex justify-start items-center border-0 gap-3 py-0.5 pl-2 rounded-md w-full"
 				on:click={handleOnClick}
@@ -101,7 +125,7 @@
 	</TableBodyRow>
 	{#if fileNode.open}
 		{#each fileNode.children as child}
-			<svelte:self bind:fileNode={child} bind:loading level={level + 1} />
+			<svelte:self bind:fileNode={child} bind:loading {shiftHeld} level={level + 1} />
 		{/each}
 	{/if}
 </div>
