@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { Badge, Button, Card, Indicator, Tooltip } from 'flowbite-svelte';
 	import {
 		ChevronDownOutline,
@@ -6,7 +7,7 @@
 		CloseOutline,
 		CodeOutline
 	} from 'flowbite-svelte-icons';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
 	import { stopWorkflow } from '$lib/builds';
 
@@ -122,6 +123,29 @@
 				return '';
 		}
 	};
+
+	onMount(() => {
+		void listen('build-deep-link', (e) => {
+			const workflowInfo = e.payload;
+
+			const foundCommitWorkflow = commits.find((commit) =>
+				commit.commit.startsWith(workflowInfo.commitSha)
+			);
+
+			if (foundCommitWorkflow !== undefined) {
+				const foundWorkflow = foundCommitWorkflow.workflows.find(
+					(workflow) =>
+						workflow.kind === 'Workflow' && workflow.metadata.name.startsWith(workflowInfo.name)
+				);
+
+				if (foundWorkflow !== undefined) {
+					setSelectedCommit(foundCommitWorkflow.commit);
+					selectedWorkflow = foundWorkflow;
+					showWorkflowLogsModal = true;
+				}
+			}
+		});
+	});
 </script>
 
 {#each commits as commit}
