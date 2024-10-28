@@ -8,6 +8,12 @@ export interface TauriError {
 	status_code: number;
 }
 
+// Okta types
+
+export interface Credentials {
+	id_token: string;
+}
+
 // Config types
 export interface DiscordChannelInfo {
 	name: string;
@@ -33,6 +39,11 @@ export interface AWSConfig {
 	artifactBucketName: string;
 }
 
+export interface OktaConfig {
+	clientId: string;
+	issuer: string;
+}
+
 export interface AppConfig {
 	repoPath: string;
 	repoUrl: string;
@@ -48,7 +59,8 @@ export interface AppConfig {
 	engineDownloadSymbols: boolean;
 	engineRepoUrl: string;
 	recordPlay: boolean;
-	awsConfig: AWSConfig;
+	serverUrl: string;
+	oktaConfig: OktaConfig;
 	selectedArtifactProject: string;
 	playtestRegion: string;
 	initialized: boolean;

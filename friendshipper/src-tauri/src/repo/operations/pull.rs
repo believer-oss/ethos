@@ -3,6 +3,7 @@ use std::sync::mpsc::Sender;
 
 use anyhow::anyhow;
 use axum::{async_trait, extract::State, Json};
+use ethos_core::storage::config::Project;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info, instrument};
 
@@ -12,7 +13,7 @@ use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
-use ethos_core::storage::{config::Project, ArtifactStorage};
+use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfig, UProject};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;

@@ -1,5 +1,6 @@
 import { derived, type Readable, writable } from 'svelte/store';
 import type { ChangeSet, Commit, ModifiedFile } from '@ethos/core';
+import OktaAuth from '@okta/okta-auth-js';
 import type {
 	AppConfig,
 	ArtifactEntry,
@@ -27,12 +28,14 @@ export const appConfig = writable(<AppConfig>{});
 export const repoConfig = writable(<Nullable<RepoConfig>>null);
 export const commits = writable(<Commit[]>[]);
 export const commitMessage = writable(<string | CommitMessage>'');
+export const oktaAuth = writable(<Nullable<OktaAuth>>null);
 export const selectedFiles = writable(<ModifiedFile[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const workflows = writable(<CommitWorkflowInfo[]>[]);
 export const engineWorkflows = writable(<CommitWorkflowInfo[]>[]);
 export const onboardingInProgress = writable(false);
 export const changeSets = writable(<ChangeSet[]>[]);
+export const startTime = writable(Date.now());
 
 export const nextPlaytest = derived([playtests, appConfig], ([$playtests, $appConfig]) => {
 	if ($playtests.length > 0) {

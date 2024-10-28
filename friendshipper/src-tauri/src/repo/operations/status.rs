@@ -4,6 +4,10 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::extract::Query;
 use axum::{async_trait, extract::State, Json};
+use ethos_core::storage::config::Project;
+use ethos_core::storage::{
+    ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList, Platform,
+};
 use parking_lot::RwLock;
 use serde::Deserialize;
 use tracing::{debug, info, instrument, warn};
@@ -14,10 +18,7 @@ use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::storage::{
-    config::Project, ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList,
-    ArtifactStorage, Platform,
-};
+use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::errors::CoreError;
@@ -462,7 +463,7 @@ where
 
         debug!("fetching s3 editor entries list");
 
-        aws_client.check_config().await?;
+        aws_client.check_expiration().await?;
 
         let project = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
             let app_config = self.app_config.read();
@@ -603,7 +604,7 @@ where
         let client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
         // Make sure AWS credentials still valid
-        client.check_config().await?;
+        client.check_expiration().await?;
         Some(client)
     };
 
@@ -659,6 +660,7 @@ where
 
 #[cfg(test)]
 mod tests {
+
     use ethos_core::storage::ArtifactEntry;
 
     use super::*;

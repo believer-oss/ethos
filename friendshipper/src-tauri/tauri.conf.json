@@ -53,6 +53,7 @@
 				"relaunch": true
 			}
 		},
+		"macOSPrivateApi": true,
 		"bundle": {
 			"active": true,
 			"category": "DeveloperTool",
@@ -111,7 +112,7 @@
 				"title": "Friendshipper",
 				"minWidth": 980,
 				"minHeight": 600,
-				"visible": true,
+				"visible": false,
 				"decorations": false,
 				"transparent": true,
 				"fileDropEnabled": false

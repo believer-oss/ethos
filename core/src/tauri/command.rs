@@ -10,7 +10,7 @@ use crate::types::repo::{
 
 use tauri::api::process::current_binary;
 use tauri::Env;
-use tracing::{error, info};
+use tracing::{error, info, Instrument};
 
 pub async fn check_error(code: reqwest::StatusCode, body: String) -> Option<TauriError> {
     if code.is_client_error() || code.is_server_error() {
@@ -52,13 +52,19 @@ pub async fn get_log_path(state: tauri::State<'_, State>) -> Result<String, Taur
 pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     use std::process::Command;
 
-    while state.shutdown_tx.send(()).await.is_ok() {
-        // keep sending until the channel is closed
-        info!("Sent shutdown signal");
+    let span = tracing::info_span!("shutting_down");
 
-        // wait a second
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    async move {
+        while state.shutdown_tx.send(()).await.is_ok() {
+            // keep sending until the channel is closed
+            info!("Sent shutdown signal");
+
+            // wait a second
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
     }
+    .instrument(span)
+    .await;
 
     if let Ok(path) = current_binary(&Env::default()) {
         match Command::new(path).spawn() {
@@ -153,12 +159,16 @@ pub async fn check_login_required(state: tauri::State<'_, State>) -> Result<bool
 }
 
 #[tauri::command]
-pub async fn refresh_login(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/auth/refresh", state.server_url))
-        .send()
-        .await?;
+pub async fn refresh_login(
+    state: tauri::State<'_, State>,
+    token: Option<String>,
+) -> Result<(), TauriError> {
+    let url = match token {
+        Some(token) => format!("{}/auth/refresh?token={}", state.server_url, token),
+        None => format!("{}/auth/refresh", state.server_url),
+    };
+
+    let res = state.client.post(url).send().await?;
 
     if let Some(err) = check_error(res.status(), res.text().await?).await {
         return Err(err);

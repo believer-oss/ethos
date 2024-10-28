@@ -3,7 +3,6 @@
 	import { onMount } from 'svelte';
 	import {
 		Button,
-		Card,
 		DarkMode,
 		Img,
 		Modal,
@@ -41,6 +40,7 @@
 	import { fs } from '@tauri-apps/api';
 	import { checkUpdate, installUpdate } from '@tauri-apps/api/updater';
 	import { relaunch } from '@tauri-apps/api/process';
+	import { jwtDecode } from 'jwt-decode';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -51,6 +51,7 @@
 		commits,
 		dynamicConfig,
 		engineWorkflows,
+		oktaAuth,
 		onboardingInProgress,
 		playtests,
 		projectConfigs,
@@ -62,7 +63,7 @@
 	} from '$lib/stores';
 	import { getPlaytests } from '$lib/playtests';
 	import { getBuilds, getWorkflows } from '$lib/builds';
-	import { checkLoginRequired, refreshLogin } from '$lib/auth';
+	import { refreshLogin } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import { getAllCommits, getRepoStatus, SkipDllCheck, AllowOfflineCommunication } from '$lib/repo';
@@ -71,12 +72,13 @@
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
 	import { handleError } from '$lib/utils';
 	import { CHANGE_SETS_PATH } from '$lib/consts';
+	import { createOktaAuth, isTokenExpired } from '$lib/okta';
+	import { browser } from '$app/environment';
 
 	// Initialization
 	let appVersion = '';
 	let initialized = false;
-	let loginRequired = true;
-	let loginPrompted = false;
+	const loginRequired = true;
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
 	let gitStartupMessage = '';
@@ -113,8 +115,11 @@
 
 	$: activeUrl = $page.url.pathname;
 
+	let tokenRefreshInterval: ReturnType<typeof setInterval> | undefined;
+	let accessToken: string | null = null;
+	let refreshToken: string | null = null;
+
 	const refreshInterval = 60 * 1000;
-	const authRefreshInterval = 10 * 1000;
 
 	let loading = false;
 	const loadingText = 'Refreshing data...';
@@ -179,17 +184,133 @@
 		}
 	};
 
-	const checkAuth = async () => {
-		if (!$appConfig.initialized || $onboardingInProgress) return;
+	const handleOktaLogout = async () => {
+		try {
+			localStorage.removeItem('oktaRefreshToken');
+			localStorage.removeItem('oktaAccessToken');
+			accessToken = null;
+			refreshToken = null;
+		} catch (err) {
+			await emit('error', err);
+		}
+	};
 
-		const updatedLoginRequired = await checkLoginRequired();
-		if (updatedLoginRequired !== loginRequired) {
-			loginRequired = updatedLoginRequired;
-			if (loginRequired) {
-				loginPrompted = true;
-			} else {
-				loginPrompted = false;
+	const tryOktaRefresh = async () => {
+		if (!$oktaAuth) return;
+
+		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
+			scopes: ['openid', 'email', 'profile']
+		});
+
+		if (tokens && tokens.idToken) {
+			await emit('access-token-set', tokens.accessToken?.accessToken);
+			await refreshLogin(tokens.accessToken?.accessToken);
+			localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+		}
+		$oktaAuth?.tokenManager.setTokens(tokens);
+	};
+
+	const handleOktaLogin = async () => {
+		try {
+			const previousStartupMessage = startupMessage;
+			startupMessage = 'Logging in with Okta...';
+
+			// Initiate the redirect flow
+			if (browser && $oktaAuth) {
+				const { tokens } = await $oktaAuth.token.getWithPopup({
+					scopes: ['openid', 'email', 'profile']
+				});
+
+				if (tokens && tokens.idToken) {
+					await emit('access-token-set', tokens.accessToken?.accessToken);
+					await refreshLogin(tokens.accessToken?.accessToken);
+					localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+				}
+				$oktaAuth?.tokenManager.setTokens(tokens);
 			}
+
+			startupMessage = previousStartupMessage;
+		} catch (err) {
+			await emit('error', err);
+		}
+	};
+
+	const refreshOktaOrLogout = async () => {
+		if (refreshToken && !isTokenExpired(refreshToken) && $oktaAuth) {
+			try {
+				await $oktaAuth.session.refresh();
+
+				const tokens = await $oktaAuth.tokenManager.getTokens();
+
+				await refreshLogin(tokens.accessToken?.accessToken);
+
+				if (tokens.accessToken) {
+					accessToken = tokens.accessToken.accessToken;
+					localStorage.setItem('oktaAccessToken', accessToken);
+				} else {
+					await handleOktaLogout();
+				}
+			} catch (error) {
+				await emit('error', error);
+				await handleOktaLogout();
+			}
+		} else {
+			try {
+				await tryOktaRefresh();
+			} catch (_) {
+				await handleOktaLogout();
+				await handleOktaLogin();
+			}
+		}
+	};
+
+	// If we have an access token, starts a background process that will attempt to refresh the token before it expires
+	const startOktaTokenRefreshProcess = async () => {
+		if (tokenRefreshInterval) clearTimeout(tokenRefreshInterval);
+
+		if (accessToken) {
+			const decodedToken: { exp: number } = jwtDecode(accessToken);
+			const expirationTime = decodedToken.exp * 1000;
+			const currentTime = Date.now();
+			const timeUntilExpiry = expirationTime - currentTime;
+			// For now lets refresh five minutes before it expires to ensure it stays active
+			const fiveMinutes = 5 * 60 * 1000;
+
+			// If we are already in that buffer zone, attempt the refresh and restart this process
+			if (timeUntilExpiry <= fiveMinutes) {
+				await refreshOktaOrLogout();
+				await startOktaTokenRefreshProcess();
+			} else {
+				// Otherwise lets start the process
+				const refreshTime = Math.max(timeUntilExpiry - fiveMinutes, 0);
+				tokenRefreshInterval = setTimeout(() => {
+					void (async () => {
+						await refreshOktaOrLogout();
+						await startOktaTokenRefreshProcess();
+					})();
+				}, refreshTime);
+			}
+		}
+	};
+
+	const handleOktaState = async (): Promise<void> => {
+		accessToken = localStorage.getItem('oktaAccessToken');
+		refreshToken = localStorage.getItem('oktaRefreshToken');
+
+		// If we dont have any tokens or just an expired refresh token, user has to log in to Okta
+		if ((!accessToken && !refreshToken) || (!accessToken && isTokenExpired(refreshToken))) {
+			await handleOktaLogin();
+		}
+
+		// If we have no access token but an un-expired refresh token, try to refresh
+		if (!accessToken || isTokenExpired(accessToken)) {
+			await refreshOktaOrLogout();
+		}
+
+		if (accessToken) {
+			// Only start the process if we have a valid access token
+			await refreshLogin(accessToken);
+			await startOktaTokenRefreshProcess();
 		}
 	};
 
@@ -214,6 +335,11 @@
 			const config = await getAppConfig();
 			appConfig.set(config);
 
+			// if we don't have a server url, set initialized to false
+			if (!config.serverUrl) {
+				config.initialized = false;
+			}
+
 			// if the config isn't initialized, we want to push the user
 			// to the welcome modal
 			if (!config.initialized) {
@@ -225,17 +351,19 @@
 			}
 		}
 
-		await checkAuth();
-		if (loginRequired && !loginPrompted) {
-			try {
-				await refreshLogin();
-				await initialize();
-			} catch (e) {
-				await emit('error', e);
-			}
+		try {
+			$oktaAuth = createOktaAuth($appConfig.oktaConfig.issuer, $appConfig.oktaConfig.clientId);
+			await handleOktaState();
+		} catch (e) {
+			await emit('error', e);
 		}
+		// try {
+		// } catch (e) {
+		// 	await emit('error', e);
+		// 	return;
+		// }
 
-		if (!loginRequired) {
+		if (!loginRequired || accessToken) {
 			try {
 				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
 					getDynamicConfig(),
@@ -303,12 +431,11 @@
 		const setupAppWindow = async (): Promise<void> => {
 			await appWindow.show();
 		};
+		void setupAppWindow();
 
 		const unlisten = listen('startup-message', (e) => {
 			startupMessage = e.payload as string;
 		});
-
-		void setupAppWindow();
 
 		const refresh = async () => {
 			if (!$appConfig.initialized || $onboardingInProgress || loginRequired) return;
@@ -383,15 +510,11 @@
 				const interval = setInterval(() => {
 					void refresh();
 				}, refreshInterval);
-				const authInterval = setInterval(() => {
-					void checkAuth();
-				}, authRefreshInterval);
 
 				showWelcomeModal = !get(appConfig).initialized;
 
 				return () => {
 					clearInterval(interval);
-					clearInterval(authInterval);
 				};
 			})
 			.catch((e) => {
@@ -426,6 +549,11 @@
 		}
 	});
 
+	void listen('access-token-set', (e) => {
+		localStorage.setItem('oktaAccessToken', e.payload as string);
+		accessToken = e.payload as string;
+	});
+
 	void listen('success', (e) => {
 		successMessage = e.payload as string;
 		hasSuccess = true;
@@ -433,10 +561,6 @@
 
 	void listen('git-refresh', () => {
 		void refreshRepo();
-	});
-
-	void listen('login-status', (e) => {
-		loginRequired = Boolean(e.payload);
 	});
 
 	void listen('open-preferences', () => {
@@ -477,7 +601,9 @@
 	};
 </script>
 
-<WelcomeModal bind:showModal={showWelcomeModal} onClose={initialize} />
+{#key $appConfig}
+	<WelcomeModal bind:showModal={showWelcomeModal} currentConfig={$appConfig} onClose={initialize} />
+{/key}
 
 <PreferencesModal
 	bind:showModal={showPreferencesModal}
@@ -533,33 +659,20 @@
 			</Button>
 		</div>
 	</div>
-	{#if !initialized || loginRequired}
-		{#if loginRequired && loginPrompted}
-			<div
-				class="flex flex-col p-4 align-middle justify-around h-full w-full bg-secondary-800 dark:bg-space-950"
-			>
-				<Card
-					class="w-full p-4 sm:p-4 max-w-full flex flex-col align-middle gap-2 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+	{#if !initialized || !accessToken}
+		{#if initialized}
+			<div>
+				<div
+					class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
+					data-tauri-drag-region
 				>
-					<img src="/assets/7B_5.png" alt="Friendshipper Logo" class="w-24 h-24 mx-auto" />
-					<h3 class="text-xl text-white text-center">Log in to Friendshipper!</h3>
-					<div class="flex flex-row justify-around align-middle">
-						<Button
-							class="w-[300px]"
-							on:click={async () => {
-								try {
-									await refreshLogin();
-									await initialize();
-
-									loginPrompted = false;
-								} catch (e) {
-									await emit('error', e);
-								}
-							}}
-							>Log In
-						</Button>
-					</div>
-				</Card>
+					<button
+						class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+						on:click={handleOktaLogin}
+					>
+						Login With Okta
+					</button>
+				</div>
 			</div>
 		{:else}
 			<div

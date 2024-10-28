@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import { open } from '@tauri-apps/api/dialog';
 	import { emit, listen } from '@tauri-apps/api/event';
-	import { getAppConfig, updateAppConfig } from '$lib/config';
+	import { updateAppConfig } from '$lib/config';
 	import { appConfig, onboardingInProgress, repoStatus } from '$lib/stores';
 	import UnrealEngineLogo from '$lib/icons/UnrealEngineLogo.svelte';
 	import { configureGitUser, installGit, restart } from '$lib/system';
@@ -17,9 +17,10 @@
 		SkipDllCheck,
 		AllowOfflineCommunication
 	} from '$lib/repo';
+	import type { AppConfig } from '$lib/types';
 
 	enum Page {
-		AWSConfig = 1,
+		ServerConfig = 1,
 		Username,
 		UserType,
 		GitSetup,
@@ -29,16 +30,14 @@
 	}
 
 	export let showModal: boolean;
+	export let currentConfig: AppConfig;
 	export let onClose: () => Promise<void>;
 
 	let disableNext = true;
-	let currentPage: Page = Page.AWSConfig;
+	let currentPage: Page = Page.ServerConfig;
 
-	// aws config
-	let awsAccountId: string = '';
-	let awsSsoStartUrl: string = '';
-	let awsRoleName: string = '';
-	let artifactBucket: string = '';
+	// server config
+	let serverUrl: string = '';
 
 	let cloneLocation: string = '';
 	let repoUrl: string = '';
@@ -64,20 +63,23 @@
 			repoPath = `${cloneLocation}/${repoName}`;
 		};
 
+	const serverUrlIsValid = (): boolean => {
+		// make sure this is a valid URL
+		try {
+			const url = new URL(serverUrl);
+			return url.protocol === 'http:' || url.protocol === 'https:';
+		} catch (_) {
+			return false;
+		}
+	};
+
 	const validate = () => {
 		let valid = true;
 
 		switch (currentPage) {
-			case Page.AWSConfig:
-				valid =
-					awsAccountId !== '' &&
-					awsSsoStartUrl !== '' &&
-					awsRoleName !== '' &&
-					artifactBucket !== '';
-				awsAccountId = awsAccountId.trim();
-				awsSsoStartUrl = awsSsoStartUrl.trim();
-				awsRoleName = awsRoleName.trim();
-				artifactBucket = artifactBucket.trim();
+			case Page.ServerConfig:
+				valid = serverUrlIsValid();
+				serverUrl = serverUrl.trim();
 				break;
 			case Page.Username:
 				valid = userDisplayName !== '';
@@ -134,31 +136,13 @@
 		updatedAppConfig.userDisplayName = userDisplayName;
 		updatedAppConfig.repoPath = repoPath;
 		updatedAppConfig.repoUrl = repoUrl;
+		updatedAppConfig.serverUrl = serverUrl;
 		updatedAppConfig.githubPAT = githubPAT;
-
-		updatedAppConfig.awsConfig = {
-			accountId: awsAccountId,
-			ssoStartUrl: awsSsoStartUrl,
-			roleName: awsRoleName,
-			artifactBucketName: artifactBucket
-		};
-
-		if (!isPlaytesterOnly) {
-			updatedAppConfig.gitConfig = {
-				username: gitUsername,
-				email: gitEmail
-			};
-		}
 
 		try {
 			await updateAppConfig(updatedAppConfig);
 			await emit('success', 'Preferences saved.');
-		} catch (e) {
-			await emit('error', e);
-		}
-
-		try {
-			$appConfig = await getAppConfig();
+			await restart();
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -206,7 +190,13 @@
 
 		if (currentPage === Page.GitSetup) {
 			isPlaytesterOnly = false;
-			await confirmGitInstallation();
+
+			if (!currentConfig.githubPAT) {
+				await confirmGitInstallation();
+			} else {
+				// skip this page if this is a reconfigure
+				await gotoNextPage();
+			}
 		}
 
 		if (currentPage === Page.CloneSettings) {
@@ -255,13 +245,25 @@
 	});
 
 	onMount(() => {
-		$appConfig = get(appConfig);
-		if ($appConfig.userDisplayName) {
-			userDisplayName = $appConfig.userDisplayName;
+		if (currentConfig.userDisplayName) {
+			userDisplayName = currentConfig.userDisplayName;
 		}
 
-		if ($appConfig.repoPath) {
-			repoPath = $appConfig.repoPath;
+		if (currentConfig.serverUrl) {
+			serverUrl = currentConfig.serverUrl;
+		}
+
+		if (currentConfig.repoUrl) {
+			repoUrl = currentConfig.repoUrl;
+		}
+
+		if (currentConfig.githubPAT) {
+			githubPAT = currentConfig.githubPAT;
+		}
+
+		if (currentConfig.repoPath) {
+			repoPath = currentConfig.repoPath;
+			cloneLocation = repoPath.split('/').slice(0, -1).join('/');
 		}
 	});
 </script>
@@ -293,29 +295,24 @@
 				</Alert>
 			{/if}
 		</div>
-		{#if currentPage === Page.AWSConfig}
+		{#if currentPage === Page.ServerConfig}
 			<div>
 				<p class="text-md text-center text-gray-300 dark:text-gray-300 w-full">
-					To get started, you'll need to provide some information about your AWS account and the S3
-					bucket where your game's artifacts are stored.
+					To get started, you'll need to provide the URL of your Friendshipper server.
 				</p>
 			</div>
 			<div class="flex flex-col justify-between items-center gap-2">
 				<span class="text-md text-center text-gray-300 dark:text-gray-300 w-full"
-					>AWS Account ID</span
+					>Friendshipper Server URL</span
 				>
-				<Input class="h-8 text-center w-1/2" bind:value={awsAccountId} on:input={validate} />
-				<span class="text-md text-center text-gray-300 dark:text-gray-300 w-full"
-					>AWS SSO Start URL</span
-				>
-				<Input class="h-8 text-center w-1/2" bind:value={awsSsoStartUrl} on:input={validate} />
-				<span class="text-md text-center text-gray-300 dark:text-gray-300 w-3/4">AWS Role Name</span
-				>
-				<Input class="h-8 text-center w-1/2" bind:value={awsRoleName} on:input={validate} />
-				<span class="text-md text-center text-gray-300 dark:text-gray-300 w-3/4"
-					>S3 Artifact Bucket Name</span
-				>
-				<Input class="h-8 text-center w-1/2" bind:value={artifactBucket} on:input={validate} />
+				<Input
+					size="lg"
+					class="text-center bg-secondary-700 dark:bg-space-900 text-primary-400 dark:text-primary-400 border-primary-400 dark:border-primary-400 border-2 rounded-md p-2 w-1/2"
+					type="text"
+					spellcheck="false"
+					bind:value={serverUrl}
+					on:input={validate}
+				/>
 			</div>
 		{:else if currentPage === Page.Username}
 			<div class="flex flex-col justify-between gap-2">
@@ -473,7 +470,7 @@
 			</div>
 		{/if}
 		<div class="flex justify-between mt-2">
-			{#if currentPage !== Page.AWSConfig}
+			{#if currentPage !== Page.ServerConfig}
 				<Button primary on:click={gotoPrevPage}>Back</Button>
 			{:else}
 				<div />

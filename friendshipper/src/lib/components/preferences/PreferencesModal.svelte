@@ -27,15 +27,15 @@
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
-	import { appConfig, dynamicConfig, playtests } from '$lib/stores';
-	import type { AppConfig } from '$lib/types';
+	import { onDestroy } from 'svelte';
+	import { appConfig, dynamicConfig, playtests, startTime } from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
 	import { resetRepo } from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
-	import { logout } from '$lib/auth';
+	import type { AppConfig } from '$lib/types';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -44,16 +44,46 @@
 	export let handleCheckForUpdates: () => Promise<void>;
 
 	let checkForUpdatesInFlight: boolean = false;
-	let localAppConfig: AppConfig = { awsConfig: {} };
+	let localAppConfig: AppConfig = {};
 	let isEngineTypePrebuilt: boolean = false;
 	let isEngineTypeSource: boolean = false;
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
+	let uptime = Math.floor((Date.now() - $startTime) / 1000);
+	let uptimeInterval: ReturnType<typeof setInterval>;
+
+	const formatUptime = (input: number) => {
+		const hours = Math.floor(input / 3600)
+			.toString()
+			.padStart(2, '0');
+		const minutes = Math.floor((input % 3600) / 60)
+			.toString()
+			.padStart(2, '0');
+		const seconds = (input % 60).toString().padStart(2, '0');
+		return `${hours}:${minutes}:${seconds}`;
+	};
 
 	const onOpen = () => {
+		// refresh uptime in interval
+		uptimeInterval = setInterval(() => {
+			uptime = Math.floor((Date.now() - $startTime) / 1000);
+		}, 1000);
+
 		localAppConfig = structuredClone($appConfig);
+
+		// initialize config types to empty object if needed
+		if (!localAppConfig.oktaConfig) {
+			localAppConfig.oktaConfig = {
+				clientId: '',
+				issuer: ''
+			};
+		}
 	};
+
+	onDestroy(() => {
+		clearInterval(uptimeInterval);
+	});
 
 	const openRepoFolder = async () => {
 		localAppConfig.repoPath = await open({
@@ -135,7 +165,11 @@
 		try {
 			showProgressModal = true;
 			progressModalTitle = 'Logging out...';
-			await logout();
+
+			localStorage.removeItem('oktaRefreshToken');
+			localStorage.removeItem('oktaAccessToken');
+
+			await restart();
 			showModal = false;
 
 			// wait 5 seconds before closing the modal
@@ -252,19 +286,21 @@
 				For engineers. Enable if you want to debug the game client locally. Increases download size.
 			</Tooltip>
 		</div>
-		{#if $dynamicConfig.playtestRegions.length > 1}
-			<div class="flex flex-col gap-2 m-4">
-				<Label class="text-white">Playtest Region</Label>
-				<Select
-					size="sm"
-					bind:value={localAppConfig.playtestRegion}
-					class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-				>
-					{#each $dynamicConfig.playtestRegions as region}
-						<option value={region}>{regions[region] || region}</option>
-					{/each}
-				</Select>
-			</div>
+		{#if $dynamicConfig && $dynamicConfig.playtestRegions}
+			{#if $dynamicConfig.playtestRegions.length > 1}
+				<div class="flex flex-col gap-2 m-4">
+					<Label class="text-white">Playtest Region</Label>
+					<Select
+						size="sm"
+						bind:value={localAppConfig.playtestRegion}
+						class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+					>
+						{#each $dynamicConfig.playtestRegions as region}
+							<option value={region}>{regions[region] || region}</option>
+						{/each}
+					</Select>
+				</div>
+			{/if}
 		{/if}
 		<div class="m-4">
 			<Accordion>
@@ -525,36 +561,15 @@
 
 	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
 		<CloudArrowUpSolid />
-		AWS
+		Server Configuration
 	</h1>
 	<div class="rounded-lg border border-gray-300 dark:border-gray-300">
 		<div class="mt-4 mb-4 ml-4 mr-4 flex flex-col gap-4">
 			<div class="flex flex-col gap-2">
-				<Label class="text-white">AWS Account ID</Label>
+				<Label class="text-white">Friendshipper Server URL</Label>
 				<Input
 					class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-					bind:value={localAppConfig.awsConfig.accountId}
-				/>
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label class="text-white">AWS SSO Start URL</Label>
-				<Input
-					class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-					bind:value={localAppConfig.awsConfig.ssoStartUrl}
-				/>
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label class="text-white">Playtest IAM Role</Label>
-				<Input
-					class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-					bind:value={localAppConfig.awsConfig.roleName}
-				/>
-			</div>
-			<div class="flex flex-col gap-2">
-				<Label class="text-white">S3 Artifact Bucket Name</Label>
-				<Input
-					class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-					bind:value={localAppConfig.awsConfig.artifactBucketName}
+					bind:value={localAppConfig.serverUrl}
 				/>
 			</div>
 		</div>
@@ -637,12 +652,17 @@
 	<div
 		class="absolute bottom-0 left-0 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900"
 	>
-		<div class="flex flex-row-reverse justify-between gap-2">
+		<div class="flex flex-row-reverse justify-between gap-2 h-full">
 			<div class="flex gap-2">
 				<Button on:click={onApplyClicked}>Apply</Button>
 				<Button outline on:click={onDiscardClicked}>Discard</Button>
 			</div>
-			<Button color="red" on:click={onLogoutClicked}>Logout</Button>
+			<div class="flex gap-2 justify-center h-full">
+				<div class="flex items-center h-full">
+					<Button color="red" on:click={onLogoutClicked}>Logout</Button>
+					<code class="ml-2 text-sm">Uptime: {formatUptime(uptime)}</code>
+				</div>
+			</div>
 		</div>
 	</div>
 </Modal>

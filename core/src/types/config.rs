@@ -37,11 +37,9 @@ pub type AppConfigRef = Arc<RwLock<AppConfig>>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct AWSConfig {
-    pub account_id: String,
-    pub sso_start_url: String,
-    pub role_name: String,
-    pub artifact_bucket_name: String,
+pub struct OktaConfig {
+    pub client_id: String,
+    pub issuer: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -94,9 +92,12 @@ pub struct AppConfig {
     #[serde(default, rename = "recordPlay")]
     pub record_play: bool,
 
-    #[serde(rename = "awsConfig")]
+    #[serde(default, rename = "serverUrl")]
+    pub server_url: String,
+
+    #[serde(rename = "oktaConfig")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub aws_config: Option<AWSConfig>,
+    pub okta_config: Option<OktaConfig>,
 
     #[serde(default, rename = "selectedArtifactProject")]
     pub selected_artifact_project: Option<String>,
@@ -147,7 +148,8 @@ impl AppConfig {
             engine_download_symbols: false,
             engine_repo_url: Default::default(),
             record_play: false,
-            aws_config: None,
+            server_url: Default::default(),
+            okta_config: None,
             selected_artifact_project: None,
             playtest_region: default_playtest_region(),
             otlp_endpoint: None,
@@ -342,6 +344,12 @@ impl UProject {
         let commit_sha_short: &str = &captures[2];
         Ok(commit_sha_short.to_string())
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendshipperConfig {
+    pub artifact_bucket_name: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

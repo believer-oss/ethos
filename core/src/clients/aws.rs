@@ -1,16 +1,12 @@
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
-use aws_credential_types::{
-    provider::{ProvideCredentials, SharedCredentialsProvider},
-    Credentials,
-};
+use aws_credential_types::{provider::SharedCredentialsProvider, Credentials};
 use aws_sdk_ecr::{types::ImageIdentifier, Client as EcrClient};
 use aws_sdk_eks::Client as EksClient;
-use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
-use aws_sdk_sso::Client as SsoClient;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client as S3Client;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SignatureLocation, SigningSettings};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use aws_smithy_runtime_api::client::identity::Identity;
@@ -22,41 +18,24 @@ use chrono::{DateTime, Utc};
 use http::Request;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument};
 
-use crate::auth::sso::{AccessToken, DeviceClient, SsoAccessTokenProvider, TokenExpiredError};
-use crate::storage::entry::ArtifactEntry;
-use crate::types::config::{AWSConfig, DynamicConfig};
+use crate::types::config::DynamicConfig;
 use crate::types::errors::CoreError;
-use crate::{AWS_SSO_START_URL, ETHOS_APP_NAME};
-
-static AWS_KEYRING_TOKEN: &str = "aws_sso_token";
-static AWS_KEYRING_DEVICE_CLIENT: &str = "aws_device_client";
-static AWS_KEYRING_DEVICE_SECRET_FIRST: &str = "aws_device_secret_first";
-static AWS_KEYRING_DEVICE_SECRET_SECOND: &str = "aws_device_secret_second";
-
-#[derive(Debug, Clone)]
-pub struct SsoConfig {
-    config: SdkConfig,
-    token_provider: SsoAccessTokenProvider,
-    access_token: AccessToken,
-}
 
 #[derive(Debug, Clone)]
 pub struct AWSAuthContext {
     pub credentials: Credentials,
     pub sdkconfig: SdkConfig,
     pub login_required: bool,
-
-    sso_config: Option<SsoConfig>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AWSClient {
-    pub config: Option<AWSConfig>,
+    pub artifact_bucket_name: String,
 
     auth_context: Arc<RwLock<AWSAuthContext>>,
-    verification_tx: Option<Sender<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,90 +52,12 @@ pub struct StoredDeviceClientInfo {
 }
 
 impl AWSClient {
-    #[instrument(skip(verification_tx), err)]
-    pub async fn new(
-        verification_tx: Option<Sender<String>>,
-        client_name: String,
-        config: AWSConfig,
-    ) -> Result<Self> {
-        let sso_config = SdkConfig::builder()
-            .http_client(create_hyper_client())
-            .region(Region::new(crate::AWS_REGION))
-            .build();
-
-        let token_provider = SsoAccessTokenProvider::new(&sso_config, client_name).unwrap();
-
-        let access_token = match Self::restore_token(config.clone()) {
-            Ok(token) => {
-                info!("Restored token. Expires at {:?}", token.expires_at);
-
-                if token.is_expired() {
-                    // get new token
-                    warn!("Cached token expired, refreshing");
-                    let token = match token_provider.refresh_token(token.clone()).await {
-                        Ok(token) => token,
-                        Err(e) => match e.downcast_ref() {
-                            Some(TokenExpiredError) => {
-                                warn!("Token can not automatically be refreshed, prompting for login.");
-                                token_provider
-                                    .get_new_token(&config.sso_start_url, verification_tx.clone())
-                                    .await?
-                            }
-                            _ => return Err(anyhow!("Unable to refresh token: {:?}", e)),
-                        },
-                    };
-
-                    info!("Refreshed token. Expires at {:?}", token.expires_at);
-
-                    // save token to keyring
-                    Self::store_token(token.clone())?;
-
-                    token
-                } else {
-                    token
-                }
-            }
-            Err(_) => {
-                // get new token
-                let token = token_provider
-                    .get_new_token(&config.sso_start_url, verification_tx.clone())
-                    .await?;
-
-                // save token to keyring
-                Self::store_token(token.clone())?;
-
-                token
-            }
-        };
-
-        let shared_config =
-            Self::get_config(access_token.clone(), sso_config.clone(), config.clone()).await?;
-
-        Ok(AWSClient {
-            auth_context: Arc::new(RwLock::new(AWSAuthContext {
-                credentials: shared_config
-                    .credentials_provider()
-                    .unwrap()
-                    .provide_credentials()
-                    .await
-                    .unwrap(),
-                sdkconfig: shared_config,
-                sso_config: Some(SsoConfig {
-                    config: sso_config,
-                    token_provider,
-                    access_token,
-                }),
-                login_required: false,
-            })),
-            config: Some(config),
-            verification_tx,
-        })
-    }
-
     pub async fn from_static_creds(
         access_key: &str,
         secret_key: &str,
         session_token: Option<&str>,
+        expires_at: Option<DateTime<Utc>>,
+        bucket_name: String,
     ) -> Self {
         let session_token = session_token.map(|t| t.to_string());
         let creds = Credentials::from_keys(access_key, secret_key, session_token);
@@ -170,11 +71,10 @@ impl AWSClient {
             auth_context: Arc::new(RwLock::new(AWSAuthContext {
                 credentials: creds,
                 sdkconfig: shared_config.clone(),
-                sso_config: None,
                 login_required: false,
+                expires_at,
             })),
-            config: None,
-            verification_tx: None,
+            artifact_bucket_name: bucket_name,
         }
     }
 
@@ -185,12 +85,24 @@ impl AWSClient {
 
     pub async fn logout(&self) -> Result<(), CoreError> {
         let mut auth_context = self.auth_context.write().await;
-
-        Self::delete_stored_token()?;
-
-        auth_context.sso_config = None;
         auth_context.login_required = true;
         Ok(())
+    }
+
+    pub async fn check_expiration(&self) -> Result<(), CoreError> {
+        let auth_context = self.auth_context.read().await;
+        if let Some(expires_at) = auth_context.expires_at {
+            if expires_at < Utc::now() {
+                return Err(CoreError::Internal(anyhow!("Credentials have expired")));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_credential_expiration(&self) -> Option<DateTime<Utc>> {
+        let auth_context = self.auth_context.read().await;
+        auth_context.expires_at
     }
 
     pub async fn get_sdk_config(&self) -> SdkConfig {
@@ -201,168 +113,15 @@ impl AWSClient {
         self.auth_context.read().await.credentials.clone()
     }
 
-    pub async fn get_credential_expiration(&self) -> Option<DateTime<Utc>> {
-        let sso_config = self.auth_context.read().await.sso_config.clone();
-        if let Some(sso_config) = sso_config {
-            return Some(sso_config.access_token.expires_at);
-        }
-
-        None
-    }
-
-    // Returns true when the underlying access token was refreshed
-    pub async fn check_config(&self) -> Result<(), CoreError> {
-        debug!("Checking AWS config");
-        let sso_config: Option<SsoConfig>;
-        let login_required: bool;
-
-        {
-            let auth_context = self.auth_context.read().await;
-            sso_config = auth_context.sso_config.clone();
-            login_required = auth_context.login_required;
-        }
-
-        if let Some(sso_config) = sso_config {
-            let access_token = sso_config.access_token;
-
-            if access_token.is_expired() && !login_required {
-                info!("Access token expired, refreshing");
-                self.refresh_token(false).await?
-            } else {
-                debug!("Access token still valid, or we've already signaled a refresh is needed.");
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn refresh_token(&self, allow_prompt: bool) -> Result<(), CoreError> {
-        let mut auth_context = self.auth_context.write().await;
-
-        let sso_config = auth_context.sso_config.clone();
-        if let Some(sso_config) = sso_config {
-            if !sso_config.access_token.is_expired() {
-                return Ok(());
-            }
-
-            let new_token = match sso_config
-                .token_provider
-                .refresh_token(sso_config.access_token.clone())
-                .await
-            {
-                Ok(token) => token,
-                Err(e) => match e.downcast_ref() {
-                    Some(TokenExpiredError) => {
-                        if allow_prompt {
-                            sso_config
-                                .token_provider
-                                .get_new_token(AWS_SSO_START_URL, self.verification_tx.clone())
-                                .await?
-                        } else {
-                            self.logout().await?;
-
-                            return Err(CoreError::Unauthorized);
-                        }
-                    }
-                    _ => {
-                        return Err(CoreError::Internal(anyhow!(
-                            "Unable to refresh token: {:?}",
-                            e
-                        )))
-                    }
-                },
-            };
-
-            // save token to keyring
-            Self::store_token(new_token.clone())?;
-
-            auth_context.sso_config = Some(SsoConfig {
-                config: sso_config.config.clone(),
-                token_provider: sso_config.token_provider.clone(),
-                access_token: new_token.clone(),
-            });
-
-            // This unwrap is safe because we know the config is Some
-            match Self::get_config(
-                new_token,
-                sso_config.config.clone(),
-                self.config.clone().unwrap(),
-            )
-            .await
-            {
-                Ok(shared_config) => {
-                    match shared_config.credentials_provider() {
-                        Some(provider) => match provider.provide_credentials().await {
-                            Ok(updated_creds) => {
-                                auth_context.credentials = updated_creds;
-                            }
-                            Err(e) => {
-                                return Err(CoreError::Internal(anyhow!(
-                                    "Unable to get credentials from provider: {:?}",
-                                    e
-                                )));
-                            }
-                        },
-                        None => {
-                            return Err(CoreError::Internal(anyhow!(
-                                "Unable to get credentials provider"
-                            )));
-                        }
-                    }
-
-                    auth_context.sdkconfig = shared_config;
-                    auth_context.login_required = false;
-                }
-                Err(e) => {
-                    error!("Unable to get updated SDK config: {:?}", e);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn get_config(
-        token: AccessToken,
-        sso_config: SdkConfig,
-        aws_config: AWSConfig,
-    ) -> Result<SdkConfig> {
-        let client = SsoClient::new(&sso_config);
-        let role_credentials = client
-            .get_role_credentials()
-            .role_name(aws_config.role_name.clone())
-            .account_id(aws_config.account_id.clone())
-            .access_token(token.access_token)
-            .send()
-            .await?;
-
-        match role_credentials.role_credentials() {
-            Some(role_credentials) => {
-                let creds = Credentials::from_keys(
-                    role_credentials.access_key_id().unwrap(),
-                    role_credentials.secret_access_key().unwrap(),
-                    Some(role_credentials.session_token().unwrap().to_string()),
-                );
-
-                info!("Role credentials: {:?}", role_credentials.expiration);
-
-                Ok(SdkConfig::builder()
-                    .http_client(create_hyper_client())
-                    .credentials_provider(SharedCredentialsProvider::new(creds.clone()))
-                    .region(Region::new(crate::AWS_REGION))
-                    .build())
-            }
-            None => Err(anyhow!("Unable to get role credentials")),
-        }
+    pub fn get_artifact_bucket(&self) -> String {
+        self.artifact_bucket_name.clone()
     }
 
     pub async fn get_dynamic_config(&self) -> Result<DynamicConfig, CoreError> {
-        self.check_config().await?;
-
         let client = S3Client::new(&self.get_sdk_config().await);
         let resp = match client
             .get_object()
-            .bucket(self.config.clone().unwrap().artifact_bucket_name.clone())
+            .bucket(self.artifact_bucket_name.clone())
             .key(crate::DYNAMIC_CONFIG_KEY)
             .send()
             .await
@@ -397,14 +156,11 @@ impl AWSClient {
 
     #[instrument(skip(self), err)]
     pub async fn list_all_objects(&self, prefix: &str) -> Result<Vec<String>, CoreError> {
-        self.check_config().await?;
-
         let mut output = vec![];
         let client = S3Client::new(&self.get_sdk_config().await);
-        let aws_config = self.config.clone().unwrap();
         let mut paginator = client
             .list_objects_v2()
-            .bucket(aws_config.artifact_bucket_name.clone())
+            .bucket(self.artifact_bucket_name.clone())
             .prefix(prefix)
             .into_paginator()
             .send();
@@ -440,14 +196,11 @@ impl AWSClient {
         path: &str,
         object_key: &str,
     ) -> Result<String, CoreError> {
-        self.check_config().await?;
-
         let client = S3Client::new(&self.get_sdk_config().await);
-        let aws_config = self.config.clone().unwrap();
 
         let get_object_output = client
             .get_object()
-            .bucket(aws_config.artifact_bucket_name)
+            .bucket(self.artifact_bucket_name.clone())
             .key(object_key)
             .send()
             .await
@@ -479,10 +232,7 @@ impl AWSClient {
         file_path: &str,
         destination_prefix: &str,
     ) -> Result<String, CoreError> {
-        self.check_config().await?;
-
         let client = S3Client::new(&self.get_sdk_config().await);
-        let aws_config = self.config.clone().unwrap();
 
         let file_name = std::path::Path::new(file_path)
             .file_name()
@@ -491,9 +241,11 @@ impl AWSClient {
 
         let object_key = format!("{}/{}", destination_prefix.trim_end_matches('/'), file_name);
 
+        let bucket_name = self.artifact_bucket_name.clone();
+
         client
             .put_object()
-            .bucket(aws_config.artifact_bucket_name)
+            .bucket(bucket_name)
             .key(&object_key)
             .body(ByteStream::from_path(file_path).await?)
             .send()
@@ -506,61 +258,6 @@ impl AWSClient {
             })?;
 
         Ok(object_key)
-    }
-
-    // TODO: This is used by the updater to identify new releases based on the semver. Should we
-    // move this to the storage subsystem to unify all of the blob storage?
-    pub async fn get_latest_object_key(
-        &self,
-        app_name: &str,
-    ) -> Result<Option<ArtifactEntry>, CoreError> {
-        match self.check_config().await {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Error getting object key: {:?}", e);
-                return Ok(None);
-            }
-        }
-
-        let prefix = format!("tauri-{}", app_name.to_lowercase());
-
-        let mut output = vec![];
-        let client = S3Client::new(&self.get_sdk_config().await);
-        let aws_config = self.config.clone().unwrap();
-        let mut paginator = client
-            .list_objects_v2()
-            .bucket(aws_config.artifact_bucket_name.clone())
-            .prefix(prefix)
-            .into_paginator()
-            .send();
-
-        while let Some(resp) = paginator.next().await {
-            if resp.is_err() {
-                debug!("Resp: [{:?}", resp);
-                return Err(CoreError::Internal(anyhow!(
-                    "Error getting object key: {:?}",
-                    resp
-                )));
-            };
-            for object in resp.unwrap().contents() {
-                let entry = ArtifactEntry::from(object.clone());
-                output.push(entry);
-            }
-        }
-
-        // filter for semver-compliant files for the correct platform
-        let mut versions: Vec<ArtifactEntry> = output
-            .into_iter()
-            .filter(|entry| entry.get_semver().is_some())
-            .filter(|entry| entry.key.to_string().ends_with(crate::BIN_SUFFIX))
-            .collect();
-
-        if versions.is_empty() {
-            return Ok(None);
-        }
-
-        versions.sort_by_key(|a| a.get_semver().unwrap());
-        Ok(Some(versions.last().unwrap().clone()))
     }
 
     // Ported from: https://github.com/awslabs/aws-sdk-rust/issues/980#issuecomment-1859340980
@@ -626,8 +323,6 @@ impl AWSClient {
         cluster_name: &str,
         region: &str,
     ) -> Result<(http::Uri, Vec<Vec<u8>>), CoreError> {
-        self.check_config().await?;
-
         debug!("Creating EKS client");
 
         let region = region.to_string();
@@ -679,99 +374,6 @@ impl AWSClient {
         debug!("Image: {:?}", img);
 
         img.is_ok()
-    }
-
-    #[instrument]
-    fn restore_token(config: AWSConfig) -> Result<AccessToken> {
-        let token_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_TOKEN)?;
-        let token = token_entry.get_password()?;
-
-        let stored_token: StoredAccessToken = serde_json::from_str(&token)?;
-
-        let device_client_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_CLIENT)?;
-        let device_client = device_client_entry.get_password()?;
-
-        let stored_device_client: StoredDeviceClientInfo = serde_json::from_str(&device_client)?;
-
-        let device_secret_first_entry =
-            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_FIRST)?;
-        let device_secret_first = device_secret_first_entry.get_password()?;
-
-        let device_secret_second_entry =
-            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_SECOND)?;
-        let device_secret_second = device_secret_second_entry.get_password()?;
-
-        let stored_device_client = DeviceClient {
-            client_id: stored_device_client.client_id,
-            client_secret: format!("{}{}", device_secret_first, device_secret_second),
-            registration_expires_at: stored_device_client.registration_expires_at,
-        };
-
-        Ok(AccessToken {
-            start_url: config.sso_start_url.clone(),
-            region: crate::AWS_REGION.to_string(),
-            access_token: stored_token.access_token,
-            expires_at: stored_token.expires_at,
-            device_client: stored_device_client,
-            refresh_token: stored_token.refresh_token,
-        })
-    }
-
-    #[instrument]
-    fn store_token(token: AccessToken) -> Result<()> {
-        let stored_token = StoredAccessToken {
-            access_token: token.access_token,
-            expires_at: token.expires_at,
-            refresh_token: token.refresh_token,
-        };
-
-        let token_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_TOKEN)?;
-        token_entry.set_password(&serde_json::to_string(&stored_token)?)?;
-
-        // split token device client token in half
-        let device_client = token.device_client;
-        let stored_device_client = StoredDeviceClientInfo {
-            client_id: device_client.client_id,
-            registration_expires_at: device_client.registration_expires_at,
-        };
-
-        let device_client_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_CLIENT)?;
-        device_client_entry.set_password(&serde_json::to_string(&stored_device_client)?)?;
-
-        // Windows has a character limit on what can be in the keyring, so we split the secret in half
-        let device_client_first =
-            &device_client.client_secret[..device_client.client_secret.len() / 2];
-        let device_client_second =
-            &device_client.client_secret[device_client.client_secret.len() / 2..];
-
-        let device_secret_first_entry =
-            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_FIRST)?;
-        device_secret_first_entry.set_password(device_client_first)?;
-
-        let device_secret_second_entry =
-            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_SECOND)?;
-        device_secret_second_entry.set_password(device_client_second)?;
-
-        Ok(())
-    }
-
-    #[instrument]
-    fn delete_stored_token() -> Result<()> {
-        let token_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_TOKEN)?;
-        token_entry.delete_password()?;
-
-        let device_client_entry = keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_CLIENT)?;
-        device_client_entry.delete_password()?;
-
-        let device_secret_first_entry =
-            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_FIRST)?;
-        device_secret_first_entry.delete_password()?;
-
-        let device_secret_second_entry =
-            keyring::Entry::new(ETHOS_APP_NAME, AWS_KEYRING_DEVICE_SECRET_SECOND)?;
-        device_secret_second_entry.delete_password()?;
-
-        Ok(())
     }
 }
 

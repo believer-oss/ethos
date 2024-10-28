@@ -12,6 +12,7 @@ use ethos_core::middleware::nonce::NONCE;
 
 pub mod auth;
 pub mod builds;
+pub mod client;
 pub mod config;
 pub mod engine;
 pub mod obs;

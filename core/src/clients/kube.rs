@@ -63,7 +63,7 @@ impl KubeClient {
         log_tx: Option<Sender<String>>,
     ) -> Result<Self> {
         debug!("Checking AWS credentials");
-        let _ = aws_creds.check_config().await;
+        let _ = aws_creds.check_expiration().await;
 
         let aws_creds_expire_at = aws_creds.get_credential_expiration().await;
         debug!("AWS credentials expire at: {:?}", aws_creds_expire_at);
@@ -134,7 +134,7 @@ impl KubeClient {
 
     #[instrument(skip_all)]
     pub async fn kubeconfig(&self) -> Result<kube::Config, CoreError> {
-        self.aws_creds.check_config().await?;
+        self.aws_creds.check_expiration().await?;
 
         let new_aws_creds_expire_at = self.aws_creds.get_credential_expiration().await;
 

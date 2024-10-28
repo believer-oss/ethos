@@ -12,8 +12,8 @@ use ethos_core::types::config::{ConfigValidationError, RepoConfig};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::CloneRequest;
-use ethos_core::AWSClient;
 
+use crate::client::FriendshipperClient;
 use crate::engine::EngineProvider;
 use crate::repo::operations::{clone_handler, download_dlls_handler, update_engine_handler};
 use crate::state::AppState;
@@ -35,7 +35,12 @@ async fn get_config<T>(State(state): State<AppState<T>>) -> Result<Json<AppConfi
 where
     T: EngineProvider,
 {
-    let config = state.app_config.read().clone();
+    let mut config = state.app_config.read().clone();
+
+    // get github PAT from keyring
+    if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password() {
+        config.github_pat = Some(pat);
+    }
 
     Ok(Json(config))
 }
@@ -100,6 +105,23 @@ where
             .clone_from(&current_config.selected_artifact_project)
     }
 
+    // if the server url changed, check its health endpoint
+    if payload.server_url != current_config.server_url {
+        let friendshipper_client = FriendshipperClient::new(payload.server_url.clone())?;
+        friendshipper_client.check_health().await?;
+    }
+
+    // if we didn't have a server url, and we now do, and we don't have any okta configuration, set the okta configuration
+    if current_config.server_url.is_empty()
+        && !payload.server_url.is_empty()
+        && payload.okta_config.is_none()
+    {
+        let friendshipper_client = FriendshipperClient::new(payload.server_url.clone())?;
+        let okta_config = friendshipper_client.get_okta_config().await?;
+
+        payload.okta_config = Some(okta_config);
+    }
+
     // Make sure if repo_url changed repo_path also changed, and vice versa, but only validate
     // if neither is empty.
     #[allow(clippy::collapsible_if)]
@@ -113,44 +135,6 @@ where
                 "Repo URL and Repo Path should change together".to_string()
             ))
             .into());
-        }
-    }
-
-    if let Some(aws_config) = payload.aws_config.clone() {
-        let refresh_client: bool = match state.aws_client.read().await.clone() {
-            Some(client) => match client.config {
-                Some(ref config) => config != &aws_config,
-                None => true,
-            },
-            None => true,
-        };
-
-        if refresh_client || current_config.playtest_region != payload.playtest_region {
-            info!("Initializing AWS client with new config");
-            let new_aws_client = AWSClient::new(
-                Some(state.notification_tx.clone()),
-                APP_NAME.to_string(),
-                aws_config.clone(),
-            )
-            .await?;
-
-            // update the aws config in the app state
-            {
-                let mut lock = state.app_config.write();
-                lock.aws_config = Some(aws_config.clone());
-            }
-
-            let username = state.app_config.read().user_display_name.clone();
-            let playtest_region = payload.playtest_region.clone();
-            state
-                .replace_aws_client(
-                    new_aws_client,
-                    playtest_region,
-                    &username,
-                    state.app_config.clone(),
-                    state.config_file.clone(),
-                )
-                .await?;
         }
     }
 
@@ -232,10 +216,13 @@ where
                 entry.set_password(&pat)?;
             }
             None => {
-                return Err(anyhow!(ConfigValidationError(
-                    "GitHub Personal Access Token cannot be empty.".to_string()
-                ))
-                .into());
+                // Only worry about this if we don't already have a Github Client
+                if state.github_client.read().clone().is_none() {
+                    return Err(anyhow!(ConfigValidationError(
+                        "GitHub Personal Access Token cannot be empty.".to_string()
+                    ))
+                    .into());
+                }
             }
         }
     }
