@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use axum::Router;
 use config::Config;
 use directories_next::BaseDirs;
@@ -28,6 +28,7 @@ use ethos_core::types::repo::RepoStatusRef;
 use ethos_core::utils::logging::OtelReloadHandle;
 use ethos_core::worker::{RepoWorker, TaskSequence};
 
+use crate::client::FriendshipperClient;
 use crate::engine::{EngineProvider, UnrealEngineProvider};
 use crate::repo::operations::InstallGitHooksOp;
 use crate::state::FrontendOp;
@@ -129,7 +130,7 @@ impl Server {
                     let index_lock_path = PathBuf::from(repo_path).join(".git").join("index.lock");
                     let mut attempts = 0;
                     while index_lock_path.exists() && attempts < 30 {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                         attempts += 1;
                     }
 
@@ -421,7 +422,7 @@ impl Server {
             .map_err(|e| CoreError::Internal(anyhow!(e)))
     }
 
-    pub fn initialize_app_config() -> Result<(Option<PathBuf>, Option<AppConfig>)> {
+    pub fn initialize_app_config() -> Result<(Option<PathBuf>, Option<AppConfig>), CoreError> {
         if let Some(base_dirs) = BaseDirs::new() {
             let config_dir = base_dirs.config_dir().join(APP_NAME);
 
@@ -433,7 +434,10 @@ impl Server {
                     );
                 }
                 Err(e) => {
-                    bail!("Failed to create config directory: {:?}", e);
+                    return Err(CoreError::Internal(anyhow!(
+                        "Failed to create config directory: {:?}",
+                        e
+                    )));
                 }
             }
 
@@ -451,7 +455,10 @@ impl Server {
                 {
                     Ok(file) => file,
                     Err(e) => {
-                        bail!("Failed to create config file: {:?}", e);
+                        return Err(CoreError::Internal(anyhow!(
+                            "Failed to create config file: {:?}",
+                            e
+                        )));
                     }
                 };
 
@@ -460,7 +467,10 @@ impl Server {
                         info!("Initialized config file at {}", &config_file_str);
                     }
                     Err(e) => {
-                        bail!("Failed to initialize config file: {:?}", e);
+                        return Err(CoreError::Internal(anyhow!(
+                            "Failed to write default config to file: {:?}",
+                            e
+                        )));
                     }
                 }
             }
@@ -481,7 +491,7 @@ impl Server {
                 .set_default("initialized", true)
                 .unwrap();
 
-            match builder.build() {
+            return match builder.build() {
                 Ok(settings) => match settings.try_deserialize::<AppConfig>() {
                     Ok(mut config) => {
                         info!("Loaded config from {}", &config_file_str);
@@ -499,16 +509,38 @@ impl Server {
                         // based on the repo status, not store this state.
                         config.selected_artifact_project = None;
 
-                        return Ok((Some(config_file), Some(config)));
+                        // if we have a server_url but no okta_config, fetch the okta config
+                        if !config.server_url.is_empty() && config.okta_config.is_none() {
+                            info!("Fetching Okta config");
+                            let client = FriendshipperClient::new(config.server_url.clone())?;
+
+                            // can't await in here as we haven't started tokio yet
+                            match tauri::async_runtime::block_on(client.get_okta_config()) {
+                                Ok(okta_config) => {
+                                    config.okta_config = Some(okta_config);
+                                }
+                                Err(e) => {
+                                    error!("Failed to fetch Okta config: {}", e);
+                                    return Err(CoreError::Internal(anyhow!(
+                                        "Failed to fetch Okta config: {}",
+                                        e
+                                    )));
+                                }
+                            }
+                        }
+
+                        Ok((Some(config_file), Some(config)))
                     }
-                    Err(e) => {
-                        bail!("Failed to deserialize AppConfig: {:?}", e);
-                    }
+                    Err(e) => Err(CoreError::Internal(anyhow!(
+                        "Failed to deserialize AppConfig: {:?}",
+                        e
+                    ))),
                 },
-                Err(e) => {
-                    bail!("Failed to load config: {:?}", e);
-                }
-            }
+                Err(e) => Err(CoreError::Internal(anyhow!(
+                    "Failed to load AppConfig: {:?}",
+                    e
+                ))),
+            };
         }
 
         Ok((None, None))

@@ -219,8 +219,6 @@ where
         client: AWSClient,
         playtest_region: String,
         username: &str,
-        config: AppConfigRef,
-        config_file: PathBuf,
     ) -> Result<(), CoreError> {
         let mut aws_client = self.aws_client.write().await;
 
@@ -309,7 +307,7 @@ where
                 let file = std::fs::OpenOptions::new()
                     .write(true)
                     .truncate(true)
-                    .open(&config_file)
+                    .open(&self.config_file)
                     .map_err(|e| {
                         CoreError::Internal(anyhow::anyhow!("Failed to open config file: {}", e))
                     })?;
@@ -345,17 +343,9 @@ where
             kube_client.replace(new_kube_client);
         }
 
-        let artifact_bucket = match &self.app_config.read().aws_config {
-            Some(aws_config) => aws_config.artifact_bucket_name.clone(),
-            None => {
-                return Err(CoreError::Internal(anyhow!(
-                    "No AWS config found in app config"
-                )));
-            }
-        };
-
         // TODO Hardcoding for now, but this will move to dynamic_config
-        let s3ap = ethos_core::storage::S3ArtifactProvider::new(&client, &artifact_bucket);
+        let s3ap =
+            ethos_core::storage::S3ArtifactProvider::new(&client, &client.get_artifact_bucket());
         let new_storage = Some(ArtifactStorage::new(
             Arc::new(s3ap),
             new_dynamic_config.storage_schema.clone(),

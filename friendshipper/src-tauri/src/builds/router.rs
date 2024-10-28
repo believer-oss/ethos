@@ -5,6 +5,9 @@ use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
+use ethos_core::storage::{
+    ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList, Platform,
+};
 use ethos_core::utils::junit::JunitOutput;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
@@ -18,9 +21,6 @@ use ethos_core::clients::argo::{
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::clients::obs;
-use ethos_core::storage::{
-    ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList, Platform,
-};
 use ethos_core::types::argo::workflow::{Workflow, WorkflowStatus};
 use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::errors::CoreError;
@@ -65,7 +65,7 @@ where
     T: EngineProvider,
 {
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
-    aws_client.check_config().await?;
+    aws_client.check_expiration().await?;
 
     let project_param = params.project.clone();
 

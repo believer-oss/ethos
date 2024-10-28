@@ -4,6 +4,7 @@ use std::sync::mpsc::Sender;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use axum::extract::{Path, State};
+use ethos_core::storage::config::Project;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info};
 
@@ -15,7 +16,6 @@ use ethos_core::clients::git;
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
-use ethos_core::storage::config::Project;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfig, RepoConfigRef, UProject};
 use ethos_core::types::errors::CoreError;

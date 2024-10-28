@@ -40,7 +40,7 @@ serde_with = { workspace = true }
 serde_yaml = { workspace = true }
 rmp-serde = { workspace = true }
 sysinfo = { workspace = true }
-tauri = { workspace = true, features = ["fs-read-file", "clipboard-write-text"] }
+tauri = { workspace = true, features = ["fs-read-file", "clipboard-write-text", "macos-private-api"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

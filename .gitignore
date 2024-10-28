@@ -16,6 +16,9 @@ node_modules
 /friendshipper/src-tauri/tests/tmp
 /friendshipper/tests/tmp
 
+# tmp
+/friendshipper/server/tmp
+
 # eslint
 .eslintcache
 

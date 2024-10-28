@@ -53,11 +53,13 @@
 	"type": "module",
 	"dependencies": {
 		"@ethos/core": "link:../core/ui",
+		"@okta/okta-auth-js": "^7.8.1",
 		"@tauri-apps/api": "^1.5.1",
 		"@threlte/core": "^6.1.0",
 		"@threlte/extras": "^7.3.0",
 		"dayjs": "^1.11.10",
 		"flowbite-svelte-icons": "^1.6.1",
+		"jwt-decode": "^4.0.0",
 		"semver": "^7.5.4",
 		"tailwind-merge": "^2.0.0",
 		"three": "^0.157.0"

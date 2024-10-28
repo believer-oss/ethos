@@ -1,5 +1,7 @@
-use ethos_core::middleware::nonce::{NONCE, NONCE_HEADER};
-use ethos_core::storage::ArtifactList;
+use ethos_core::{
+    middleware::nonce::{NONCE, NONCE_HEADER},
+    storage::ArtifactList,
+};
 
 mod common;
 

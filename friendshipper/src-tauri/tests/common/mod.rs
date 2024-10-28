@@ -6,6 +6,7 @@ use std::{
 };
 
 use axum::{body::Body, http::Request, response::Response};
+use ethos_core::storage::StorageSchemaVersion;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use tokio::{
@@ -21,7 +22,7 @@ use tracing::{info, Span};
 
 use ethos_core::fs::LocalDownloadPath;
 use ethos_core::storage::mock::MockArtifactProvider;
-use ethos_core::storage::{ArtifactStorage, StorageSchemaVersion};
+use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig, RepoConfig};
 use ethos_core::worker::RepoWorker;
 use ethos_core::AWSClient;
@@ -39,6 +40,16 @@ static SECRET_KEY: &str = match option_env!("SECRET_KEY") {
     Some(v) => v,
     None => "",
 };
+#[allow(dead_code)]
+static TEST_BUCKET: &str = match option_env!("TEST_BUCKET") {
+    Some(v) => v,
+    None => "",
+};
+
+#[allow(dead_code)]
+fn get_test_bucket() -> String {
+    TEST_BUCKET.to_string()
+}
 
 lazy_static! {
     pub static ref TEST_DIR: PathBuf = {
@@ -389,7 +400,8 @@ pub async fn setup(
     let (frontend_op_tx, _) = std::sync::mpsc::channel();
 
     info!("Creating AWS client");
-    let aws_client = AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None).await;
+    let aws_client =
+        AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket()).await;
 
     info!("Created AWS client. Creating notification channel.");
     let (notification_tx, notification_rx) = std::sync::mpsc::channel();

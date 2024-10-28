@@ -18,11 +18,8 @@ use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::longtail;
 use ethos_core::msg::LongtailMsg;
-use ethos_core::storage::ArtifactBuildConfig;
-use ethos_core::storage::ArtifactConfig;
-use ethos_core::storage::ArtifactKind;
 use ethos_core::storage::ArtifactStorage;
-use ethos_core::storage::Platform;
+use ethos_core::storage::{ArtifactBuildConfig, ArtifactConfig, ArtifactKind, Platform};
 use ethos_core::types::config::RepoConfig;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
@@ -93,8 +90,6 @@ where
             binaries_staging_path = binaries_staging_path.join(&self.project_name);
             binaries_destination_path = binaries_destination_path.join(&self.project_name);
         };
-
-        self.aws_client.check_config().await?;
 
         let editor_config = ArtifactConfig::new(
             self.artifact_prefix.as_str().into(),

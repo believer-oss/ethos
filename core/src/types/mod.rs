@@ -1,4 +1,5 @@
 pub mod argo;
+pub mod aws;
 pub mod builds;
 pub mod commits;
 pub mod config;
