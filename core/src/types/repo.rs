@@ -327,6 +327,27 @@ pub struct PullResponse {
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FileHistoryRevision {
+    pub filename: String,
+    pub commit_id: String,
+    pub short_commit_id: String,
+    pub commit_id_number: u32,
+    pub revision_number: u32,
+    pub file_hash: String,
+    pub description: String,
+    pub user_name: String,
+    pub action: String,
+    pub date: DateTime<Utc>,
+    pub file_size: u32,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+pub struct FileHistoryResponse {
+    pub revisions: Vec<FileHistoryRevision>,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommitFileInfo {
     pub action: String,
     pub file: String,

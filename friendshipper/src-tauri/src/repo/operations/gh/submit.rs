@@ -8,7 +8,7 @@ use tracing::{info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
-use crate::repo::operations::{PushRequest, StatusOp};
+use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use ethos_core::clients::git;
@@ -20,8 +20,8 @@ use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
-use ethos_core::types::repo::File;
 use ethos_core::types::repo::SubmitStatus;
+use ethos_core::types::repo::{File, PushRequest};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
