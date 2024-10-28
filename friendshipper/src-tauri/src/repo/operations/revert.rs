@@ -14,10 +14,10 @@ use ethos_core::clients::git;
 use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::LockOperation;
-use ethos_core::types::repo::RevertFilesRequest;
+use ethos_core::types::repo::{File, RevertFilesRequest};
 use ethos_core::worker::{Task, TaskSequence};
 
-use super::{File, RepoStatusRef};
+use super::RepoStatusRef;
 
 #[derive(Clone)]
 pub struct RevertFilesOp<T> {
