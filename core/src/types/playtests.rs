@@ -88,12 +88,14 @@ pub type GetPlaytestsResponse = Vec<Playtest>;
 pub struct CreatePlaytestRequest {
     pub name: String,
     pub project: String,
+    pub do_not_prune: bool,
     pub spec: PlaytestSpec,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UpdatePlaytestRequest {
     pub project: String,
+    pub do_not_prune: bool,
     pub spec: PlaytestSpec,
 }
 

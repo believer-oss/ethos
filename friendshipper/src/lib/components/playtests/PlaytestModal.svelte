@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Input, Label, Modal, Select } from 'flowbite-svelte';
+	import { Button, Checkbox, Input, Label, Modal, Select, Tooltip } from 'flowbite-svelte';
 	import { ExclamationCircleOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type { ArtifactEntry, Nullable, Playtest, PlaytestSpec } from '$lib/types';
@@ -93,6 +93,7 @@
 		}
 
 		if (mode === ModalState.Editing && playtest != null) {
+			const doNotPrune = !('autoCleanup' in data);
 			const spec: PlaytestSpec = {
 				displayName: playtest.spec.displayName,
 				version: data.version,
@@ -104,8 +105,9 @@
 				feedbackURL: data.feedbackURL
 			};
 
-			await updatePlaytest(playtest?.metadata.name, project, spec);
+			await updatePlaytest(playtest?.metadata.name, project, doNotPrune, spec);
 		} else if (mode === ModalState.Creating) {
+			const doNotPrune = !('autoCleanup' in data);
 			const spec: PlaytestSpec = {
 				displayName: data.name,
 				version: data.version,
@@ -120,7 +122,7 @@
 			const name = data.name.toLowerCase().replace(/[_\s/]/g, '-');
 
 			try {
-				await createPlaytest(name, data.project, spec);
+				await createPlaytest(name, data.project, doNotPrune, spec);
 			} catch (createError) {
 				await emit('error', createError);
 			}
@@ -306,6 +308,16 @@
 				placeholder={playtest ? playtest.spec.feedbackURL : 'Playtest Feedback URL'}
 				value={playtest ? playtest.spec.feedbackURL : ''}
 			/>
+		</Label>
+		<Label class="flex flex-row text-xs text-white">
+			<Checkbox
+				name="autoCleanup"
+				checked={playtest && playtest.metadata.annotations
+					? !playtest.metadata.annotations['believer.dev/do-not-prune']
+					: true}
+			/>
+			<span>Auto Cleanup</span>
+			<Tooltip>If toggled, this playtest will automatically delete in 24 hours.</Tooltip>
 		</Label>
 		<Button type="submit" class="w-full" disabled={submitting}>Submit</Button>
 	</form>

@@ -62,7 +62,9 @@ where
     T: EngineProvider,
 {
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
-    let playtest = kube_client.update_playtest(&name, request).await?;
+
+    let owner = state.app_config.read().user_display_name.clone();
+    let playtest = kube_client.update_playtest(&name, request, owner).await?;
 
     Ok(Json(playtest))
 }
