@@ -1,0 +1,33 @@
+[package]
+name = "friendshipper-server"
+version = "4.8.1"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.72"
+aws-config = "1.5.8"
+aws-sdk-sts = "1.46.0"
+aws-smithy-types-convert = { version = "0.60.8", features = ["convert-chrono"] }
+axum = { version = "0.7.5", features = ["macros"] }
+chrono = { version = "0.4.26", features = ["serde"] }
+clap = { version = "4.5.20", features = ["derive"] }
+config = "0.13.3"
+ethos-core = { path = "../../core" }
+jwt-authorizer = "0.15.0"
+log = "0.4.20"
+opentelemetry = "0.21.0"
+opentelemetry-otlp = { version = "0.14.0", features = ["http-proto", "reqwest-client"] }
+opentelemetry_sdk = { version = "0.21.1", features = ["rt-tokio"] }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.113"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5.2", features = ["trace"] }
+tracing = "0.1.40"
+tracing-opentelemetry = "0.22.0"
+tracing-subscriber = { version = "0.3.17", features = [
+    "json",
+    "local-time",
+    "std",
+    "env-filter",
+] }
