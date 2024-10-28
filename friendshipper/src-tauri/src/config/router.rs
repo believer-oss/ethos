@@ -122,22 +122,6 @@ where
         payload.okta_config = Some(okta_config);
     }
 
-    // Make sure if repo_url changed repo_path also changed, and vice versa, but only validate
-    // if neither is empty.
-    #[allow(clippy::collapsible_if)]
-    if !current_config.repo_url.is_empty() && !current_config.repo_path.is_empty() {
-        if (payload.repo_url != current_config.repo_url
-            && current_config.repo_path == payload.repo_path)
-            || (payload.repo_path != current_config.repo_path
-                && current_config.repo_url == payload.repo_url)
-        {
-            return Err(anyhow!(ConfigValidationError(
-                "Repo URL and Repo Path should change together".to_string()
-            ))
-            .into());
-        }
-    }
-
     if !payload.repo_path.is_empty() {
         let git_dir = PathBuf::from(payload.repo_path.clone()).join(".git");
         // If the config hasn't been initialized, the user hasn't finished the welcome flow. We should allow

@@ -168,6 +168,7 @@
 
 			localStorage.removeItem('oktaRefreshToken');
 			localStorage.removeItem('oktaAccessToken');
+			localStorage.clear();
 
 			await restart();
 			showModal = false;

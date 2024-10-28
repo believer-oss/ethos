@@ -79,7 +79,7 @@
 		switch (currentPage) {
 			case Page.ServerConfig:
 				valid = serverUrlIsValid();
-				serverUrl = serverUrl.trim();
+				serverUrl = serverUrl.trim().replace(/\/$/, '');
 				break;
 			case Page.Username:
 				valid = userDisplayName !== '';
@@ -150,24 +150,27 @@
 
 	const initiateRepoClone = async () => {
 		errorMessage = '';
-		cloning = true;
 		try {
 			await handleUpdateAppConfig();
 
-			await cloneRepo({ url: repoUrl, path: cloneLocation });
+			// only clone if this is our first time through
+			if (!currentConfig.repoPath) {
+				cloning = true;
+				await cloneRepo({ url: repoUrl, path: cloneLocation });
 
-			// force update of repo status
-			message = 'Updating repo status...';
-			$repoStatus = await getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False);
+				// force update of repo status
+				message = 'Updating repo status...';
+				$repoStatus = await getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False);
 
-			// run initial fetch of DLLs - it may be worth moving this and the engine fetch
-			// to the clone endpoint on the backend
-			message = 'Performing initial fetch of DLLs...';
-			await forceDownloadDlls();
+				// run initial fetch of DLLs - it may be worth moving this and the engine fetch
+				// to the clone endpoint on the backend
+				message = 'Performing initial fetch of DLLs...';
+				await forceDownloadDlls();
 
-			// run initial fetch of Engine binaries
-			message = 'Performing initial fetch of Engine binaries...';
-			await forceDownloadEngine();
+				// run initial fetch of Engine binaries
+				message = 'Performing initial fetch of Engine binaries...';
+				await forceDownloadEngine();
+			}
 		} catch (e) {
 			const error = e as Error;
 			errorMessage = String(error.message);
