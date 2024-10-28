@@ -357,17 +357,15 @@
 			}
 		}
 
-		try {
-			$oktaAuth = createOktaAuth($appConfig.oktaConfig.issuer, $appConfig.oktaConfig.clientId);
-			await handleOktaState();
-		} catch (e) {
-			await emit('error', e);
+		if (!$oktaAuth) {
+			try {
+				$oktaAuth = createOktaAuth($appConfig.oktaConfig.issuer, $appConfig.oktaConfig.clientId);
+				await handleOktaState();
+				await initialize();
+			} catch (e) {
+				await emit('error', e);
+			}
 		}
-		// try {
-		// } catch (e) {
-		// 	await emit('error', e);
-		// 	return;
-		// }
 
 		if (!loginRequired || accessToken) {
 			try {

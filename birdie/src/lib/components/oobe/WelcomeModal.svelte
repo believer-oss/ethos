@@ -141,7 +141,9 @@
 		}
 
 		if (currentPage === Page.CloneSettings) {
-			await configureGitUser(gitUsername, gitEmail);
+			if (gitUsername !== '' && gitEmail !== '') {
+				await configureGitUser(gitUsername, gitEmail);
+			}
 		}
 
 		if (currentPage === Page.CloneStatus) {
