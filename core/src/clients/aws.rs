@@ -52,6 +52,7 @@ pub struct StoredDeviceClientInfo {
 }
 
 impl AWSClient {
+    #[instrument(skip_all)]
     pub async fn from_static_creds(
         access_key: &str,
         secret_key: &str,
