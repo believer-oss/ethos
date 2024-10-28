@@ -188,6 +188,7 @@
 		try {
 			localStorage.removeItem('oktaRefreshToken');
 			localStorage.removeItem('oktaAccessToken');
+			localStorage.clear();
 			accessToken = null;
 			refreshToken = null;
 		} catch (err) {
@@ -198,16 +199,20 @@
 	const tryOktaRefresh = async () => {
 		if (!$oktaAuth) return;
 
-		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
-			scopes: ['openid', 'email', 'profile']
-		});
+		try {
+			const { tokens } = await $oktaAuth.token.getWithoutPrompt({
+				scopes: ['openid', 'email', 'profile']
+			});
 
-		if (tokens && tokens.idToken) {
-			await emit('access-token-set', tokens.accessToken?.accessToken);
-			await refreshLogin(tokens.accessToken?.accessToken);
-			localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+			if (tokens && tokens.idToken) {
+				await emit('access-token-set', tokens.accessToken?.accessToken);
+				await refreshLogin(tokens.accessToken?.accessToken);
+				localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+			}
+			$oktaAuth?.tokenManager.setTokens(tokens);
+		} catch (err) {
+			await emit('error', err);
 		}
-		$oktaAuth?.tokenManager.setTokens(tokens);
 	};
 
 	const handleOktaLogin = async () => {
@@ -231,6 +236,7 @@
 
 			startupMessage = previousStartupMessage;
 		} catch (err) {
+			await handleOktaLogout();
 			await emit('error', err);
 		}
 	};
