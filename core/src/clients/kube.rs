@@ -507,13 +507,8 @@ impl KubeClient {
                 playtest.metadata.resource_version = existing.metadata.resource_version;
                 let mut annotations =
                     BTreeMap::from([(String::from("believer.dev/project"), input.project)]);
-                if playtest.metadata.annotations.is_some() {
-                    match existing
-                        .metadata
-                        .annotations
-                        .unwrap()
-                        .get("believer.dev/owner")
-                    {
+                if let Some(existing_annotations) = existing.metadata.annotations {
+                    match existing_annotations.get("believer.dev/owner") {
                         Some(o) => {
                             annotations.insert(String::from("believer.dev/owner"), o.to_string())
                         }
