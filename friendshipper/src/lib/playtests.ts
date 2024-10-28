@@ -11,11 +11,13 @@ export enum ModalState {
 export const createPlaytest = async (
 	name: string,
 	project: string,
+	do_not_prune: boolean,
 	spec: PlaytestSpec
 ): Promise<void> => {
 	const req = {
 		name,
 		project,
+		do_not_prune,
 		spec
 	};
 	await invoke('create_playtest', { req });
@@ -24,10 +26,12 @@ export const createPlaytest = async (
 export const updatePlaytest = async (
 	playtest: string,
 	project: string,
+	do_not_prune: boolean,
 	spec: PlaytestSpec
 ): Promise<void> => {
 	const req = {
 		project,
+		do_not_prune,
 		spec
 	};
 	await invoke('update_playtest', { playtest, req });

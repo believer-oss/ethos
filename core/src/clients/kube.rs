@@ -471,10 +471,17 @@ impl KubeClient {
         let pp = PostParams::default();
 
         let mut playtest = Playtest::new(&input.name, input.spec);
-        playtest.metadata.annotations = Some(BTreeMap::from([
+        let mut annotations = BTreeMap::from([
             (String::from("believer.dev/project"), input.project),
             (String::from("believer.dev/owner"), owner),
-        ]));
+        ]);
+        if input.do_not_prune {
+            annotations.insert(
+                String::from("believer.dev/do-not-prune"),
+                "true".to_string(),
+            );
+        }
+        playtest.metadata.annotations = Some(annotations);
 
         match api.create(&pp, &playtest).await {
             Ok(res) => Ok(res),
@@ -487,6 +494,7 @@ impl KubeClient {
         &self,
         name: &str,
         input: UpdatePlaytestRequest,
+        owner: String,
     ) -> Result<Playtest, CoreError> {
         let client = Client::try_from(self.kubeconfig().await?)?;
         let api: Api<Playtest> = Api::default_namespaced(client);
@@ -497,10 +505,30 @@ impl KubeClient {
 
                 let mut playtest = Playtest::new(name, input.spec);
                 playtest.metadata.resource_version = existing.metadata.resource_version;
-                playtest.metadata.annotations = Some(BTreeMap::from([(
-                    String::from("believer.dev/project"),
-                    input.project,
-                )]));
+                let mut annotations =
+                    BTreeMap::from([(String::from("believer.dev/project"), input.project)]);
+                if playtest.metadata.annotations.is_some() {
+                    match existing
+                        .metadata
+                        .annotations
+                        .unwrap()
+                        .get("believer.dev/owner")
+                    {
+                        Some(o) => {
+                            annotations.insert(String::from("believer.dev/owner"), o.to_string())
+                        }
+                        None => annotations.insert(String::from("believer.dev/owner"), owner),
+                    };
+                } else {
+                    annotations.insert(String::from("believer.dev/owner"), owner);
+                }
+                if input.do_not_prune {
+                    annotations.insert(
+                        String::from("believer.dev/do-not-prune"),
+                        "true".to_string(),
+                    );
+                }
+                playtest.metadata.annotations = Some(annotations);
                 playtest.spec.groups = existing.spec.groups;
 
                 match api.replace(name, &pp, &playtest).await {
