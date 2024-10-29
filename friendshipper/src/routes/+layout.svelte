@@ -454,14 +454,19 @@
 			[, quickLaunchServerName] = payload.split('launch/');
 
 			void goto('/');
-
-			return;
-		}
-
-		if (payload === 'home') {
+		} else if (payload === 'home') {
 			void goto('/');
 		} else if (payload === 'playtests') {
 			void goto('/playtests');
+		} else if (payload.startsWith('builds/')) {
+			const [, group, commitSha, name] = payload.split('/');
+
+			void goto('/builds');
+
+			// need to wait for the page to be open so it has a chance to respond to this event
+			setTimeout(() => {
+				void emit('build-deep-link', { group, commitSha, name });
+			}, 100);
 		}
 	});
 

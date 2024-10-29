@@ -17,7 +17,7 @@ pub struct TestSuite {
     #[serde(rename = "time")]
     pub time: Option<f64>,
     #[serde(rename = "testcase")]
-    pub testcases: Vec<TestCase>,
+    pub testcases: Option<Vec<TestCase>>,
     #[serde(rename = "testsuite")]
     pub testsuites: Option<Vec<TestSuite>>,
 }
@@ -78,26 +78,39 @@ mod tests {
             </failure>
         </testcase>
     </testsuite>
+    <testsuite name="Tests.Submit" time="3.0">
+        <testsuite name="Tests.Submit.Empty" time="3.0">
+        </testsuite>
+    </testsuite>
+    <testsuite name="Tests.Empty" time="0.0">
+    </testsuite>
 </testsuites>"#;
 
         let parsed: JunitOutput = JunitOutput::new_from_xml_str(TEST_JUNIT_XML).unwrap();
         println!("{:?}", parsed);
 
-        assert_eq!(parsed.testsuites.len(), 2);
+        assert_eq!(parsed.testsuites.len(), 4);
 
-        assert_eq!(parsed.testsuites[0].testcases.len(), 3);
-        assert_eq!(parsed.testsuites[1].testcases.len(), 3);
+        assert_eq!(parsed.testsuites[0].testcases.clone().unwrap().len(), 3);
+        assert_eq!(parsed.testsuites[1].testcases.clone().unwrap().len(), 3);
 
         let first_testsuite = parsed.testsuites[0].clone();
-        assert_eq!(first_testsuite.testcases.len(), 3);
+        assert_eq!(first_testsuite.testcases.unwrap().len(), 3);
 
         // test the failure message
         let second_testsuite = parsed.testsuites[1].clone();
-        let failure = second_testsuite.testcases[2].failure.clone();
+        let failure = second_testsuite.testcases.unwrap()[2].failure.clone();
         assert!(failure.is_some() && failure.as_ref().unwrap().len() == 1);
         assert_eq!(
             failure.as_ref().unwrap()[0].content,
             Some("AAAA HELP WE FAILED".to_string())
         );
+
+        let third_testsuite = parsed.testsuites[2].clone();
+        assert_eq!(third_testsuite.testsuites.unwrap().len(), 1);
+        assert!(third_testsuite.testcases.is_none());
+
+        let fourth_testsuite = parsed.testsuites[3].clone();
+        assert!(fourth_testsuite.testsuites.is_none());
     }
 }
