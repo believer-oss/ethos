@@ -28,6 +28,9 @@
 					"requireLiteralLeadingDot": false
 				}
 			},
+			"os": {
+				"all": true
+			},
 			"path": {
 				"all": true
 			},

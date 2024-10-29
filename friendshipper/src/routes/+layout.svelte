@@ -31,6 +31,7 @@
 	import { Canvas } from '@threlte/core';
 	import { get } from 'svelte/store';
 	import { getVersion } from '@tauri-apps/api/app';
+	import { type } from '@tauri-apps/api/os';
 	import { invoke } from '@tauri-apps/api/tauri';
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
@@ -222,16 +223,28 @@
 
 			// Initiate the redirect flow
 			if (browser && $oktaAuth) {
-				const { tokens } = await $oktaAuth.token.getWithPopup({
-					scopes: ['openid', 'email', 'profile']
-				});
+				const osType = await type();
 
-				if (tokens && tokens.idToken) {
-					await emit('access-token-set', tokens.accessToken?.accessToken);
-					await refreshLogin(tokens.accessToken?.accessToken);
-					localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+				if (osType === 'Darwin') {
+					await $oktaAuth.token.getWithRedirect({
+						issuer: $appConfig.oktaConfig.issuer,
+						clientId: $appConfig.oktaConfig.clientId,
+						redirectUri: `${window.location.origin}/auth/callback`,
+						pkce: true,
+						scopes: ['openid', 'email', 'profile']
+					});
+				} else {
+					const { tokens } = await $oktaAuth.token.getWithPopup({
+						scopes: ['openid', 'email', 'profile']
+					});
+
+					if (tokens && tokens.idToken) {
+						await emit('access-token-set', tokens.accessToken?.accessToken);
+						await refreshLogin(tokens.accessToken?.accessToken);
+						localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+					}
+					$oktaAuth?.tokenManager.setTokens(tokens);
 				}
-				$oktaAuth?.tokenManager.setTokens(tokens);
 			}
 
 			startupMessage = previousStartupMessage;
