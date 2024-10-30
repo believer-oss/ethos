@@ -243,9 +243,13 @@
 	});
 
 	void listen('error', (e) => {
-		const error = e.payload as Error;
 		hasError = true;
-		errorMessage = String(error.message);
+		const error = e.payload as Error;
+		if (error.message) {
+			errorMessage = error.message;
+		} else {
+			errorMessage = JSON.stringify(e.payload);
+		}
 	});
 
 	void listen('success', (e) => {
