@@ -6,7 +6,7 @@
 	import { open } from '@tauri-apps/api/dialog';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { updateAppConfig } from '$lib/config';
-	import { appConfig, onboardingInProgress, repoStatus } from '$lib/stores';
+	import { appConfig, oktaAuth, onboardingInProgress, repoStatus } from '$lib/stores';
 	import UnrealEngineLogo from '$lib/icons/UnrealEngineLogo.svelte';
 	import { configureGitUser, installGit, restart } from '$lib/system';
 	import {
@@ -140,9 +140,14 @@
 		updatedAppConfig.githubPAT = githubPAT;
 
 		try {
-			await updateAppConfig(updatedAppConfig);
-			await emit('success', 'Preferences saved.');
-			await restart();
+			const accessToken = $oktaAuth?.getAccessToken();
+			if (accessToken) {
+				await updateAppConfig(updatedAppConfig, accessToken);
+				await emit('success', 'Preferences saved.');
+				await restart();
+			} else {
+				await emit('error', 'No access token found.');
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
