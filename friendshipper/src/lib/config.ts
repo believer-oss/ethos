@@ -5,7 +5,7 @@ export const getDynamicConfig = async (): Promise<DynamicConfig> => invoke('get_
 
 export const getAppConfig = async (): Promise<AppConfig> => invoke('get_app_config');
 
-export const updateAppConfig = async (config: AppConfig, token: string): Promise<string> =>
+export const updateAppConfig = async (config: AppConfig, token?: string): Promise<string> =>
 	invoke('update_app_config', { config, token });
 
 export const getRepoConfig = async (): Promise<RepoConfig> => invoke('get_repo_config');

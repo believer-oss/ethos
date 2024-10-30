@@ -85,7 +85,7 @@ where
 
 #[derive(Debug, Deserialize)]
 struct UpdateConfigParams {
-    token: String,
+    token: Option<String>,
 }
 
 #[instrument(skip(state), err)]
@@ -133,25 +133,30 @@ where
 
     // if our playtest region has changed, we need to replace the aws client
     if payload.playtest_region != current_config.playtest_region {
-        let friendshipper_client = FriendshipperClient::new(payload.server_url.clone())?;
-        let credentials = friendshipper_client
-            .get_aws_credentials(&params.token)
-            .await?;
-        let friendshipper_config = friendshipper_client.get_config(&params.token).await?;
-        state
-            .replace_aws_client(
-                AWSClient::from_static_creds(
-                    &credentials.access_key_id,
-                    &credentials.secret_access_key,
-                    credentials.session_token.as_deref(),
-                    credentials.expiration,
-                    friendshipper_config.artifact_bucket_name.clone(),
+        if let Some(token) = params.token {
+            let friendshipper_client = FriendshipperClient::new(payload.server_url.clone())?;
+            let credentials = friendshipper_client.get_aws_credentials(&token).await?;
+            let friendshipper_config = friendshipper_client.get_config(&token).await?;
+            state
+                .replace_aws_client(
+                    AWSClient::from_static_creds(
+                        &credentials.access_key_id,
+                        &credentials.secret_access_key,
+                        credentials.session_token.as_deref(),
+                        credentials.expiration,
+                        friendshipper_config.artifact_bucket_name.clone(),
+                    )
+                    .await,
+                    payload.playtest_region.clone(),
+                    &payload.user_display_name.clone(),
                 )
-                .await,
-                payload.playtest_region.clone(),
-                &payload.user_display_name.clone(),
-            )
-            .await?;
+                .await?;
+        } else {
+            return Err(anyhow!(ConfigValidationError(
+                "Token is required to update the AWS client.".to_string()
+            ))
+            .into());
+        }
     }
 
     if !payload.repo_path.is_empty() {
