@@ -493,30 +493,6 @@ pub async fn get_app_config(state: tauri::State<'_, State>) -> Result<AppConfig,
 }
 
 #[tauri::command]
-pub async fn update_app_config(
-    state: tauri::State<'_, State>,
-    config: AppConfig,
-) -> Result<String, TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/config", state.server_url))
-        .json(&config.clone())
-        .send()
-        .await?;
-
-    if res.status().is_client_error() || res.status().is_server_error() {
-        let status_code = res.status().as_u16();
-        let body = res.text().await?;
-        return Err(TauriError {
-            message: body,
-            status_code,
-        });
-    }
-
-    Ok(res.text().await?)
-}
-
-#[tauri::command]
 pub async fn reset_config(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     let res = state
         .client

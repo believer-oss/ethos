@@ -1,8 +1,11 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::anyhow;
+use axum::extract::Query;
 use axum::routing::post;
 use axum::{extract::State, routing::get, Json, Router};
+use ethos_core::AWSClient;
+use serde::Deserialize;
 use tracing::{info, instrument};
 
 use ethos_core::clients::github::GraphQLClient;
@@ -80,9 +83,15 @@ where
     Json(config)
 }
 
+#[derive(Debug, Deserialize)]
+struct UpdateConfigParams {
+    token: String,
+}
+
 #[instrument(skip(state), err)]
 async fn update_config<T>(
     State(state): State<AppState<T>>,
+    Query(params): Query<UpdateConfigParams>,
     Json(payload): Json<AppConfig>,
 ) -> Result<String, CoreError>
 where
@@ -120,6 +129,29 @@ where
         let okta_config = friendshipper_client.get_okta_config().await?;
 
         payload.okta_config = Some(okta_config);
+    }
+
+    // if our playtest region has changed, we need to replace the aws client
+    if payload.playtest_region != current_config.playtest_region {
+        let friendshipper_client = FriendshipperClient::new(payload.server_url.clone())?;
+        let credentials = friendshipper_client
+            .get_aws_credentials(&params.token)
+            .await?;
+        let friendshipper_config = friendshipper_client.get_config(&params.token).await?;
+        state
+            .replace_aws_client(
+                AWSClient::from_static_creds(
+                    &credentials.access_key_id,
+                    &credentials.secret_access_key,
+                    credentials.session_token.as_deref(),
+                    credentials.expiration,
+                    friendshipper_config.artifact_bucket_name.clone(),
+                )
+                .await,
+                payload.playtest_region.clone(),
+                &payload.user_display_name.clone(),
+            )
+            .await?;
     }
 
     if !payload.repo_path.is_empty() {

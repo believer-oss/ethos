@@ -6,7 +6,7 @@ use ethos_core::tauri::command::{check_error, restart};
 use ethos_core::tauri::error::TauriError;
 use ethos_core::tauri::State;
 use ethos_core::types::builds::SyncClientRequest;
-use ethos_core::types::config::{DynamicConfig, UnrealVerSelDiagResponse};
+use ethos_core::types::config::{AppConfig, DynamicConfig, UnrealVerSelDiagResponse};
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
 use ethos_core::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use ethos_core::types::github::pulls::get_pull_requests::GetPullRequestsSearchEdgesNodeOnPullRequest;
@@ -170,6 +170,31 @@ pub async fn verify_build(
     }
 
     Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn update_app_config(
+    state: tauri::State<'_, State>,
+    config: AppConfig,
+    token: String,
+) -> Result<String, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/config?token={}", state.server_url, token))
+        .json(&config.clone())
+        .send()
+        .await?;
+
+    if res.status().is_client_error() || res.status().is_server_error() {
+        let status_code = res.status().as_u16();
+        let body = res.text().await?;
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
+    }
+
+    Ok(res.text().await?)
 }
 
 #[tauri::command]
