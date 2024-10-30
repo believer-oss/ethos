@@ -176,14 +176,14 @@ pub async fn verify_build(
 pub async fn update_app_config(
     state: tauri::State<'_, State>,
     config: AppConfig,
-    token: String,
+    token: Option<String>,
 ) -> Result<String, TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/config?token={}", state.server_url, token))
-        .json(&config.clone())
-        .send()
-        .await?;
+    let url = match token {
+        Some(token) => format!("{}/config?token={}", state.server_url, token),
+        None => format!("{}/config", state.server_url),
+    };
+
+    let res = state.client.post(url).json(&config.clone()).send().await?;
 
     if res.status().is_client_error() || res.status().is_server_error() {
         let status_code = res.status().as_u16();
