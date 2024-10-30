@@ -9,14 +9,22 @@
 			return;
 		}
 
-		const tokens = await $oktaAuth.token.parseFromUrl();
-		$oktaAuth.tokenManager.setTokens(tokens?.tokens);
+		const { tokens } = await $oktaAuth.token.parseFromUrl();
 
-		const accessToken = tokens?.tokens.accessToken?.accessToken || '';
-		const refreshToken = tokens?.tokens.refreshToken?.refreshToken || '';
+		if (tokens && tokens.accessToken) {
+			$oktaAuth.tokenManager.setTokens(tokens);
 
-		await emit('access-token-set', accessToken);
-		localStorage.setItem('oktaRefreshToken', refreshToken);
+			const { accessToken } = tokens.accessToken;
+			await emit('access-token-set', accessToken);
+
+			if (tokens.refreshToken) {
+				const { refreshToken } = tokens.refreshToken;
+				localStorage.setItem('oktaRefreshToken', refreshToken);
+			}
+		} else {
+			await emit('error', 'No tokens found.');
+		}
+
 		window.location.href = '/';
 	});
 </script>
