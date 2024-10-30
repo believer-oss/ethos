@@ -200,19 +200,19 @@
 	const tryOktaRefresh = async () => {
 		if (!$oktaAuth) return;
 
-		try {
-			const { tokens } = await $oktaAuth.token.getWithoutPrompt({
-				scopes: ['openid', 'email', 'profile']
-			});
+		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
+			scopes: ['openid', 'email', 'profile']
+		});
 
-			if (tokens && tokens.idToken) {
-				await emit('access-token-set', tokens.accessToken?.accessToken);
-				await refreshLogin(tokens.accessToken?.accessToken);
-				localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
-			}
+		if (tokens && tokens.accessToken) {
 			$oktaAuth?.tokenManager.setTokens(tokens);
-		} catch (err) {
-			await emit('error', err);
+
+			await emit('access-token-set', tokens.accessToken.accessToken);
+			await refreshLogin(tokens.accessToken.accessToken);
+
+			if (tokens.refreshToken?.refreshToken) {
+				localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken);
+			}
 		}
 	};
 
@@ -238,12 +238,16 @@
 						scopes: ['openid', 'email', 'profile']
 					});
 
-					if (tokens && tokens.idToken) {
-						await emit('access-token-set', tokens.accessToken?.accessToken);
-						await refreshLogin(tokens.accessToken?.accessToken);
-						localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken || '');
+					if (tokens && tokens.accessToken) {
+						$oktaAuth.tokenManager.setTokens(tokens);
+
+						await emit('access-token-set', tokens.accessToken.accessToken);
+						if (tokens.refreshToken?.refreshToken) {
+							localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken);
+						}
+
+						await refreshLogin(tokens.accessToken.accessToken);
 					}
-					$oktaAuth?.tokenManager.setTokens(tokens);
 				}
 			}
 
@@ -277,8 +281,12 @@
 			try {
 				await tryOktaRefresh();
 			} catch (_) {
-				await handleOktaLogout();
-				await handleOktaLogin();
+				try {
+					await handleOktaLogout();
+					await handleOktaLogin();
+				} catch (e) {
+					await emit('error', e);
+				}
 			}
 		}
 	};
