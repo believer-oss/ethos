@@ -66,7 +66,8 @@
 		locks,
 		rootNode,
 		selectedFile,
-		useFileTreeView
+		useFileTreeView,
+		selectedTreeFiles
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 	import CharacterCard from '$lib/components/metadata/CharacterCard.svelte';
@@ -87,7 +88,6 @@
 	let showSearchModal: boolean = false;
 	let searchInput: HTMLInputElement;
 	let modalLoading: boolean = false;
-	let selectedFiles: LFSFile[] = [];
 	let shiftHeld = false;
 	let includeWip = true;
 
@@ -225,30 +225,34 @@
 		if (shiftHeld) {
 			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
 			const lastSelectedIndex = $currentRootFiles.findIndex(
-				(file) => selectedFiles[selectedFiles.length - 1].name === file.name
+				(file) => $selectedTreeFiles[$selectedTreeFiles.length - 1].name === file.name
 			);
 
 			if (currentIndex > lastSelectedIndex) {
 				for (let i = lastSelectedIndex + 1; i <= currentIndex; i += 1) {
-					if (!selectedFiles.includes($currentRootFiles[i])) {
-						selectedFiles = [...selectedFiles, $currentRootFiles[i]];
+					if (!$selectedTreeFiles.includes($currentRootFiles[i])) {
+						$selectedTreeFiles = [...$selectedTreeFiles, $currentRootFiles[i]];
 					} else {
-						selectedFiles = selectedFiles.filter((item) => item.name !== $currentRootFiles[i].name);
+						$selectedTreeFiles = $selectedTreeFiles.filter(
+							(item) => item.name !== $currentRootFiles[i].name
+						);
 					}
 				}
 			} else {
 				for (let i = currentIndex; i < lastSelectedIndex; i += 1) {
-					if (!selectedFiles.includes($currentRootFiles[i])) {
-						selectedFiles = [...selectedFiles, $currentRootFiles[i]];
+					if (!$selectedTreeFiles.includes($currentRootFiles[i])) {
+						$selectedTreeFiles = [...$selectedTreeFiles, $currentRootFiles[i]];
 					} else {
-						selectedFiles = selectedFiles.filter((item) => item.name !== $currentRootFiles[i].name);
+						$selectedTreeFiles = $selectedTreeFiles.filter(
+							(item) => item.name !== $currentRootFiles[i].name
+						);
 					}
 				}
 			}
 
 			// if we're unchecking, include the last selected file as well
-			if (!selectedFiles.includes(selected)) {
-				selectedFiles = selectedFiles.filter(
+			if (!$selectedTreeFiles.includes(selected)) {
+				$selectedTreeFiles = $selectedTreeFiles.filter(
 					(item) => item.name !== $currentRootFiles[lastSelectedIndex].name
 				);
 			}
@@ -256,10 +260,10 @@
 			return;
 		}
 
-		if (!selectedFiles.includes(selected)) {
-			selectedFiles = [...selectedFiles, selected];
+		if (!$selectedTreeFiles.includes(selected)) {
+			$selectedTreeFiles = [...$selectedTreeFiles, selected];
 		} else {
-			selectedFiles = selectedFiles.filter((item) => item.name !== selected.name);
+			$selectedTreeFiles = $selectedTreeFiles.filter((item) => item.name !== selected.name);
 		}
 	};
 
@@ -331,14 +335,14 @@
 	const handleDownloadSelectedFiles = async () => {
 		loading = true;
 
-		if (selectedFiles.length === 0) return;
+		if ($selectedTreeFiles.length === 0) return;
 
-		const paths = selectedFiles.map((file) => file.path);
+		const paths = $selectedTreeFiles.map((file) => file.path);
 
 		try {
 			await downloadFiles(paths);
 
-			selectedFiles = [];
+			$selectedTreeFiles = [];
 			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
@@ -364,15 +368,15 @@
 	};
 
 	const handleUnFavoriteSelectedFiles = async () => {
-		if (selectedFiles.length === 0) return;
+		if ($selectedTreeFiles.length === 0) return;
 		loading = true;
 
-		const paths = selectedFiles.map((file) => file.path);
+		const paths = $selectedTreeFiles.map((file) => file.path);
 
 		try {
 			await delFetchInclude(paths);
 
-			selectedFiles = [];
+			$selectedTreeFiles = [];
 			$fetchIncludeList = await getFetchInclude();
 		} catch (e) {
 			await emit('error', e);
@@ -381,10 +385,10 @@
 	};
 
 	const handleLockSelectedFiles = async () => {
-		if (selectedFiles.length === 0) return;
+		if ($selectedTreeFiles.length === 0) return;
 		loading = true;
 
-		const paths = selectedFiles.map((file) => file.path);
+		const paths = $selectedTreeFiles.map((file) => file.path);
 
 		try {
 			await lockFiles(paths);
@@ -401,9 +405,9 @@
 
 	const handleUnlockSelectedFiles = async () => {
 		loading = true;
-		if (selectedFiles.length === 0) return;
+		if ($selectedTreeFiles.length === 0) return;
 
-		const paths = selectedFiles.map((file) => file.path);
+		const paths = $selectedTreeFiles.map((file) => file.path);
 
 		try {
 			await unlockFiles(paths, false);
@@ -422,7 +426,7 @@
 		$currentRoot = '';
 		$selectedFile = null;
 		commits = [];
-		selectedFiles = [];
+		$selectedTreeFiles = [];
 		await refreshFiles();
 	};
 
@@ -434,7 +438,7 @@
 		$selectedFile = parentFiles.find((f) => f.name === ancestry[index]) ?? null;
 
 		commits = [];
-		selectedFiles = [];
+		$selectedTreeFiles = [];
 		await refreshFiles();
 	};
 
@@ -443,7 +447,7 @@
 		$currentRoot = currRoot === '' ? folder.name : `${$currentRoot}/${folder.name}`;
 		$selectedFile = folder;
 		commits = [];
-		selectedFiles = [];
+		$selectedTreeFiles = [];
 		await refreshFiles();
 	};
 
@@ -658,7 +662,7 @@
 			await handleSaveFileTree();
 			await handleLoadCurrentRoot();
 		}
-		selectedFiles = [];
+		$selectedTreeFiles = [];
 	};
 
 	void listen('refresh-files', () => {
@@ -798,7 +802,9 @@
 											<TableBodyCell class="p-1 w-8">
 												<Checkbox
 													class="!p-1.5 mr-0"
-													checked={selectedFiles.some((selected) => selected.name === file.name)}
+													checked={$selectedTreeFiles.some(
+														(selected) => selected.name === file.name
+													)}
 													on:change={async () => {
 														await handleFileToggled(file);
 													}}
@@ -853,7 +859,7 @@
 			</div>
 		{/if}
 		<div class="flex flex-col h-full min-w-[26rem] gap-2">
-			{#if selectedFiles.length > 0}
+			{#if $selectedTreeFiles.length > 0}
 				<Card
 					class="w-full flex flex-col gap-2 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
 				>

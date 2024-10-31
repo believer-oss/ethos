@@ -37,7 +37,6 @@ export const rootNode = writable(<Node>{
 	children: []
 });
 export const selectedFile = writable(<Nullable<LFSFile>>null);
-export const multiSelectEnd = writable(<Nullable<LFSFile>>null);
 export const selectedTreeFiles = writable(<LFSFile[]>[]);
 export const fetchIncludeList = writable(<string[]>[]);
 

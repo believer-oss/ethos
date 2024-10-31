@@ -4,7 +4,6 @@
 	import { FileType, type Node } from '$lib/types';
 	import TreeNode from '$lib/components/files/TreeNode.svelte';
 	import { getFiles } from '$lib/repo';
-	import { multiSelectEnd, selectedFile, selectedTreeFiles } from '$lib/stores';
 
 	export let fileNode: Node;
 	export let loading: boolean;
@@ -65,38 +64,10 @@
 		loading = false;
 	};
 
-	const clicked = async () => {
-		let foundBeginning = false;
-
-		const dfsMultiSelect = (node: Node): boolean => {
-			if (node.value.path === $selectedFile?.path) {
-				// start pushing to selectedTreeFiles
-				foundBeginning = true;
-			}
-			if (foundBeginning) {
-				$selectedTreeFiles.push(node.value);
-			}
-			if (node.value.path === $multiSelectEnd?.path) {
-				// stop traversing
-				return true;
-			}
-			for (const child of node.children) {
-				if (dfsMultiSelect(child)) {
-					return true;
-				}
-			}
-			return false;
-		};
-
-		if ($selectedFile && $multiSelectEnd) {
-			dfsMultiSelect(fileNode);
-			await refresh();
-		}
-	};
-
 	onMount(() => {
 		// refresh every 30 seconds
 		const interval = setInterval(async () => {
+			console.log('Refreshing File Tree');
 			await refresh();
 		}, 15000);
 
@@ -106,13 +77,7 @@
 	});
 </script>
 
-<svelte:window
-	on:click={async () => {
-		await clicked();
-	}}
-	on:keydown={onKeyDown}
-	on:keyup={onKeyUp}
-/>
+<svelte:window on:keydown={onKeyDown} on:keyup={onKeyUp} />
 <Card
 	class="w-full p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 >

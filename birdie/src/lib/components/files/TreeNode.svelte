@@ -8,15 +8,10 @@
 		HeartOutline,
 		HeartSolid
 	} from 'flowbite-svelte-icons';
+	import { get } from 'svelte/store';
 	import { FileType, LocalFileLFSState, type Node } from '$lib/types';
 	import { getFiles } from '$lib/repo';
-	import {
-		currentRoot,
-		fetchIncludeList,
-		multiSelectEnd,
-		selectedFile,
-		selectedTreeFiles
-	} from '$lib/stores';
+	import { currentRoot, fetchIncludeList, selectedFile, selectedTreeFiles } from '$lib/stores';
 
 	export let fileNode: Node;
 	export let loading: boolean;
@@ -25,7 +20,6 @@
 
 	$: selected =
 		$selectedFile?.path === fileNode.value.path ||
-		$multiSelectEnd?.path === fileNode.value.path ||
 		$selectedTreeFiles.some((f) => f.path === fileNode.value.path);
 
 	const getChildren = async () => {
@@ -50,11 +44,15 @@
 	};
 
 	const handleOnClick = async () => {
-		if (fileNode.value.path !== '/' && shiftHeld) {
-			if (!$selectedFile) {
-				$selectedFile = fileNode.value;
-			} else {
-				$multiSelectEnd = fileNode.value;
+		if (shiftHeld) {
+			// do nothing if the dummy root is selected
+			if (fileNode.value.path !== '/') {
+				const currSelectedFile = get(selectedFile);
+				if (currSelectedFile) {
+					$selectedTreeFiles = [...$selectedTreeFiles, currSelectedFile];
+					$selectedFile = null;
+				}
+				$selectedTreeFiles = [...$selectedTreeFiles, fileNode.value];
 			}
 		} else {
 			// open or close the node
@@ -75,7 +73,6 @@
 			}
 			// clear multi select state
 			$selectedTreeFiles = [];
-			$multiSelectEnd = null;
 			// update currentRoot
 			if (fileNode.value.fileType === FileType.File) {
 				$currentRoot = fileNode.value.path.substring(0, fileNode.value.path.lastIndexOf('/'));
