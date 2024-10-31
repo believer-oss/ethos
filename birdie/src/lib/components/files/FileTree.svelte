@@ -67,7 +67,6 @@
 	onMount(() => {
 		// refresh every 30 seconds
 		const interval = setInterval(async () => {
-			console.log('Refreshing File Tree');
 			await refresh();
 		}, 15000);
 
