@@ -4,10 +4,12 @@
 	import { FileType, type Node } from '$lib/types';
 	import TreeNode from '$lib/components/files/TreeNode.svelte';
 	import { getFiles } from '$lib/repo';
+	import { shiftSelectedFile, selectedFile, selectedTreeFiles } from '$lib/stores';
 
 	export let fileNode: Node;
 	export let loading: boolean;
 
+	let ctrlHeld = false;
 	let shiftHeld = false;
 	const level = 0;
 
@@ -46,12 +48,16 @@
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Shift') {
 			shiftHeld = true;
+		} else if (event.key === 'Control') {
+			ctrlHeld = true;
 		}
 	};
 
-	const onKeyUp = (e: KeyboardEvent) => {
-		if (e.key === 'Shift') {
+	const onKeyUp = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
 			shiftHeld = false;
+		} else if (event.key === 'Control') {
+			ctrlHeld = false;
 		}
 	};
 
@@ -62,6 +68,40 @@
 			fileNode = updatedTree;
 		}
 		loading = false;
+	};
+
+	const clicked = async () => {
+		let foundStart = false;
+		// recursively traverse the tree to select all files between selectedFile and multiSelectedFile
+		const dfsMultiSelect = (node: Node): boolean => {
+			if (
+				!foundStart &&
+				(node.value.path === $selectedFile?.path || node.value.path === $shiftSelectedFile?.path)
+			) {
+				// if we haven't found the start, and we reach either selected files, start pushing to selectedTreeFiles
+				foundStart = true;
+			} else if (
+				node.value.path === $selectedFile?.path ||
+				node.value.path === $shiftSelectedFile?.path
+			) {
+				// there should never be 2 duplicate paths in the file tree, so we will always hit the other selected end to stop traversing
+				$selectedTreeFiles.push(node.value);
+				return true;
+			}
+			if (foundStart) {
+				$selectedTreeFiles.push(node.value);
+			}
+			for (const child of node.children) {
+				if (dfsMultiSelect(child)) {
+					return true;
+				}
+			}
+			return false;
+		};
+		if ($selectedFile && $shiftSelectedFile && $selectedFile.path !== $shiftSelectedFile.path) {
+			dfsMultiSelect(fileNode);
+			await refresh();
+		}
 	};
 
 	onMount(() => {
@@ -76,14 +116,20 @@
 	});
 </script>
 
-<svelte:window on:keydown={onKeyDown} on:keyup={onKeyUp} />
+<svelte:window
+	on:click={async () => {
+		await clicked();
+	}}
+	on:keydown={onKeyDown}
+	on:keyup={onKeyUp}
+/>
 <Card
 	class="w-full p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 >
 	<div class="flex flex-col gap-2 w-full h-full">
 		<Table>
 			<TableBody>
-				<TreeNode bind:fileNode bind:loading {shiftHeld} {level} />
+				<TreeNode bind:fileNode bind:loading {shiftHeld} {ctrlHeld} {level} />
 			</TableBody>
 		</Table>
 	</div>

@@ -11,11 +11,18 @@
 	import { get } from 'svelte/store';
 	import { FileType, LocalFileLFSState, type Node } from '$lib/types';
 	import { getFiles } from '$lib/repo';
-	import { currentRoot, fetchIncludeList, selectedFile, selectedTreeFiles } from '$lib/stores';
+	import {
+		currentRoot,
+		shiftSelectedFile,
+		fetchIncludeList,
+		selectedFile,
+		selectedTreeFiles
+	} from '$lib/stores';
 
 	export let fileNode: Node;
 	export let loading: boolean;
 	export let shiftHeld: boolean;
+	export let ctrlHeld: boolean;
 	export let level: number;
 
 	$: selected =
@@ -45,14 +52,26 @@
 
 	const handleOnClick = async () => {
 		if (shiftHeld) {
+			$selectedTreeFiles = [];
 			// do nothing if the dummy root is selected
 			if (fileNode.value.path !== '/') {
+				if (!$selectedFile) {
+					$selectedFile = fileNode.value;
+				} else {
+					$shiftSelectedFile = fileNode.value;
+				}
+			}
+		} else if (ctrlHeld) {
+			$shiftSelectedFile = null;
+			// do nothing if the dummy root is selected
+			if (fileNode.value.path !== '/') {
+				// if there was any file selected before ctrl was held, also add it to the list
 				const currSelectedFile = get(selectedFile);
 				if (currSelectedFile) {
 					$selectedTreeFiles = [...$selectedTreeFiles, currSelectedFile];
-					$selectedFile = null;
 				}
 				$selectedTreeFiles = [...$selectedTreeFiles, fileNode.value];
+				$selectedFile = fileNode.value;
 			}
 		} else {
 			// open or close the node
@@ -72,6 +91,7 @@
 				$selectedFile = null;
 			}
 			// clear multi select state
+			$shiftSelectedFile = null;
 			$selectedTreeFiles = [];
 			// update currentRoot
 			if (fileNode.value.fileType === FileType.File) {
@@ -122,7 +142,7 @@
 	</TableBodyRow>
 	{#if fileNode.open}
 		{#each fileNode.children as child}
-			<svelte:self bind:fileNode={child} bind:loading {shiftHeld} level={level + 1} />
+			<svelte:self bind:fileNode={child} bind:loading {shiftHeld} {ctrlHeld} level={level + 1} />
 		{/each}
 	{/if}
 </div>
