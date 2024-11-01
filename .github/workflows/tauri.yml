@@ -147,3 +147,58 @@ jobs:
 
           # Clean up
           rm -rf temp
+
+  push-f11r-server:
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    needs: publish-tauri
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: believer-oss/f11r-server
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Check if files have changed
+        uses: tj-actions/changed-files@v42
+        id: changes
+        with:
+          files: |
+            friendshipper/server/**/*
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{major}}.{{minor}}.{{patch}},value=${{ needs.publish-tauri.outputs.appVersion }}
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: friendshipper/server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
