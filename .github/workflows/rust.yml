@@ -86,6 +86,7 @@ jobs:
           librsvg2-dev
 
       - name: set up rust toolchain
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: set up Node
@@ -223,3 +224,38 @@ jobs:
         with:
           files: |
             ${{ matrix.app }}.exe
+
+  build-f11r-server:
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: believer-oss/f11r-server
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Check if files have changed
+        uses: tj-actions/changed-files@v42
+        id: changes
+        with:
+          files: |
+            friendshipper/server/**/*
+
+      - name: set up rust toolchain
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Check format and linting
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        run: |
+          cargo fmt -p friendshipper-server -- --check
+          cargo clippy --all-features -p friendshipper-server -- -D warnings
+
+      - name: Run unit tests
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        run: |
+          cargo test --verbose --release -p friendshipper-server
