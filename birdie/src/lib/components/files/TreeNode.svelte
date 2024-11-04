@@ -8,7 +8,6 @@
 		HeartOutline,
 		HeartSolid
 	} from 'flowbite-svelte-icons';
-	import { get } from 'svelte/store';
 	import { FileType, LocalFileLFSState, type Node } from '$lib/types';
 	import { getFiles } from '$lib/repo';
 	import {
@@ -26,7 +25,7 @@
 	export let level: number;
 
 	$: selected =
-		$selectedFile?.path === fileNode.value.path ||
+		($selectedFile && $selectedFile.path === fileNode.value.path) ||
 		$selectedTreeFiles.some((f) => f.path === fileNode.value.path);
 
 	const getChildren = async () => {
@@ -66,9 +65,8 @@
 			// do nothing if the dummy root is selected
 			if (fileNode.value.path !== '/') {
 				// if there was any file selected before ctrl was held, also add it to the list
-				const currSelectedFile = get(selectedFile);
-				if (currSelectedFile) {
-					$selectedTreeFiles = [...$selectedTreeFiles, currSelectedFile];
+				if ($selectedFile && !$selectedTreeFiles.includes($selectedFile)) {
+					$selectedTreeFiles = [...$selectedTreeFiles, $selectedFile];
 				}
 				$selectedTreeFiles = [...$selectedTreeFiles, fileNode.value];
 				$selectedFile = fileNode.value;
@@ -110,7 +108,6 @@
 <div class="w-full {level % 2 === 0 ? 'dark:bg-secondary-600' : 'dark:bg-secondary-700'}">
 	<TableBodyRow class="text-left w-max border-b-0 w-full" color="custom">
 		{#each Array(level) as _}
-			<TableBodyCell class="w-1 px-2" />
 			<TableBodyCell class="w-1 px-2" />
 		{/each}
 		<TableBodyCell class="p-2 w-full">

@@ -116,15 +116,12 @@
 	});
 </script>
 
-<svelte:window
+<svelte:window on:keydown={onKeyDown} on:keyup={onKeyUp} />
+<Card
+	class="p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 	on:click={async () => {
 		await clicked();
 	}}
-	on:keydown={onKeyDown}
-	on:keyup={onKeyUp}
-/>
-<Card
-	class="w-full p-4 sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 >
 	<div class="flex flex-col gap-2 w-full h-full">
 		<Table>
