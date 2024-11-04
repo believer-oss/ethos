@@ -40,6 +40,7 @@
 	let verifyingServer = true;
 	let buildVerified = false;
 	let fetchingServers = false;
+	let fetchingBuilds = false;
 	let showServerModal = false;
 
 	let servers: GameServerResult[] = [];
@@ -336,10 +337,13 @@
 					<div class="flex items-center gap-2 mt-2">
 						<p class="text-xl text-primary-400">Servers</p>
 						<Button
-							disabled={syncing || !buildVerified}
+							disabled={syncing || !buildVerified || fetchingBuilds}
 							class="!p-1.5"
 							size="xs"
-							on:click={() => {
+							on:click={async () => {
+								fetchingBuilds = true;
+								builds.set(await getBuilds(250));
+								fetchingBuilds = false;
 								showServerModal = true;
 							}}
 						>
