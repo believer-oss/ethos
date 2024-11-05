@@ -149,7 +149,7 @@ jobs:
           rm -rf temp
 
   push-f11r-server:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    if: ${{ github.event.inputs.app == 'friendshipper' && (contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push') }}
     needs: publish-tauri
     env:
       REGISTRY: ghcr.io
@@ -191,7 +191,8 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
-          context: friendshipper/server
+          context: .
+          file: friendshipper/server/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
