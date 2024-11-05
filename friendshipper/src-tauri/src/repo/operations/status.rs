@@ -186,7 +186,6 @@ where
             info!(
                 %status.lock_user,
                 ?status.locks_ours,
-                ?status.locks_theirs,
                 "locks"
             );
         }

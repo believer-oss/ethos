@@ -284,6 +284,8 @@ impl Server {
                 git.configure_untracked_cache().await?;
 
                 startup_tx.send("Performing git repo maintenance".to_string())?;
+                git.refetch().await?;
+                git.rewrite_graph().await?;
                 git.expire_reflog().await?;
                 match git.run_gc().await {
                     Ok(_) => {}

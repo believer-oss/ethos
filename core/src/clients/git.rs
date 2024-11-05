@@ -693,6 +693,15 @@ impl Git {
         .await
     }
 
+    pub async fn refetch(&self) -> anyhow::Result<()> {
+        self.run(&["fetch", "--refetch"], Opts::default()).await
+    }
+
+    pub async fn rewrite_graph(&self) -> anyhow::Result<()> {
+        self.run(&["commit-graph", "write", "--reachable"], Opts::default())
+            .await
+    }
+
     // sample output of: git worktree list --porcelain
     // worktree D:/repos/fellowship
     // HEAD 6ca1438e074b664470df54319cd6272a4d4d565d

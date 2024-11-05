@@ -86,6 +86,27 @@ impl Server {
                     )?;
                 }
 
+                let git = shared_state.git().clone();
+
+                // ensure important git configs are set
+                git.set_config("gc.auto", "0").await?;
+                git.set_config("maintenance.auto", "0").await?;
+                git.set_config("lfs.setlockablereadonly", "false").await?;
+                git.set_config("http.postBuffer", "524288000").await?;
+                git.configure_untracked_cache().await?;
+
+                startup_tx.send("Performing git repo maintenance".to_string())?;
+                git.refetch().await?;
+                git.rewrite_graph().await?;
+                git.expire_reflog().await?;
+                match git.run_gc().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Failed to run git gc: {:?}", e);
+                        startup_tx.send("Warning: Git maintenance failed".to_string())?;
+                    }
+                }
+
                 startup_tx.send("Fetching initial repo status".to_string())?;
                 let status_op = StatusOp {
                     repo_status: shared_state.repo_status.clone(),
