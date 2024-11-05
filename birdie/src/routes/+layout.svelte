@@ -2,8 +2,6 @@
 	import '../app.postcss';
 	import { onMount } from 'svelte';
 	import {
-		Accordion,
-		AccordionItem,
 		Button,
 		Img,
 		Modal,
@@ -29,7 +27,6 @@
 	import { getVersion } from '@tauri-apps/api/app';
 	import { get } from 'svelte/store';
 	import { invoke } from '@tauri-apps/api/tauri';
-	import { readTextFile } from '@tauri-apps/api/fs';
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
@@ -48,7 +45,7 @@
 		changeSets
 	} from '$lib/stores';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
-	import { getLogPath } from '$lib/system';
+	import { openSystemLogsFolder } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig } from '$lib/config';
 	import { getAllCommits, getRepoStatus, verifyLocks } from '$lib/repo';
@@ -57,7 +54,7 @@
 	// Initialization
 	let appVersion = '';
 	let initialized = false;
-	let initializationLog = '';
+	let gitStartupMessage = '';
 	let startupMessage = 'Initializing Birdie';
 
 	// Welcome Modal
@@ -148,38 +145,14 @@
 		for (;;) {
 			try {
 				await invoke('get_system_status');
+
 				break;
 			} catch (_) {
-				const path = await getLogPath();
-
-				// get current YYYY-MM-DD in UTC
-				const date = new Date();
-				const year = date.getUTCFullYear();
-
-				// get month as 2 digits
-				const month = (1 + date.getUTCMonth()).toString().padStart(2, '0');
-
-				// get day as 2 digits
-				const day = date.getUTCDate().toString().padStart(2, '0');
-
-				// get hour as 2 digits
-				const hour = date.getUTCHours().toString().padStart(2, '0');
-
-				try {
-					const log = await readTextFile(
-						`${path}/Birdie-${appVersion}.${year}-${month}-${day}-${hour}.log`
-					);
-					// set initialization log to last 50 lines of log
-					initializationLog = log.split('\n').slice(-50).join('\n');
-				} catch (e) {
-					await emit('error', e);
-				}
+				// wait one second
+				await new Promise((resolve) => {
+					setTimeout(resolve, 1000);
+				});
 			}
-
-			// wait one second
-			await new Promise((resolve) => {
-				setTimeout(resolve, 1000);
-			});
 		}
 
 		try {
@@ -257,6 +230,10 @@
 		hasSuccess = true;
 	});
 
+	void listen('git-log', (event) => {
+		gitStartupMessage = event.payload as string;
+	});
+
 	void listen('startup-message', (e) => {
 		startupMessage = e.payload as string;
 	});
@@ -327,26 +304,12 @@
 				<span class="text-gray-300 text-xl">{startupMessage}...</span>
 				<Spinner size="4" />
 			</div>
-			{#if initializationLog !== ''}
-				<Accordion
-					activeClass="dark:hover:bg-secondary-700 focus:ring-0 dark:border-gray-300 text-white overflow-auto py-2"
-					inactiveClass="dark:hover:bg-secondary-700 dark:border-gray-300 text-white py-2"
-					class="w-full dark:border-gray-300"
-				>
-					<AccordionItem class="w-full" borderSharedClass="dark:border-gray-300">
-						<div slot="header" class="flex items-center justify-between text-center w-full pr-2">
-							<span class="text-xs text-gray-300 font-mono w-full"
-								>Click here to see startup logs</span
-							>
-						</div>
-						<div
-							class="bg-secondary-800 text-gray-300 font-mono w-full max-h-[60vh] overflow-y-auto p-2"
-						>
-							<code class="whitespace-pre-wrap truncate">{initializationLog}</code>
-						</div>
-					</AccordionItem>
-				</Accordion>
+			{#if gitStartupMessage}
+				<div class="rounded-md p-2 dark:bg-secondary-900">
+					<code class="text-sm text-gray-300 dark:text-gray-300 m-0">{gitStartupMessage}</code>
+				</div>
 			{/if}
+			<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
 		</div>
 	{:else}
 		<div class="flex dark:bg-secondary-700 h-full overflow-y-hidden w-full overflow-x-hidden">
