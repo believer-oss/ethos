@@ -647,6 +647,50 @@
 		search = '';
 	};
 
+	const addSelectedFilePathToFileTree = async (node: Node, subFolders: string[]): Promise<Node> => {
+		if (node.value.fileType === FileType.File) return node;
+		const updatedChildFiles = await getFiles(node.value.path);
+		let updatedChildNodes: Node[] = [];
+		if (subFolders.length === 0) {
+			// we're at the deepest subfolder level
+			// update our children and "forget" anything deeper than this
+			updatedChildFiles.forEach((child) => {
+				updatedChildNodes.push({
+					value: child,
+					open: false,
+					children: []
+				});
+			});
+		} else {
+			// some extra steps here to ensure we don't overwrite any sibling/deeper nodes
+			updatedChildFiles.forEach((child) => {
+				const existingChild = node.children.find((c) => c.value.path === child.path);
+				if (existingChild) {
+					updatedChildNodes.push({
+						...existingChild,
+						value: child
+					});
+				} else {
+					updatedChildNodes.push({
+						value: child,
+						open: false,
+						children: []
+					});
+				}
+			});
+			// recursively call on the child node that matches the next subfolder
+			updatedChildNodes = await Promise.all(
+				updatedChildNodes.map((child) => {
+					if (child.value.name === subFolders[0]) {
+						return addSelectedFilePathToFileTree(child, subFolders.slice(1));
+					}
+					return child;
+				})
+			);
+		}
+		return { ...node, open: true, children: updatedChildNodes };
+	};
+
 	const selectSearchResult = async (path: string) => {
 		modalLoading = true;
 		// strip last part of the path
@@ -665,6 +709,8 @@
 		if (newSelectedFile) {
 			await selectFile(newSelectedFile);
 		}
+
+		$rootNode = await addSelectedFilePathToFileTree(get(rootNode), $selectedFile.path.split('/'));
 
 		modalLoading = false;
 		showSearchModal = false;
