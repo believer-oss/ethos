@@ -218,7 +218,9 @@
 			{/if}
 		{:else}
 			<TableBodyRow class="text-left border-b-0 p-2 bg-secondary-700">
-				<TableBodyCell class="py-2">No commits yet! (We may still be loading.)</TableBodyCell>
+				<td colspan="6" class="p-4 py-2">
+					<span class="text-gray-400">No commits yet! (We may still be loading.)</span>
+				</td>
 			</TableBodyRow>
 		{/each}
 	</TableBody>
