@@ -19,9 +19,9 @@ export const currentRoot = writable('');
 export const commitMessage = writable('');
 export const changeSets = writable(<ChangeSet[]>[]);
 export const selectedFiles = writable(<ModifiedFile[]>[]);
+export const selectedDirectoryClass = writable('');
 
 // file tree and asset explorer
-export const useFileTreeView = writable(false);
 export const rootNode = writable(<Node>{
 	// dummy root node
 	value: {
@@ -39,6 +39,7 @@ export const rootNode = writable(<Node>{
 export const selectedFile = writable(<Nullable<LFSFile>>null);
 export const shiftSelectedFile = writable(<Nullable<LFSFile>>null);
 export const selectedTreeFiles = writable(<LFSFile[]>[]);
+export const selectedExplorerFiles = writable(<LFSFile[]>[]);
 export const fetchIncludeList = writable(<string[]>[]);
 
 export const locks = writable(<VerifyLocksResponse>{

@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { Card, Table, TableBody } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { fs } from '@tauri-apps/api';
 	import { FileType, type Node } from '$lib/types';
 	import TreeNode from '$lib/components/files/TreeNode.svelte';
 	import { getFiles } from '$lib/repo';
-	import { shiftSelectedFile, selectedFile, selectedTreeFiles } from '$lib/stores';
+	import { shiftSelectedFile, selectedFile, selectedTreeFiles, currentRoot } from '$lib/stores';
+	import { CURRENT_ROOT_PATH, FILE_TREE_PATH } from '$lib/consts';
 
 	export let fileNode: Node;
 	export let loading: boolean;
@@ -12,6 +14,16 @@
 	let ctrlHeld = false;
 	let shiftHeld = false;
 	const level = 0;
+
+	const handleSaveFileTree = async () => {
+		await fs.writeFile(FILE_TREE_PATH, JSON.stringify(fileNode, null, 2), {
+			dir: fs.BaseDirectory.AppLocalData
+		});
+	};
+
+	const handleSaveCurrentRoot = async () => {
+		await fs.writeFile(CURRENT_ROOT_PATH, $currentRoot, { dir: fs.BaseDirectory.AppLocalData });
+	};
 
 	// recursively update the tree starting from the root node
 	const updateTree = async (node: Node): Promise<Node> => {
@@ -22,23 +34,25 @@
 		const updatedChildFiles = await getFiles(node.value.path);
 		let updatedChildNodes: Node[] = [];
 		// deleted children will not be considered since they will not exist inside updatedChildFiles
-		updatedChildFiles.forEach((child) => {
-			const existingChild = node.children.find((c) => c.value.path === child.path);
-			if (existingChild) {
-				// if this file already exists as a child, simply update it's LFSFile value
-				updatedChildNodes.push({
-					...existingChild,
-					value: child
-				});
-			} else {
-				// otherwise, create a new node for a new child
-				updatedChildNodes.push({
-					value: child,
-					open: false,
-					children: []
-				});
-			}
-		});
+		updatedChildFiles
+			.filter((child) => child.fileType !== FileType.File)
+			.forEach((child) => {
+				const existingChild = node.children.find((c) => c.value.path === child.path);
+				if (existingChild) {
+					// if this file already exists as a child, simply update it's LFSFile value
+					updatedChildNodes.push({
+						...existingChild,
+						value: child
+					});
+				} else {
+					// otherwise, create a new node for a new child
+					updatedChildNodes.push({
+						value: child,
+						open: false,
+						children: []
+					});
+				}
+			});
 		updatedChildNodes = await Promise.all(updatedChildNodes.map((child) => updateTree(child)));
 
 		// overwrite the children of the current node with the updated children
@@ -67,6 +81,8 @@
 		if (updatedTree) {
 			fileNode = updatedTree;
 		}
+		await handleSaveFileTree();
+		await handleSaveCurrentRoot();
 		loading = false;
 	};
 
@@ -102,6 +118,7 @@
 			dfsMultiSelect(fileNode);
 			await refresh();
 		}
+		await handleSaveFileTree();
 	};
 
 	onMount(() => {
