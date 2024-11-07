@@ -864,7 +864,7 @@
 		<CharacterCard metadata={directoryMetadata} onMetadataSaved={handleUpdateDirectoryMetadata} />
 	{/if}
 	<div class="flex gap-2 overflow-hidden w-full max-w-full max-h-[70vh]">
-		<div class="flex flex-col min-w-[35rem] gap-2 h-full gap-2">
+		<div class="flex flex-col min-w-[25vw] gap-2 h-full gap-2">
 			<FileTree bind:fileNode={$rootNode} bind:loading />
 			<Card
 				class="h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
@@ -914,7 +914,7 @@
 				</div>
 			</Card>
 			<Card
-				class="flex flex-col max-w-full p-4 sm:p-4 max-h-[40rem] h-[40rem] dark:bg-secondary-600 border-0 shadow-none overflow-hidden"
+				class="flex flex-col max-w-full p-4 sm:p-4 min-h-[20rem] max-h-[40rem] h-[40rem] dark:bg-secondary-600 border-0 shadow-none overflow-hidden"
 			>
 				<div class="flex items-center gap-2">
 					<p class="text-xl my-2 dark:text-primary-400">File Details</p>
@@ -1153,7 +1153,7 @@
 		</div>
 	</div>
 	<Card
-		class="w-full p-4 sm:p-4 max-w-full max-h-[30vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
+		class="w-full p-4 sm:p-4 max-w-full min-h-[11rem] max-h-[30vh] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
 	>
 		{#if loadingFileHistory}
 			<Spinner class="w-4 h-4 dark:text-gray-500 fill-white" />
