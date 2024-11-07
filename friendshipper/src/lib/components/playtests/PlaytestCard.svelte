@@ -27,7 +27,14 @@
 		getPlaytests,
 		unassignUserFromPlaytest
 	} from '$lib/playtests';
-	import { appConfig, builds, dynamicConfig, playtests } from '$lib/stores';
+	import {
+		appConfig,
+		backgroundSyncInProgress,
+		builds,
+		currentSyncedVersion,
+		dynamicConfig,
+		playtests
+	} from '$lib/stores';
 	import { openUrl, handleError } from '$lib/utils';
 	import { getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
@@ -40,6 +47,7 @@
 
 	let countdownFinished = false;
 	let syncing = false;
+	let backgroundSyncing = false;
 	let progressModalText = '';
 	$: owner = playtest.metadata.annotations?.['believer.dev/owner'] ?? '';
 
@@ -88,20 +96,27 @@
 		loading = false;
 	};
 
-	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
+	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server?: GameServerResult) => {
 		if (!entry) {
 			return;
 		}
 
-		syncing = true;
 		progressModalText = 'Syncing client...';
 		const req: SyncClientRequest = {
 			artifactEntry: entry,
-			methodPrefix: $builds.methodPrefix,
-			launchOptions: {
-				name: server.name
-			}
+			methodPrefix: $builds.methodPrefix
 		};
+
+		syncing = true;
+		if (server) {
+			req.launchOptions = {
+				name: server.name
+			};
+		} else {
+			// this is a sync only, run it in the background
+			backgroundSyncing = true;
+			await emit('background-sync-start');
+		}
 
 		try {
 			await syncClient(req);
@@ -110,6 +125,13 @@
 		}
 
 		syncing = false;
+
+		if (backgroundSyncing) {
+			await emit('background-sync-end');
+			backgroundSyncing = false;
+		}
+
+		currentSyncedVersion.set(entry.commit);
 	};
 
 	const shouldShowLaunchButton = (): boolean => {
@@ -117,24 +139,33 @@
 		return !!(playtestAssignment && playtestAssignment.serverRef);
 	};
 
-	const handleSyncAndLaunch = async () => {
-		const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
-		if (playtestAssignment && playtestAssignment.serverRef) {
+	const handleSyncAndLaunch = async (launch: boolean = true) => {
+		try {
 			if (playtest.metadata.annotations) {
 				const project = playtest.metadata.annotations['believer.dev/project'];
 				const entry = await getBuilds(250, project).then((a) =>
 					a.entries.find((b) => b.commit === playtest.spec.version)
 				);
 
-				const updatedServers = await getServers(playtest.spec.version);
-				const playtestServer = updatedServers.find(
-					(s) => s.name === playtestAssignment.serverRef?.name
-				);
+				const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
+				if (playtestAssignment && playtestAssignment.serverRef) {
+					const updatedServers = await getServers(playtest.spec.version);
 
-				if (playtestServer && entry) {
-					await handleSyncClient(entry, playtestServer);
+					if (launch) {
+						const playtestServer = updatedServers.find(
+							(s) => s.name === playtestAssignment.serverRef?.name
+						);
+
+						if (playtestServer && entry) {
+							await handleSyncClient(entry, playtestServer);
+						}
+					}
+				} else if (entry) {
+					await handleSyncClient(entry);
 				}
 			}
+		} catch (e) {
+			await emit('error', e);
 		}
 	};
 
@@ -237,8 +268,35 @@
 				</Button>
 				{#key playtest}
 					{#if shouldShowLaunchButton()}
-						<Button size="xs" class="text-xs py-1" color="primary" on:click={handleSyncAndLaunch}
-							>Sync & Launch</Button
+						<Button
+							size="xs"
+							class="text-xs py-1"
+							disabled={$backgroundSyncInProgress}
+							color="primary"
+							on:click={() => handleSyncAndLaunch(true)}
+							>{$currentSyncedVersion === playtest.spec.version
+								? 'Launch'
+								: 'Sync & Launch'}</Button
+						>
+					{/if}
+					{#if $backgroundSyncInProgress}
+						<Tooltip
+							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+							placement="top">Sync in progress</Tooltip
+						>
+					{/if}
+					<Button
+						size="xs"
+						class="text-xs py-1"
+						disabled={$backgroundSyncInProgress || $currentSyncedVersion === playtest.spec.version}
+						color="primary"
+						on:click={() => handleSyncAndLaunch(false)}
+						>{$currentSyncedVersion === playtest.spec.version ? 'Synced' : 'Sync Client'}</Button
+					>
+					{#if $backgroundSyncInProgress}
+						<Tooltip
+							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+							placement="top">Sync in progress</Tooltip
 						>
 					{/if}
 				{/key}
@@ -413,4 +471,4 @@
 	</div>
 </Tooltip>
 
-<ProgressModal title={progressModalText} bind:showModal={syncing} />
+<ProgressModal title={progressModalText} showModal={syncing && !backgroundSyncing} />

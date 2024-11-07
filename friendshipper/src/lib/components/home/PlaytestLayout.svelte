@@ -9,8 +9,10 @@
 	import {
 		activeProjectConfig,
 		appConfig,
+		backgroundSyncInProgress,
 		builds,
 		builtCommits,
+		currentSyncedVersion,
 		playtests,
 		selectedCommit,
 		workflowMap
@@ -144,10 +146,7 @@
 			artifactEntry: entry,
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
-				name: server.name,
-				ip: server.ip,
-				port: server.port,
-				netimguiPort: server.netimguiPort
+				name: server.name
 			}
 		};
 
@@ -157,6 +156,7 @@
 			await emit('error', e);
 		}
 
+		currentSyncedVersion.set(entry.commit);
 		syncing = false;
 	};
 
@@ -231,7 +231,9 @@
 			checkForExisting: false
 		};
 
-		[launchRequest.map] = $activeProjectConfig.maps;
+		if ($activeProjectConfig) {
+			[launchRequest.map] = $activeProjectConfig.maps;
+		}
 
 		try {
 			await launchServer(launchRequest);
@@ -379,7 +381,9 @@
 					<ServerTable
 						{servers}
 						onUpdateServers={async () => {
-							await updateServers(selected.commit);
+							if (selected !== null) {
+								await updateServers(selected.commit);
+							}
 						}}
 					/>
 				</div>
@@ -406,7 +410,7 @@
 
 {#key (nextPlaytest?.status, servers)}
 	<Button
-		disabled={shouldDisableLaunchButton()}
+		disabled={shouldDisableLaunchButton() || $backgroundSyncInProgress}
 		size="xl"
 		class="fixed bottom-6 right-6 shadow-2xl"
 		on:click={handleSyncAndLaunch}

@@ -6,6 +6,7 @@
 		DarkMode,
 		Img,
 		Modal,
+		Progressbar,
 		Sidebar,
 		SidebarDropdownWrapper,
 		SidebarGroup,
@@ -47,6 +48,7 @@
 	import {
 		allModifiedFiles,
 		appConfig,
+		backgroundSyncInProgress,
 		builds,
 		changeSets,
 		commits,
@@ -104,6 +106,11 @@
 	let updating = false;
 	let latest = '';
 	let updateAvailable = false;
+
+	// Background sync
+	let backgroundSyncProgress = 0;
+	let backgroundSyncElapsed = '';
+	let backgroundSyncRemaining = '';
 
 	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus?.conflicts.length > 0;
 
@@ -574,6 +581,25 @@
 		}
 	});
 
+	void listen('background-sync-start', () => {
+		backgroundSyncInProgress.set(true);
+
+		backgroundSyncProgress = 0;
+		backgroundSyncElapsed = '';
+		backgroundSyncRemaining = '';
+
+		void listen('longtail-sync-progress', (event) => {
+			const captures = event.payload as { progress: string; elapsed: string; remaining: string };
+			backgroundSyncProgress = parseFloat(captures.progress.replace('%', ''));
+			backgroundSyncElapsed = captures.elapsed;
+			backgroundSyncRemaining = captures.remaining;
+		});
+	});
+
+	void listen('background-sync-end', () => {
+		backgroundSyncInProgress.set(false);
+	});
+
 	void listen('access-token-set', (e) => {
 		localStorage.setItem('oktaAccessToken', e.payload as string);
 		accessToken = e.payload as string;
@@ -951,11 +977,23 @@
 				</SidebarWrapper>
 			</Sidebar>
 
-			<div class="px-4 mx-auto w-full h-full overflow-hidden">
-				<main class="w-full h-full flex flex-col pb-2 overflow-hidden">
+			<div class="flex flex-col mx-auto w-full h-full overflow-hidden">
+				<main class="w-full h-full flex flex-col px-4 pb-2 overflow-hidden">
 					<slot class="overflow-hidden" />
 				</main>
 			</div>
+		</div>
+	{/if}
+	{#if $backgroundSyncInProgress}
+		<div
+			class="flex gap-1 items-center bg-secondary-700 dark:bg-space-900 h-6 max-h-6 w-full py-1 px-2 z-50"
+		>
+			<code class="text-xs text-gray-400 dark:text-gray-400">Syncing... </code>
+			<Spinner size="2" />
+			<Progressbar progress={backgroundSyncProgress} size="h-1" />
+			<code class="text-xs text-gray-400 dark:text-gray-400 text-nowrap">
+				{backgroundSyncElapsed} / {backgroundSyncRemaining}
+			</code>
 		</div>
 	{/if}
 </div>
