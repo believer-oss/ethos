@@ -66,9 +66,11 @@
 	};
 
 	const isChecked = (files: ModifiedFile[]) =>
+		selectedFiles.length > 0 &&
 		files.every((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
 
 	const isIndeterminate = (files: ModifiedFile[]) =>
+		selectedFiles.length > 0 &&
 		!isChecked(files) &&
 		files.some((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
 

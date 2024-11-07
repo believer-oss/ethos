@@ -134,7 +134,9 @@
 	};
 </script>
 
-<Card class="w-full p-4 sm:p-4 max-w-full dark:bg-secondary-600 border-0 shadow-none overflow-auto">
+<Card
+	class="w-full p-4 sm:p-4 max-w-full min-h-[8rem] dark:bg-secondary-600 border-0 shadow-none overflow-auto"
+>
 	<div class="flex items-center gap-2 mb-2 justify-between">
 		<p class="text-xl dark:text-primary-400">Character Metadata</p>
 		{#if editingMetadata}
