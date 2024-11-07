@@ -36,6 +36,8 @@ export const engineWorkflows = writable(<CommitWorkflowInfo[]>[]);
 export const onboardingInProgress = writable(false);
 export const changeSets = writable(<ChangeSet[]>[]);
 export const startTime = writable(Date.now());
+export const backgroundSyncInProgress = writable(false);
+export const currentSyncedVersion = writable('');
 
 export const nextPlaytest = derived([playtests, appConfig], ([$playtests, $appConfig]) => {
 	if ($playtests.length > 0) {

@@ -30,7 +30,9 @@
 	import {
 		allModifiedFiles,
 		appConfig,
+		backgroundSyncInProgress,
 		builds,
+		currentSyncedVersion,
 		nextPlaytest,
 		playtests,
 		repoConfig,
@@ -181,6 +183,7 @@
 			await emit('error', e);
 		}
 
+		currentSyncedVersion.set(entry.commit);
 		syncing = false;
 	};
 
@@ -398,7 +401,7 @@
 
 {#key $nextPlaytest?.status}
 	<Button
-		disabled={shouldDisableLaunchButton()}
+		disabled={shouldDisableLaunchButton() || $backgroundSyncInProgress}
 		size="xl"
 		class="fixed bottom-6 right-6 shadow-2xl"
 		on:click={handleSyncAndLaunch}

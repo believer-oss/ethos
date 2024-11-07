@@ -18,7 +18,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { ProgressModal } from '@ethos/core';
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
-	import { appConfig, builds, dynamicConfig } from '$lib/stores';
+	import { appConfig, backgroundSyncInProgress, builds, dynamicConfig } from '$lib/stores';
 	import { syncClient } from '$lib/builds';
 	import { downloadServerLogs, terminateServer } from '$lib/gameServers';
 	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
@@ -158,7 +158,7 @@
 					<TableBodyCell class="py-2 flex gap-2 justify-end">
 						<Button
 							outline
-							disabled={syncing}
+							disabled={syncing || $backgroundSyncInProgress}
 							size="sm"
 							on:click={async () => handleSyncClient(server)}
 							>Sync & Join
