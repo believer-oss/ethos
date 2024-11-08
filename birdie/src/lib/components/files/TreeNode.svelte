@@ -66,7 +66,6 @@
 				}
 			}
 		} else if (ctrlHeld) {
-			$shiftSelectedFile = null;
 			// do nothing if the dummy root is selected
 			if (fileNode.value.path !== '/') {
 				// if there was any file selected before ctrl was held, also add it to the list
@@ -75,6 +74,7 @@
 				}
 				$selectedTreeFiles = [...$selectedTreeFiles, fileNode.value];
 			}
+			$shiftSelectedFile = null;
 		} else {
 			// open or close the node
 			fileNode = {

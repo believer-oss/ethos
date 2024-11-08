@@ -285,6 +285,7 @@
 						$currentRootFiles[lastSelectedIndex]
 					];
 				}
+				$selectedFile = null;
 			}
 
 			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
