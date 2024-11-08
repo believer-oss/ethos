@@ -74,7 +74,6 @@
 					$selectedTreeFiles = [...$selectedTreeFiles, $selectedFile];
 				}
 				$selectedTreeFiles = [...$selectedTreeFiles, fileNode.value];
-				$selectedFile = fileNode.value;
 			}
 		} else {
 			// open or close the node
