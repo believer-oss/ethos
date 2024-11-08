@@ -270,20 +270,25 @@
 					}
 				}
 			}
+			$selectedFile = null;
 			return;
 		}
 		if (ctrlHeld) {
-			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
-			const lastSelectedIndex = $currentRootFiles.findIndex(
-				(file) => $selectedFile?.name === file.name
-			);
-
-			// if the previously selected file is not also in the selected tree files list, add it
-			if (!$selectedExplorerFiles.includes($currentRootFiles[lastSelectedIndex])) {
-				$selectedExplorerFiles = [...$selectedExplorerFiles, $currentRootFiles[lastSelectedIndex]];
+			// if there was any file selected before ctrl was held, also add it to the list
+			if ($selectedFile) {
+				const lastSelectedIndex = $currentRootFiles.findIndex(
+					(file) => $selectedFile?.name === file.name
+				);
+				if (!$selectedExplorerFiles.includes($currentRootFiles[lastSelectedIndex])) {
+					$selectedExplorerFiles = [
+						...$selectedExplorerFiles,
+						$currentRootFiles[lastSelectedIndex]
+					];
+				}
 			}
+
+			const currentIndex = $currentRootFiles.findIndex((file) => file.name === selected.name);
 			$selectedExplorerFiles = [...$selectedExplorerFiles, $currentRootFiles[currentIndex]];
-			await selectFile(selected);
 			return;
 		}
 		await selectFile(selected);
@@ -929,7 +934,7 @@
 						<Tooltip>Show in explorer</Tooltip>
 					{/if}
 				</div>
-				{#if $selectedFile === null}
+				{#if $selectedFile === null && $selectedExplorerFiles.length === 0 && $selectedTreeFiles.length === 0}
 					<p class="text-gray-500 dark:text-gray-400 pb-4">No file selected.</p>
 				{:else}
 					<div class="flex flex-col gap-2 w-full h-full">
