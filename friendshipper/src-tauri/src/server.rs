@@ -499,7 +499,7 @@ impl Server {
                         if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password()
                         {
                             if !pat.is_empty() {
-                                config.github_pat = Some(pat);
+                                config.github_pat = Some(pat.into());
                             }
                         }
 

@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf, sync::Arc};
 
 use anyhow::anyhow;
-use axum::{debug_handler, extract::State, routing::get, Json, Router};
-use tracing::info;
+use axum::{extract::State, routing::get, Json, Router};
+use tracing::{info, instrument};
 
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::types::config::ConfigValidationError;
@@ -29,7 +29,7 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Json<BirdieConfig> {
     Json(config)
 }
 
-#[debug_handler]
+#[instrument(skip(state), err)]
 async fn update_config(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<BirdieConfig>,
@@ -123,7 +123,7 @@ async fn update_config(
 
         match payload.github_pat.clone() {
             Some(pat) => {
-                match GraphQLClient::new(pat.clone()).await {
+                match GraphQLClient::new(pat.to_string()).await {
                     Ok(client) => {
                         state.github_client.write().replace(client);
                     }
@@ -138,7 +138,7 @@ async fn update_config(
 
                 // store pat in keyring
                 let entry = keyring::Entry::new(APP_NAME, KEYRING_USER)?;
-                entry.set_password(&pat)?;
+                entry.set_password(&pat.to_string())?;
             }
             None => {
                 return Err(anyhow!(ConfigValidationError(

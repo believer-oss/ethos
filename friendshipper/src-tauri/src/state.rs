@@ -114,7 +114,7 @@ where
 
             match github_pat {
                 Some(pat) => {
-                    let client = match github::GraphQLClient::new(pat).await {
+                    let client = match github::GraphQLClient::new(pat.to_string()).await {
                         Ok(client) => Some(client),
                         Err(e) => {
                             warn!("Failed to create GitHub client: {}", e);

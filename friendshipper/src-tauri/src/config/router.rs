@@ -42,7 +42,7 @@ where
 
     // get github PAT from keyring
     if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password() {
-        config.github_pat = Some(pat);
+        config.github_pat = Some(pat.into());
     }
 
     Ok(Json(config))
@@ -219,7 +219,7 @@ where
 
         match payload.github_pat.clone() {
             Some(pat) => {
-                match GraphQLClient::new(pat.clone()).await {
+                match GraphQLClient::new(pat.clone().to_string()).await {
                     Ok(client) => {
                         state.github_client.write().replace(client);
                     }
@@ -234,7 +234,7 @@ where
 
                 // store pat in keyring
                 let entry = keyring::Entry::new(APP_NAME, KEYRING_USER)?;
-                entry.set_password(&pat)?;
+                entry.set_password(&pat.to_string())?;
             }
             None => {
                 // Only worry about this if we don't already have a Github Client

@@ -1,5 +1,7 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
+use ethos_core::types::config::RedactedString;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +25,7 @@ pub struct BirdieConfig {
     pub user_display_name: String,
 
     #[serde(default, rename = "githubPAT", skip_serializing_if = "Option::is_none")]
-    pub github_pat: Option<String>,
+    pub github_pat: Option<RedactedString>,
 
     #[serde(default)]
     pub initialized: bool,

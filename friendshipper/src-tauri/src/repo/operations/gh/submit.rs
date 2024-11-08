@@ -684,7 +684,7 @@ where
         repo_status: state.repo_status.clone(),
 
         git_client: state.git(),
-        token,
+        token: token.to_string(),
         github_client,
     };
 
