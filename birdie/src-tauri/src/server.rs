@@ -6,6 +6,8 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
+use ethos_core::types::errors::CoreError;
+use log::warn;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::error;
@@ -43,7 +45,7 @@ impl Server {
         config_file: PathBuf,
         startup_tx: STDSender<String>,
         shutdown_rx: mpsc::Receiver<()>,
-    ) -> Result<()> {
+    ) -> Result<(), CoreError> {
         let mut shutdown_rx = shutdown_rx;
 
         startup_tx.send("Initializing application config".to_string())?;
@@ -96,7 +98,10 @@ impl Server {
                 git.configure_untracked_cache().await?;
 
                 startup_tx.send("Performing git repo maintenance".to_string())?;
-                git.refetch().await?;
+                git.refetch().await.or_else(|e| {
+                    warn!("Failed to refetch git repo: {:?}", e);
+                    Ok::<(), CoreError>(())
+                })?;
                 git.rewrite_graph().await?;
                 git.expire_reflog().await?;
                 match git.run_gc().await {

@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -698,8 +699,29 @@ impl Git {
     }
 
     pub async fn rewrite_graph(&self) -> anyhow::Result<()> {
-        self.run(&["commit-graph", "write", "--reachable"], Opts::default())
-            .await
+        let result = self
+            .run(
+                &["commit-graph", "write", "--reachable"],
+                Opts::default().with_complete_error(),
+            )
+            .await;
+
+        if let Err(e) = &result {
+            if e.to_string().contains("commit-graph.lock") {
+                warn!("Removing commit-graph.lock");
+                let graph_lock =
+                    Path::new(&self.repo_path).join(".git/objects/info/commit-graph.lock");
+                if let Err(e) = std::fs::remove_file(graph_lock) {
+                    bail!("Failed to remove commit-graph.lock: {}", e);
+                }
+
+                return self
+                    .run(&["commit-graph", "write", "--reachable"], Opts::default())
+                    .await;
+            }
+        }
+
+        Ok(())
     }
 
     // sample output of: git worktree list --porcelain
@@ -844,8 +866,7 @@ impl Git {
             .await;
         match res {
             Err(e) => {
-                error!("git {:?} failed with error: {}", args, e);
-                bail!("Git command failed. Check the log for details.");
+                bail!("git {:?} failed with error: {}", args, e);
             }
             Ok(_) => Ok(()),
         }
