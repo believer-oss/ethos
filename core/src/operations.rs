@@ -248,12 +248,26 @@ impl LockOp {
             .connection_verbose(true)
             .build()
             .unwrap();
-        let unique_paths = {
+        let mut unique_paths = {
             let mut unique = self.paths.clone();
             unique.sort();
             unique.dedup();
             unique
         };
+
+        // if we're locking, filter out files that are already in locks.ours, otherwise
+        // filter out files that are not
+        let repo_status = self.repo_status.read().clone();
+        unique_paths = unique_paths
+            .into_iter()
+            .filter(|path| {
+                if self.op == LockOperation::Lock {
+                    !repo_status.locks_ours.iter().any(|lock| lock.path == *path)
+                } else {
+                    repo_status.locks_ours.iter().any(|lock| lock.path == *path)
+                }
+            })
+            .collect::<Vec<_>>();
 
         let span = tracing::info_span!("lfs_batch_request");
         let request_url = format!("{}/{}", server_url.clone(), endpoint);

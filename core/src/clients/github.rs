@@ -17,7 +17,7 @@ use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
 use reqwest::Client;
 use std::collections::HashMap;
-use tracing::{instrument, warn};
+use tracing::instrument;
 
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
 
@@ -140,7 +140,6 @@ impl GraphQLClient {
         .await
         {
             Ok(res) => {
-                warn!("get_pull_requests: {:?}", res);
                 let edges = res
                     .data
                     .ok_or(anyhow!("Failed to get valid response data"))?
