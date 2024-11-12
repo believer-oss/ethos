@@ -1110,7 +1110,9 @@
 				</Table>
 			</Card>
 			<div class="flex flex-col gap-2 w-full h-full">
-				<Card class="sm:p-4 max-w-full h-full dark:bg-secondary-600 border-0 shadow-none">
+				<Card
+					class="sm:p-4 max-w-full h-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
+				>
 					<div class="flex flex-col overflow-hidden w-full h-full">
 						<ModifiedFilesCard
 							disabled={loading}
