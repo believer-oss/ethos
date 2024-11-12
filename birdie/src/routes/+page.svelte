@@ -575,7 +575,7 @@
 		asyncModalText = 'Locking Files';
 
 		try {
-			const selectedPaths = $selectedExplorerFiles.map((file) => file.path);
+			const selectedPaths = $selectedFiles.map((file) => file.path);
 			await lockFiles(selectedPaths);
 			await emit('success', 'Files locked!');
 			await verifyLocks();
@@ -768,7 +768,7 @@
 		await refreshFiles();
 
 		const req: RevertFilesRequest = {
-			files: $selectedExplorerFiles.map((file) => file.path),
+			files: $selectedFiles.map((file) => file.path),
 			skipEngineCheck: false
 		};
 
@@ -777,7 +777,7 @@
 
 			$repoStatus = await getRepoStatus();
 
-			$selectedExplorerFiles = [];
+			$selectedFiles = [];
 			selectAll = false;
 		} catch (e) {
 			await emit('error', e);
