@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Spinner } from 'flowbite-svelte';
-	import { CirclePlusOutline } from 'flowbite-svelte-icons';
+	import { CirclePlusOutline, RefreshOutline } from 'flowbite-svelte-icons';
 
 	// We get our playtests from the parent store
 	import { onMount } from 'svelte';
@@ -64,11 +64,32 @@
 
 	onMount(() => {
 		void updatePlaytests();
+
+		// update every 10 seconds if we aren't loading
+		setInterval(() => {
+			if (!loading) {
+				void updatePlaytests();
+			}
+		}, 10000);
 	});
 </script>
 
 <div class="flex items-center gap-2">
 	<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Playtests</p>
+	<Button
+		disabled={loading}
+		class="!p-1.5"
+		primary
+		on:click={async () => {
+			await updatePlaytests();
+		}}
+	>
+		{#if loading}
+			<Spinner size="4" />
+		{:else}
+			<RefreshOutline class="w-4 h-4" />
+		{/if}
+	</Button>
 	<Button
 		class="!p-1.5"
 		size="xs"
