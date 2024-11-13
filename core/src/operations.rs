@@ -186,7 +186,7 @@ impl Task for RebaseOp {
     #[instrument(name = "RebaseOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         let remote_branch = self.repo_status.read().remote_branch.clone();
-        let args: Vec<&str> = vec!["rebase", &remote_branch];
+        let args: Vec<&str> = vec!["rebase", "--autostash", &remote_branch];
 
         self.git_client.run(&args, Opts::default()).await?;
 
