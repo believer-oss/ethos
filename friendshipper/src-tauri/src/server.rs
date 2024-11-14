@@ -290,13 +290,6 @@ impl Server {
                 })?;
                 git.rewrite_graph().await?;
                 git.expire_reflog().await?;
-                match git.run_gc().await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Failed to run git gc: {:?}", e);
-                        startup_tx.send("Warning: Git maintenance failed".to_string())?;
-                    }
-                }
 
                 startup_tx.send("Installing git hooks".to_string())?;
                 if let Some(git_hooks_path) = git_hooks_path {

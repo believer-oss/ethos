@@ -701,7 +701,7 @@ impl Git {
     pub async fn rewrite_graph(&self) -> anyhow::Result<()> {
         let result = self
             .run(
-                &["commit-graph", "write", "--reachable"],
+                &["commit-graph", "write", "--reachable", "--changed-paths"],
                 Opts::default().with_complete_error(),
             )
             .await;
@@ -716,7 +716,10 @@ impl Git {
                 }
 
                 return self
-                    .run(&["commit-graph", "write", "--reachable"], Opts::default())
+                    .run(
+                        &["commit-graph", "write", "--reachable", "--changed-paths"],
+                        Opts::default(),
+                    )
                     .await;
             }
         }
