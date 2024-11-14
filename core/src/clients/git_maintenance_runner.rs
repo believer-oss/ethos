@@ -23,7 +23,7 @@ impl Default for MaintenanceConfig {
     fn default() -> Self {
         MaintenanceConfig {
             fetch_interval: Duration::from_secs(30),
-            maintenance_interval: Duration::from_secs(3600),
+            maintenance_interval: Duration::from_secs(1800),
         }
     }
 }
