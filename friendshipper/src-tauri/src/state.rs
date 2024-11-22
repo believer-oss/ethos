@@ -1,7 +1,9 @@
+use std::sync::atomic::AtomicBool;
 use std::{path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
+use ethos_core::auth::OIDCTokens;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::Resource;
@@ -46,6 +48,7 @@ pub struct AppState<T> {
     pub operation_tx: MPSCSender<TaskSequence>,
     pub notification_tx: STDSender<String>,
     pub frontend_op_tx: STDSender<FrontendOp>,
+    pub oidc_tx: STDSender<OIDCTokens>,
 
     pub aws_client: Arc<TokioRwLock<Option<AWSClient>>>,
     pub kube_client: Arc<RwLock<Option<KubeClient>>>,
@@ -58,6 +61,8 @@ pub struct AppState<T> {
 
     pub gameserver_log_tx: STDSender<String>,
     pub git_tx: STDSender<String>,
+
+    pub login_in_flight: Arc<AtomicBool>,
 
     pub engine: T,
 }
@@ -78,12 +83,14 @@ where
         operation_tx: MPSCSender<TaskSequence>,
         notification_tx: STDSender<String>,
         frontend_op_tx: STDSender<FrontendOp>,
+        oidc_tx: STDSender<OIDCTokens>,
         version: String,
         aws_client: Option<AWSClient>,
         log_path: PathBuf,
         otel_reload_handle: Option<OtelReloadHandle>,
         git_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
+        login_in_flight: Arc<AtomicBool>,
     ) -> Result<Self> {
         let mut longtail = Longtail::new(crate::APP_NAME);
 
@@ -177,6 +184,7 @@ where
             operation_tx,
             notification_tx,
             frontend_op_tx,
+            oidc_tx,
             aws_client: Arc::new(TokioRwLock::new(aws_client)),
             kube_client,
             github_client,
@@ -185,6 +193,7 @@ where
             otel_reload_handle,
             git_tx,
             gameserver_log_tx: server_log_tx,
+            login_in_flight,
             engine,
         })
     }
