@@ -18,7 +18,7 @@ use tauri::{
 use tracing::{error, info, warn};
 
 use birdie::server::Server;
-use ethos_core::tauri::State;
+use ethos_core::tauri::TauriState;
 use ethos_core::utils::logging;
 use ethos_core::{clients, utils};
 
@@ -199,10 +199,11 @@ fn main() -> Result<(), CoreError> {
         let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         tauri::Builder::default()
-            .manage(State {
+            .manage(TauriState {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),
                 client,
+                auth_state: None,
                 shutdown_tx,
             })
             .invoke_handler(tauri::generate_handler![

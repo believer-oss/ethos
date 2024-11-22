@@ -28,6 +28,10 @@
 					"requireLiteralLeadingDot": false
 				}
 			},
+			"http": {
+				"all": true,
+				"request": true
+			},
 			"os": {
 				"all": true
 			},

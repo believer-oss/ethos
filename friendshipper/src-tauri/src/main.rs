@@ -3,12 +3,16 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::thread;
 
+use ethos_core::auth::OIDCTokens;
 use ethos_core::longtail::Longtail;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
 use lazy_static::lazy_static;
+use openidconnect::{CsrfToken, PkceCodeChallenge, PkceCodeVerifier};
 use serde::Serialize;
 use tauri::api::notification::Notification;
 use tauri::regex::Regex;
@@ -18,7 +22,7 @@ use tauri::{
 };
 use tracing::{error, info, warn};
 
-use ethos_core::tauri::State;
+use ethos_core::tauri::{AuthState, TauriState};
 use ethos_core::{clients, msg::LongtailMsg, utils, utils::logging};
 use friendshipper::state::FrontendOp;
 use friendshipper::APP_NAME;
@@ -147,16 +151,32 @@ fn main() -> Result<(), CoreError> {
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
+        let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
+        let csrf_token = CsrfToken::new_random();
+
+        let login_in_flight = Arc::new(AtomicBool::new(false));
+
         let url_clone = server_url.clone();
         tauri::Builder::default()
-            .manage(State {
+            .manage(TauriState {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),
                 client: client.clone(),
+                auth_state: Some(AuthState {
+                    csrf_token,
+                    pkce: Arc::new((
+                        pkce_code_challenge,
+                        PkceCodeVerifier::secret(&pkce_code_verifier).to_string(),
+                    )),
+                    issuer_url: config.okta_config.as_ref().unwrap().issuer.clone(),
+                    client_id: config.okta_config.as_ref().unwrap().client_id.clone(),
+                    in_flight: login_in_flight.clone(),
+                }),
                 shutdown_tx,
             })
             .invoke_handler(tauri::generate_handler![
                 assign_user_to_group,
+                authenticate,
                 check_login_required,
                 checkout_trunk,
                 clone_repo,
@@ -199,7 +219,8 @@ fn main() -> Result<(), CoreError> {
                 open_url,
                 quick_submit,
                 rebase,
-                refresh_login,
+                refresh,
+                refresh_aws_login,
                 acquire_locks,
                 release_locks,
                 reset_config,
@@ -243,6 +264,16 @@ fn main() -> Result<(), CoreError> {
                             .title(APP_NAME)
                             .body(&notification)
                             .show();
+                    }
+                });
+
+                let (oidc_tx, oidc_rx) = std::sync::mpsc::channel::<OIDCTokens>();
+                let auth_handle = handle.clone();
+                thread::spawn(move || {
+                    while let Ok(tokens) = oidc_rx.recv() {
+                        if let Err(e) = auth_handle.emit_all("oidc-tokens", &tokens) {
+                            error!("Failed to emit OIDC tokens to frontend: {}", e);
+                        }
                     }
                 });
 
@@ -342,16 +373,19 @@ fn main() -> Result<(), CoreError> {
                 });
 
                 let server_log_path = log_path.clone();
+                let server_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let server = friendshipper::server::Server::new(
                         PORT,
                         longtail_tx.clone(),
                         notification_tx.clone(),
                         frontend_op_tx,
+                        oidc_tx.clone(),
                         server_log_path,
                         git_tx.clone(),
                         gameserver_log_tx.clone(),
                         otel_reload_handle,
+                        login_in_flight.clone(),
                     );
 
                     match server
@@ -361,6 +395,7 @@ fn main() -> Result<(), CoreError> {
                             startup_tx.clone(),
                             refresh_tx,
                             shutdown_rx,
+                            server_handle,
                         )
                         .await
                     {

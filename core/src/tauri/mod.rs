@@ -1,12 +1,28 @@
-use std::path::PathBuf;
+use openidconnect::{CsrfToken, PkceCodeChallenge};
+use std::{
+    path::PathBuf,
+    sync::{atomic::AtomicBool, Arc},
+};
 use tokio::sync::mpsc::Sender;
 
 pub mod command;
 pub mod error;
 
-pub struct State {
+#[derive(Clone)]
+pub struct AuthState {
+    pub csrf_token: CsrfToken,
+    pub pkce: Arc<(PkceCodeChallenge, String)>,
+    pub issuer_url: String,
+    pub client_id: String,
+    pub in_flight: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+pub struct TauriState {
     pub server_url: String,
     pub log_path: PathBuf,
     pub client: reqwest::Client,
+    pub auth_state: Option<AuthState>,
+
     pub shutdown_tx: Sender<()>,
 }
