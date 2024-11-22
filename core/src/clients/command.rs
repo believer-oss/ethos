@@ -1,6 +1,6 @@
 use crate::middleware::nonce::{NONCE, NONCE_HEADER};
 use anyhow::Result;
-use http::header;
+use reqwest::header;
 
 pub fn new_reqwest_client() -> Result<reqwest::Client> {
     let mut headers = header::HeaderMap::new();

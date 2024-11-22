@@ -78,7 +78,7 @@ ureq = "2.6.2"
 which = "4.4.0"
 json-patch = "1.1.0"
 ring = "0.17"
-graphql_client = { version = "0.13.0", features = ["reqwest"] }
+graphql_client = { git = "https://github.com/graphql-rust/graphql-client.git", rev = "9b91a7f7d4a21dbbeacf974bce63fe5e55620ca8", features = ["reqwest"] }
 obws = "0.11.5"
 futures = "0.3.29"
 toml = "0.8.8"

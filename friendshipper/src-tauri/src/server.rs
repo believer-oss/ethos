@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use axum::Router;
 use config::Config;
 use directories_next::BaseDirs;
+use ethos_core::auth::OIDCTokens;
 use ethos_core::clients::git::Git;
 use ethos_core::clients::GitMaintenanceRunner;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -40,6 +41,7 @@ pub struct Server {
     longtail_tx: STDSender<LongtailMsg>,
     notification_tx: STDSender<String>,
     frontend_op_tx: STDSender<FrontendOp>,
+    oidc_tx: STDSender<OIDCTokens>,
     log_path: PathBuf,
     git_tx: STDSender<String>,
     gameserver_log_tx: STDSender<String>,
@@ -53,6 +55,7 @@ impl Server {
         longtail_tx: STDSender<LongtailMsg>,
         notification_tx: STDSender<String>,
         frontend_op_tx: STDSender<FrontendOp>,
+        oidc_tx: STDSender<OIDCTokens>,
         log_path: PathBuf,
         git_tx: STDSender<String>,
         gameserver_log_tx: STDSender<String>,
@@ -63,6 +66,7 @@ impl Server {
             longtail_tx,
             notification_tx,
             frontend_op_tx,
+            oidc_tx,
             log_path,
             git_tx,
             gameserver_log_tx,
@@ -215,6 +219,7 @@ impl Server {
             op_tx.clone(),
             self.notification_tx.clone(),
             self.frontend_op_tx.clone(),
+            self.oidc_tx.clone(),
             VERSION.to_string(),
             None,
             self.log_path.clone(),

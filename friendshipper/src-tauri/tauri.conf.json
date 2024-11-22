@@ -28,6 +28,10 @@
 					"requireLiteralLeadingDot": false
 				}
 			},
+			"http": {
+				"all": true,
+				"request": true
+			},
 			"os": {
 				"all": true
 			},
@@ -91,7 +95,14 @@
 			}
 		},
 		"security": {
-			"csp": null
+			"csp": null,
+			"dangerousRemoteDomainIpcAccess": [
+				{
+					"domain": "localhost",
+					"windows": ["main"],
+					"enableTauriAPI": true
+				}
+			]
 		},
 		"systemTray": {
 			"iconPath": "icons/32x32.png",

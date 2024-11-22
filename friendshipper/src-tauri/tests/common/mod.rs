@@ -398,6 +398,7 @@ pub async fn setup(
     let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<()>();
 
     let (frontend_op_tx, _) = std::sync::mpsc::channel();
+    let (oidc_tx, _) = std::sync::mpsc::channel();
 
     info!("Creating AWS client");
     let aws_client =
@@ -475,6 +476,7 @@ pub async fn setup(
         op_tx,
         notification_tx,
         frontend_op_tx,
+        oidc_tx,
         String::from("0.0.0"),
         Some(aws_client),
         PathBuf::from_str("test-path").unwrap(),

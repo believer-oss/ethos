@@ -77,6 +77,7 @@
 	import { CHANGE_SETS_PATH } from '$lib/consts';
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
+	import { sendNotification } from '@tauri-apps/api/notification';
 
 	// Initialization
 	let appVersion = '';
@@ -207,6 +208,26 @@
 	const tryOktaRefresh = async () => {
 		if (!$oktaAuth) return;
 
+		void listen('oidc-tokens', async (event) => {
+			console.log(event);
+			if ($oktaAuth && event.payload && event.payload.access_token) {
+				console.log('Received OIDC tokens', event.payload);
+				const tokens = event.payload;
+				$oktaAuth.tokenManager.setTokens(tokens);
+
+				const accessToken = tokens.access_token;
+				await emit('access-token-set', accessToken);
+
+				if (tokens.refresh_token) {
+					const { refreshToken } = tokens.refresh_token;
+					localStorage.setItem('oktaRefreshToken', refreshToken);
+				}
+
+				// route to /
+				await goto('/');
+			}
+		});
+
 		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
 			scopes: ['openid', 'email', 'profile']
 		});
@@ -224,19 +245,19 @@
 	};
 
 	const handleOktaLogin = async () => {
-		try {
-			const previousStartupMessage = startupMessage;
-			startupMessage = 'Logging in with Okta...';
+		const previousStartupMessage = startupMessage;
+		startupMessage = 'Logging in with Okta...';
 
-			// Initiate the redirect flow
-			if (browser && $oktaAuth) {
+		// Initiate the redirect flow
+		if (browser && $oktaAuth) {
+			try {
 				const osType = await type();
 
 				if (osType === 'Darwin') {
 					await $oktaAuth.token.getWithRedirect({
 						issuer: $appConfig.oktaConfig.issuer,
 						clientId: $appConfig.oktaConfig.clientId,
-						redirectUri: `${window.location.origin}/auth/callback`,
+						redirectUri: `http://localhost:8484/auth/callback`,
 						pkce: true,
 						scopes: ['openid', 'email', 'profile']
 					});
@@ -256,13 +277,15 @@
 						await refreshLogin(tokens.accessToken.accessToken);
 					}
 				}
+			} catch (e) {
+				sendNotification({
+					title: 'Error',
+					body: '${JSON.stringify(e)}'
+				});
 			}
-
-			startupMessage = previousStartupMessage;
-		} catch (err) {
-			await handleOktaLogout();
-			await emit('error', err);
 		}
+
+		startupMessage = previousStartupMessage;
 	};
 
 	const refreshOktaOrLogout = async () => {

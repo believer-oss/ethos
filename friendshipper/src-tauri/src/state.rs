@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
+use ethos_core::auth::OIDCTokens;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::Resource;
@@ -46,6 +47,7 @@ pub struct AppState<T> {
     pub operation_tx: MPSCSender<TaskSequence>,
     pub notification_tx: STDSender<String>,
     pub frontend_op_tx: STDSender<FrontendOp>,
+    pub oidc_tx: STDSender<OIDCTokens>,
 
     pub aws_client: Arc<TokioRwLock<Option<AWSClient>>>,
     pub kube_client: Arc<RwLock<Option<KubeClient>>>,
@@ -78,6 +80,7 @@ where
         operation_tx: MPSCSender<TaskSequence>,
         notification_tx: STDSender<String>,
         frontend_op_tx: STDSender<FrontendOp>,
+        oidc_tx: STDSender<OIDCTokens>,
         version: String,
         aws_client: Option<AWSClient>,
         log_path: PathBuf,
@@ -177,6 +180,7 @@ where
             operation_tx,
             notification_tx,
             frontend_op_tx,
+            oidc_tx,
             aws_client: Arc::new(TokioRwLock::new(aws_client)),
             kube_client,
             github_client,

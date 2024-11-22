@@ -5,6 +5,7 @@
 
 use std::thread;
 
+use ethos_core::auth::OIDCTokens;
 use ethos_core::longtail::Longtail;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
@@ -243,6 +244,14 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
+                let (oidc_tx, oidc_rx) = std::sync::mpsc::channel::<OIDCTokens>();
+                let auth_handle = handle.clone();
+                thread::spawn(move || {
+                    while let Ok(tokens) = oidc_rx.recv() {
+                        auth_handle.emit_all("oidc-tokens", &tokens).unwrap();
+                    }
+                });
+
                 let (frontend_op_tx, frontend_op_rx) = std::sync::mpsc::channel();
                 {
                     let frontend_op_handle = handle.clone();
@@ -345,6 +354,7 @@ fn main() -> Result<(), CoreError> {
                         longtail_tx.clone(),
                         notification_tx.clone(),
                         frontend_op_tx,
+                        oidc_tx.clone(),
                         server_log_path,
                         git_tx.clone(),
                         gameserver_log_tx.clone(),
