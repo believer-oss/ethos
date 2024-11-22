@@ -7,14 +7,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use axum::Router;
+use axum::{Extension, Router};
 use config::Config;
 use directories_next::BaseDirs;
+use ethos_core::auth::OIDCTokens;
 use ethos_core::clients::git::Git;
 use ethos_core::clients::GitMaintenanceRunner;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use parking_lot::RwLock;
+use tauri::AppHandle;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, info, instrument, warn};
@@ -40,10 +42,12 @@ pub struct Server {
     longtail_tx: STDSender<LongtailMsg>,
     notification_tx: STDSender<String>,
     frontend_op_tx: STDSender<FrontendOp>,
+    oidc_tx: STDSender<OIDCTokens>,
     log_path: PathBuf,
     git_tx: STDSender<String>,
     gameserver_log_tx: STDSender<String>,
     otel_reload_handle: OtelReloadHandle,
+    login_in_flight: Arc<AtomicBool>,
 }
 
 impl Server {
@@ -53,20 +57,24 @@ impl Server {
         longtail_tx: STDSender<LongtailMsg>,
         notification_tx: STDSender<String>,
         frontend_op_tx: STDSender<FrontendOp>,
+        oidc_tx: STDSender<OIDCTokens>,
         log_path: PathBuf,
         git_tx: STDSender<String>,
         gameserver_log_tx: STDSender<String>,
         otel_reload_handle: OtelReloadHandle,
+        login_in_flight: Arc<AtomicBool>,
     ) -> Self {
         Server {
             port,
             longtail_tx,
             notification_tx,
             frontend_op_tx,
+            oidc_tx,
             log_path,
             git_tx,
             gameserver_log_tx,
             otel_reload_handle,
+            login_in_flight,
         }
     }
 
@@ -77,6 +85,7 @@ impl Server {
         startup_tx: STDSender<String>,
         refresh_tx: STDSender<()>,
         mut shutdown_rx: mpsc::Receiver<()>,
+        handle: AppHandle,
     ) -> Result<(), CoreError> {
         let pause_background_tasks = Arc::new(AtomicBool::new(false));
 
@@ -86,6 +95,7 @@ impl Server {
                 config_file,
                 startup_tx.clone(),
                 pause_background_tasks.clone(),
+                handle,
             )
             .await?;
 
@@ -155,7 +165,7 @@ impl Server {
 
     #[instrument(
         level = "info",
-        skip(self, config, config_file, startup_tx, pause_background_tasks)
+        skip(self, config, config_file, startup_tx, pause_background_tasks, handle)
     )]
     async fn initialize_server(
         &self,
@@ -163,6 +173,7 @@ impl Server {
         config_file: PathBuf,
         startup_tx: STDSender<String>,
         pause_background_tasks: Arc<AtomicBool>,
+        handle: AppHandle,
     ) -> Result<(Router, String, AppState<UnrealEngineProvider>), CoreError> {
         startup_tx.send("Initializing application config".to_string())?;
 
@@ -215,12 +226,14 @@ impl Server {
             op_tx.clone(),
             self.notification_tx.clone(),
             self.frontend_op_tx.clone(),
+            self.oidc_tx.clone(),
             VERSION.to_string(),
             None,
             self.log_path.clone(),
             Some(self.otel_reload_handle.clone()),
             self.git_tx.clone(),
             self.gameserver_log_tx.clone(),
+            self.login_in_flight.clone(),
         )
         .await?;
 
@@ -318,6 +331,7 @@ impl Server {
         let span = tracing::info_span!("create_router").entered();
         let app = crate::router(&shared_state.log_path)?
             .with_state(shared_state.clone())
+            .layer(Extension(handle.clone()))
             .layer(ethos_core::utils::tracing::new_tracing_layer(
                 APP_NAME.to_lowercase(),
             ));

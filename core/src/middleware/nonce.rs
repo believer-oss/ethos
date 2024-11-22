@@ -15,6 +15,11 @@ pub async fn nonce(
     next: Next,
     value: &str,
 ) -> Result<Response, StatusCode> {
+    // if the URI is /auth/callback, we don't need to check the nonce
+    if request.uri().path() == "/auth/callback" {
+        return Ok(next.run(request).await);
+    }
+
     if let Some(nonce) = headers.get(NONCE_HEADER) {
         if nonce == value {
             return Ok(next.run(request).await);

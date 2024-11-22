@@ -28,14 +28,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
 	import { onDestroy } from 'svelte';
-	import {
-		appConfig,
-		dynamicConfig,
-		oktaAuth,
-		playtests,
-		repoStatus,
-		startTime
-	} from '$lib/stores';
+	import { appConfig, dynamicConfig, playtests, repoStatus, startTime, tokens } from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
@@ -128,7 +121,7 @@
 		const shouldShowProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
 		const internal = async () => {
 			try {
-				const accessToken = $oktaAuth?.getAccessToken();
+				const accessToken = $tokens?.accessToken;
 				if (accessToken) {
 					await updateAppConfig(localAppConfig, accessToken);
 					await emit('success', 'Preferences saved.');
