@@ -9,3 +9,7 @@ export const refreshLogin = async (token?: string): Promise<void> => {
 export const logout = async (): Promise<void> => {
 	await invoke('logout');
 };
+
+export const authenticate = async (): Promise<void> => {
+	await invoke('authenticate');
+};

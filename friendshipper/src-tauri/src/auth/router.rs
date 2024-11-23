@@ -1,18 +1,23 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use ethos_core::tauri::TauriState;
 use openidconnect::core::{CoreClient, CoreProviderMetadata};
-use openidconnect::{AuthorizationCode, ClientId, IssuerUrl, OAuth2TokenResponse, TokenResponse};
+use openidconnect::{
+    AuthorizationCode, ClientId, CsrfToken, IssuerUrl, OAuth2TokenResponse, PkceCodeVerifier,
+    RedirectUrl, TokenResponse,
+};
 // use ethos_core::auth::OIDCTokens;
-use ethos_core::AWSClient;
-use serde::Deserialize;
-use tracing::{debug, error};
-use ethos_core::auth::OIDCTokens;
 use crate::client::FriendshipperClient;
 use crate::engine::EngineProvider;
+use ethos_core::auth::OIDCTokens;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::types::errors::CoreError;
+use ethos_core::AWSClient;
+use serde::Deserialize;
+use tauri::{AppHandle, Manager};
+use tracing::error;
 
 use crate::state::AppState;
 
@@ -21,7 +26,7 @@ where
     T: EngineProvider,
 {
     Router::new()
-        .route("/callback", get(oidc_callback))
+        .route("/callback", get(authorize))
         .route("/status", get(get_status))
         .route("/refresh", post(refresh_aws_credentials))
         .route("/logout", post(logout))
@@ -66,7 +71,7 @@ where
         credentials.expiration,
         friendshipper_config.artifact_bucket_name.clone(),
     )
-        .await;
+    .await;
 
     let username = state.app_config.read().user_display_name.clone();
     let playtest_region = state.app_config.read().playtest_region.clone();
@@ -94,44 +99,67 @@ where
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct OIDCQueryParams {
-    // access_token: String,
-    // id_token: String,
-    // refresh_token: String,
-    state: String,
-    code: String,
+    state: CsrfToken,
+    code: AuthorizationCode,
 }
 
-async fn oidc_callback<T>(State(state): State<AppState<T>>, Query(params): Query<OIDCQueryParams>) -> Result<(), CoreError>
+async fn authorize<T>(
+    handle: Extension<AppHandle>,
+    State(state): State<AppState<T>>,
+    query: Query<OIDCQueryParams>,
+) -> Result<String, CoreError>
 where
     T: EngineProvider,
 {
-    let http_client = reqwest::blocking::ClientBuilder::new()
-        // Following redirects opens the client up to SSRF vulnerabilities.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let tauri_state = handle.state::<TauriState>();
+    let auth = tauri_state
+        .auth_state
+        .clone()
+        .ok_or(CoreError::Internal(anyhow!("Auth state not found")))?;
+    let http_client = reqwest::Client::new();
 
-    let issuer_url_string = state.app_config.read().clone().okta_config.unwrap().issuer.clone();
+    let okta_config = state
+        .app_config
+        .read()
+        .clone()
+        .okta_config
+        .ok_or(CoreError::Internal(anyhow!("Okta config not found")))?;
+
+    let issuer_url_string = okta_config.issuer;
     let issuer_url = IssuerUrl::new(issuer_url_string)?;
 
     // Fetch GitLab's OpenID Connect discovery document.
-    let provider_metadata = CoreProviderMetadata::discover(&issuer_url, &http_client)?;
+    let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client).await?;
 
-    let client_id_string = state.app_config.read().clone().okta_config.unwrap().client_id.clone();
+    let client_id_string = okta_config.client_id;
     let client_id = ClientId::new(client_id_string);
-    let client = CoreClient::from_provider_metadata(
-        provider_metadata,
-        client_id,
-        None,
-    );
 
-    let code = AuthorizationCode::new(params.code.clone());
-    let token_response = client.exchange_code(code).request(http_client)?;
+    let redirect_url = RedirectUrl::new("http://localhost:8484/auth/callback".to_string())?;
+    let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
+        .set_redirect_uri(redirect_url);
+
+    let token_response = client
+        .exchange_code(query.code.clone())?
+        .set_pkce_verifier(PkceCodeVerifier::new(auth.pkce.1.clone()))
+        .request_async(&http_client)
+        .await?;
+
+    let id_token = token_response
+        .id_token()
+        .ok_or(CoreError::Internal(anyhow!(
+            "No ID token found in response"
+        )))?
+        .to_string();
+
+    let refresh_token: Option<String> = token_response
+        .refresh_token()
+        .map(|token| token.secret().to_string());
 
     state.oidc_tx.send(OIDCTokens {
         access_token: token_response.access_token().secret().to_string(),
-        id_token: token_response.id_token().unwrap().to_string(),
-        refresh_token: token_response.refresh_token().unwrap().secret().to_string(),
+        id_token,
+        refresh_token,
     })?;
 
-    Ok(())
+    Ok("close me!".to_string())
 }

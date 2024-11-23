@@ -71,7 +71,7 @@ notify = "6.1.1"
 notify-debouncer-full = "0.3.1"
 futures = "0.3.30"
 serde-xml-rs = "0.6.0"
-openidconnect = "3.5.0"
+openidconnect = { git = "https://github.com/ramosbugs/openidconnect-rs.git", rev = "4.0.0-rc.1" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }

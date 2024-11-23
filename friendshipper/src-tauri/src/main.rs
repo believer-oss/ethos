@@ -3,6 +3,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Arc;
 use std::thread;
 
 use ethos_core::auth::OIDCTokens;
@@ -10,6 +11,7 @@ use ethos_core::longtail::Longtail;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
 use lazy_static::lazy_static;
+use openidconnect::{CsrfToken, PkceCodeChallenge, PkceCodeVerifier};
 use serde::Serialize;
 use tauri::api::notification::Notification;
 use tauri::regex::Regex;
@@ -19,7 +21,7 @@ use tauri::{
 };
 use tracing::{error, info, warn};
 
-use ethos_core::tauri::State;
+use ethos_core::tauri::{AuthState, TauriState};
 use ethos_core::{clients, msg::LongtailMsg, utils, utils::logging};
 use friendshipper::state::FrontendOp;
 use friendshipper::APP_NAME;
@@ -148,16 +150,29 @@ fn main() -> Result<(), CoreError> {
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
+        let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
+        let csrf_token = CsrfToken::new_random();
+
         let url_clone = server_url.clone();
         tauri::Builder::default()
-            .manage(State {
+            .manage(TauriState {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),
                 client: client.clone(),
+                auth_state: Some(AuthState {
+                    csrf_token,
+                    pkce: Arc::new((
+                        pkce_code_challenge,
+                        PkceCodeVerifier::secret(&pkce_code_verifier).to_string(),
+                    )),
+                    issuer_url: config.okta_config.as_ref().unwrap().issuer.clone(),
+                    client_id: config.okta_config.as_ref().unwrap().client_id.clone(),
+                }),
                 shutdown_tx,
             })
             .invoke_handler(tauri::generate_handler![
                 assign_user_to_group,
+                authenticate,
                 check_login_required,
                 checkout_trunk,
                 clone_repo,
@@ -348,6 +363,7 @@ fn main() -> Result<(), CoreError> {
                 });
 
                 let server_log_path = log_path.clone();
+                let server_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let server = friendshipper::server::Server::new(
                         PORT,
@@ -368,6 +384,7 @@ fn main() -> Result<(), CoreError> {
                             startup_tx.clone(),
                             refresh_tx,
                             shutdown_rx,
+                            server_handle,
                         )
                         .await
                     {

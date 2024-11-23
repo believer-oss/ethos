@@ -66,7 +66,7 @@
 	} from '$lib/stores';
 	import { getPlaytests } from '$lib/playtests';
 	import { getBuilds, getWorkflows } from '$lib/builds';
-	import { refreshLogin } from '$lib/auth';
+	import { authenticate, refreshLogin } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import { getAllCommits, getRepoStatus, SkipDllCheck, AllowOfflineCommunication } from '$lib/repo';
@@ -78,6 +78,7 @@
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
 	import { sendNotification } from '@tauri-apps/api/notification';
+	import { pkce, PKCE_STORAGE_NAME } from '@okta/okta-auth-js';
 
 	// Initialization
 	let appVersion = '';
@@ -208,26 +209,6 @@
 	const tryOktaRefresh = async () => {
 		if (!$oktaAuth) return;
 
-		void listen('oidc-tokens', async (event) => {
-			console.log(event);
-			if ($oktaAuth && event.payload && event.payload.access_token) {
-				console.log('Received OIDC tokens', event.payload);
-				const tokens = event.payload;
-				$oktaAuth.tokenManager.setTokens(tokens);
-
-				const accessToken = tokens.access_token;
-				await emit('access-token-set', accessToken);
-
-				if (tokens.refresh_token) {
-					const { refreshToken } = tokens.refresh_token;
-					localStorage.setItem('oktaRefreshToken', refreshToken);
-				}
-
-				// route to /
-				await goto('/');
-			}
-		});
-
 		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
 			scopes: ['openid', 'email', 'profile']
 		});
@@ -251,41 +232,13 @@
 		// Initiate the redirect flow
 		if (browser && $oktaAuth) {
 			try {
-				const osType = await type();
-
-				if (osType === 'Darwin') {
-					await $oktaAuth.token.getWithRedirect({
-						issuer: $appConfig.oktaConfig.issuer,
-						clientId: $appConfig.oktaConfig.clientId,
-						redirectUri: `http://localhost:8484/auth/callback`,
-						pkce: true,
-						scopes: ['openid', 'email', 'profile']
-					});
-				} else {
-					const { tokens } = await $oktaAuth.token.getWithPopup({
-						scopes: ['openid', 'email', 'profile']
-					});
-
-					if (tokens && tokens.accessToken) {
-						$oktaAuth.tokenManager.setTokens(tokens);
-
-						await emit('access-token-set', tokens.accessToken.accessToken);
-						if (tokens.refreshToken?.refreshToken) {
-							localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken);
-						}
-
-						await refreshLogin(tokens.accessToken.accessToken);
-					}
-				}
+				await authenticate();
 			} catch (e) {
-				sendNotification({
-					title: 'Error',
-					body: '${JSON.stringify(e)}'
-				});
+				console.error('Error logging in with Okta', e);
 			}
-		}
 
-		startupMessage = previousStartupMessage;
+			startupMessage = previousStartupMessage;
+		}
 	};
 
 	const refreshOktaOrLogout = async () => {
@@ -332,6 +285,8 @@
 			const timeUntilExpiry = expirationTime - currentTime;
 			// For now lets refresh five minutes before it expires to ensure it stays active
 			const fiveMinutes = 5 * 60 * 1000;
+
+			console.log('timeUntilExpiry', timeUntilExpiry);
 
 			// If we are already in that buffer zone, attempt the refresh and restart this process
 			if (timeUntilExpiry <= fiveMinutes) {
@@ -593,6 +548,28 @@
 		} else {
 			errorMessage = JSON.stringify(e.payload);
 		}
+	});
+
+	void listen('oidc-tokens', async (event) => {
+		console.log(event);
+		if ($oktaAuth && event.payload && event.payload.accessToken) {
+			console.log('Received OIDC tokens', event.payload);
+			const tokens = event.payload;
+			// $oktaAuth.tokenManager.setTokens(tokens);
+
+			accessToken = tokens.accessToken;
+			await emit('access-token-set', accessToken);
+
+			if (tokens.refreshToken) {
+				const { refreshToken } = tokens.refreshToken;
+				localStorage.setItem('oktaRefreshToken', refreshToken);
+			}
+
+			await refreshLogin(accessToken);
+		}
+
+		// route to /
+		await goto('/');
 	});
 
 	void listen('git-log', (event) => {

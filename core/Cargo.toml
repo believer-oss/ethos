@@ -86,6 +86,7 @@ async-trait = "0.1"
 windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 walkdir = "2.5.0"
 octocrab = "0.39.0"
+openidconnect = { git = "https://github.com/ramosbugs/openidconnect-rs.git", rev = "4.0.0-rc.1" }
 bytes = "1.7.2"
 tempfile = { workspace = true }
 serde-xml-rs = "0.6.0"

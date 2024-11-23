@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use axum::Router;
+use axum::{Extension, Router};
 use config::Config;
 use directories_next::BaseDirs;
 use ethos_core::auth::OIDCTokens;
@@ -16,6 +16,7 @@ use ethos_core::clients::GitMaintenanceRunner;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use parking_lot::RwLock;
+use tauri::AppHandle;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, info, instrument, warn};
@@ -81,6 +82,7 @@ impl Server {
         startup_tx: STDSender<String>,
         refresh_tx: STDSender<()>,
         mut shutdown_rx: mpsc::Receiver<()>,
+        handle: AppHandle,
     ) -> Result<(), CoreError> {
         let pause_background_tasks = Arc::new(AtomicBool::new(false));
 
@@ -90,6 +92,7 @@ impl Server {
                 config_file,
                 startup_tx.clone(),
                 pause_background_tasks.clone(),
+                handle,
             )
             .await?;
 
@@ -167,6 +170,7 @@ impl Server {
         config_file: PathBuf,
         startup_tx: STDSender<String>,
         pause_background_tasks: Arc<AtomicBool>,
+        handle: AppHandle,
     ) -> Result<(Router, String, AppState<UnrealEngineProvider>), CoreError> {
         startup_tx.send("Initializing application config".to_string())?;
 
@@ -328,6 +332,7 @@ impl Server {
         let span = tracing::info_span!("create_router").entered();
         let app = crate::router(&shared_state.log_path)?
             .with_state(shared_state.clone())
+            .layer(Extension(handle.clone()))
             .layer(ethos_core::utils::tracing::new_tracing_layer(
                 APP_NAME.to_lowercase(),
             ));

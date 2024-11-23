@@ -39,7 +39,7 @@ impl GraphQLClient {
                     reqwest::header::AUTHORIZATION,
                     reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))?,
                 ))
-                    .collect(),
+                .collect(),
             )
             .build()?;
 
@@ -48,7 +48,7 @@ impl GraphQLClient {
             GITHUB_GRAPHQL_URL,
             get_username::Variables {},
         )
-            .await
+        .await
         {
             Ok(res) => match res.data {
                 Some(data) => Ok(GraphQLClient {
@@ -77,7 +77,7 @@ impl GraphQLClient {
                 number,
             },
         )
-            .await
+        .await
         {
             Ok(res) => Ok(res
                 .data
@@ -107,7 +107,7 @@ impl GraphQLClient {
                 number,
             },
         )
-            .await
+        .await
         {
             Ok(res) => {
                 let pr: GetPullRequestRepositoryPullRequest = res
@@ -137,7 +137,7 @@ impl GraphQLClient {
             GITHUB_GRAPHQL_URL,
             get_pull_requests::Variables { query, limit },
         )
-            .await
+        .await
         {
             Ok(res) => {
                 let edges = res
@@ -169,7 +169,7 @@ impl GraphQLClient {
             GITHUB_GRAPHQL_URL,
             enqueue_pull_request::Variables { id },
         )
-            .await
+        .await
         {
             Ok(_) => Ok(()),
             Err(e) => Err(anyhow!("Error enqueuing PR: {}", e)),
@@ -183,7 +183,7 @@ impl GraphQLClient {
             GITHUB_GRAPHQL_URL,
             dequeue_pull_request::Variables { id },
         )
-            .await
+        .await
         {
             Ok(_) => Ok(()),
             Err(e) => Err(anyhow!("Error dequeueing PR: {}", e)),
@@ -208,7 +208,7 @@ impl GraphQLClient {
                 limit,
             },
         )
-            .await
+        .await
         {
             Ok(res) => {
                 let exists: bool = !res
@@ -244,7 +244,7 @@ impl GraphQLClient {
                 name: repo.to_string(),
             },
         )
-            .await
+        .await
         {
             Ok(res) => {
                 let merge_queue: GetMergeQueueRepositoryMergeQueue = res
@@ -278,7 +278,7 @@ impl GraphQLClient {
                 limit,
             },
         )
-            .await
+        .await
         {
             Ok(res) => {
                 let target: GetCommitStatusesRepositoryDefaultBranchRefTarget = res
