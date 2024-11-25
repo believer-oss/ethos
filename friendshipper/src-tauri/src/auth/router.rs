@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
@@ -6,12 +8,12 @@ use ethos_core::tauri::TauriState;
 use openidconnect::core::{CoreClient, CoreProviderMetadata};
 use openidconnect::{
     AuthorizationCode, ClientId, CsrfToken, IssuerUrl, OAuth2TokenResponse, PkceCodeVerifier,
-    RedirectUrl, TokenResponse,
+    RedirectUrl, RefreshToken, TokenResponse,
 };
 // use ethos_core::auth::OIDCTokens;
 use crate::client::FriendshipperClient;
 use crate::engine::EngineProvider;
-use ethos_core::auth::OIDCTokens;
+use ethos_core::auth::{OIDCTokens, Token};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::types::errors::CoreError;
 use ethos_core::AWSClient;
@@ -28,8 +30,9 @@ where
     Router::new()
         .route("/callback", get(authorize))
         .route("/status", get(get_status))
-        .route("/refresh", post(refresh_aws_credentials))
+        .route("/aws/refresh", post(refresh_aws_credentials))
         .route("/logout", post(logout))
+        .route("/refresh", post(refresh))
 }
 
 async fn get_status<T>(State(state): State<AppState<T>>) -> Json<bool>
@@ -128,7 +131,6 @@ where
     let issuer_url_string = okta_config.issuer;
     let issuer_url = IssuerUrl::new(issuer_url_string)?;
 
-    // Fetch GitLab's OpenID Connect discovery document.
     let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client).await?;
 
     let client_id_string = okta_config.client_id;
@@ -151,15 +153,92 @@ where
         )))?
         .to_string();
 
-    let refresh_token: Option<String> = token_response
-        .refresh_token()
-        .map(|token| token.secret().to_string());
+    let refresh_token: Option<Token> = token_response.refresh_token().map(|token| Token {
+        token: token.secret().to_string(),
+        expires_in: token_response
+            .expires_in()
+            .unwrap_or(Duration::from_secs(3600)),
+    });
 
     state.oidc_tx.send(OIDCTokens {
-        access_token: token_response.access_token().secret().to_string(),
+        access_token: Token {
+            token: token_response.access_token().secret().to_string(),
+            expires_in: token_response
+                .expires_in()
+                .unwrap_or(Duration::from_secs(3600)),
+        },
         id_token,
         refresh_token,
     })?;
 
     Ok("close me!".to_string())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefreshOktaTokensParams {
+    pub refresh_token: String,
+}
+
+pub async fn refresh<T>(
+    State(state): State<AppState<T>>,
+    Query(params): Query<RefreshOktaTokensParams>,
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let http_client = reqwest::Client::new();
+
+    let okta_config = state
+        .app_config
+        .read()
+        .clone()
+        .okta_config
+        .ok_or(CoreError::Internal(anyhow!("Okta config not found")))?;
+
+    let issuer_url_string = okta_config.issuer;
+    let issuer_url = IssuerUrl::new(issuer_url_string)?;
+
+    let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client).await?;
+
+    let client_id_string = okta_config.client_id;
+    let client_id = ClientId::new(client_id_string);
+
+    let redirect_url = RedirectUrl::new("http://localhost:8484/auth/callback".to_string())?;
+    let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
+        .set_redirect_uri(redirect_url);
+
+    let refresh_token = RefreshToken::new(params.refresh_token.clone());
+    let token_response = client
+        .exchange_refresh_token(&refresh_token)?
+        .request_async(&http_client)
+        .await?;
+
+    let id_token = token_response
+        .id_token()
+        .ok_or(CoreError::Internal(anyhow!(
+            "No ID token found in response"
+        )))?
+        .to_string();
+
+    let refresh_token: Option<Token> = token_response
+        .refresh_token()
+        .map(|token| Token {
+            token: token.secret().to_string(),
+            expires_in: token_response
+                .expires_in()
+                .unwrap_or(Duration::from_secs(3600)),
+        });
+
+    state.oidc_tx.send(OIDCTokens {
+        access_token: Token {
+            token: token_response.access_token().secret().to_string(),
+            expires_in: token_response
+                .expires_in()
+                .unwrap_or(Duration::from_secs(3600)),
+        },
+        id_token,
+        refresh_token,
+    })?;
+
+    Ok(())
 }

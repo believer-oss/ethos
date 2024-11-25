@@ -164,8 +164,8 @@ pub async fn refresh_login(
     token: Option<String>,
 ) -> Result<(), TauriError> {
     let url = match token {
-        Some(token) => format!("{}/auth/refresh?token={}", state.server_url, token),
-        None => format!("{}/auth/refresh", state.server_url),
+        Some(token) => format!("{}/auth/aws/refresh?token={}", state.server_url, token),
+        None => format!("{}/auth/aws/refresh", state.server_url),
     };
 
     let res = state.client.post(url).send().await?;

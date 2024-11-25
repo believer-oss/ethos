@@ -77,8 +77,6 @@
 	import { CHANGE_SETS_PATH } from '$lib/consts';
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
-	import { sendNotification } from '@tauri-apps/api/notification';
-	import { pkce, PKCE_STORAGE_NAME } from '@okta/okta-auth-js';
 
 	// Initialization
 	let appVersion = '';
@@ -196,8 +194,6 @@
 
 	const handleOktaLogout = async () => {
 		try {
-			localStorage.removeItem('oktaRefreshToken');
-			localStorage.removeItem('oktaAccessToken');
 			localStorage.clear();
 			accessToken = null;
 			refreshToken = null;
