@@ -1008,6 +1008,24 @@ pub async fn authenticate(handle: tauri::AppHandle) -> Result<(), TauriError> {
 }
 
 #[tauri::command]
+pub async fn refresh(state: tauri::State<'_, TauriState>, token: String) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/auth/refresh?refreshToken={}",
+            state.server_url, token
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn logout(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client

@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use anyhow::{anyhow, Result};
 use axum::extract::{Query, State};
+use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use ethos_core::tauri::TauriState;
@@ -10,10 +9,10 @@ use openidconnect::{
     AuthorizationCode, ClientId, CsrfToken, IssuerUrl, OAuth2TokenResponse, PkceCodeVerifier,
     RedirectUrl, RefreshToken, TokenResponse,
 };
-// use ethos_core::auth::OIDCTokens;
+
 use crate::client::FriendshipperClient;
 use crate::engine::EngineProvider;
-use ethos_core::auth::{OIDCTokens, Token};
+use ethos_core::auth::OIDCTokens;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::types::errors::CoreError;
 use ethos_core::AWSClient;
@@ -22,6 +21,45 @@ use tauri::{AppHandle, Manager};
 use tracing::error;
 
 use crate::state::AppState;
+
+static REDIRECT_HTML: &str = r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Friendshipper Authentication</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+        }
+        .message {
+            text-align: center;
+            padding: 2rem;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+            margin-bottom: 1rem;
+        }
+        p {
+            color: #4b5563;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="message">
+        <h1>Authentication Complete</h1>
+        <p>You can now close this window and return to Friendshipper.</p>
+    </div>
+</body>
+</html>"#;
 
 pub fn router<T>() -> Router<AppState<T>>
 where
@@ -110,7 +148,7 @@ async fn authorize<T>(
     handle: Extension<AppHandle>,
     State(state): State<AppState<T>>,
     query: Query<OIDCQueryParams>,
-) -> Result<String, CoreError>
+) -> Result<Html<String>, CoreError>
 where
     T: EngineProvider,
 {
@@ -153,28 +191,21 @@ where
         )))?
         .to_string();
 
-    let refresh_token: Option<Token> = token_response.refresh_token().map(|token| Token {
-        token: token.secret().to_string(),
-        expires_in: token_response
-            .expires_in()
-            .unwrap_or(Duration::from_secs(3600)),
-    });
+    let refresh_token: Option<String> = token_response
+        .refresh_token()
+        .map(|token| token.secret().to_string());
 
     state.oidc_tx.send(OIDCTokens {
-        access_token: Token {
-            token: token_response.access_token().secret().to_string(),
-            expires_in: token_response
-                .expires_in()
-                .unwrap_or(Duration::from_secs(3600)),
-        },
+        access_token: token_response.access_token().secret().to_string(),
         id_token,
         refresh_token,
     })?;
 
-    Ok("close me!".to_string())
+    Ok(Html(REDIRECT_HTML.to_string()))
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RefreshOktaTokensParams {
     pub refresh_token: String,
 }
@@ -220,22 +251,12 @@ where
         )))?
         .to_string();
 
-    let refresh_token: Option<Token> = token_response
+    let refresh_token: Option<String> = token_response
         .refresh_token()
-        .map(|token| Token {
-            token: token.secret().to_string(),
-            expires_in: token_response
-                .expires_in()
-                .unwrap_or(Duration::from_secs(3600)),
-        });
+        .map(|token| token.secret().to_string());
 
     state.oidc_tx.send(OIDCTokens {
-        access_token: Token {
-            token: token_response.access_token().secret().to_string(),
-            expires_in: token_response
-                .expires_in()
-                .unwrap_or(Duration::from_secs(3600)),
-        },
+        access_token: token_response.access_token().secret().to_string(),
         id_token,
         refresh_token,
     })?;

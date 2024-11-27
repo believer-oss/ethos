@@ -162,7 +162,7 @@ impl Server {
 
     #[instrument(
         level = "info",
-        skip(self, config, config_file, startup_tx, pause_background_tasks)
+        skip(self, config, config_file, startup_tx, pause_background_tasks, handle)
     )]
     async fn initialize_server(
         &self,

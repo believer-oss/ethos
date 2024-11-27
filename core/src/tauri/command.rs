@@ -104,7 +104,9 @@ pub async fn get_logs(state: tauri::State<'_, TauriState>) -> Result<Vec<LogEntr
 }
 
 #[tauri::command]
-pub async fn open_system_logs_folder(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
+pub async fn open_system_logs_folder(
+    state: tauri::State<'_, TauriState>,
+) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/system/open-logs", state.server_url))
@@ -159,7 +161,7 @@ pub async fn check_login_required(state: tauri::State<'_, TauriState>) -> Result
 }
 
 #[tauri::command]
-pub async fn refresh_login(
+pub async fn refresh_aws_login(
     state: tauri::State<'_, TauriState>,
     token: Option<String>,
 ) -> Result<(), TauriError> {
@@ -218,7 +220,9 @@ pub async fn configure_git_user(
 }
 
 #[tauri::command]
-pub async fn get_repo_config(state: tauri::State<'_, TauriState>) -> Result<RepoConfig, TauriError> {
+pub async fn get_repo_config(
+    state: tauri::State<'_, TauriState>,
+) -> Result<RepoConfig, TauriError> {
     let res = state
         .client
         .get(format!("{}/config/repo", state.server_url))

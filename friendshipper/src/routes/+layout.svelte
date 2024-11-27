@@ -32,10 +32,9 @@
 	import { Canvas } from '@threlte/core';
 	import { get } from 'svelte/store';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { type } from '@tauri-apps/api/os';
 	import { invoke } from '@tauri-apps/api/tauri';
 
-	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
+	import { ErrorToast, type Nullable, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
 	import { appWindow } from '@tauri-apps/api/window';
 	import { BaseDirectory } from '@tauri-apps/api/path';
@@ -54,19 +53,19 @@
 		commits,
 		dynamicConfig,
 		engineWorkflows,
-		oktaAuth,
 		onboardingInProgress,
 		playtests,
 		projectConfigs,
 		repoConfig,
 		repoStatus,
 		selectedCommit,
+		tokens,
 		updateDismissed,
 		workflows
 	} from '$lib/stores';
 	import { getPlaytests } from '$lib/playtests';
 	import { getBuilds, getWorkflows } from '$lib/builds';
-	import { authenticate, refreshLogin } from '$lib/auth';
+	import { authenticate, refreshAuth, refreshAWSLogin } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import { getAllCommits, getRepoStatus, SkipDllCheck, AllowOfflineCommunication } from '$lib/repo';
@@ -75,8 +74,9 @@
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
 	import { handleError } from '$lib/utils';
 	import { CHANGE_SETS_PATH } from '$lib/consts';
-	import { createOktaAuth, isTokenExpired } from '$lib/okta';
+	import { isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
+	import { type OIDCTokens } from '$lib/types';
 
 	// Initialization
 	let appVersion = '';
@@ -124,8 +124,6 @@
 	$: activeUrl = $page.url.pathname;
 
 	let tokenRefreshInterval: ReturnType<typeof setInterval> | undefined;
-	let accessToken: string | null = null;
-	let refreshToken: string | null = null;
 
 	const refreshInterval = 60 * 1000;
 
@@ -195,29 +193,9 @@
 	const handleOktaLogout = async () => {
 		try {
 			localStorage.clear();
-			accessToken = null;
-			refreshToken = null;
+			tokens.set(null);
 		} catch (err) {
 			await emit('error', err);
-		}
-	};
-
-	const tryOktaRefresh = async () => {
-		if (!$oktaAuth) return;
-
-		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
-			scopes: ['openid', 'email', 'profile']
-		});
-
-		if (tokens && tokens.accessToken) {
-			$oktaAuth?.tokenManager.setTokens(tokens);
-
-			await emit('access-token-set', tokens.accessToken.accessToken);
-			await refreshLogin(tokens.accessToken.accessToken);
-
-			if (tokens.refreshToken?.refreshToken) {
-				localStorage.setItem('oktaRefreshToken', tokens.refreshToken?.refreshToken);
-			}
 		}
 	};
 
@@ -226,11 +204,11 @@
 		startupMessage = 'Logging in with Okta...';
 
 		// Initiate the redirect flow
-		if (browser && $oktaAuth) {
+		if (browser) {
 			try {
 				await authenticate();
 			} catch (e) {
-				console.error('Error logging in with Okta', e);
+				await emit('error', e);
 			}
 
 			startupMessage = previousStartupMessage;
@@ -238,34 +216,19 @@
 	};
 
 	const refreshOktaOrLogout = async () => {
-		if (refreshToken && !isTokenExpired(refreshToken) && $oktaAuth) {
+		if ($tokens && $tokens.refreshToken) {
 			try {
-				await $oktaAuth.session.refresh();
-
-				const tokens = await $oktaAuth.tokenManager.getTokens();
-
-				await refreshLogin(tokens.accessToken?.accessToken);
-
-				if (tokens.accessToken) {
-					accessToken = tokens.accessToken.accessToken;
-					localStorage.setItem('oktaAccessToken', accessToken);
-				} else {
-					await handleOktaLogout();
-				}
+				await refreshAuth($tokens.refreshToken);
 			} catch (error) {
 				await emit('error', error);
 				await handleOktaLogout();
 			}
 		} else {
 			try {
-				await tryOktaRefresh();
-			} catch (_) {
-				try {
-					await handleOktaLogout();
-					await handleOktaLogin();
-				} catch (e) {
-					await emit('error', e);
-				}
+				await handleOktaLogout();
+				await handleOktaLogin();
+			} catch (e) {
+				await emit('error', e);
 			}
 		}
 	};
@@ -274,15 +237,13 @@
 	const startOktaTokenRefreshProcess = async () => {
 		if (tokenRefreshInterval) clearTimeout(tokenRefreshInterval);
 
-		if (accessToken) {
-			const decodedToken: { exp: number } = jwtDecode(accessToken);
+		if ($tokens && $tokens.accessToken) {
+			const decodedToken: { exp: number } = jwtDecode($tokens.accessToken);
 			const expirationTime = decodedToken.exp * 1000;
 			const currentTime = Date.now();
 			const timeUntilExpiry = expirationTime - currentTime;
 			// For now lets refresh five minutes before it expires to ensure it stays active
 			const fiveMinutes = 5 * 60 * 1000;
-
-			console.log('timeUntilExpiry', timeUntilExpiry);
 
 			// If we are already in that buffer zone, attempt the refresh and restart this process
 			if (timeUntilExpiry <= fiveMinutes) {
@@ -302,22 +263,21 @@
 	};
 
 	const handleOktaState = async (): Promise<void> => {
-		accessToken = localStorage.getItem('oktaAccessToken');
-		refreshToken = localStorage.getItem('oktaRefreshToken');
+		const storedTokenString = localStorage.getItem('tokens');
+		const storedTokens: Nullable<OIDCTokens> = storedTokenString
+			? JSON.parse(storedTokenString)
+			: null;
 
 		// If we dont have any tokens or just an expired refresh token, user has to log in to Okta
-		if ((!accessToken && !refreshToken) || (!accessToken && isTokenExpired(refreshToken))) {
+		if (!storedTokens || isTokenExpired(storedTokens?.accessToken)) {
 			await handleOktaLogin();
 		}
 
-		// If we have no access token but an un-expired refresh token, try to refresh
-		if (!accessToken || isTokenExpired(accessToken)) {
-			await refreshOktaOrLogout();
-		}
-
-		if (accessToken) {
+		if (storedTokens?.accessToken) {
 			// Only start the process if we have a valid access token
-			await refreshLogin(accessToken);
+			await refreshAWSLogin(storedTokens?.accessToken);
+
+			tokens.set(storedTokens);
 			await startOktaTokenRefreshProcess();
 		}
 	};
@@ -359,9 +319,8 @@
 			}
 		}
 
-		if (!$oktaAuth) {
+		if (!$tokens) {
 			try {
-				$oktaAuth = createOktaAuth($appConfig.oktaConfig.issuer, $appConfig.oktaConfig.clientId);
 				await handleOktaState();
 				await initialize();
 			} catch (e) {
@@ -369,7 +328,7 @@
 			}
 		}
 
-		if (!loginRequired || accessToken) {
+		if (!loginRequired || $tokens?.accessToken) {
 			try {
 				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
 					getDynamicConfig(),
@@ -546,26 +505,14 @@
 		}
 	});
 
-	void listen('oidc-tokens', async (event) => {
-		console.log(event);
-		if ($oktaAuth && event.payload && event.payload.accessToken) {
-			console.log('Received OIDC tokens', event.payload);
-			const tokens = event.payload;
-			// $oktaAuth.tokenManager.setTokens(tokens);
+	void listen('oidc-tokens', (event: { payload: OIDCTokens }) => {
+		if (event.payload && event.payload.accessToken) {
+			const eventTokens = event.payload;
 
-			accessToken = tokens.accessToken;
-			await emit('access-token-set', accessToken);
-
-			if (tokens.refreshToken) {
-				const { refreshToken } = tokens.refreshToken;
-				localStorage.setItem('oktaRefreshToken', refreshToken);
-			}
-
-			await refreshLogin(accessToken);
+			void refreshAWSLogin(eventTokens.accessToken).then(() => {
+				void emit('token-set', eventTokens);
+			});
 		}
-
-		// route to /
-		await goto('/');
 	});
 
 	void listen('git-log', (event) => {
@@ -596,9 +543,9 @@
 		backgroundSyncInProgress.set(false);
 	});
 
-	void listen('access-token-set', (e) => {
-		localStorage.setItem('oktaAccessToken', e.payload as string);
-		accessToken = e.payload as string;
+	void listen('token-set', (e: { payload: OIDCTokens }) => {
+		localStorage.setItem('tokens', JSON.stringify(e.payload));
+		tokens.set(e.payload);
 	});
 
 	void listen('success', (e) => {
@@ -706,7 +653,7 @@
 			</Button>
 		</div>
 	</div>
-	{#if !initialized || !accessToken}
+	{#if !initialized || !$tokens?.accessToken}
 		{#if initialized}
 			<div>
 				<div

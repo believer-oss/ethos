@@ -101,7 +101,9 @@ pub async fn get_file_history(
 
 // Repo
 #[tauri::command]
-pub async fn get_repo_status(state: tauri::State<'_, TauriState>) -> Result<RepoStatus, TauriError> {
+pub async fn get_repo_status(
+    state: tauri::State<'_, TauriState>,
+) -> Result<RepoStatus, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/status", state.server_url))
@@ -115,7 +117,10 @@ pub async fn get_repo_status(state: tauri::State<'_, TauriState>) -> Result<Repo
 }
 
 #[tauri::command]
-pub async fn submit(state: tauri::State<'_, TauriState>, req: PushRequest) -> Result<(), TauriError> {
+pub async fn submit(
+    state: tauri::State<'_, TauriState>,
+    req: PushRequest,
+) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/push", state.server_url))
@@ -218,7 +223,9 @@ pub async fn verify_locks(
 
 // Git Config
 #[tauri::command]
-pub async fn get_fetch_include(state: tauri::State<'_, TauriState>) -> Result<Vec<String>, TauriError> {
+pub async fn get_fetch_include(
+    state: tauri::State<'_, TauriState>,
+) -> Result<Vec<String>, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/config/fetchinclude", state.server_url))
@@ -253,7 +260,10 @@ pub async fn del_fetch_include(
 
 // Birdie commands
 #[tauri::command]
-pub async fn get_file(state: tauri::State<'_, TauriState>, path: String) -> Result<File, TauriError> {
+pub async fn get_file(
+    state: tauri::State<'_, TauriState>,
+    path: String,
+) -> Result<File, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/file", state.server_url))
