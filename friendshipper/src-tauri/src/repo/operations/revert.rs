@@ -159,7 +159,7 @@ where
             paths: lock_paths,
             op: LockOperation::Unlock,
             response_tx: None,
-            github_pat,
+            github_pat: github_pat.to_string(),
             repo_status: state.repo_status.clone(),
             github_username,
             force: false,

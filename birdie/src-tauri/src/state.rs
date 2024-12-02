@@ -55,7 +55,7 @@ impl AppState {
 
             match github_pat {
                 Some(pat) => {
-                    let client = github::GraphQLClient::new(pat).await?;
+                    let client = github::GraphQLClient::new(pat.to_string()).await?;
                     Arc::new(ParkingLotRwLock::new(Some(client)))
                 }
                 None => Arc::new(ParkingLotRwLock::new(None)),

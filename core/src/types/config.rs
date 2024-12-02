@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -42,6 +43,28 @@ pub struct OktaConfig {
     pub issuer: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RedactedString(String);
+
+impl std::fmt::Debug for RedactedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "********")
+    }
+}
+
+impl From<String> for RedactedString {
+    fn from(s: String) -> Self {
+        RedactedString(s)
+    }
+}
+
+#[allow(clippy::to_string_trait_impl)]
+impl ToString for RedactedString {
+    fn to_string(&self) -> String {
+        self.0.clone()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default, rename = "repoPath", alias = "repo_path")]
@@ -72,7 +95,7 @@ pub struct AppConfig {
     pub open_uproject_after_sync: bool,
 
     #[serde(default, rename = "githubPAT", skip_serializing_if = "Option::is_none")]
-    pub github_pat: Option<String>,
+    pub github_pat: Option<RedactedString>,
 
     #[serde(default, rename = "engineType")]
     pub engine_type: EngineType,
