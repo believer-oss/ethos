@@ -894,7 +894,7 @@
 		divider={false}
 		contentClass="bg-secondary-700 dark:bg-space-900 h-full overflow-y-auto"
 	>
-		<TabItem open title="My Submits ({pulls.length})" class="bg-secondary-700 dark:bg-space-900">
+		<TabItem open title="My Commits ({pulls.length})" class="bg-secondary-700 dark:bg-space-900">
 			<Table color="custom" striped>
 				<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 					<TableHeadCell class="p-2">Number</TableHeadCell>
@@ -920,7 +920,14 @@
 								</Button>
 							</TableBodyCell>
 							<TableBodyCell class="p-2">
-								{pull.title}
+								{#each pull.commits.nodes as node}
+									<span
+										>{node.commit.message.length > 80
+											? `${node.commit.message.substring(0, 80)}...`
+											: node.commit.message}</span
+									>
+									<br />
+								{/each}
 							</TableBodyCell>
 							<TableBodyCell class="p-2"
 								><Badge class="text-white dark:text-white w-full {getStatusBadgeClass(pull)}"
