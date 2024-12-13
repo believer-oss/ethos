@@ -12,6 +12,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
+use tracing::info;
 use tracing::instrument;
 use tracing::warn;
 
@@ -159,6 +160,7 @@ impl EngineProvider for UnrealEngineProvider {
 }
 
 impl UnrealEngineProvider {
+    #[instrument(skip(self))]
     pub fn is_editor_process_running(&self) -> bool {
         let mut system = System::new();
         let refresh_kind = ProcessRefreshKind::new().with_cmd(UpdateKind::OnlyIfNotSet);
@@ -174,7 +176,17 @@ impl UnrealEngineProvider {
         for process in system.processes_by_name("UnrealEditor") {
             for arg in process.cmd() {
                 let arg: String = arg.to_lowercase().replace('\\', "/");
-                if arg.contains(&repo_path) {
+                let is_editor_running = arg.contains(&repo_path);
+
+                info!(
+                    "Checked if process '{}' arg '{}' contains '{}': {}",
+                    process.name(),
+                    arg,
+                    repo_path,
+                    is_editor_running
+                );
+
+                if is_editor_running {
                     return true;
                 }
             }
