@@ -11,6 +11,17 @@ query GetPullRequests($query: String!, $limit: Int!) {
           mergedAt
           headRefName
           state
+          commits(first: 5) {
+            __typename
+            nodes {
+              __typename
+              commit {
+                __typename
+                message
+              }
+            }
+            totalCount
+          }
           mergeable
           mergeQueueEntry {
             __typename

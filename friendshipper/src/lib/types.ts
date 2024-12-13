@@ -244,6 +244,19 @@ export interface MergeQueue {
 	entries: MergeQueueEntryConnection;
 }
 
+export interface GithubPullRequestCommit {
+	oid: string;
+	message: string;
+}
+
+export interface GithubPullRequestCommitNode {
+	commit: GithubPullRequestCommit;
+}
+
+export interface GithubPullRequestCommits {
+	nodes: GithubPullRequestCommitNode[];
+}
+
 export interface GitHubPullRequest {
 	number: number;
 	createdAt: string;
@@ -252,6 +265,7 @@ export interface GitHubPullRequest {
 	mergeable: 'CONFLICTING' | 'MERGEABLE' | 'UNKNOWN';
 	mergeQueueEntry: Nullable<MergeQueueEntry>;
 	author: PullRequestAuthor;
+	commits: GithubPullRequestCommits;
 	permalink: string;
 	title: string;
 	state: 'CLOSED' | 'MERGED' | 'OPEN';
