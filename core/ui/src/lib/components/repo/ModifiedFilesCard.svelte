@@ -377,7 +377,7 @@
 	let sortFunction = (a: ModifiedFile, b: ModifiedFile) =>
 		sortDirection * getFileDisplayString(a).localeCompare(getFileDisplayString(b));
 	$: filteredSortedChangeSets = changeSets.map((changeSet) => {
-		if (searchInput.length > 3) {
+		if (searchInput.length < 3) {
 			return {
 				...changeSet,
 				files: [...changeSet.files].sort(sortFunction)
