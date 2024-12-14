@@ -166,6 +166,7 @@ fn main() -> Result<(), CoreError> {
                 delete_snapshot,
                 download_server_logs,
                 fix_rebase,
+                get_build,
                 get_builds,
                 get_commits,
                 get_dynamic_config,

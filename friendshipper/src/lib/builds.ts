@@ -3,8 +3,12 @@ import type {
 	GetWorkflowsResponse,
 	ArtifactListResponse,
 	SyncClientRequest,
-	JunitOutput
+	JunitOutput,
+	ArtifactEntry
 } from '$lib/types';
+
+export const getBuild = async (commit: string, project?: string): Promise<ArtifactEntry> =>
+	invoke('get_build', { commit, project });
 
 export const getBuilds = async (limit?: number, project?: string): Promise<ArtifactListResponse> =>
 	invoke('get_builds', { limit, project });

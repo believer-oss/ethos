@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { Button, Checkbox, Input, Label, Modal, Select, Tooltip } from 'flowbite-svelte';
-	import { ExclamationCircleOutline } from 'flowbite-svelte-icons';
+	import { EditOutline, ExclamationCircleOutline, UndoOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type { ArtifactEntry, Nullable, Playtest, PlaytestSpec } from '$lib/types';
 	import { createPlaytest, deletePlaytest, ModalState, updatePlaytest } from '$lib/playtests';
-	import { appConfig, activeProjectConfig, allProjects, workflowMap } from '$lib/stores';
-	import { getBuilds } from '$lib/builds';
+	import { appConfig, activeProjectConfig, allProjects, workflowMap, builds } from '$lib/stores';
+	import { getBuild, getBuilds } from '$lib/builds';
 
 	export let versions: ArtifactEntry[];
 	export let showModal: boolean;
@@ -21,6 +21,8 @@
 	let submitting = false;
 	let deleting = false;
 
+	let playtestError: string = '';
+
 	const getPlaytestProject = (item: Nullable<Playtest>): string => {
 		if (item === null) return '';
 		if (item.metadata.annotations === null) return '';
@@ -29,6 +31,13 @@
 	};
 
 	$: project = getPlaytestProject(playtest);
+
+	enum CommitSelectMode {
+		Default,
+		Custom
+	}
+
+	let commitSelectMode: CommitSelectMode = CommitSelectMode.Default;
 
 	const getProjectValues = async (
 		item: Nullable<Playtest>,
@@ -85,6 +94,8 @@
 
 	const handleSubmit = async (e: SubmitEvent) => {
 		submitting = true;
+		playtestError = '';
+
 		const formData = new FormData(e.target as HTMLFormElement);
 		const data: Record<string, string> = {};
 		for (const field of formData) {
@@ -105,7 +116,17 @@
 				feedbackURL: data.feedbackURL
 			};
 
-			await updatePlaytest(playtest?.metadata.name, project, doNotPrune, spec);
+			try {
+				if (commitSelectMode === CommitSelectMode.Custom) {
+					await getBuild(data.version, data.project);
+				}
+
+				await updatePlaytest(playtest?.metadata.name, project, doNotPrune, spec);
+			} catch (updateError) {
+				playtestError = (updateError as Error).message;
+				submitting = false;
+				return;
+			}
 		} else if (mode === ModalState.Creating) {
 			const doNotPrune = !('autoCleanup' in data);
 			const spec: PlaytestSpec = {
@@ -122,11 +143,17 @@
 			const name = data.name.toLowerCase().replace(/[_\s/]/g, '-');
 
 			try {
+				if (commitSelectMode === CommitSelectMode.Custom) {
+					await getBuild(data.version, data.project);
+				}
 				await createPlaytest(name, data.project, doNotPrune, spec);
 			} catch (createError) {
-				await emit('error', createError);
+				playtestError = (createError as Error).message;
+				submitting = false;
+				return;
 			}
 		}
+
 		submitting = false;
 		showModal = false;
 
@@ -151,6 +178,20 @@
 		onSubmit();
 	};
 
+	const handleOpen = () => {
+		// if we're editing and the commit is in the workflow list, set mode to default
+		if (mode === ModalState.Editing && playtest != null) {
+			const commit = $builds.entries.find((c) => c.commit === playtest.spec.version);
+			if (commit) {
+				commitSelectMode = CommitSelectMode.Default;
+			} else {
+				commitSelectMode = CommitSelectMode.Custom;
+			}
+		} else {
+			commitSelectMode = CommitSelectMode.Default;
+		}
+	};
+
 	const getPlaytestDate = (item: Nullable<Playtest>): string => {
 		const date = item != null ? new Date(item.spec.startTime) : new Date();
 		return `${date.getFullYear()}-${(date.getMonth() + 1).toLocaleString('en-US', {
@@ -167,12 +208,13 @@
 </script>
 
 <Modal
-	size="xs"
+	size="sm"
 	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
 	bodyClass="!border-t-0"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
+	on:open={handleOpen}
 >
 	<form class="flex flex-col space-y-4" action="#" on:submit|preventDefault={handleSubmit}>
 		<h4 class="flex items-center gap-3 text-lg font-semibold text-primary-400">
@@ -220,19 +262,61 @@
 		<div class="flex flex-row gap-2">
 			<Label class="space-y-2 text-xs text-white w-1/2">
 				<span>Version</span>
-				<Select
-					size="sm"
-					name="version"
-					class={inputClass}
-					value={playtest ? playtest.spec.version : ''}
-					required
-				>
-					{#each commits as commit}
-						<option value={commit.value}
-							>{commit.name.substring(0, 8)} {$workflowMap.get(commit.name)?.message || ''}</option
+				<div class="flex flex-row gap-2 w-full">
+					{#if commitSelectMode === CommitSelectMode.Default}
+						<Select
+							size="sm"
+							name="version"
+							class={inputClass}
+							value={playtest ? playtest.spec.version : ''}
+							required
 						>
-					{/each}
-				</Select>
+							{#each commits as commit}
+								<option value={commit.value}
+									>{commit.name.substring(0, 8)}
+									{$workflowMap.get(commit.name)?.message || ''}</option
+								>
+							{/each}
+						</Select>
+						<Button
+							size="xs"
+							on:click={() => {
+								commitSelectMode = CommitSelectMode.Custom;
+							}}
+						>
+							<EditOutline />
+						</Button>
+						<Tooltip
+							placement="bottom"
+							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+						>
+							Enter commit manually
+						</Tooltip>
+					{:else}
+						<Input
+							type="text"
+							class={inputClass}
+							size="sm"
+							name="version"
+							value={playtest ? playtest.spec.version : ''}
+							required
+						/>
+						<Button
+							size="xs"
+							on:click={() => {
+								commitSelectMode = CommitSelectMode.Default;
+							}}
+						>
+							<UndoOutline />
+						</Button>
+						<Tooltip
+							placement="bottom"
+							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+						>
+							Use commit from recent commits list
+						</Tooltip>
+					{/if}
+				</div>
 			</Label>
 			<Label class="space-y-2 text-xs text-white w-1/2">
 				<span>Map</span>
@@ -249,6 +333,11 @@
 				</Select>
 			</Label>
 		</div>
+		{#if commitSelectMode === CommitSelectMode.Custom}
+			<span class="text-xs bg-red-700 text-white p-2 rounded-md">
+				Warning: The map list for manually entered commits may not be up to date.
+			</span>
+		{/if}
 		<div class="flex flex-row gap-2">
 			<Label class="space-y-2 text-xs text-white w-full">
 				<span>Number of groups</span>
@@ -319,6 +408,11 @@
 			<span>Auto Cleanup</span>
 			<Tooltip>If toggled, this playtest will automatically delete in 24 hours.</Tooltip>
 		</Label>
+		{#if playtestError}
+			<span class="text-xs bg-red-700 text-white p-2 rounded-md">
+				{playtestError}
+			</span>
+		{/if}
 		<Button type="submit" class="w-full" disabled={submitting}>Submit</Button>
 	</form>
 </Modal>

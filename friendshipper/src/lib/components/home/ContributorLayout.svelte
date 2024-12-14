@@ -39,7 +39,7 @@
 		repoStatus
 	} from '$lib/stores';
 	import { getPlaytestGroupForUser, getPlaytests } from '$lib/playtests';
-	import { getBuilds, syncClient } from '$lib/builds';
+	import { getBuild, getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 	import { handleError } from '$lib/utils';
@@ -193,9 +193,18 @@
 			const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
 			if (playtestAssignment && playtestAssignment.serverRef) {
 				const project = playtest.metadata.annotations['believer.dev/project'];
-				const entry = await getBuilds(250, project).then((a) =>
+				let entry = await getBuilds(250, project).then((a) =>
 					a.entries.find((b) => b.commit === playtest.spec.version)
 				);
+
+				if (!entry) {
+					entry = await getBuild(playtest.spec.version, project);
+
+					if (!entry) {
+						await emit('error', 'No build found for playtest');
+						return;
+					}
+				}
 
 				const updatedServers = await getServers(playtest.spec.version);
 				const playtestServer = updatedServers.find(

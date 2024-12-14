@@ -1,7 +1,7 @@
 use ethos_core::utils::junit::JunitOutput;
 use tracing::error;
 
-use ethos_core::storage::ArtifactList;
+use ethos_core::storage::{ArtifactEntry, ArtifactList};
 use ethos_core::tauri::command::{check_error, restart};
 use ethos_core::tauri::error::TauriError;
 use ethos_core::tauri::State;
@@ -92,6 +92,42 @@ pub async fn get_project_config(
 }
 
 // Commits
+#[tauri::command]
+pub async fn get_build(
+    state: tauri::State<'_, State>,
+    commit: String,
+    project: Option<String>,
+) -> Result<ArtifactEntry, TauriError> {
+    let mut req = state.client.get(format!(
+        "{}/builds/commit?commit={}",
+        state.server_url, commit
+    ));
+
+    if let Some(project) = project {
+        req = req.query(&[("project", project)]);
+    }
+
+    match req.send().await {
+        Ok(res) => {
+            if is_error_status(res.status()) {
+                Err(create_tauri_error(res).await)
+            } else {
+                match res.json::<ArtifactEntry>().await {
+                    Ok(res) => Ok(res),
+                    Err(err) => Err(TauriError {
+                        message: err.to_string(),
+                        status_code: 0,
+                    }),
+                }
+            }
+        }
+        Err(err) => Err(TauriError {
+            message: err.to_string(),
+            status_code: 0,
+        }),
+    }
+}
+
 #[tauri::command]
 pub async fn get_builds(
     state: tauri::State<'_, State>,
