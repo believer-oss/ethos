@@ -10,6 +10,8 @@
 		TableBody,
 		TableBodyCell,
 		TableBodyRow,
+		TableHead,
+		TableHeadCell,
 		Tooltip
 	} from 'flowbite-svelte';
 	import {
@@ -27,6 +29,7 @@
 	import {
 		ModifiedFileState,
 		SubmitStatus,
+		SortKey,
 		type ModifiedFile,
 		type ChangeSet
 	} from '$lib/types/index.js';
@@ -73,22 +76,6 @@
 		selectedFiles.length > 0 &&
 		!isChecked(files) &&
 		files.some((file) => selectedFiles.some((selectedFile) => selectedFile.path === file.path));
-
-	// filteredChangeSets is changeSets but with the files filtered by searchInput
-	$: filteredChangeSets = changeSets.map((changeSet) => {
-		if (searchInput.length < 3) {
-			return changeSet;
-		}
-
-		return {
-			...changeSet,
-			files: changeSet.files.filter(
-				(file) =>
-					file.path.toLowerCase().includes(searchInput.toLowerCase()) ||
-					file.displayName.toLowerCase().includes(searchInput.toLowerCase())
-			)
-		};
-	});
 
 	// changeSetOrderedFiles is the list of modified files, but ordered the way they appear in the changeSets
 	$: changeSetOrderedFiles = changeSets
@@ -384,6 +371,40 @@
 		hoveringCreateNewChangeset = false;
 	};
 
+	// sorting and filtering
+	let sortDirection: number = 1;
+	let sortKey: SortKey = SortKey.FileName;
+	let sortFunction = (a: ModifiedFile, b: ModifiedFile) =>
+		sortDirection * getFileDisplayString(a).localeCompare(getFileDisplayString(b));
+	$: filteredSortedChangeSets = changeSets.map((changeSet) => {
+		if (searchInput.length < 3) {
+			return {
+				...changeSet,
+				files: [...changeSet.files].sort(sortFunction)
+			};
+		}
+
+		return {
+			...changeSet,
+			files: changeSet.files
+				.filter(
+					(file) =>
+						file.path.toLowerCase().includes(searchInput.toLowerCase()) ||
+						file.displayName.toLowerCase().includes(searchInput.toLowerCase())
+				)
+				.sort(sortFunction)
+		};
+	});
+
+	const changeSortDirection = (newSortKey: SortKey) => {
+		if (newSortKey === sortKey) {
+			sortDirection = -sortDirection;
+		} else {
+			sortDirection = 1;
+			sortKey = newSortKey;
+		}
+	};
+
 	onMount(async () => {
 		await cleanUpChangeSets();
 	});
@@ -430,7 +451,7 @@
 		/>
 	</div>
 	<div class="overflow-y-auto pr-1 mb-16">
-		{#each filteredChangeSets as changeSet, index}
+		{#each filteredSortedChangeSets as changeSet, index}
 			<div
 				on:dragover|preventDefault
 				on:dragenter|preventDefault={(e) => {
@@ -531,6 +552,45 @@
 				</div>
 				{#if changeSet.files.length > 0 && changeSet.open}
 					<Table color="custom" striped={true}>
+						<TableHead class="w-full border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+							<TableHeadCell />
+							<TableHeadCell
+								class="p-1 cursor-pointer gap-2"
+								on:click={() => {
+									changeSortDirection(SortKey.FileState);
+									sortFunction = (a, b) => sortDirection * a.state.localeCompare(b.state);
+								}}
+							>
+								<div class="flex items-center">
+									<ChevronSortOutline class="text-gray-400" size="xs" />
+								</div>
+							</TableHeadCell>
+							<TableHeadCell
+								class="p-1 cursor-pointer"
+								on:click={() => {
+									changeSortDirection(SortKey.LockStatus);
+									sortFunction = (a, b) => sortDirection * a.lockedBy.localeCompare(b.lockedBy);
+								}}
+							>
+								<div class="flex flex-row w-min items-center gap-2">
+									Locks
+									<ChevronSortOutline class="text-gray-400" size="xs" />
+								</div>
+							</TableHeadCell>
+							<TableHeadCell
+								class="p-1 cursor-pointer"
+								on:click={() => {
+									changeSortDirection(SortKey.FileName);
+									sortFunction = (a, b) =>
+										sortDirection * getFileDisplayString(a).localeCompare(getFileDisplayString(b));
+								}}
+							>
+								<div class="flex items-center gap-2">
+									File Name
+									<ChevronSortOutline class="text-gray-400" size="xs" />
+								</div>
+							</TableHeadCell>
+						</TableHead>
 						<TableBody>
 							{#each changeSet.files as file, fileIndex}
 								<TableBodyRow
