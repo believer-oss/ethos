@@ -81,7 +81,6 @@
 	// Initialization
 	let appVersion = '';
 	let initialized = false;
-	const loginRequired = true;
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
 	let gitStartupMessage = '';
@@ -395,7 +394,7 @@
 			}
 		}
 
-		if (!loginRequired || accessToken) {
+		if (accessToken) {
 			try {
 				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
 					getDynamicConfig(),
@@ -470,7 +469,7 @@
 		});
 
 		const refresh = async () => {
-			if (!$appConfig.initialized || $onboardingInProgress || loginRequired) return;
+			if (!$appConfig.initialized || $onboardingInProgress) return;
 
 			const buildsPromise = getBuilds(250);
 			const playtestsPromise = getPlaytests();
