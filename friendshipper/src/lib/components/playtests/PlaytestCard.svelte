@@ -36,7 +36,7 @@
 		playtests
 	} from '$lib/stores';
 	import { openUrl, handleError } from '$lib/utils';
-	import { getBuilds, syncClient } from '$lib/builds';
+	import { getBuild, getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
 
 	export let playtest: Playtest;
@@ -143,9 +143,18 @@
 		try {
 			if (playtest.metadata.annotations) {
 				const project = playtest.metadata.annotations['believer.dev/project'];
-				const entry = await getBuilds(250, project).then((a) =>
+				let entry = await getBuilds(250, project).then((a) =>
 					a.entries.find((b) => b.commit === playtest.spec.version)
 				);
+
+				if (!entry) {
+					entry = await getBuild(playtest.spec.version, project);
+
+					if (!entry) {
+						await emit('error', 'No build found for playtest');
+						return;
+					}
+				}
 
 				const playtestAssignment = getPlaytestGroupForUser(playtest, $appConfig.userDisplayName);
 				if (playtestAssignment && playtestAssignment.serverRef) {

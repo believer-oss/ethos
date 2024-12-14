@@ -29,7 +29,7 @@
 		TauriError
 	} from '$lib/types';
 	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
-	import { syncClient, getBuilds } from '$lib/builds';
+	import { syncClient, getBuilds, getBuild } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { getPlaytestGroupForUser } from '$lib/playtests';
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
@@ -191,11 +191,20 @@
 			const playtestAssignment = getPlaytestGroupForUser(nextPlaytest, $appConfig.userDisplayName);
 			if (playtestAssignment && playtestAssignment.serverRef) {
 				const project = nextPlaytest.metadata.annotations?.['believer.dev/project'];
-				const entry = project
+				let entry = project
 					? await getBuilds(250, project).then((a) =>
 							a.entries.find((b) => b.commit === nextPlaytest.spec.version)
 					  )
 					: null;
+
+				if (!entry) {
+					entry = await getBuild(nextPlaytest.spec.version, project);
+
+					if (!entry) {
+						await emit('error', 'No build found for playtest');
+						return;
+					}
+				}
 
 				if (entry !== selected) {
 					const updatedServers = await getServers(nextPlaytest?.spec.version);

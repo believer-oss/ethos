@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
 use ethos_core::storage::{
-    ArtifactBuildConfig, ArtifactConfig, ArtifactKind, ArtifactList, Platform,
+    ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
 use ethos_core::utils::junit::JunitOutput;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
@@ -36,6 +36,7 @@ where
 {
     Router::new()
         .route("/", get(get_builds))
+        .route("/commit", get(get_build))
         .route("/client/sync", post(sync_client))
         .route("/client/wipe", post(wipe_client_data))
         .route("/longtail/reset", post(reset_longtail))
@@ -44,6 +45,54 @@ where
         .route("/workflows/logs", get(get_logs_for_workflow_node))
         .route("/workflows/junit", get(get_workflow_junit_artifact))
         .route("/workflows/stop", post(stop_workflow))
+}
+
+#[derive(Default, Deserialize)]
+struct GetBuildParams {
+    commit: String,
+    project: Option<String>,
+}
+
+async fn get_build<T>(
+    State(state): State<AppState<T>>,
+    params: Query<GetBuildParams>,
+) -> Result<Json<ArtifactEntry>, CoreError>
+where
+    T: EngineProvider,
+{
+    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
+    aws_client.check_expiration().await?;
+
+    let project_param = params.project.clone();
+
+    let project = if let Some(project) = project_param {
+        project
+    } else {
+        state
+            .app_config
+            .read()
+            .clone()
+            .selected_artifact_project
+            .context("Project not configured. Repo may still be initializing.")?
+    };
+
+    let storage = state
+        .storage
+        .read()
+        .clone()
+        .context("Storage not configured. AWS may still be initializing.")?;
+
+    let artifact_config = ArtifactConfig::new(
+        project.as_str().into(),
+        ArtifactKind::Client,
+        ArtifactBuildConfig::Development,
+        Platform::Win64,
+    );
+
+    let artifact_entry = storage
+        .get_artifact_for_commit(artifact_config, &params.commit)
+        .await?;
+    Ok(Json(artifact_entry))
 }
 
 #[derive(Default, Deserialize)]

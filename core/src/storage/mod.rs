@@ -108,6 +108,20 @@ impl ArtifactStorage {
         }
     }
 
+    pub async fn get_artifact_for_commit(
+        &self,
+        artifact_config: ArtifactConfig,
+        commit: &str,
+    ) -> Result<ArtifactEntry, CoreError> {
+        let artifact_list = self.artifact_list(artifact_config).await;
+        let artifact_entry = artifact_list
+            .entries
+            .iter()
+            .find(|entry| entry.commit == Some(commit.to_string()))
+            .ok_or(anyhow!("Artifact not found for commit {}", commit))?;
+        Ok(artifact_entry.clone())
+    }
+
     fn resolve_path(&self, artifact_config: &ArtifactConfig) -> String {
         match &self.schema_version {
             StorageSchemaVersion::V1 => Self::resolve_path_v1(artifact_config),
