@@ -14,6 +14,12 @@ export enum SubmitStatus {
 	Conflicted = 'Conflicted'
 }
 
+export enum SortKey {
+	FileName = 'FileName',
+	LockStatus = 'LockStatus',
+	FileState = 'FileState'
+}
+
 export interface ModifiedFile {
 	path: string;
 	displayName: string;
