@@ -12,8 +12,8 @@ pub mod error;
 pub struct AuthState {
     pub csrf_token: CsrfToken,
     pub pkce: Arc<(PkceCodeChallenge, String)>,
-    pub issuer_url: String,
-    pub client_id: String,
+    pub issuer_url: Option<String>,
+    pub client_id: Option<String>,
     pub in_flight: Arc<AtomicBool>,
 }
 
