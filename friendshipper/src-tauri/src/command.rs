@@ -99,7 +99,7 @@ pub async fn get_project_config(
 // Commits
 #[tauri::command]
 pub async fn get_build(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
     project: Option<String>,
 ) -> Result<ArtifactEntry, TauriError> {
@@ -1031,6 +1031,21 @@ pub async fn authenticate(handle: tauri::AppHandle) -> Result<(), TauriError> {
     let state = handle.state::<TauriState>();
     let auth: AuthState = state.auth_state.as_ref().unwrap().clone();
 
+    // return an error if anything in auth state is empty
+    if auth.issuer_url.is_none() {
+        return Err(TauriError {
+            message: "Authentication state is missing issuer URL".to_string(),
+            status_code: 500,
+        });
+    }
+
+    if auth.client_id.is_none() {
+        return Err(TauriError {
+            message: "Authentication state is missing client ID".to_string(),
+            status_code: 500,
+        });
+    }
+
     let in_flight = auth.in_flight.load(Ordering::Relaxed);
     if in_flight {
         debug!("Authentication already in flight");
@@ -1040,7 +1055,7 @@ pub async fn authenticate(handle: tauri::AppHandle) -> Result<(), TauriError> {
     auth.in_flight.store(true, Ordering::Relaxed);
     let http_client = reqwest::Client::new();
 
-    let issuer_url_string = auth.issuer_url.clone();
+    let issuer_url_string = auth.issuer_url.clone().unwrap();
     let issuer_url = IssuerUrl::new(issuer_url_string).map_err(|_| TauriError {
         message: "Invalid issuer URL".to_string(),
         status_code: 500,
@@ -1053,7 +1068,7 @@ pub async fn authenticate(handle: tauri::AppHandle) -> Result<(), TauriError> {
             status_code: 500,
         })?;
 
-    let client_id_string = auth.client_id.clone();
+    let client_id_string = auth.client_id.clone().unwrap();
     let client_id = ClientId::new(client_id_string);
 
     let redirect_url = RedirectUrl::new("http://localhost:8484/auth/callback".to_string())
