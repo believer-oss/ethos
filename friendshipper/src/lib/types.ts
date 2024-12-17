@@ -122,6 +122,7 @@ export interface GameServerResult {
 	netimguiPort: number;
 	version: string;
 	creationTimestamp: string;
+	ready: boolean;
 }
 
 export interface LaunchRequest {
@@ -146,10 +147,12 @@ export interface PlaytestSpec {
 	startTime: string;
 	feedbackURL: string;
 	groups?: Nullable<Group[]>;
+	includeReadinessProbe: boolean;
 }
 
 export interface GroupStatus extends Group {
 	serverRef?: LocalObjectReference;
+	ready: boolean;
 }
 
 export interface PlaytestStatus {

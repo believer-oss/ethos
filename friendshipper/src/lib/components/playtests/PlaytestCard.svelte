@@ -166,7 +166,11 @@
 						);
 
 						if (playtestServer && entry) {
-							await handleSyncClient(entry, playtestServer);
+							if (playtestServer.ready) {
+								await handleSyncClient(entry, playtestServer);
+							} else {
+								await emit('error', 'Playtest server is not ready. Try again shortly.');
+							}
 						}
 					}
 				} else if (entry) {
@@ -397,7 +401,7 @@
 					<div>
 						<div class="flex items-center justify-between gap-2">
 							<p class="text-base text-primary-400 font-semibold m-2 my-0">{group.name}</p>
-							<span class="text-sm">server {group.serverRef ? '🟢' : '🔴'}</span>
+							<span class="text-sm">server {group.ready ? '🟢' : '🔴'}</span>
 						</div>
 						<Hr classHr="my-2 bg-gray-300 dark:bg-gray-300" />
 						<div class="grid grid-cols-2 gap-1 mb-2">

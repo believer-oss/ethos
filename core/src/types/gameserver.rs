@@ -16,6 +16,8 @@ pub struct GameServerSpec {
     pub display_name: Option<String>,
     pub version: String,
     pub map: Option<String>,
+
+    pub include_readiness_probe: bool,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
@@ -24,6 +26,9 @@ pub struct GameServerStatus {
     pub ip: Option<String>,
     pub port: i32,
     pub netimgui_port: i32,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,6 +41,7 @@ pub struct GameServerResults {
     pub netimgui_port: i32,
     pub version: String,
     pub creation_timestamp: Time,
+    pub ready: bool,
 }
 
 impl GameServerResults {
@@ -54,4 +60,5 @@ pub struct LaunchRequest {
     pub check_for_existing: bool,
     pub display_name: String,
     pub map: Option<String>,
+    pub include_readiness_probe: bool,
 }

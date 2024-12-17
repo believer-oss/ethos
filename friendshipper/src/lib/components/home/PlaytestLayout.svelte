@@ -213,21 +213,33 @@
 					);
 
 					if (playtestServer && entry) {
-						await handleSyncClient(entry, playtestServer);
+						if (playtestServer.ready) {
+							await handleSyncClient(entry, playtestServer);
+						} else {
+							await emit('error', 'Playtest server is not ready. Try again shortly.');
+						}
 						return;
 					}
 				} else {
 					const playtestServer = servers.find((s) => s.name === playtestAssignment.serverRef?.name);
 
 					if (playtestServer && entry) {
-						await handleSyncClient(entry, playtestServer);
+						if (playtestServer.ready) {
+							await handleSyncClient(entry, playtestServer);
+						} else {
+							await emit('error', 'Playtest server is not ready. Try again shortly.');
+						}
 						return;
 					}
 				}
 			}
 		}
 		if (servers.length > 0) {
-			await handleSyncClient(selected, servers[0]);
+			if (servers[0].ready) {
+				await handleSyncClient(selected, servers[0]);
+			} else {
+				await emit('error', 'Server is not ready. Try again shortly.');
+			}
 
 			return;
 		}
@@ -254,13 +266,22 @@
 
 		const server = servers.find((s) => s.displayName === name);
 		if (server) {
-			await handleSyncClient(selected, server);
+			if (server.ready) {
+				await handleSyncClient(selected, server);
+			} else {
+				await emit('error', 'Server is not ready. Try again shortly.');
+			}
 		}
 	};
 
 	void listen('quick-launch', (event) => {
 		const quickLaunchEvent = event.payload as QuickLaunchEvent;
 		void handleSyncClient(quickLaunchEvent.artifactEntry, quickLaunchEvent.server);
+		if (quickLaunchEvent.server.ready) {
+			void handleSyncClient(quickLaunchEvent.artifactEntry, quickLaunchEvent.server);
+		} else {
+			void emit('error', 'Server is not ready. Try again shortly.');
+		}
 	});
 
 	onMount(() => {
