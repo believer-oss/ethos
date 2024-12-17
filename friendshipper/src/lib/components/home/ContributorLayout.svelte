@@ -212,7 +212,11 @@
 				);
 
 				if (playtestServer && entry) {
-					await handleSyncClient(entry, playtestServer);
+					if (playtestServer.ready) {
+						await handleSyncClient(entry, playtestServer);
+					} else {
+						await emit('error', 'Playtest server is not ready. Try again shortly.');
+					}
 				}
 			}
 		}

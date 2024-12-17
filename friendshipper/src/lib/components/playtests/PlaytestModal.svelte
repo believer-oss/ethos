@@ -113,7 +113,8 @@
 				playersPerGroup: parseInt(data.maxPlayersPerGroup, 10),
 				startTime: new Date(`${data.startDate} ${data.startTime}`).toISOString(),
 				groups: playtest.spec.groups,
-				feedbackURL: data.feedbackURL
+				feedbackURL: data.feedbackURL,
+				includeReadinessProbe: playtest?.spec.includeReadinessProbe ?? false
 			};
 
 			try {
@@ -129,6 +130,7 @@
 			}
 		} else if (mode === ModalState.Creating) {
 			const doNotPrune = !('autoCleanup' in data);
+			const includeReadinessProbe = 'includeReadinessProbe' in data;
 			const spec: PlaytestSpec = {
 				displayName: data.name,
 				version: data.version,
@@ -137,7 +139,8 @@
 				playersPerGroup: parseInt(data.maxPlayersPerGroup, 10),
 				startTime: new Date(`${data.startDate} ${data.startTime}`).toISOString(),
 				groups: [],
-				feedbackURL: data.feedbackURL
+				feedbackURL: data.feedbackURL,
+				includeReadinessProbe
 			};
 
 			const name = data.name.toLowerCase().replace(/[_\s/]/g, '-');
@@ -398,16 +401,30 @@
 				value={playtest ? playtest.spec.feedbackURL : ''}
 			/>
 		</Label>
-		<Label class="flex flex-row text-xs text-white">
-			<Checkbox
-				name="autoCleanup"
-				checked={playtest && playtest.metadata.annotations
-					? !playtest.metadata.annotations['believer.dev/do-not-prune']
-					: true}
-			/>
-			<span>Auto Cleanup</span>
-			<Tooltip>If toggled, this playtest will automatically delete in 24 hours.</Tooltip>
-		</Label>
+		<div class="flex flex-row gap-2">
+			<Label class="flex flex-row text-xs text-white">
+				<Checkbox
+					name="autoCleanup"
+					checked={playtest && playtest.metadata.annotations
+						? !playtest.metadata.annotations['believer.dev/do-not-prune']
+						: true}
+				/>
+				<span>Auto Cleanup</span>
+				<Tooltip>If toggled, this playtest will automatically delete in 24 hours.</Tooltip>
+			</Label>
+			<Label class="flex flex-row text-xs text-white">
+				<Checkbox
+					name="includeReadinessProbe"
+					disabled={mode === ModalState.Editing}
+					checked={(playtest && playtest.spec.includeReadinessProbe) ?? false}
+				/>
+				<span>Wait for server readiness</span>
+				<Tooltip>
+					If toggled, the playtest will wait for the server to be ready before starting. Version of
+					the deployed gameserver must support an HTTP readiness check.
+				</Tooltip>
+			</Label>
+		</div>
 		{#if playtestError}
 			<span class="text-xs bg-red-700 text-white p-2 rounded-md">
 				{playtestError}

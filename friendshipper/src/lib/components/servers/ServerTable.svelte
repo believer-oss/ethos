@@ -63,7 +63,11 @@
 		};
 
 		try {
-			await syncClient(req);
+			if (server.ready) {
+				await syncClient(req);
+			} else {
+				await emit('error', 'Server is not ready. Try again shortly.');
+			}
 		} catch (e) {
 			await emit('error', e);
 		}

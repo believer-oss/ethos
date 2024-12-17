@@ -258,6 +258,11 @@ impl KubeClient {
                         None => (Some("Missing".to_string()), 0, 0),
                     };
 
+                    let ready = match &i.status {
+                        Some(v) => v.ready.unwrap_or(false),
+                        None => false,
+                    };
+
                     GameServerResults {
                         name: i.metadata.name.clone().unwrap(),
                         display_name: match i.spec.display_name.clone() {
@@ -269,6 +274,7 @@ impl KubeClient {
                         netimgui_port,
                         version: i.spec.version.clone(),
                         creation_timestamp: i.metadata.creation_timestamp.clone().unwrap(),
+                        ready,
                     }
                 })
                 .collect::<Vec<GameServerResults>>()),
@@ -283,6 +289,7 @@ impl KubeClient {
         check_for_existing: bool,
         display_name: &str,
         map: Option<String>,
+        include_readiness_probe: bool,
     ) -> Result<GameServer, CoreError> {
         let suffix: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
@@ -312,6 +319,7 @@ impl KubeClient {
                 display_name: Some(display_name.to_string()),
                 version: tag,
                 map,
+                include_readiness_probe,
             },
             status: None,
         };

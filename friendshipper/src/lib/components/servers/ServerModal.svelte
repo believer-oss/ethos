@@ -89,7 +89,11 @@
 		const server = servers.find((s) => s.displayName === name);
 		if (server) {
 			try {
-				await handleSyncClient(selected, server);
+				if (server.ready) {
+					await handleSyncClient(selected, server);
+				} else {
+					await emit('error', 'Server is not ready. Try again shortly.');
+				}
 				selected = get(selectedCommit);
 			} catch (e) {
 				await emit('error', e);

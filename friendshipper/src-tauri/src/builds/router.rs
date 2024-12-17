@@ -269,6 +269,7 @@ where
                 ip: status.ip,
                 port: status.port,
                 netimgui_port: status.netimgui_port,
+                ready: status.ready.unwrap_or(false),
             };
 
             let args = state.engine.create_launch_args(

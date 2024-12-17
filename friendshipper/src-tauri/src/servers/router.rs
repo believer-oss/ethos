@@ -90,6 +90,7 @@ where
             request.check_for_existing,
             request.display_name.as_str(),
             request.map,
+            request.include_readiness_probe,
         )
         .await?;
 
@@ -192,6 +193,7 @@ where
                 netimgui_port: status.netimgui_port,
                 version: server.spec.version.clone(),
                 creation_timestamp: server.metadata.creation_timestamp.unwrap(),
+                ready: status.ready.unwrap_or(false),
             })),
             None => Err(CoreError::Internal(anyhow!("Server is not ready yet"))),
         },

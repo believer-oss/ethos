@@ -41,6 +41,9 @@ pub struct GroupStatus {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub users: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready: Option<bool>,
 }
 
 #[derive(CustomResource, Default, Deserialize, Serialize, Clone, Debug, JsonSchema)]
@@ -73,6 +76,9 @@ pub struct PlaytestSpec {
     #[serde(rename = "usersToAutoAssign")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub users_to_auto_assign: Option<Vec<String>>,
+
+    #[serde(rename = "includeReadinessProbe")]
+    pub include_readiness_probe: bool,
 
     pub groups: Vec<Group>,
 }
