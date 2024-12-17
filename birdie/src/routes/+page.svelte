@@ -5,6 +5,7 @@
 		Button,
 		ButtonGroup,
 		Card,
+		Checkbox,
 		Input,
 		Label,
 		Modal,
@@ -109,6 +110,7 @@
 	let ctrlHeld = false;
 	let includeWip = true;
 	let selectAll = false;
+	let showSourceControl = true;
 
 	// sync and tools
 	let inAsyncOperation = false;
@@ -852,7 +854,7 @@
 			</Button>
 		</ButtonGroup>
 	</div>
-	<div class="overflow-x-auto overflow-y-hidden py-1 h-8 min-h-[2rem]">
+	<div class="flex gap-2 justify-between overflow-x-auto overflow-y-hidden py-1 h-8 min-h-[2rem]">
 		<Breadcrumb
 			aria-label="File ancestry"
 			olClass="inline-flex items-center space-x-1 rtl:space-x-reverse rtl:space-x-reverse"
@@ -869,6 +871,9 @@
 				</BreadcrumbItem>
 			{/each}
 		</Breadcrumb>
+		<div class="flex gap-2">
+			<Checkbox bind:checked={showSourceControl}>Source Control</Checkbox>
+		</div>
 	</div>
 	{#if metadataFeaturesEnabled && $selectedDirectoryClass === 'character' && directoryMetadata}
 		<CharacterCard metadata={directoryMetadata} onMetadataSaved={handleUpdateDirectoryMetadata} />
@@ -1049,7 +1054,7 @@
 			</Card>
 		</div>
 		<div class="flex flex-row gap-2 w-full h-full">
-			<Card class="sm:p-4 h-full max-w-full dark:bg-secondary-600 border-0 shadow-none">
+			<Card class="sm:p-4 h-full max-w-full w-full dark:bg-secondary-600 border-0 shadow-none">
 				<Table>
 					<TableBody>
 						{#each $currentRootFiles as file, index}
@@ -1117,55 +1122,58 @@
 					</TableBody>
 				</Table>
 			</Card>
-			<div class="flex flex-col gap-2 w-full h-full">
-				<Card
-					class="sm:p-4 max-w-full h-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
-				>
-					<div class="flex flex-col overflow-hidden w-full h-full">
-						<ModifiedFilesCard
-							disabled={loading}
-							bind:selectedFiles={$selectedFiles}
-							bind:selectAll
-							onOpenDirectory={handleOpenDirectory}
-							modifiedFiles={$allModifiedFiles}
-							changeSets={$changeSets}
-							onChangesetsSaved={handleSaveChangesets}
-							onRevertFiles={handleRevertFiles}
-							snapshotsEnabled={false}
-							onLockSelected={handleLockSelected}
-						/>
-					</div>
-				</Card>
-				<Card
-					class="w-full p-4 gap-2 sm:p-4 max-w-full h-full max-h-[12rem] dark:bg-secondary-600 border-0 shadow-none"
-				>
-					<div class="flex flex-col w-full h-full gap-2">
-						<div class="flex flex-row justify-between gap-2">
-							<Label for="commit-message" class="mb-2">Commit Message</Label>
-							<p class="font-semibold text-sm">
-								On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
-							</p>
+			{#if showSourceControl}
+				<div class="flex flex-col gap-2 w-full h-full">
+					<Card
+						class="sm:p-4 max-w-full h-full dark:bg-secondary-600 border-0 shadow-none overflow-auto"
+					>
+						<div class="flex flex-col overflow-hidden w-full h-full">
+							<ModifiedFilesCard
+								disabled={loading}
+								bind:selectedFiles={$selectedFiles}
+								bind:selectAll
+								onOpenDirectory={handleOpenDirectory}
+								modifiedFiles={$allModifiedFiles}
+								changeSets={$changeSets}
+								onChangesetsSaved={handleSaveChangesets}
+								onRevertFiles={handleRevertFiles}
+								snapshotsEnabled={false}
+								onLockSelected={handleLockSelected}
+							/>
 						</div>
-						<Textarea
-							id="commit-message"
-							bind:value={$commitMessage}
-							on:focus={() => {
-								$enableGlobalSearch = false;
-							}}
-							on:blur={() => {
-								$enableGlobalSearch = true;
-							}}
-							class="dark:bg-secondary-800 min-h-[4rem] h-full"
-						/>
-						<div class="flex flex-row w-full align-middle justify-end">
-							<ButtonGroup class="space-x-px">
-								<Button color="primary" disabled={!canSubmit} on:click={handleSubmit}>Submit</Button
-								>
-							</ButtonGroup>
+					</Card>
+					<Card
+						class="w-full p-4 gap-2 sm:p-4 max-w-full h-full max-h-[12rem] dark:bg-secondary-600 border-0 shadow-none"
+					>
+						<div class="flex flex-col w-full h-full gap-2">
+							<div class="flex flex-row justify-between gap-2">
+								<Label for="commit-message" class="mb-2">Commit Message</Label>
+								<p class="font-semibold text-sm">
+									On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
+								</p>
+							</div>
+							<Textarea
+								id="commit-message"
+								bind:value={$commitMessage}
+								on:focus={() => {
+									$enableGlobalSearch = false;
+								}}
+								on:blur={() => {
+									$enableGlobalSearch = true;
+								}}
+								class="dark:bg-secondary-800 min-h-[4rem] h-full"
+							/>
+							<div class="flex flex-row w-full align-middle justify-end">
+								<ButtonGroup class="space-x-px">
+									<Button color="primary" disabled={!canSubmit} on:click={handleSubmit}
+										>Submit</Button
+									>
+								</ButtonGroup>
+							</div>
 						</div>
-					</div>
-				</Card>
-			</div>
+					</Card>
+				</div>
+			{/if}
 		</div>
 	</div>
 	<Card
