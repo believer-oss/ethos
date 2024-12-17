@@ -291,6 +291,7 @@ pub async fn get_all_files(
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileHistoryParams {
     pub file: String,
+    pub limit: Option<u32>,
 }
 
 #[instrument(skip(state))]
@@ -298,6 +299,7 @@ pub async fn get_file_history(
     State(state): State<Arc<AppState>>,
     params: Query<FileHistoryParams>,
 ) -> Result<Json<Vec<Commit>>, CoreError> {
+    let limit = params.limit.unwrap_or(100);
     let output = state
         .git()
         .run_and_collect_output(
@@ -305,6 +307,8 @@ pub async fn get_file_history(
                 "log",
                 "--pretty=format:%h|%s|%an|%aI",
                 "--follow",
+                "--max-count",
+                limit.to_string().as_str(),
                 "--",
                 &params.file,
             ],

@@ -2,7 +2,7 @@
 	import { Card, Table, TableBody } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
 	import { fs } from '@tauri-apps/api';
-	import { FileType, type Node } from '$lib/types';
+	import { FileType, type LFSFile, type Node } from '$lib/types';
 	import TreeNode from '$lib/components/files/TreeNode.svelte';
 	import { getFiles } from '$lib/repo';
 	import { shiftSelectedFile, selectedFile, selectedTreeFiles, currentRoot } from '$lib/stores';
@@ -10,6 +10,7 @@
 
 	export let fileNode: Node;
 	export let loading: boolean;
+	export let onFileClick: (file: LFSFile) => Promise<void>;
 
 	let ctrlHeld = false;
 	let shiftHeld = false;
@@ -119,6 +120,10 @@
 			await refresh();
 		}
 		await handleSaveFileTree();
+
+		if ($selectedFile) {
+			await onFileClick($selectedFile);
+		}
 	};
 
 	onMount(() => {
