@@ -78,7 +78,6 @@ ureq = "2.6.2"
 which = "4.4.0"
 json-patch = "1.1.0"
 ring = "0.17"
-graphql_client = { version = "0.13.0", features = ["reqwest"] }
 obws = "0.11.5"
 futures = "0.3.29"
 toml = "0.8.8"
@@ -92,3 +91,7 @@ serde-xml-rs = "0.6.0"
 hyper-rustls = { version = "0.24.2", features = ["webpki-roots"] }
 hyper = { version = "0.14.31", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
+
+# Pinned to fix reqwest dependency conflict
+graphql_client = { git = "https://github.com/graphql-rust/graphql-client.git", rev = "9b91a7f7d4a21dbbeacf974bce63fe5e55620ca8", features = ["reqwest"] }
+openidconnect = { git = "https://github.com/ramosbugs/openidconnect-rs.git", rev = "4.0.0-rc.1" }

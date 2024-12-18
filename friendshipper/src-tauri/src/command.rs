@@ -1,10 +1,15 @@
+use std::sync::atomic::Ordering;
+
 use ethos_core::utils::junit::JunitOutput;
-use tracing::error;
+use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
+use openidconnect::{ClientId, IssuerUrl, Nonce, RedirectUrl, Scope};
+use tauri::Manager;
+use tracing::{debug, error};
 
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
 use ethos_core::tauri::command::{check_error, restart};
 use ethos_core::tauri::error::TauriError;
-use ethos_core::tauri::State;
+use ethos_core::tauri::{AuthState, TauriState};
 use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::config::{AppConfig, DynamicConfig, UnrealVerSelDiagResponse};
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
@@ -38,7 +43,7 @@ fn is_error_status(status: reqwest::StatusCode) -> bool {
 
 #[tauri::command]
 pub async fn get_unrealversionselector_status(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<UnrealVerSelDiagResponse, TauriError> {
     let res = state
         .client
@@ -59,7 +64,7 @@ pub async fn get_unrealversionselector_status(
 // Config
 #[tauri::command]
 pub async fn get_dynamic_config(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<DynamicConfig, TauriError> {
     let res = state
         .client
@@ -76,7 +81,7 @@ pub async fn get_dynamic_config(
 
 #[tauri::command]
 pub async fn get_project_config(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<Vec<ProjectConfig>, TauriError> {
     let res = state
         .client
@@ -94,7 +99,7 @@ pub async fn get_project_config(
 // Commits
 #[tauri::command]
 pub async fn get_build(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
     project: Option<String>,
 ) -> Result<ArtifactEntry, TauriError> {
@@ -130,7 +135,7 @@ pub async fn get_build(
 
 #[tauri::command]
 pub async fn get_builds(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     limit: Option<u32>,
     project: Option<String>,
 ) -> Result<ArtifactList, TauriError> {
@@ -167,7 +172,7 @@ pub async fn get_builds(
 
 #[tauri::command]
 pub async fn show_commit_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
     stash: bool,
 ) -> Result<Vec<CommitFileInfo>, TauriError> {
@@ -189,7 +194,7 @@ pub async fn show_commit_files(
 
 #[tauri::command]
 pub async fn verify_build(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
 ) -> Result<bool, TauriError> {
     let res = state
@@ -210,7 +215,7 @@ pub async fn verify_build(
 
 #[tauri::command]
 pub async fn update_app_config(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     config: AppConfig,
     token: Option<String>,
 ) -> Result<String, TauriError> {
@@ -235,7 +240,7 @@ pub async fn update_app_config(
 
 #[tauri::command]
 pub async fn sync_client(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: SyncClientRequest,
 ) -> Result<(), TauriError> {
     let res = state
@@ -254,7 +259,7 @@ pub async fn sync_client(
 }
 
 #[tauri::command]
-pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn wipe_client_data(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/builds/client/wipe", state.server_url))
@@ -270,7 +275,7 @@ pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), Taur
 }
 
 #[tauri::command]
-pub async fn reset_longtail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn reset_longtail(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/builds/longtail/reset", state.server_url))
@@ -288,7 +293,7 @@ pub async fn reset_longtail(state: tauri::State<'_, State>) -> Result<(), TauriE
 }
 
 #[tauri::command]
-pub async fn reset_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn reset_repo(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/reset", state.server_url))
@@ -305,7 +310,7 @@ pub async fn reset_repo(state: tauri::State<'_, State>) -> Result<(), TauriError
 
 #[tauri::command]
 pub async fn reset_repo_to_commit(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -325,7 +330,7 @@ pub async fn reset_repo_to_commit(
 // Argo
 #[tauri::command]
 pub async fn get_workflows(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     engine: bool,
 ) -> Result<GetWorkflowsResponse, TauriError> {
     let res = state
@@ -346,7 +351,7 @@ pub async fn get_workflows(
 
 #[tauri::command]
 pub async fn get_workflow_node_logs(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     uid: String,
     node_id: String,
 ) -> Result<String, TauriError> {
@@ -368,7 +373,7 @@ pub async fn get_workflow_node_logs(
 
 #[tauri::command]
 pub async fn get_workflow_junit_artifact(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     uid: String,
     node_id: String,
 ) -> Result<Option<JunitOutput>, TauriError> {
@@ -390,7 +395,7 @@ pub async fn get_workflow_junit_artifact(
 
 #[tauri::command]
 pub async fn stop_workflow(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     workflow: String,
 ) -> Result<String, TauriError> {
     let res = state
@@ -412,7 +417,7 @@ pub async fn stop_workflow(
 // Repo
 #[tauri::command]
 pub async fn get_repo_status(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     skip_dll_check: bool,
     allow_offline_communication: bool,
 ) -> Result<RepoStatus, TauriError> {
@@ -432,7 +437,9 @@ pub async fn get_repo_status(
 }
 
 #[tauri::command]
-pub async fn list_snapshots(state: tauri::State<'_, State>) -> Result<Vec<Snapshot>, TauriError> {
+pub async fn list_snapshots(
+    state: tauri::State<'_, TauriState>,
+) -> Result<Vec<Snapshot>, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/snapshots", state.server_url))
@@ -448,7 +455,7 @@ pub async fn list_snapshots(state: tauri::State<'_, State>) -> Result<Vec<Snapsh
 
 #[tauri::command]
 pub async fn restore_snapshot(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -467,7 +474,7 @@ pub async fn restore_snapshot(
 
 #[tauri::command]
 pub async fn save_snapshot(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     message: String,
     files: Vec<String>,
 ) -> Result<(), TauriError> {
@@ -486,7 +493,7 @@ pub async fn save_snapshot(
 
 #[tauri::command]
 pub async fn delete_snapshot(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -506,7 +513,7 @@ pub async fn delete_snapshot(
 
 #[tauri::command]
 pub async fn quick_submit(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: PushRequest,
 ) -> Result<(), TauriError> {
     let res = state
@@ -526,7 +533,7 @@ pub async fn quick_submit(
 // GitHub
 #[tauri::command]
 pub async fn get_pull_request(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     id: u64,
 ) -> Result<serde_json::Value, TauriError> {
     let res = state
@@ -550,7 +557,7 @@ pub async fn get_pull_request(
 
 #[tauri::command]
 pub async fn get_pull_requests(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     limit: i64,
 ) -> Result<Vec<GetPullRequestsSearchEdgesNodeOnPullRequest>, TauriError> {
     let res = state
@@ -571,7 +578,7 @@ pub async fn get_pull_requests(
 
 #[tauri::command]
 pub async fn get_merge_queue(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<GetMergeQueueRepositoryMergeQueue, TauriError> {
     let res = state
         .client
@@ -589,7 +596,7 @@ pub async fn get_merge_queue(
 // Servers
 #[tauri::command]
 pub async fn get_servers(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: Option<String>,
 ) -> Result<Vec<GameServerResults>, TauriError> {
     let mut req = state.client.get(format!("{}/servers", state.server_url));
@@ -621,7 +628,7 @@ pub async fn get_servers(
 
 #[tauri::command]
 pub async fn get_server(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     name: &str,
 ) -> Result<GameServerResults, TauriError> {
     let res = state
@@ -639,7 +646,7 @@ pub async fn get_server(
 
 #[tauri::command]
 pub async fn launch_server(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: LaunchRequest,
 ) -> Result<(), TauriError> {
     let res = state
@@ -658,7 +665,7 @@ pub async fn launch_server(
 
 #[tauri::command]
 pub async fn terminate_server(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     name: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -676,7 +683,7 @@ pub async fn terminate_server(
 
 #[tauri::command]
 pub async fn download_server_logs(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     name: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -693,7 +700,7 @@ pub async fn download_server_logs(
 }
 
 #[tauri::command]
-pub async fn open_logs_folder(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn open_logs_folder(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/servers/open-logs", state.server_url))
@@ -709,7 +716,7 @@ pub async fn open_logs_folder(state: tauri::State<'_, State>) -> Result<(), Taur
 
 #[tauri::command]
 pub async fn start_gameserver_log_tail(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     name: String,
 ) -> Result<(), TauriError> {
     state
@@ -721,7 +728,9 @@ pub async fn start_gameserver_log_tail(
 }
 
 #[tauri::command]
-pub async fn stop_gameserver_log_tail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn stop_gameserver_log_tail(
+    state: tauri::State<'_, TauriState>,
+) -> Result<(), TauriError> {
     state
         .client
         .post(format!("{}/servers/logs/stop", state.server_url))
@@ -732,7 +741,9 @@ pub async fn stop_gameserver_log_tail(state: tauri::State<'_, State>) -> Result<
 
 // Playtests
 #[tauri::command]
-pub async fn get_playtests(state: tauri::State<'_, State>) -> Result<Vec<Playtest>, TauriError> {
+pub async fn get_playtests(
+    state: tauri::State<'_, TauriState>,
+) -> Result<Vec<Playtest>, TauriError> {
     let response = state
         .client
         .get(format!("{}/playtests", state.server_url))
@@ -745,7 +756,7 @@ pub async fn get_playtests(state: tauri::State<'_, State>) -> Result<Vec<Playtes
 
 #[tauri::command]
 pub async fn assign_user_to_group(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: AssignUserRequest,
 ) -> Result<(), TauriError> {
     let res = state
@@ -764,7 +775,7 @@ pub async fn assign_user_to_group(
 
 #[tauri::command]
 pub async fn unassign_user_from_playtest(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: UnassignUserRequest,
 ) -> Result<(), TauriError> {
     state
@@ -778,7 +789,7 @@ pub async fn unassign_user_from_playtest(
 
 #[tauri::command]
 pub async fn create_playtest(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: CreatePlaytestRequest,
 ) -> Result<(), TauriError> {
     state
@@ -792,7 +803,7 @@ pub async fn create_playtest(
 
 #[tauri::command]
 pub async fn update_playtest(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     playtest: String,
     req: UpdatePlaytestRequest,
 ) -> Result<(), TauriError> {
@@ -807,7 +818,7 @@ pub async fn update_playtest(
 
 #[tauri::command]
 pub async fn delete_playtest(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     playtest: String,
 ) -> Result<(), TauriError> {
     state
@@ -820,7 +831,7 @@ pub async fn delete_playtest(
 
 // Project
 #[tauri::command]
-pub async fn open_project(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn open_project(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     state
         .client
         .post(format!("{}/project/open-project", state.server_url))
@@ -830,7 +841,7 @@ pub async fn open_project(state: tauri::State<'_, State>) -> Result<(), TauriErr
 }
 
 #[tauri::command]
-pub async fn force_download_dlls(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn force_download_dlls(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/download-dlls", state.server_url))
@@ -845,7 +856,7 @@ pub async fn force_download_dlls(state: tauri::State<'_, State>) -> Result<(), T
 }
 
 #[tauri::command]
-pub async fn force_download_engine(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn force_download_engine(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/download-engine", state.server_url))
@@ -860,7 +871,7 @@ pub async fn force_download_engine(state: tauri::State<'_, State>) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn reinstall_git_hooks(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!(
@@ -879,7 +890,7 @@ pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), T
 
 #[tauri::command]
 pub async fn sync_engine_commit_with_uproject(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<String, TauriError> {
     let res = state
         .client
@@ -900,7 +911,7 @@ pub async fn sync_engine_commit_with_uproject(
 
 #[tauri::command]
 pub async fn sync_uproject_commit_with_engine(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<String, TauriError> {
     let res = state
         .client
@@ -951,7 +962,7 @@ pub async fn tray_generate_and_open_sln(
 }
 
 #[tauri::command]
-pub async fn generate_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn generate_sln(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let open = false;
     let generate = true;
     generate_and_open_sln(
@@ -964,7 +975,7 @@ pub async fn generate_sln(state: tauri::State<'_, State>) -> Result<(), TauriErr
 }
 
 #[tauri::command]
-pub async fn open_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn open_sln(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let open = true;
     let generate = false;
     generate_and_open_sln(
@@ -976,9 +987,107 @@ pub async fn open_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> 
     .await
 }
 
-// logout
+// auth
 #[tauri::command]
-pub async fn logout(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn authenticate(handle: tauri::AppHandle) -> Result<(), TauriError> {
+    let state = handle.state::<TauriState>();
+    let auth: AuthState = state.auth_state.as_ref().unwrap().clone();
+
+    // return an error if anything in auth state is empty
+    if auth.issuer_url.is_none() {
+        return Err(TauriError {
+            message: "Authentication state is missing issuer URL".to_string(),
+            status_code: 500,
+        });
+    }
+
+    if auth.client_id.is_none() {
+        return Err(TauriError {
+            message: "Authentication state is missing client ID".to_string(),
+            status_code: 500,
+        });
+    }
+
+    let in_flight = auth.in_flight.load(Ordering::Relaxed);
+    if in_flight {
+        debug!("Authentication already in flight");
+        return Ok(());
+    }
+
+    auth.in_flight.store(true, Ordering::Relaxed);
+    let http_client = reqwest::Client::new();
+
+    let issuer_url_string = auth.issuer_url.clone().unwrap();
+    let issuer_url = IssuerUrl::new(issuer_url_string).map_err(|_| TauriError {
+        message: "Invalid issuer URL".to_string(),
+        status_code: 500,
+    })?;
+
+    let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
+        .await
+        .map_err(|_| TauriError {
+            message: "Failed to fetch provider metadata".to_string(),
+            status_code: 500,
+        })?;
+
+    let client_id_string = auth.client_id.clone().unwrap();
+    let client_id = ClientId::new(client_id_string);
+
+    let redirect_url = RedirectUrl::new("http://localhost:8484/auth/callback".to_string())
+        .map_err(|_| TauriError {
+            message: "Invalid redirect URL".to_string(),
+            status_code: 500,
+        })?;
+
+    let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
+        .set_redirect_uri(redirect_url);
+
+    // The 2nd element is the csrf token.
+    // We already have it so we don't care about it.
+    let inner_auth = auth.clone();
+    let (auth_url, _, _) = client
+        .authorize_url(
+            CoreAuthenticationFlow::AuthorizationCode,
+            move || inner_auth.csrf_token.clone(),
+            Nonce::new_random,
+        )
+        .add_scopes(vec![
+            Scope::new("openid".to_string()),
+            Scope::new("profile".to_string()),
+            Scope::new("email".to_string()),
+            Scope::new("offline_access".to_string()),
+        ])
+        .set_pkce_challenge(auth.pkce.0.clone())
+        .url();
+
+    open::that(auth_url.to_string()).map_err(|_| TauriError {
+        message: "Failed to open browser".to_string(),
+        status_code: 500,
+    })?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn refresh(state: tauri::State<'_, TauriState>, token: String) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/auth/refresh?refreshToken={}",
+            state.server_url, token
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn logout(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/auth/logout", state.server_url))
