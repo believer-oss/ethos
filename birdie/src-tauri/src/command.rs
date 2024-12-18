@@ -413,7 +413,7 @@ pub async fn run_set_env(state: tauri::State<'_, TauriState>) -> Result<(), Taur
 }
 
 #[tauri::command]
-pub async fn refetch_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn refetch_repo(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/refetch", state.server_url))
