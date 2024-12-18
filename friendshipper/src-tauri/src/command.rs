@@ -309,7 +309,7 @@ pub async fn reset_repo(state: tauri::State<'_, TauriState>) -> Result<(), Tauri
 }
 
 #[tauri::command]
-pub async fn refetch_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn refetch_repo(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/refetch", state.server_url))
@@ -716,9 +716,8 @@ pub async fn download_server_logs(
 }
 
 #[tauri::command]
-<<<<<<< HEAD
 pub async fn copy_profile_data_from_gameserver(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     name: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -735,10 +734,7 @@ pub async fn copy_profile_data_from_gameserver(
 }
 
 #[tauri::command]
-pub async fn open_logs_folder(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-=======
 pub async fn open_logs_folder(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
->>>>>>> 9ead67c (chore(friendshipper): move oidc auth + refresh logic into the backend")
     let res = state
         .client
         .post(format!("{}/servers/open-logs", state.server_url))

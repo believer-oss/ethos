@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import {
 		Button,
+		ButtonGroup,
 		DarkMode,
 		Img,
 		Modal,
@@ -728,7 +729,10 @@
 						<code class="text-sm text-gray-300 dark:text-gray-300 m-0">{gitStartupMessage}</code>
 					</div>
 				{/if}
-				<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
+				<ButtonGroup class="space-x-px">
+					<Button color="primary" on:click={openSystemLogsFolder}>Open Logs Folder</Button>
+					<Button color="primary" on:click={handleOktaLogin}>Re-open Login Page</Button>
+				</ButtonGroup>
 			</div>
 		{/if}
 	{:else}
