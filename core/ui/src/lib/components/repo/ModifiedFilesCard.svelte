@@ -718,7 +718,7 @@
 			role="button"
 			tabindex="0"
 		>
-			<div class="text-white">drag file(s) here to create a new group</div>
+			<div class="text-white whitespace-nowrap">drag file(s) here to create a new group</div>
 		</div>
 	</div>
 </Card>
