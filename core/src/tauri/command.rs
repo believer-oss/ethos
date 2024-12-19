@@ -1,5 +1,5 @@
 use crate::tauri::error::TauriError;
-use crate::tauri::State;
+use crate::tauri::TauriState;
 use crate::types::commits::Commit;
 use crate::types::config::{AppConfig, RepoConfig};
 use crate::types::logs::LogEntry;
@@ -26,7 +26,7 @@ pub async fn check_error(code: reqwest::StatusCode, body: String) -> Option<Taur
 // System
 
 #[tauri::command]
-pub async fn get_system_status(state: tauri::State<'_, State>) -> Result<bool, TauriError> {
+pub async fn get_system_status(state: tauri::State<'_, TauriState>) -> Result<bool, TauriError> {
     let res = state
         .client
         .get(format!("{}/system/status", state.server_url.clone()))
@@ -44,12 +44,12 @@ pub async fn get_system_status(state: tauri::State<'_, State>) -> Result<bool, T
 }
 
 #[tauri::command]
-pub async fn get_log_path(state: tauri::State<'_, State>) -> Result<String, TauriError> {
+pub async fn get_log_path(state: tauri::State<'_, TauriState>) -> Result<String, TauriError> {
     Ok(state.log_path.clone().to_str().unwrap().to_string())
 }
 
 #[tauri::command]
-pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn restart(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     use std::process::Command;
 
     let span = tracing::info_span!("shutting_down");
@@ -84,7 +84,7 @@ pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
 }
 
 #[tauri::command]
-pub async fn get_logs(state: tauri::State<'_, State>) -> Result<Vec<LogEntry>, TauriError> {
+pub async fn get_logs(state: tauri::State<'_, TauriState>) -> Result<Vec<LogEntry>, TauriError> {
     let res = state
         .client
         .get(format!("{}/system/logs", state.server_url))
@@ -104,7 +104,9 @@ pub async fn get_logs(state: tauri::State<'_, State>) -> Result<Vec<LogEntry>, T
 }
 
 #[tauri::command]
-pub async fn open_system_logs_folder(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn open_system_logs_folder(
+    state: tauri::State<'_, TauriState>,
+) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/system/open-logs", state.server_url))
@@ -120,7 +122,7 @@ pub async fn open_system_logs_folder(state: tauri::State<'_, State>) -> Result<(
 
 #[tauri::command]
 pub async fn open_terminal_to_path(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     path: String,
 ) -> Result<(), TauriError> {
     let res = state
@@ -139,7 +141,7 @@ pub async fn open_terminal_to_path(
 
 // Auth
 #[tauri::command]
-pub async fn check_login_required(state: tauri::State<'_, State>) -> Result<bool, TauriError> {
+pub async fn check_login_required(state: tauri::State<'_, TauriState>) -> Result<bool, TauriError> {
     let res = state
         .client
         .get(format!("{}/auth/status", state.server_url))
@@ -159,13 +161,13 @@ pub async fn check_login_required(state: tauri::State<'_, State>) -> Result<bool
 }
 
 #[tauri::command]
-pub async fn refresh_login(
-    state: tauri::State<'_, State>,
+pub async fn refresh_aws_login(
+    state: tauri::State<'_, TauriState>,
     token: Option<String>,
 ) -> Result<(), TauriError> {
     let url = match token {
-        Some(token) => format!("{}/auth/refresh?token={}", state.server_url, token),
-        None => format!("{}/auth/refresh", state.server_url),
+        Some(token) => format!("{}/auth/aws/refresh?token={}", state.server_url, token),
+        None => format!("{}/auth/aws/refresh", state.server_url),
     };
 
     let res = state.client.post(url).send().await?;
@@ -179,7 +181,7 @@ pub async fn refresh_login(
 
 // Git
 #[tauri::command]
-pub async fn install_git(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn install_git(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/system/git/install", state.server_url))
@@ -197,7 +199,7 @@ pub async fn install_git(state: tauri::State<'_, State>) -> Result<(), TauriErro
 
 #[tauri::command]
 pub async fn configure_git_user(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     name: String,
     email: String,
 ) -> Result<(), TauriError> {
@@ -218,7 +220,9 @@ pub async fn configure_git_user(
 }
 
 #[tauri::command]
-pub async fn get_repo_config(state: tauri::State<'_, State>) -> Result<RepoConfig, TauriError> {
+pub async fn get_repo_config(
+    state: tauri::State<'_, TauriState>,
+) -> Result<RepoConfig, TauriError> {
     let res = state
         .client
         .get(format!("{}/config/repo", state.server_url))
@@ -239,7 +243,7 @@ pub async fn get_repo_config(state: tauri::State<'_, State>) -> Result<RepoConfi
 
 #[tauri::command]
 pub async fn get_commits(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     limit: Option<u32>,
     remote: Option<bool>,
 ) -> Result<Vec<Commit>, TauriError> {
@@ -281,7 +285,7 @@ pub async fn get_commits(
 
 #[tauri::command]
 pub async fn clone_repo(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: CloneRequest,
 ) -> Result<(), TauriError> {
     let res = state
@@ -298,7 +302,7 @@ pub async fn clone_repo(
 }
 
 #[tauri::command]
-pub async fn checkout_trunk(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn checkout_trunk(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/checkout/trunk", state.server_url))
@@ -314,7 +318,7 @@ pub async fn checkout_trunk(state: tauri::State<'_, State>) -> Result<(), TauriE
 
 #[tauri::command]
 pub async fn revert_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     req: RevertFilesRequest,
 ) -> Result<(), TauriError> {
     let res = state
@@ -333,7 +337,7 @@ pub async fn revert_files(
 
 #[tauri::command]
 pub async fn get_rebase_status(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<RebaseStatusResponse, TauriError> {
     let res = state
         .client
@@ -354,7 +358,7 @@ pub async fn get_rebase_status(
 }
 
 #[tauri::command]
-pub async fn fix_rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn fix_rebase(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/diagnostics/rebase/fix", state.server_url))
@@ -369,7 +373,7 @@ pub async fn fix_rebase(state: tauri::State<'_, State>) -> Result<(), TauriError
 }
 
 #[tauri::command]
-pub async fn rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn rebase(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/diagnostics/rebase", state.server_url))
@@ -385,7 +389,7 @@ pub async fn rebase(state: tauri::State<'_, State>) -> Result<(), TauriError> {
 
 #[tauri::command]
 pub async fn acquire_locks(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     paths: Vec<String>,
     force: bool,
 ) -> Result<(), TauriError> {
@@ -412,7 +416,7 @@ pub async fn acquire_locks(
 
 #[tauri::command]
 pub async fn release_locks(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     paths: Vec<String>,
     force: bool,
 ) -> Result<(), TauriError> {
@@ -432,7 +436,7 @@ pub async fn release_locks(
 }
 
 #[tauri::command]
-pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn sync_latest(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/pull", state.server_url))
@@ -473,7 +477,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
 
 // Config
 #[tauri::command]
-pub async fn get_app_config(state: tauri::State<'_, State>) -> Result<AppConfig, TauriError> {
+pub async fn get_app_config(state: tauri::State<'_, TauriState>) -> Result<AppConfig, TauriError> {
     let res = state
         .client
         .get(format!("{}/config", state.server_url))
@@ -493,7 +497,7 @@ pub async fn get_app_config(state: tauri::State<'_, State>) -> Result<AppConfig,
 }
 
 #[tauri::command]
-pub async fn reset_config(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn reset_config(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/config/reset", state.server_url))

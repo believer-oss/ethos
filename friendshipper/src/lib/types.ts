@@ -9,6 +9,11 @@ export interface TauriError {
 }
 
 // Okta types
+export interface OIDCTokens {
+	idToken: string;
+	accessToken: string;
+	refreshToken: Nullable<string>;
+}
 
 export interface Credentials {
 	id_token: string;
