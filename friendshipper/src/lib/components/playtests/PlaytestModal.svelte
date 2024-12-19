@@ -20,17 +20,9 @@
 	let maps: { value: string; name: string }[] = [];
 	let submitting = false;
 	let deleting = false;
+	let project: string = '';
 
 	let playtestError: string = '';
-
-	const getPlaytestProject = (item: Nullable<Playtest>): string => {
-		if (item === null) return '';
-		if (item.metadata.annotations === null) return '';
-
-		return item.metadata.annotations['believer.dev/project'] ?? '';
-	};
-
-	$: project = getPlaytestProject(playtest);
 
 	enum CommitSelectMode {
 		Default,
@@ -89,6 +81,14 @@
 		value: p,
 		name: p.split('-')[1]
 	}));
+
+	const getPlaytestProject = (item: Nullable<Playtest>): string => {
+		if (item === null) return projects?.[0]?.value ?? '';
+
+		if (item.metadata.annotations === null) return '';
+
+		return item.metadata.annotations['believer.dev/project'] ?? '';
+	};
 
 	const inputClass = 'bg-secondary-700 dark:bg-space-900 text-white';
 
@@ -193,6 +193,8 @@
 		} else {
 			commitSelectMode = CommitSelectMode.Default;
 		}
+
+		project = getPlaytestProject(playtest);
 	};
 
 	const getPlaytestDate = (item: Nullable<Playtest>): string => {
@@ -211,7 +213,7 @@
 </script>
 
 <Modal
-	size="sm"
+	size="md"
 	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
 	bodyClass="!border-t-0"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
@@ -271,7 +273,7 @@
 							size="sm"
 							name="version"
 							class={inputClass}
-							value={playtest ? playtest.spec.version : ''}
+							value={playtest ? playtest.spec.version : commits[0]?.value ?? ''}
 							required
 						>
 							{#each commits as commit}
@@ -301,7 +303,7 @@
 							class={inputClass}
 							size="sm"
 							name="version"
-							value={playtest ? playtest.spec.version : ''}
+							value={playtest ? playtest.spec.version : commits[0]?.value ?? ''}
 							required
 						/>
 						<Button
@@ -327,7 +329,7 @@
 					size="sm"
 					name="map"
 					class={inputClass}
-					value={playtest ? playtest.spec.map : ''}
+					value={playtest ? playtest.spec.map : maps[0]?.value ?? ''}
 					required
 				>
 					{#each maps as map}
