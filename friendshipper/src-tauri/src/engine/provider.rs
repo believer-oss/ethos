@@ -16,6 +16,12 @@ pub enum CommunicationType {
     OfflineFallback, // Tries IPC first, but falls back to an offline approach if the host engine process isn't running, which can be much slower than IPC
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum AllowMultipleProcesses {
+    False,
+    True,
+}
+
 /// EngineProvider trait
 #[async_trait]
 pub trait EngineProvider: Clone + Send + Sync + 'static {
@@ -39,7 +45,7 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
 
     /// Opens the project in the engine's editor
     /// For example, if the engine is Unreal, this function should open the .uproject file in the editor.
-    async fn open_project(&self) -> Result<()>;
+    async fn open_project(&self, allow_multiple: AllowMultipleProcesses) -> Result<()>;
 
     fn get_default_content_subdir(&self) -> String;
 

@@ -58,6 +58,7 @@ export interface AppConfig {
 	engineSourcePath: string;
 	engineDownloadSymbols: boolean;
 	engineRepoUrl: string;
+	engineAllowMultipleProcesses: boolean;
 	recordPlay: boolean;
 	serverUrl: string;
 	oktaConfig: OktaConfig;
