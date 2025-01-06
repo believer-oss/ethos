@@ -112,6 +112,9 @@ pub struct AppConfig {
     #[serde(default, rename = "engineRepoUrl")]
     pub engine_repo_url: String,
 
+    #[serde(default, rename = "engineAllowMultipleProcesses")]
+    pub engine_allow_multiple_processes: bool,
+
     #[serde(default, rename = "recordPlay")]
     pub record_play: bool,
 
@@ -170,6 +173,7 @@ impl AppConfig {
             engine_source_path: Default::default(),
             engine_download_symbols: false,
             engine_repo_url: Default::default(),
+            engine_allow_multiple_processes: false,
             record_play: false,
             server_url: Default::default(),
             okta_config: None,

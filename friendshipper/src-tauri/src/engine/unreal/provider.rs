@@ -1,4 +1,5 @@
 use crate::engine;
+use crate::engine::provider::AllowMultipleProcesses;
 use crate::engine::unreal::ofpa::OFPANameCache;
 use crate::engine::unreal::ofpa::OFPANameCacheRef;
 use crate::engine::EngineProvider;
@@ -96,10 +97,15 @@ impl EngineProvider for UnrealEngineProvider {
         Ok(())
     }
 
-    async fn open_project(&self) -> Result<()> {
+    async fn open_project(&self, allow_multiple: AllowMultipleProcesses) -> Result<()> {
         let path_absolute: PathBuf = self.repo_path.join(self.uproject_path.clone());
 
-        if !self.is_editor_process_running() {
+        let mut can_launch_editor = allow_multiple == AllowMultipleProcesses::True;
+        if !can_launch_editor {
+            can_launch_editor = !self.is_editor_process_running();
+        }
+
+        if can_launch_editor {
             open::that(path_absolute)?
         } else {
             return Err(anyhow!(

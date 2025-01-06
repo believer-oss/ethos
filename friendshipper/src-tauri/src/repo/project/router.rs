@@ -12,6 +12,7 @@ use serde::Serialize;
 use tokio::process::Command;
 use tracing::{error, info};
 
+use crate::engine::AllowMultipleProcesses;
 use crate::engine::EngineProvider;
 use ethos_core::clients::git;
 use ethos_core::clients::git::CommitFormat;
@@ -61,9 +62,15 @@ async fn open_project<T>(State(state): State<AppState<T>>) -> Result<(), CoreErr
 where
     T: EngineProvider,
 {
+    let allow_multiple = if state.app_config.read().engine_allow_multiple_processes {
+        AllowMultipleProcesses::True
+    } else {
+        AllowMultipleProcesses::False
+    };
+
     state
         .engine
-        .open_project()
+        .open_project(allow_multiple)
         .await
         .map_err(|e| CoreError::Internal(anyhow!(e)))
 }

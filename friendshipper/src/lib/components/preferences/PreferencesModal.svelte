@@ -473,6 +473,20 @@
 	<div class="rounded-lg border border-gray-300 dark:border-gray-300">
 		<div class="m-4 flex flex-col gap-4">
 			<div>
+				<div class="flex flex-row gap-2">
+					<Checkbox
+						bind:checked={localAppConfig.engineAllowMultipleProcesses}
+						class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+					/>
+					<Label class="text-gray-400">Allow launching multiple editors</Label>
+				</div>
+				<Tooltip class="text-sm" placement="top">
+					When unchecked, will only allow one instance of the editor to be open. When checked,
+					multiple editor processes will be launched. Use at your own risk!
+				</Tooltip>
+			</div>
+
+			<div>
 				<Radio
 					name="engineType"
 					bind:group={localAppConfig.engineType}
