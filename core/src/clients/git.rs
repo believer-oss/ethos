@@ -222,29 +222,35 @@ impl Git {
         Ok(commit.to_string())
     }
 
-    pub async fn fetch<'a>(&self, prune: ShouldPrune, opts: Opts<'a>) -> anyhow::Result<()> {
-        let mut fetch_running = GIT_FETCH_LOCK.clone().lock_owned().await;
-        *fetch_running = true;
-        if prune == ShouldPrune::Yes {
-            self.run(
-                &[
-                    "fetch",
-                    "--prune",
-                    "--no-auto-maintenance",
-                    "--show-forced-updates",
-                ],
-                opts,
-            )
-            .await?
+    pub async fn fetch(&self, prune: ShouldPrune, opts: Opts<'_>) -> anyhow::Result<()> {
+        let fetch_running = GIT_FETCH_LOCK.clone().try_lock_owned();
+        if fetch_running.is_err() {
+            GIT_FETCH_LOCK.clone().lock_owned().await;
+            Ok(())
         } else {
-            self.run(
-                &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
-                opts,
-            )
-            .await?
+            let mut running = fetch_running.unwrap();
+            *running = true;
+            if prune == ShouldPrune::Yes {
+                self.run(
+                    &[
+                        "fetch",
+                        "--prune",
+                        "--no-auto-maintenance",
+                        "--show-forced-updates",
+                    ],
+                    opts,
+                )
+                .await?
+            } else {
+                self.run(
+                    &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
+                    opts,
+                )
+                .await?
+            }
+            *running = false;
+            Ok(())
         }
-        *fetch_running = false;
-        Ok(())
     }
 
     pub async fn commit(&self, message: &str) -> anyhow::Result<()> {
@@ -819,10 +825,10 @@ impl Git {
         Ok(username)
     }
 
-    pub async fn run_and_collect_output<'a>(
+    pub async fn run_and_collect_output(
         &self,
         args: &[&str],
-        opts: Opts<'a>,
+        opts: Opts<'_>,
     ) -> anyhow::Result<String> {
         // assert we have at least one arg
         if args.is_empty() {
