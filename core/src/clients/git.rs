@@ -14,6 +14,7 @@ use tempfile::NamedTempFile;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::warn;
 use tracing::{debug, error, info, instrument};
 
@@ -97,6 +98,7 @@ pub enum LfsMode {
 pub struct Git {
     pub repo_path: PathBuf,
     pub tx: std::sync::mpsc::Sender<String>,
+    fetch_running: Arc<Mutex<bool>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -186,7 +188,11 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
 
 impl Git {
     pub fn new(repo_path: PathBuf, tx: std::sync::mpsc::Sender<String>) -> Git {
-        Git { repo_path, tx }
+        Git {
+            repo_path,
+            tx,
+            fetch_running: Arc::new(Mutex::new(false)),
+        }
     }
 
     pub async fn head_commit(
@@ -221,6 +227,8 @@ impl Git {
     }
 
     pub async fn fetch<'a>(&self, prune: ShouldPrune, opts: Opts<'a>) -> anyhow::Result<()> {
+        let mut fetch_running = self.fetch_running.clone().lock_owned().await;
+        *fetch_running = true;
         if prune == ShouldPrune::Yes {
             self.run(
                 &[
@@ -231,14 +239,16 @@ impl Git {
                 ],
                 opts,
             )
-            .await
+            .await?
         } else {
             self.run(
                 &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
                 opts,
             )
-            .await
+            .await?
         }
+        *fetch_running = false;
+        Ok(())
     }
 
     pub async fn commit(&self, message: &str) -> anyhow::Result<()> {
@@ -695,7 +705,11 @@ impl Git {
     }
 
     pub async fn refetch(&self) -> anyhow::Result<()> {
-        self.run(&["fetch", "--refetch"], Opts::default()).await
+        let mut fetch_running = self.fetch_running.clone().lock_owned().await;
+        *fetch_running = true;
+        self.run(&["fetch", "--refetch"], Opts::default()).await?;
+        *fetch_running = false;
+        Ok(())
     }
 
     pub async fn rewrite_graph(&self) -> anyhow::Result<()> {
