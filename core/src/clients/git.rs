@@ -28,6 +28,7 @@ lazy_static! {
     static ref WORKTREE_DIR_REGEX: Regex = Regex::new(r"^worktree (.+)").unwrap();
     static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
     static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
+    static ref GIT_FETCH_LOCK: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 }
 
 #[cfg(windows)]
@@ -98,7 +99,6 @@ pub enum LfsMode {
 pub struct Git {
     pub repo_path: PathBuf,
     pub tx: std::sync::mpsc::Sender<String>,
-    fetch_running: Arc<Mutex<bool>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -188,11 +188,7 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
 
 impl Git {
     pub fn new(repo_path: PathBuf, tx: std::sync::mpsc::Sender<String>) -> Git {
-        Git {
-            repo_path,
-            tx,
-            fetch_running: Arc::new(Mutex::new(false)),
-        }
+        Git { repo_path, tx }
     }
 
     pub async fn head_commit(
@@ -227,7 +223,7 @@ impl Git {
     }
 
     pub async fn fetch<'a>(&self, prune: ShouldPrune, opts: Opts<'a>) -> anyhow::Result<()> {
-        let mut fetch_running = self.fetch_running.clone().lock_owned().await;
+        let mut fetch_running = GIT_FETCH_LOCK.clone().lock_owned().await;
         *fetch_running = true;
         if prune == ShouldPrune::Yes {
             self.run(
@@ -705,7 +701,7 @@ impl Git {
     }
 
     pub async fn refetch(&self) -> anyhow::Result<()> {
-        let mut fetch_running = self.fetch_running.clone().lock_owned().await;
+        let mut fetch_running = GIT_FETCH_LOCK.clone().lock_owned().await;
         *fetch_running = true;
         self.run(&["fetch", "--refetch"], Opts::default()).await?;
         *fetch_running = false;
