@@ -284,11 +284,6 @@ impl Server {
                 git.configure_untracked_cache().await?;
 
                 startup_tx.send("Performing git repo maintenance".to_string())?;
-                git.refetch().await.or_else(|e| {
-                    warn!("Failed to refetch git repo: {:?}", e);
-                    Ok::<(), CoreError>(())
-                })?;
-                git.rewrite_graph().await?;
                 git.expire_reflog().await?;
 
                 startup_tx.send("Installing git hooks".to_string())?;

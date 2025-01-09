@@ -36,6 +36,7 @@ where
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
         .route("/reset", post(operations::reset_repo))
+        .route("/refetch", post(operations::refetch_repo))
         .route("/reset/:commit", post(operations::reset_repo_to_commit))
         .route("/revert", post(operations::revert_files_handler::<T>))
         .route("/locks/lock", post(operations::acquire_locks_handler))
