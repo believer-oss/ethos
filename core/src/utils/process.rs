@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use retry::delay::Fixed;
 use retry::{retry_with_index, OperationResult};
 use std::net::TcpListener;
+use sysinfo::Pid;
 use tracing::{info, warn};
 
 static STARTUP_RETRY_ATTEMPTS: usize = 30;
@@ -31,7 +32,7 @@ pub fn wait_for_port(port: u16) -> Result<()> {
     }
 }
 
-pub fn check_for_process(name: &str) -> Result<()> {
+pub fn check_for_process(name: &str, port: u16) -> Result<()> {
     // add bin suffix
 
     info!("Checking for existing {} process...", name);
@@ -64,6 +65,41 @@ pub fn check_for_process(name: &str) -> Result<()> {
                             STARTUP_RETRY_ATTEMPTS
                         )),
                     };
+                }
+            }
+
+            match listeners::get_processes_by_port(port) {
+                Ok(listeners) => {
+                    for listener in listeners {
+                        if listener.pid != my_pid {
+                            if let Some(process) = system.process(Pid::from_u32(listener.pid)) {
+                                warn!(
+                                    "Found existing process {} on port {} but couldn't reach its API. Attempting to kill it.",
+                                    process.name(),
+                                    port
+                                );
+
+                                return match process.kill() {
+                                    true => OperationResult::Ok(()),
+                                    false => OperationResult::Retry(format!(
+                                        "Failed to kill process {}, retrying, ({}/{})",
+                                        listener.pid,
+                                        attempt + 1,
+                                        STARTUP_RETRY_ATTEMPTS
+                                    )),
+                                };
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to get processes by port: {:?}", e);
+                    return OperationResult::Retry(format!(
+                        "Failed to get processes by port: {:?}, retrying, ({}/{})",
+                        e,
+                        attempt + 1,
+                        STARTUP_RETRY_ATTEMPTS
+                    ));
                 }
             }
 

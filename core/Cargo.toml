@@ -92,3 +92,4 @@ serde-xml-rs = "0.6.0"
 hyper-rustls = { version = "0.24.2", features = ["webpki-roots"] }
 hyper = { version = "0.14.31", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
+listeners = "0.2.1"

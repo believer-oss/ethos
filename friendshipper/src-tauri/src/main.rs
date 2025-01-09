@@ -111,7 +111,7 @@ fn main() -> Result<(), CoreError> {
             }
         };
 
-        match utils::process::check_for_process(APP_NAME) {
+        match utils::process::check_for_process(APP_NAME, PORT) {
             Ok(_) => {}
             Err(e) => {
                 error!("Failed to check for existing process: {:?}", e);
