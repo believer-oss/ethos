@@ -223,8 +223,14 @@ impl Git {
     }
 
     pub async fn fetch(&self, prune: ShouldPrune, opts: Opts<'_>) -> anyhow::Result<()> {
+        // In the event that a fetch is already running, we will ignore the prune flag and return
+        // after the current fetch completes. This should not be a problem, as the next fetch that
+        // is not under contention will respect the prune flag.
         let fetch_running = GIT_FETCH_LOCK.clone().try_lock_owned();
+
         if fetch_running.is_err() {
+            // If we get a TryLockError, it means that a fetch is already running, so we should
+            // just block until it's done.
             GIT_FETCH_LOCK.clone().lock_owned().await;
             Ok(())
         } else {
@@ -856,10 +862,10 @@ impl Git {
         }
     }
 
-    pub async fn run_and_collect_output_into_lines<'a>(
+    pub async fn run_and_collect_output_into_lines(
         &self,
         args: &[&str],
-        opts: Opts<'a>,
+        opts: Opts<'_>,
     ) -> anyhow::Result<Vec<String>> {
         // assert we have at least one arg
         if args.is_empty() {
@@ -871,7 +877,7 @@ impl Git {
         Ok(lines)
     }
 
-    pub async fn run<'a>(&self, args: &[&str], opts: Opts<'a>) -> anyhow::Result<()> {
+    pub async fn run(&self, args: &[&str], opts: Opts<'_>) -> anyhow::Result<()> {
         // assert we have at least one arg
         if args.is_empty() {
             bail!("No arguments provided to git command");
