@@ -37,7 +37,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/pull", post(pull_handler))
         .route("/push", post(push_handler))
         .route("/revert", post(revert_files_handler))
-        .route("/refetch", get(refetch_repo))
+        .route("/refetch", post(refetch_repo))
         .route("/show", get(show_commit_files))
         .route(
             "/diagnostics/rebase",
