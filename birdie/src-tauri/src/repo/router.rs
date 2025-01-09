@@ -11,6 +11,7 @@ use crate::repo::locks::{lock_files, unlock_files, verify_locks_handler};
 use crate::repo::log::log_handler;
 use crate::repo::pull::pull_handler;
 use crate::repo::push::push_handler;
+use crate::repo::refetch::refetch_repo;
 use crate::repo::revert::revert_files_handler;
 use crate::repo::show::show_commit_files;
 use crate::repo::status::status_handler;
@@ -36,6 +37,7 @@ pub fn router(shared_state: Arc<AppState>) -> Router {
         .route("/pull", post(pull_handler))
         .route("/push", post(push_handler))
         .route("/revert", post(revert_files_handler))
+        .route("/refetch", get(refetch_repo))
         .route("/show", get(show_commit_files))
         .route(
             "/diagnostics/rebase",

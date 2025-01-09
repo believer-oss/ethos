@@ -62,6 +62,8 @@ export const fixRebase = async (): Promise<void> => invoke('fix_rebase');
 
 export const rebase = async (): Promise<void> => invoke('rebase');
 
+export const refetchRepo = async (): Promise<void> => invoke('refetch_repo');
+
 // Birdie
 export const getAllFiles = async (): Promise<string[]> => invoke('get_all_files');
 export const getFiles = async (root?: string): Promise<LFSFile[]> => invoke('get_files', { root });
