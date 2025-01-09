@@ -14,6 +14,7 @@ use tempfile::NamedTempFile;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::warn;
 use tracing::{debug, error, info, instrument};
 
@@ -27,6 +28,7 @@ lazy_static! {
     static ref WORKTREE_DIR_REGEX: Regex = Regex::new(r"^worktree (.+)").unwrap();
     static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
     static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
+    static ref GIT_FETCH_LOCK: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 }
 
 #[cfg(windows)]
@@ -220,24 +222,40 @@ impl Git {
         Ok(commit.to_string())
     }
 
-    pub async fn fetch<'a>(&self, prune: ShouldPrune, opts: Opts<'a>) -> anyhow::Result<()> {
-        if prune == ShouldPrune::Yes {
-            self.run(
-                &[
-                    "fetch",
-                    "--prune",
-                    "--no-auto-maintenance",
-                    "--show-forced-updates",
-                ],
-                opts,
-            )
-            .await
+    pub async fn fetch(&self, prune: ShouldPrune, opts: Opts<'_>) -> anyhow::Result<()> {
+        // In the event that a fetch is already running, we will ignore the prune flag and return
+        // after the current fetch completes. This should not be a problem, as the next fetch that
+        // is not under contention will respect the prune flag.
+        let fetch_running = GIT_FETCH_LOCK.clone().try_lock_owned();
+
+        if fetch_running.is_err() {
+            // If we get a TryLockError, it means that a fetch is already running, so we should
+            // just block until it's done.
+            GIT_FETCH_LOCK.clone().lock_owned().await;
+            Ok(())
         } else {
-            self.run(
-                &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
-                opts,
-            )
-            .await
+            let mut running = fetch_running.unwrap();
+            *running = true;
+            if prune == ShouldPrune::Yes {
+                self.run(
+                    &[
+                        "fetch",
+                        "--prune",
+                        "--no-auto-maintenance",
+                        "--show-forced-updates",
+                    ],
+                    opts,
+                )
+                .await?
+            } else {
+                self.run(
+                    &["fetch", "--no-auto-maintenance", "--show-forced-updates"],
+                    opts,
+                )
+                .await?
+            }
+            *running = false;
+            Ok(())
         }
     }
 
@@ -695,7 +713,11 @@ impl Git {
     }
 
     pub async fn refetch(&self) -> anyhow::Result<()> {
-        self.run(&["fetch", "--refetch"], Opts::default()).await
+        let mut fetch_running = GIT_FETCH_LOCK.clone().lock_owned().await;
+        *fetch_running = true;
+        self.run(&["fetch", "--refetch"], Opts::default()).await?;
+        *fetch_running = false;
+        Ok(())
     }
 
     pub async fn rewrite_graph(&self) -> anyhow::Result<()> {
@@ -809,10 +831,10 @@ impl Git {
         Ok(username)
     }
 
-    pub async fn run_and_collect_output<'a>(
+    pub async fn run_and_collect_output(
         &self,
         args: &[&str],
-        opts: Opts<'a>,
+        opts: Opts<'_>,
     ) -> anyhow::Result<String> {
         // assert we have at least one arg
         if args.is_empty() {
@@ -840,10 +862,10 @@ impl Git {
         }
     }
 
-    pub async fn run_and_collect_output_into_lines<'a>(
+    pub async fn run_and_collect_output_into_lines(
         &self,
         args: &[&str],
-        opts: Opts<'a>,
+        opts: Opts<'_>,
     ) -> anyhow::Result<Vec<String>> {
         // assert we have at least one arg
         if args.is_empty() {
@@ -855,7 +877,7 @@ impl Git {
         Ok(lines)
     }
 
-    pub async fn run<'a>(&self, args: &[&str], opts: Opts<'a>) -> anyhow::Result<()> {
+    pub async fn run(&self, args: &[&str], opts: Opts<'_>) -> anyhow::Result<()> {
         // assert we have at least one arg
         if args.is_empty() {
             bail!("No arguments provided to git command");
