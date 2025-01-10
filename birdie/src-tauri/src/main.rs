@@ -231,6 +231,7 @@ fn main() -> Result<(), CoreError> {
                 open_terminal_to_path,
                 open_url,
                 rebase,
+                refetch_repo,
                 release_locks,
                 revert_files,
                 restart,

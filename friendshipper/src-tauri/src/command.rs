@@ -304,6 +304,22 @@ pub async fn reset_repo(state: tauri::State<'_, State>) -> Result<(), TauriError
 }
 
 #[tauri::command]
+pub async fn refetch_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/refetch", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        error!("Error refetching repo: {}", err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn reset_repo_to_commit(
     state: tauri::State<'_, State>,
     commit: String,

@@ -2,6 +2,7 @@ pub use clone::clone_handler;
 pub use file::{File, SingleFileRequest};
 pub use lfs::{DeleteFetchIncludeRequest, DownloadFilesRequest};
 pub use locks::{LockCache, LockCacheRef};
+pub use refetch::refetch_repo;
 pub use router::router;
 pub use status::StatusOp;
 
@@ -13,6 +14,7 @@ mod locks;
 mod log;
 mod pull;
 mod push;
+mod refetch;
 mod revert;
 mod router;
 mod show;

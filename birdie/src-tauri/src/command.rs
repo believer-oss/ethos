@@ -4,6 +4,7 @@ use birdie::metadata::{
 use birdie::repo::{DeleteFetchIncludeRequest, DownloadFilesRequest, File, SingleFileRequest};
 use birdie::types::config::BirdieConfig;
 use std::path::PathBuf;
+use tracing::error;
 
 use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
@@ -396,6 +397,22 @@ pub async fn run_set_env(state: tauri::State<'_, State>) -> Result<(), TauriErro
 
     if res.status().is_client_error() {
         return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn refetch_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/refetch", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        error!("Error refetching repo: {}", err.message);
+        return Err(err);
     }
 
     Ok(())

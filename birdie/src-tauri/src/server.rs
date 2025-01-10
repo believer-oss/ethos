@@ -7,7 +7,6 @@ use anyhow::{bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
 use ethos_core::types::errors::CoreError;
-use log::warn;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::error;
@@ -98,11 +97,6 @@ impl Server {
                 git.configure_untracked_cache().await?;
 
                 startup_tx.send("Performing git repo maintenance".to_string())?;
-                git.refetch().await.or_else(|e| {
-                    warn!("Failed to refetch git repo: {:?}", e);
-                    Ok::<(), CoreError>(())
-                })?;
-                git.rewrite_graph().await?;
                 git.expire_reflog().await?;
                 match git.run_gc().await {
                     Ok(_) => {}

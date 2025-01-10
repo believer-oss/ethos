@@ -32,7 +32,7 @@
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
-	import { resetRepo } from '$lib/repo';
+	import { resetRepo, refetchRepo } from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
 	import type { AppConfig } from '$lib/types';
@@ -223,6 +223,21 @@
 			await resetRepo();
 
 			await emit('success', 'Repo reset to main.');
+		} catch (e) {
+			showModal = false;
+			await emit('error', e);
+		}
+		showProgressModal = false;
+	};
+
+	const handleRefetchRepo = async () => {
+		try {
+			showModal = false;
+			showProgressModal = true;
+			progressModalTitle = 'Refetching repo...';
+			await refetchRepo();
+
+			await emit('success', 'Repo fetch complete.');
 		} catch (e) {
 			showModal = false;
 			await emit('error', e);
@@ -625,6 +640,15 @@
 						<span class="w-full"
 							>Hard reset to <code>main</code> (will revert all local changes)</span
 						>
+					</div>
+					<div class="flex gap-2 items-center">
+						<Button
+							outline
+							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+							on:click={handleRefetchRepo}
+							>Refresh Repo and Commit Graph
+						</Button>
+						<span class="w-full">Refetch the repo from github and rebuild the commit-graph</span>
 					</div>
 					<div class="flex gap-2 items-center">
 						<Button

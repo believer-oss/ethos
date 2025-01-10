@@ -1,5 +1,16 @@
 <script lang="ts">
-	import { Button, Label, Input, Modal, Tooltip, Spinner, ButtonGroup } from 'flowbite-svelte';
+	import {
+		Accordion,
+		AccordionItem,
+		Button,
+		Card,
+		Label,
+		Input,
+		Modal,
+		Tooltip,
+		Spinner,
+		ButtonGroup
+	} from 'flowbite-svelte';
 	import { FolderOpenSolid, CodeBranchSolid, TerminalSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
@@ -7,11 +18,13 @@
 	import type { BirdieConfig } from '$lib/types';
 	import { getAppConfig, updateAppConfig } from '$lib/config';
 	import { openTerminalToPath } from '$lib/system';
+	import { refetchRepo } from '$lib/repo';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
 	export let showProgressModal: boolean;
 	export let handleCheckForUpdates: () => Promise<void>;
+	export let progressModalTitle: string;
 
 	let localAppConfig: BirdieConfig = {
 		repoPath: '',
@@ -97,6 +110,21 @@
 	const onDiscardClicked = () => {
 		showModal = false;
 		void emit('preferences-closed');
+	};
+
+	const handleRefetchRepo = async () => {
+		try {
+			showModal = false;
+			showProgressModal = true;
+			progressModalTitle = 'Refetching repo...';
+			await refetchRepo();
+
+			await emit('success', 'Repo fetch complete.');
+		} catch (e) {
+			showModal = false;
+			await emit('error', e);
+		}
+		showProgressModal = false;
 	};
 </script>
 
@@ -217,6 +245,40 @@
 			</div>
 		</div>
 	</div>
+
+	<Card
+		class="w-full p-2 sm:p-2 max-w-full bg-red-800 dark:bg-red-800 max-h-screen overflow-auto border-0 shadow-none"
+	>
+		<Accordion
+			border={false}
+			activeClass="hover:bg-red-900 focus:ring-0 text-white overflow-auto py-2 border-0 rounded-xl"
+			inactiveClass="hover:bg-red-900 text-white py-2 border-0 border-t-0 rounded-xl"
+			class="w-full"
+		>
+			<AccordionItem
+				class="w-full"
+				borderClass="border-0"
+				borderOpenClass="border-0"
+				borderBottomClass="border-0"
+			>
+				<div slot="header" class="flex items-center justify-between w-full pr-2">
+					<div class="w-1/3">Danger Zone</div>
+					<span class="text-xs text-gray-300 font-mono w-3/4">In case of emergency...</span>
+				</div>
+				<div class="flex flex-col gap-2 text-white">
+					<div class="flex gap-2 items-center">
+						<Button
+							outline
+							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+							on:click={handleRefetchRepo}
+							>Refresh Repo and Commit Graph
+						</Button>
+						<span class="w-full">Refetch the repo from github and rebuild the commit-graph</span>
+					</div>
+				</div>
+			</AccordionItem>
+		</Accordion>
+	</Card>
 
 	<div class="flex flex-row-reverse gap-2">
 		<Button outline on:click={onDiscardClicked}>Discard</Button>
