@@ -68,7 +68,7 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
             let child = Command::new(exe)
                 .args(args)
                 .spawn()
-                .context("Failed to spawn {exe}")?;
+                .context("Failed to spawn exe")?;
 
             return Ok(Some(child));
         } else {
