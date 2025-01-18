@@ -25,7 +25,7 @@ where
     let project_name = request
         .url
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or_default()
         .trim_end_matches(".git");
 
@@ -51,7 +51,7 @@ where
     let repo_name = request
         .url
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or_default()
         .trim_end_matches(".git");
     let repo_path = PathBuf::from(&request.path).join(repo_name);

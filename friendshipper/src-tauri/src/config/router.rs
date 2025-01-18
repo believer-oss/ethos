@@ -171,7 +171,12 @@ where
             };
 
             // get the name of the repo from the url
-            let repo_name = req.url.split('/').last().unwrap().trim_end_matches(".git");
+            let repo_name = req
+                .url
+                .split('/')
+                .next_back()
+                .unwrap()
+                .trim_end_matches(".git");
             let full_repo_path = PathBuf::from(&req.path.clone()).join(repo_name);
 
             // hold on to the current repo path

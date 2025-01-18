@@ -49,8 +49,7 @@ jobs:
 
   build-linux:
     if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
-    runs-on:
-      group: ethos-linux
+    runs-on: linux-8core-22.04
     strategy:
       matrix:
         app: [friendshipper, birdie]
