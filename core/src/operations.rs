@@ -263,8 +263,10 @@ impl LockOp {
             .filter(|path| {
                 if self.op == LockOperation::Lock {
                     !repo_status.locks_ours.iter().any(|lock| lock.path == *path)
-                } else {
+                } else if !self.force {
                     repo_status.locks_ours.iter().any(|lock| lock.path == *path)
+                } else {
+                    true
                 }
             })
             .collect::<Vec<_>>();
