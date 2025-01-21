@@ -11,6 +11,7 @@
 	} from 'flowbite-svelte';
 	import {
 		ArchiveArrowDownOutline,
+		ArrowDownToBracketOutline,
 		CodeOutline,
 		FileCopyOutline,
 		PhoneOutline
@@ -20,7 +21,11 @@
 	import type { GameServerResult, SyncClientRequest } from '$lib/types';
 	import { appConfig, backgroundSyncInProgress, builds, dynamicConfig } from '$lib/stores';
 	import { syncClient } from '$lib/builds';
-	import { downloadServerLogs, terminateServer } from '$lib/gameServers';
+	import {
+		copyProfileDataFromGameserver,
+		downloadServerLogs,
+		terminateServer
+	} from '$lib/gameServers';
 	import ServerLogsModal from '$lib/components/servers/ServerLogsModal.svelte';
 
 	const defaultLogTooltip = 'Download server logs';
@@ -31,6 +36,7 @@
 
 	// Loading states
 	let syncing = false;
+	let progressModalTitle = 'Syncing client';
 	let downloadingLogs = false;
 	let logTooltip = defaultLogTooltip;
 
@@ -54,6 +60,7 @@
 		}
 
 		syncing = true;
+		progressModalTitle = 'Syncing client';
 		const req: SyncClientRequest = {
 			artifactEntry: entry,
 			methodPrefix: $builds.methodPrefix,
@@ -195,6 +202,26 @@
 							placement="bottom"
 							>{logTooltip}
 						</Tooltip>
+						{#if $dynamicConfig.profileDataPath.length > 0}
+							<Button
+								outline
+								size="sm"
+								disabled={syncing}
+								on:click={async () => {
+									progressModalTitle = 'Copying profile data';
+									syncing = true;
+									await copyProfileDataFromGameserver(server.name);
+									syncing = false;
+								}}
+							>
+								<ArrowDownToBracketOutline class="w-4 h-4" />
+							</Button>
+							<Tooltip
+								class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+								placement="bottom"
+								>Copy profile data
+							</Tooltip>
+						{/if}
 						<Button
 							outline
 							size="sm"
@@ -244,5 +271,5 @@
 	</TableBody>
 </Table>
 
-<ProgressModal bind:showModal={syncing} />
+<ProgressModal bind:showModal={syncing} title={progressModalTitle} />
 <ServerLogsModal bind:showModal={showServerLogsModal} serverName={selectedServerName} />

@@ -709,6 +709,24 @@ pub async fn download_server_logs(
 }
 
 #[tauri::command]
+pub async fn copy_profile_data_from_gameserver(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/servers/{}/profile", state.server_url, name))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn open_logs_folder(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     let res = state
         .client

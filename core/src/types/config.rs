@@ -393,6 +393,9 @@ pub struct DynamicConfig {
     #[serde(default)]
     pub storage_schema: StorageSchemaVersion,
 
+    #[serde(default, rename = "profileDataPath")]
+    pub profile_data_path: String,
+
     #[serde(default)]
     pub kubernetes_cluster_name: String,
 

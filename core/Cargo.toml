@@ -64,6 +64,7 @@ kube = { version = "0.87.2", default-features = false, features = [
     "client",
     "jsonpatch",
     "rustls-tls",
+    "ws",
 ] }
 kube-derive = { version = "0.87.2" }
 log-panics = { version = "2", features = ["with-backtrace"] }
@@ -93,3 +94,4 @@ hyper-rustls = { version = "0.24.2", features = ["webpki-roots"] }
 hyper = { version = "0.14.31", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 listeners = "0.2.1"
+tokio-util = "0.7.13"
