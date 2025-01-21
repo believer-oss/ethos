@@ -280,6 +280,10 @@ async fn internal_lock_handler(
             if let Some(entry) = lock_cache.get(path) {
                 // Unlocking and ours
                 if op == LockOperation::Unlock {
+                    // keep if we're unlocking others locks
+                    if request.force {
+                        return true;
+                    }
                     return entry.ours;
                 }
 
