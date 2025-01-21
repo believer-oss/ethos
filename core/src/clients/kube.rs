@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Write;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,7 +10,7 @@ use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, TryStreamExt};
 use json_patch::Patch as JsonPatch;
 use k8s_openapi::api::core::v1::{ConfigMap, Pod};
-use kube::api::{LogParams, Patch, PatchParams};
+use kube::api::{AttachParams, LogParams, Patch, PatchParams};
 use kube::{
     api::{DeleteParams, ListParams, PostParams},
     Api, Client,
@@ -443,6 +445,43 @@ impl KubeClient {
         if let Some(handle) = lock.take() {
             handle.abort();
         }
+    }
+
+    pub async fn copy_folder_from_gameserver(
+        &self,
+        name: &str,
+        folder: &str,
+        dest: &str,
+    ) -> Result<(), CoreError> {
+        let client = Client::try_from(self.kubeconfig().await?)?;
+        let api: Api<Pod> = Api::default_namespaced(client);
+
+        let ap: AttachParams = AttachParams::default()
+            .stdin(false)
+            .stdout(true)
+            .stderr(false);
+
+        let mut tar = api
+            .exec(name, vec!["tar", "-C", folder, "-zc", "-O", "."], &ap)
+            .await?;
+        let mut out = tokio_util::io::ReaderStream::new(
+            tar.stdout()
+                .ok_or_else(|| anyhow!("Failed to get stdout from tar command"))?,
+        );
+
+        // write to file if greater than 0 bytes
+        let mut file = File::create(dest)?;
+        let mut empty = true;
+        while let Ok(Some(line)) = out.try_next().await {
+            file.write_all(&line)?;
+            empty = false;
+        }
+
+        if empty {
+            std::fs::remove_file(dest)?;
+        }
+
+        Ok(())
     }
 
     #[instrument(skip(self))]

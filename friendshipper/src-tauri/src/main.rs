@@ -161,6 +161,7 @@ fn main() -> Result<(), CoreError> {
                 checkout_trunk,
                 clone_repo,
                 configure_git_user,
+                copy_profile_data_from_gameserver,
                 create_playtest,
                 delete_playtest,
                 delete_snapshot,

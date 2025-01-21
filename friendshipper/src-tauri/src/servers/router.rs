@@ -28,6 +28,7 @@ where
         .route("/:name/logs", post(download_logs))
         .route("/:name/logs/tail", post(tail_logs))
         .route("/logs/stop", post(stop_tail))
+        .route("/:name/profile", post(copy_profile_data_from_gameserver))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -166,6 +167,41 @@ where
     Err(CoreError::Internal(anyhow!(
         "Unable to find project directories"
     )))
+}
+
+#[instrument(skip(state))]
+async fn copy_profile_data_from_gameserver<T>(
+    Path(name): Path<String>,
+    State(state): State<AppState<T>>,
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+
+    // set destination as sibling of logs dir plus the server name
+    if let Some(proj_dirs) = ProjectDirs::from("", "", crate::APP_NAME) {
+        let mut profiles_path = proj_dirs.data_dir().to_path_buf();
+        let now = chrono::Utc::now().timestamp_millis();
+        profiles_path.push(format!("server_profiles/{}-{}.tar.gz", name, now));
+
+        if let Some(p) = profiles_path.parent() {
+            fs::create_dir_all(p)?
+        }
+
+        let profile_data_path = state.dynamic_config.read().profile_data_path.clone();
+
+        kube_client
+            .copy_folder_from_gameserver(
+                &name,
+                profile_data_path.as_str(),
+                // unwrap is fine because we've already checked the parent exists
+                profiles_path.to_str().unwrap(),
+            )
+            .await?;
+    }
+
+    Ok(())
 }
 
 #[instrument(skip(state))]

@@ -22,3 +22,6 @@ export const startLogTail = async (name: string): Promise<void> =>
 	invoke('start_gameserver_log_tail', { name });
 
 export const stopLogTail = async (): Promise<void> => invoke('stop_gameserver_log_tail');
+
+export const copyProfileDataFromGameserver = async (name: string): Promise<void> =>
+	invoke('copy_profile_data_from_gameserver', { name });

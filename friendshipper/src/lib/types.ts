@@ -24,6 +24,7 @@ export interface DynamicConfig {
 	maps: string[];
 	playtestDiscordChannels: DiscordChannelInfo[];
 	playtestRegions: string[];
+	profileDataPath: string;
 	mobileURLScheme: string;
 }
 
