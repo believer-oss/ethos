@@ -113,7 +113,8 @@
 				commit: selected.commit,
 				displayName: serverName,
 				checkForExisting: false,
-				map
+				map,
+				includeReadinessProbe: false
 			});
 		} catch (e) {
 			await emit('error', e);

@@ -249,7 +249,8 @@
 		const launchRequest: LaunchRequest = {
 			commit: selected.commit,
 			displayName: name,
-			checkForExisting: false
+			checkForExisting: false,
+			includeReadinessProbe: false
 		};
 
 		if ($activeProjectConfig) {

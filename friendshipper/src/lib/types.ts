@@ -132,6 +132,7 @@ export interface LaunchRequest {
 	checkForExisting: boolean;
 	displayName: string;
 	map?: string;
+	includeReadinessProbe: boolean;
 }
 
 // Playtest types
