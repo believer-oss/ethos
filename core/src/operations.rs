@@ -89,7 +89,7 @@ impl LogOp {
 
         let output = self.git_client.log(self.limit, &git_ref).await?;
         let result = output
-            .lines()
+            .split("END\n")
             .map(|line| {
                 let parts = line.split('|').collect::<Vec<_>>();
 
