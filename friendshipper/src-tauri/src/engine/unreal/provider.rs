@@ -22,6 +22,7 @@ pub struct UnrealEngineProvider {
     pub repo_path: PathBuf,
     pub uproject_path: PathBuf,
     pub ofpa_cache: OFPANameCacheRef,
+    pub can_handle_requests: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[async_trait]
@@ -32,6 +33,7 @@ impl EngineProvider for UnrealEngineProvider {
             repo_path: PathBuf::from(app_config.repo_path),
             uproject_path: PathBuf::from(repo_config.uproject_path),
             ofpa_cache: std::sync::Arc::new(parking_lot::RwLock::new(OFPANameCache::new())),
+            can_handle_requests: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -200,4 +202,34 @@ impl UnrealEngineProvider {
 
         false
     }
+
+    // pub fn wait_for_unreal_request<T>() Result<T, String> {
+    //                     let ofpa_response_future = res.json::<OFPAFriendlyNamesResponse>();
+    //                     let ofpa_response: Result<OFPAFriendlyNamesResponse, String> = 'block: {
+    //                         let waker = futures::task::noop_waker();
+    //                         let mut future_context = futures::task::Context::from_waker(&waker);
+    //                         let mut pinned = std::pin::pin!(ofpa_response_future);
+    //                         let poll = pinned.as_mut().poll(&mut future_context);
+
+    //                         while provider
+    //                             .can_handle_requests
+    //                             .load(std::sync::atomic::Ordering::Relaxed)
+    //                         {
+    //                             match poll {
+    //                                 futures::task::Poll::Ready(response) => {
+    //                                     break 'block match response {
+    //                                         Ok(data) => Ok(data),
+    //                                         Err(e) => Err::<OFPAFriendlyNamesResponse, String>(
+    //                                             e.to_string(),
+    //                                         ),
+    //                                     }
+    //                                 }
+    //                                 std::task::Poll::Pending => {} // futures::task::Poll::Pending =>
+    //                             };
+    //                         }
+    //                         drop(poll);
+    //                         Err("Canceling friendlyname request due to Unreal being busy"
+    //                             .to_string())
+    //                     };
+    // }
 }

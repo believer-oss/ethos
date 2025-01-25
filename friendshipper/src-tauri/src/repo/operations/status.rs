@@ -76,6 +76,7 @@ where
     pub aws_client: Option<AWSClient>,
     pub storage: Option<ArtifactStorage>,
     pub allow_offline_communication: bool,
+    pub skip_display_names: bool,
     pub skip_engine_update: bool,
 }
 
@@ -102,6 +103,7 @@ where
 {
     #[instrument(name = "StatusOp::run", err, skip_all)]
     pub(crate) async fn run(&self) -> Result<RepoStatus, CoreError> {
+        warn!(">>>>>>>> running status op");
         let locks_future = self.git_client.verify_locks();
         let status_future = self.git_client.status(vec![]);
 
@@ -139,6 +141,8 @@ where
                 self.git_client.repo_path
             );
         }
+
+        warn!(">>>>>>>> get local state");
 
         // if we're not on the main branch, we need to get the ahead/behind counts
         let trunk_branch = self.repo_config.read().trunk_branch.clone();
@@ -191,7 +195,9 @@ where
         }
 
         // get display names if available
-        {
+        if !self.skip_display_names {
+            warn!(">>>>>>>> getting OFPA names");
+
             // combine all the requested names into a single batch - this will avoid multiple potentially slow requests
             let mut all_filenames: Vec<String> = vec![];
             for file in status.modified_files.0.iter() {
@@ -226,6 +232,8 @@ where
 
             assert_eq!(all_filenames.len(), display_names.len());
 
+            warn!(">>>>>>>> getting locks");
+
             let (names_modified, remaining_names) =
                 display_names.split_at_mut(status.modified_files.0.len());
             let (names_untracked, remaining_names) =
@@ -258,6 +266,7 @@ where
         }
 
         {
+            warn!(">>>>>>>> getting remote info");
             status.commit_head_origin = self
                 .git_client
                 .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
@@ -314,6 +323,8 @@ where
                 app_config.selected_artifact_project = Some(new_selected_artifact_project);
             }
         }
+
+        warn!(">>>>>>>> getting AWS dll info");
 
         if let Some(aws_client) = &self.aws_client {
             let storage = self
@@ -377,9 +388,13 @@ where
             );
         }
 
+        warn!(">>>>>>>> getting AWS dll info");
+
         if !self.skip_engine_update {
             self.engine.send_status_update(&status).await;
         }
+
+        warn!(">>>>>>>> getting AWS dll info");
 
         let mut repo_status = self.repo_status.write();
         *repo_status = status.clone();
@@ -587,6 +602,8 @@ pub struct StatusParams {
     #[serde(default)]
     pub allow_offline_communication: bool,
     #[serde(default)]
+    pub skip_display_names: bool,
+    #[serde(default)]
     pub skip_engine_update: bool,
 }
 
@@ -630,6 +647,7 @@ where
         aws_client,
         storage,
         allow_offline_communication: params.allow_offline_communication,
+        skip_display_names: params.skip_display_names,
         skip_engine_update: params.skip_engine_update,
     };
 
