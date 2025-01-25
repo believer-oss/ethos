@@ -92,6 +92,7 @@ where
                 aws_client: None,
                 storage: None,
                 allow_offline_communication: false,
+                skip_display_names: true,
                 skip_engine_update: false,
             };
 
@@ -167,6 +168,7 @@ where
                         aws_client: Some(self.aws_client.clone()),
                         storage: Some(self.storage.clone()),
                         allow_offline_communication: false,
+                        skip_display_names: true,
                         skip_engine_update: true,
                     }
                 };
@@ -247,6 +249,7 @@ where
                     aws_client: Some(self.aws_client.clone()),
                     storage: Some(self.storage.clone()),
                     allow_offline_communication: false,
+                    skip_display_names: true,
                     skip_engine_update: false,
                 }
             };

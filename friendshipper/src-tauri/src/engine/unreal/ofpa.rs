@@ -1,6 +1,7 @@
 use crate::engine::CommunicationType;
 use crate::engine::UnrealEngineProvider;
 use directories_next::ProjectDirs;
+use futures::Future;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
@@ -195,7 +196,38 @@ impl OFPANameCache {
                             body
                         );
                     } else {
-                        match res.json::<OFPAFriendlyNamesResponse>().await {
+                        let ofpa_response_future = res.json::<OFPAFriendlyNamesResponse>();
+                        let ofpa_response: Result<OFPAFriendlyNamesResponse, String> = 'block: {
+                            let waker = futures::task::noop_waker();
+                            let mut future_context = futures::task::Context::from_waker(&waker);
+                            let mut pinned = std::pin::pin!(ofpa_response_future);
+                            let poll = pinned.as_mut().poll(&mut future_context);
+
+                            while provider
+                                .can_handle_requests
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                match poll {
+                                    futures::task::Poll::Ready(response) => {
+                                        break 'block match response {
+                                            Ok(data) => Ok(data),
+                                            Err(e) => Err::<OFPAFriendlyNamesResponse, String>(
+                                                e.to_string(),
+                                            ),
+                                        }
+                                    }
+                                    std::task::Poll::Pending => {} // futures::task::Poll::Pending =>
+                                };
+                                // if poll.is_ready() {
+                                //     break 'block ofpa_response_future.await;
+                                // }
+                            }
+                            drop(poll);
+                            Err("Canceling friendlyname request due to Unreal being busy"
+                                .to_string())
+                        };
+
+                        match ofpa_response {
                             Ok(data) => {
                                 let mut cache = provider.ofpa_cache.write();
                                 for item in data.names {
@@ -212,8 +244,8 @@ impl OFPANameCache {
                             }
                             Err(e) => {
                                 warn!(
-                                    "Failed to unpack json response. Falling back to commandlet. Error: {}", e
-                                );
+                                        "Failed to unpack json response. Falling back to commandlet. Error: {}", e
+                                    );
                             }
                         };
                     }
