@@ -488,8 +488,11 @@
 									indeterminate={changeSet.indeterminate}
 									on:click={() => {
 										handleToggleAllFilesInChangeset(index);
-										changeSet.checked = isChecked(changeSet.files);
-										changeSet.indeterminate = isIndeterminate(changeSet.files);
+										changeSets[index] = {
+											...changeSet,
+											checked: isChecked(changeSet.files),
+											indeterminate: isIndeterminate(changeSet.files)
+										};
 									}}
 								/>
 
@@ -607,8 +610,11 @@
 											)}
 											on:change={() => {
 												handleFileToggled(file);
-												changeSet.checked = isChecked(changeSet.files);
-												changeSet.indeterminate = isIndeterminate(changeSet.files);
+												changeSets[index] = {
+													...changeSet,
+													checked: isChecked(changeSet.files),
+													indeterminate: isIndeterminate(changeSet.files)
+												};
 											}}
 										/>
 									</TableBodyCell>
