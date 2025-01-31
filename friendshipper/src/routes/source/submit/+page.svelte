@@ -762,7 +762,7 @@
 </div>
 <div class="flex flex-row h-full gap-2 overflow-auto">
 	<div class="flex flex-col gap-2 w-full h-full overflow-x-auto">
-		{#key $repoStatus?.modifiedFiles}
+		{#key $allModifiedFiles}
 			<ModifiedFilesCard
 				disabled={loading}
 				bind:selectedFiles={$selectedFiles}

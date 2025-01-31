@@ -108,10 +108,7 @@ impl ObjectLocation {
         }
 
         let version = parts[parts.len() - 2].replace('v', "");
-        match Version::parse(&version) {
-            Ok(v) => Some(v),
-            Err(_) => None,
-        }
+        Version::parse(&version).ok()
     }
 }
 
