@@ -140,10 +140,7 @@ impl Longtail {
         // Check the path found above, and if all else fails try to find it in $PATH
         match which_in(exe_name.clone(), exe_path, env::current_dir().unwrap()) {
             Ok(path) => Some(path),
-            Err(_) => match which(exe_name) {
-                Ok(path) => Some(path),
-                Err(_) => None,
-            },
+            Err(_) => which(exe_name).ok(),
         }
     }
 

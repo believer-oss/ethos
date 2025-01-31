@@ -28,11 +28,18 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
 	import { onDestroy } from 'svelte';
-	import { appConfig, dynamicConfig, oktaAuth, playtests, startTime } from '$lib/stores';
+	import {
+		appConfig,
+		dynamicConfig,
+		oktaAuth,
+		playtests,
+		repoStatus,
+		startTime
+	} from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
-	import { resetRepo, refetchRepo } from '$lib/repo';
+	import { resetRepo, refetchRepo, getRepoStatus } from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
 	import type { AppConfig } from '$lib/types';
@@ -221,6 +228,7 @@
 			showProgressModal = true;
 			progressModalTitle = 'Resetting repo...';
 			await resetRepo();
+			$repoStatus = await getRepoStatus();
 
 			await emit('success', 'Repo reset to main.');
 		} catch (e) {
