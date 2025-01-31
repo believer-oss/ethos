@@ -35,8 +35,7 @@
 	import { type } from '@tauri-apps/api/os';
 	import { invoke } from '@tauri-apps/api/tauri';
 
-	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
-
+	import { type ChangeSet, ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { appWindow } from '@tauri-apps/api/window';
 	import { BaseDirectory } from '@tauri-apps/api/path';
 	import { fs } from '@tauri-apps/api';
@@ -187,7 +186,16 @@
 			const changeSetsResponse = await fs.readTextFile(CHANGE_SETS_PATH, {
 				dir: BaseDirectory.AppLocalData
 			});
-			changeSets.set(JSON.parse(changeSetsResponse));
+
+			const parsedChangeSets: ChangeSet[] = JSON.parse(changeSetsResponse).map(
+				(changeSet: ChangeSet) => ({
+					...changeSet,
+					checked: false,
+					indeterminate: false
+				})
+			);
+
+			changeSets.set(parsedChangeSets);
 		}
 	};
 
