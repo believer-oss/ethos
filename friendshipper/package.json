@@ -53,7 +53,6 @@
 	"type": "module",
 	"dependencies": {
 		"@ethos/core": "link:../core/ui",
-		"@okta/okta-auth-js": "^7.8.1",
 		"@tauri-apps/api": "^1.5.1",
 		"@threlte/core": "^6.1.0",
 		"@threlte/extras": "^7.3.0",

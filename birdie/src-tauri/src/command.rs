@@ -12,7 +12,7 @@ use ethos_core::types::commits::Commit;
 use ethos_core::types::locks::VerifyLocksResponse;
 use ethos_core::types::repo::{CommitFileInfo, LockRequest, PushRequest, RepoStatus};
 
-use crate::State;
+use crate::TauriState;
 
 // Add this function at the top of the file, after imports
 async fn create_tauri_error(res: reqwest::Response) -> TauriError {
@@ -25,7 +25,7 @@ async fn create_tauri_error(res: reqwest::Response) -> TauriError {
 }
 
 #[tauri::command]
-pub async fn get_config(state: tauri::State<'_, State>) -> Result<BirdieConfig, TauriError> {
+pub async fn get_config(state: tauri::State<'_, TauriState>) -> Result<BirdieConfig, TauriError> {
     let res = state
         .client
         .get(format!("{}/config", state.server_url))
@@ -41,7 +41,7 @@ pub async fn get_config(state: tauri::State<'_, State>) -> Result<BirdieConfig, 
 
 #[tauri::command]
 pub async fn update_config(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     config: BirdieConfig,
 ) -> Result<BirdieConfig, TauriError> {
     let res = state
@@ -60,7 +60,7 @@ pub async fn update_config(
 
 #[tauri::command]
 pub async fn show_commit_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     commit: String,
 ) -> Result<Vec<CommitFileInfo>, TauriError> {
     let res = state
@@ -78,7 +78,7 @@ pub async fn show_commit_files(
 
 #[tauri::command]
 pub async fn get_file_history(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     file: String,
 ) -> Result<Vec<Commit>, TauriError> {
     // url encode the file
@@ -102,7 +102,9 @@ pub async fn get_file_history(
 
 // Repo
 #[tauri::command]
-pub async fn get_repo_status(state: tauri::State<'_, State>) -> Result<RepoStatus, TauriError> {
+pub async fn get_repo_status(
+    state: tauri::State<'_, TauriState>,
+) -> Result<RepoStatus, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/status", state.server_url))
@@ -116,7 +118,10 @@ pub async fn get_repo_status(state: tauri::State<'_, State>) -> Result<RepoStatu
 }
 
 #[tauri::command]
-pub async fn submit(state: tauri::State<'_, State>, req: PushRequest) -> Result<(), TauriError> {
+pub async fn submit(
+    state: tauri::State<'_, TauriState>,
+    req: PushRequest,
+) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/push", state.server_url))
@@ -136,7 +141,7 @@ pub async fn submit(state: tauri::State<'_, State>, req: PushRequest) -> Result<
 // LFS
 #[tauri::command]
 pub async fn download_lfs_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     files: Vec<String>,
     include_wip: bool,
 ) -> Result<(), TauriError> {
@@ -156,7 +161,7 @@ pub async fn download_lfs_files(
 
 #[tauri::command]
 pub async fn lock_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     paths: Vec<String>,
 ) -> Result<(), TauriError> {
     let res = state
@@ -178,7 +183,7 @@ pub async fn lock_files(
 
 #[tauri::command]
 pub async fn unlock_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     paths: Vec<String>,
     force: bool,
 ) -> Result<(), TauriError> {
@@ -202,7 +207,7 @@ pub async fn unlock_files(
 // Locks
 #[tauri::command]
 pub async fn verify_locks(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
 ) -> Result<VerifyLocksResponse, TauriError> {
     let res = state
         .client
@@ -219,7 +224,9 @@ pub async fn verify_locks(
 
 // Git Config
 #[tauri::command]
-pub async fn get_fetch_include(state: tauri::State<'_, State>) -> Result<Vec<String>, TauriError> {
+pub async fn get_fetch_include(
+    state: tauri::State<'_, TauriState>,
+) -> Result<Vec<String>, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/config/fetchinclude", state.server_url))
@@ -235,7 +242,7 @@ pub async fn get_fetch_include(state: tauri::State<'_, State>) -> Result<Vec<Str
 
 #[tauri::command]
 pub async fn del_fetch_include(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     files: Vec<String>,
 ) -> Result<(), TauriError> {
     let res = state
@@ -254,7 +261,10 @@ pub async fn del_fetch_include(
 
 // Birdie commands
 #[tauri::command]
-pub async fn get_file(state: tauri::State<'_, State>, path: String) -> Result<File, TauriError> {
+pub async fn get_file(
+    state: tauri::State<'_, TauriState>,
+    path: String,
+) -> Result<File, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/file", state.server_url))
@@ -271,7 +281,7 @@ pub async fn get_file(state: tauri::State<'_, State>, path: String) -> Result<Fi
 
 #[tauri::command]
 pub async fn get_files(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     root: Option<String>,
 ) -> Result<Vec<File>, TauriError> {
     let mut req = state.client.get(format!("{}/repo/files", state.server_url));
@@ -290,7 +300,7 @@ pub async fn get_files(
 }
 
 #[tauri::command]
-pub async fn get_all_files(state: tauri::State<'_, State>) -> Result<Vec<String>, TauriError> {
+pub async fn get_all_files(state: tauri::State<'_, TauriState>) -> Result<Vec<String>, TauriError> {
     let res = state
         .client
         .get(format!("{}/repo/files/all", state.server_url))
@@ -307,7 +317,7 @@ pub async fn get_all_files(state: tauri::State<'_, State>) -> Result<Vec<String>
 // Birdie metadata
 #[tauri::command]
 pub async fn get_directory_metadata(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     path: PathBuf,
 ) -> Result<DirectoryMetadata, TauriError> {
     let res = state
@@ -328,7 +338,7 @@ pub async fn get_directory_metadata(
 }
 #[tauri::command]
 pub async fn update_metadata_class(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     path: PathBuf,
     directory_class: String,
 ) -> Result<(), TauriError> {
@@ -351,7 +361,7 @@ pub async fn update_metadata_class(
 
 #[tauri::command]
 pub async fn update_metadata(
-    state: tauri::State<'_, State>,
+    state: tauri::State<'_, TauriState>,
     path: PathBuf,
     metadata: DirectoryMetadata,
 ) -> Result<DirectoryMetadata, TauriError> {
@@ -370,7 +380,7 @@ pub async fn update_metadata(
 }
 
 #[tauri::command]
-pub async fn sync_tools(state: tauri::State<'_, State>) -> Result<bool, TauriError> {
+pub async fn sync_tools(state: tauri::State<'_, TauriState>) -> Result<bool, TauriError> {
     let res = state
         .client
         .post(format!("{}/tools/sync", state.server_url))
@@ -388,7 +398,7 @@ pub async fn sync_tools(state: tauri::State<'_, State>) -> Result<bool, TauriErr
 }
 
 #[tauri::command]
-pub async fn run_set_env(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn run_set_env(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/tools/setenv", state.server_url))
@@ -403,7 +413,7 @@ pub async fn run_set_env(state: tauri::State<'_, State>) -> Result<(), TauriErro
 }
 
 #[tauri::command]
-pub async fn refetch_repo(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn refetch_repo(state: tauri::State<'_, TauriState>) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/refetch", state.server_url))
