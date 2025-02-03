@@ -206,9 +206,9 @@
 
 	const getPlaytestTime = (item: Nullable<Playtest>): string => {
 		const date = item != null ? new Date(item.spec.startTime) : new Date();
-		return `${date.getHours()}:${date
-			.getMinutes()
-			.toLocaleString('en-US', { minimumIntegerDigits: 2 })}:00`;
+		const hours = date.getHours().toLocaleString('en-US', { minimumIntegerDigits: 2 });
+		const minutes = date.getMinutes().toLocaleString('en-US', { minimumIntegerDigits: 2 });
+		return `${hours}:${minutes}:00`;
 	};
 </script>
 
