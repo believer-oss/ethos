@@ -165,6 +165,11 @@ impl EngineProvider for UnrealEngineProvider {
     fn is_lockable_file(&self, filepath: &str) -> bool {
         filepath.ends_with(".uasset") || filepath.ends_with(".umap") || filepath.ends_with(".dll")
     }
+
+    fn set_state(&self, in_slow_task: bool) {
+        self.can_handle_requests
+            .store(!in_slow_task, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl UnrealEngineProvider {

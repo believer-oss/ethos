@@ -87,4 +87,6 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
     ) -> Vec<String>;
 
     fn is_lockable_file(&self, filepath: &str) -> bool;
+
+    fn set_state(&self, in_slow_task: bool);
 }
