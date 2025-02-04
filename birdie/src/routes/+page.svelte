@@ -624,7 +624,6 @@
 	};
 
 	const onKeyDown = async (event: KeyboardEvent) => {
-		console.log('keydown, enableGlobalSearch: ', $enableGlobalSearch);
 		if (event.key === 'Shift') {
 			shiftHeld = true;
 			return;

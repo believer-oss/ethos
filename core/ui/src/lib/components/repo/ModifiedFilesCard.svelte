@@ -26,7 +26,6 @@
 		EditOutline
 	} from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
-	import type { Writable } from 'svelte/store';
 	import {
 		ModifiedFileState,
 		SubmitStatus,
@@ -47,7 +46,7 @@
 	export let lockSelectedEnabled = true;
 	export let changeSets: ChangeSet[];
 	export let onChangesetsSaved: (changeSets: ChangeSet[]) => Promise<void>;
-	export let enableGlobalSearch: Writable<boolean> = false;
+	export let enableGlobalSearch: boolean = false;
 
 	let hoveringSetIndex: number = -1;
 	let hoveringCreateNewChangeset: boolean = false;
@@ -473,8 +472,11 @@
 							bind:value={editingChangeSetValue}
 							on:keydown={async (e) => {
 								if (e.key === 'Enter') {
+									changeSets[editingChangeSetIndex] = {
+										...changeSet,
+										name: editingChangeSetValue
+									};
 									editingChangeSetIndex = -1;
-									changeSet.name = editingChangeSetValue;
 									enableGlobalSearch = true;
 									await onChangesetsSaved(changeSets);
 								}
