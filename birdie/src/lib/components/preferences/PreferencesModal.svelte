@@ -9,7 +9,8 @@
 		Modal,
 		Tooltip,
 		Spinner,
-		ButtonGroup
+		ButtonGroup,
+		Checkbox
 	} from 'flowbite-svelte';
 	import { FolderOpenSolid, CodeBranchSolid, TerminalSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
@@ -33,6 +34,7 @@
 		toolsUrl: '',
 		userDisplayName: '',
 		githubPAT: '',
+		hideAutosave: '',
 		initialized: false
 	};
 	let checkForUpdatesInFlight = false;
@@ -197,6 +199,19 @@
 				<Tooltip class="text-sm" placement="bottom">
 					Specified URL should be a git URL ending in <code>.git</code>.
 				</Tooltip>
+
+				<div class="flex gap-4">
+					<div class="flex flex-row gap-2">
+						<Checkbox
+							bind:checked={localAppConfig.hideAutosave}
+							class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+						/>
+						<Label class="text-white">Hide .autosave files</Label>
+					</div>
+					<Tooltip class="text-sm" placement="bottom">
+						For designers. Enable if you want to hide modified files in the '.autosave' folder.
+					</Tooltip>
+				</div>
 
 				<Label>Github PAT</Label>
 				<Input class="h-8" bind:value={localAppConfig.githubPAT} type="password" />
