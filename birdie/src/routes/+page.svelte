@@ -332,13 +332,17 @@
 		} catch (e) {
 			await emit('error', e);
 		}
-
-		// clear selected files if they no longer exist
-		$selectedFiles = $selectedFiles.filter(
-			(file) =>
+		$selectedFiles = $selectedFiles.filter((file) => {
+			// clear autosave files if hide autosave is set
+			if ($appConfig.hideAutosave && file.path.includes('/.autosave/')) {
+				return false;
+			}
+			// clear selected files if they no longer exist
+			return (
 				$repoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
 				$repoStatus?.untrackedFiles.some((f) => f.path === file.path)
-		);
+			);
+		});
 
 		loading = false;
 	};
@@ -955,7 +959,7 @@
 							<div class="flex flex-col mt-auto gap-2">
 								<Toggle bind:checked={includeWip}>Include WIP</Toggle>
 								<Tooltip placement="top">
-									{includeWip ? 'Exclude' : 'Include'} WIP folders
+									Enable if you want to include WIP folders in the operation.
 								</Tooltip>
 								<div class="flex flex-row gap-2">
 									<Button class="w-full" disabled={loading} on:click={handleDownloadSelectedFiles}
@@ -1012,7 +1016,7 @@
 							<div class="flex flex-col mt-auto gap-2">
 								<Toggle bind:checked={includeWip}>Include WIP</Toggle>
 								<Tooltip placement="top">
-									{includeWip ? 'Exclude' : 'Include'} WIP folders
+									Enable if you want to include WIP folders in the operation.
 								</Tooltip>
 								<div class="flex flex-row gap-2">
 									<Button
@@ -1139,6 +1143,7 @@
 								onRevertFiles={handleRevertFiles}
 								snapshotsEnabled={false}
 								onLockSelected={handleLockSelected}
+								bind:enableGlobalSearch={$enableGlobalSearch}
 							/>
 						</div>
 					</Card>

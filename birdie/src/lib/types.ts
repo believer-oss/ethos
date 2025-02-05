@@ -10,6 +10,7 @@ export interface BirdieConfig {
 	toolsUrl: string;
 	userDisplayName: string;
 	githubPAT: string;
+	hideAutosave: boolean;
 	initialized: boolean;
 }
 

@@ -27,6 +27,9 @@ pub struct BirdieConfig {
     #[serde(default, rename = "githubPAT", skip_serializing_if = "Option::is_none")]
     pub github_pat: Option<RedactedString>,
 
+    #[serde(default, rename = "hideAutosave", alias = "hide_autosave")]
+    pub hide_autosave: bool,
+
     #[serde(default)]
     pub initialized: bool,
 }

@@ -1,4 +1,4 @@
-import { derived, type Readable, writable } from 'svelte/store';
+import { derived, get, type Readable, writable } from 'svelte/store';
 import type { ChangeSet, Commit, ModifiedFile } from '@ethos/core';
 import {
 	type BirdieConfig,
@@ -68,6 +68,10 @@ export const allModifiedFiles = derived(repoStatus, ($repoStatus) => {
 
 	const all: ModifiedFile[] = [...untracked, ...modified];
 	all.sort((a, b) => (a.path < b.path ? -1 : 1));
+
+	if (get(appConfig).hideAutosave) {
+		return all.filter((file) => !file.path.includes('/.autosave/'));
+	}
 
 	return all;
 });

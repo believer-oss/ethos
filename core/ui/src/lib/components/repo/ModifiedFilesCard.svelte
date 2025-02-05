@@ -46,6 +46,7 @@
 	export let lockSelectedEnabled = true;
 	export let changeSets: ChangeSet[];
 	export let onChangesetsSaved: (changeSets: ChangeSet[]) => Promise<void>;
+	export let enableGlobalSearch: boolean = false;
 
 	let hoveringSetIndex: number = -1;
 	let hoveringCreateNewChangeset: boolean = false;
@@ -471,8 +472,12 @@
 							bind:value={editingChangeSetValue}
 							on:keydown={async (e) => {
 								if (e.key === 'Enter') {
+									changeSets[editingChangeSetIndex] = {
+										...changeSet,
+										name: editingChangeSetValue
+									};
 									editingChangeSetIndex = -1;
-									changeSet.name = editingChangeSetValue;
+									enableGlobalSearch = true;
 									await onChangesetsSaved(changeSets);
 								}
 							}}
@@ -516,6 +521,7 @@
 									on:click={() => {
 										editingChangeSetIndex = index;
 										editingChangeSetValue = changeSet.name;
+										enableGlobalSearch = false;
 									}}
 								>
 									<EditOutline class="w-4 h-4" />
