@@ -110,7 +110,7 @@ jobs:
 
   rename-latest-json:
     needs: publish-tauri
-    runs-on: ubuntu-latest
+    runs-on: linux-8core-22.04
     permissions:
       contents: write
     steps:
@@ -155,7 +155,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: believer-oss/f11r-server
-    runs-on: ubuntu-latest
+    runs-on: linux-8core-22.04
     permissions:
       contents: read
       packages: write
