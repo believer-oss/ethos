@@ -171,10 +171,16 @@
 							} else {
 								await emit('error', 'Playtest server is not ready. Try again shortly.');
 							}
+
+							return;
 						}
 					}
-				} else if (entry) {
+				}
+
+				if (entry) {
 					await handleSyncClient(entry);
+				} else {
+					await emit('error', 'No build found for playtest');
 				}
 			}
 		} catch (e) {
