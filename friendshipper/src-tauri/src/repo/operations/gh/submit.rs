@@ -402,6 +402,7 @@ where
             aws_client: None,
             storage: None,
             allow_offline_communication: false,
+            skip_display_names: true,
             skip_engine_update: false,
         };
 

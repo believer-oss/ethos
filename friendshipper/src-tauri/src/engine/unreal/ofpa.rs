@@ -1,6 +1,7 @@
 use crate::engine::CommunicationType;
 use crate::engine::UnrealEngineProvider;
 use directories_next::ProjectDirs;
+use futures::FutureExt;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
@@ -175,47 +176,95 @@ impl OFPANameCache {
         if !paths_to_request.is_empty() {
             // try to do a web request first, because it'll be faster than running the commandlet
             let mut web_request_succeeded = false;
-            if is_editor_running {
+            if is_editor_running
+                && provider
+                    .can_handle_requests
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            {
                 let request_data = OFPAFriendlyNamesRequest {
                     filenames: paths_to_request.clone(),
                 };
 
                 let client = reqwest::Client::new();
-                let res_or_err = client
+                let res_or_err_future = client
                     .post("http://localhost:8091/friendshipper-ue/ofpa/friendlynames".to_string())
                     .json(&request_data)
-                    .send()
-                    .await;
+                    .send();
 
-                if let Ok(res) = res_or_err {
-                    if res.status().is_client_error() {
-                        let body = res.text().await.unwrap();
-                        warn!(
-                            "Got an error response. Falling back to commandlet. Error: {}",
-                            body
-                        );
-                    } else {
-                        match res.json::<OFPAFriendlyNamesResponse>().await {
-                            Ok(data) => {
-                                let mut cache = provider.ofpa_cache.write();
-                                for item in data.names {
-                                    if item.error.is_empty() {
-                                        cache.add_name(&item.file_path, &item.asset_name, now);
+                let res_or_err = 'block: {
+                    tokio::pin!(res_or_err_future);
+                    while provider
+                        .can_handle_requests
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        if let Some(res_or_err) = res_or_err_future.as_mut().now_or_never() {
+                            break 'block match res_or_err {
+                                Ok(res) => Ok(res),
+                                Err(e) => Err(e.to_string()),
+                            };
+                        } else {
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                    Err("Canceling friendlynames request due to Unreal being busy".to_string())
+                };
+
+                match res_or_err {
+                    Ok(res) => {
+                        if res.status().is_client_error() {
+                            let body = res.text().await.unwrap();
+                            warn!("Got error . Falling back to commandlet. Error: {}", body);
+                        } else {
+                            let ofpa_response_future = res.json::<OFPAFriendlyNamesResponse>();
+                            let ofpa_response: Result<OFPAFriendlyNamesResponse, String> = 'block: {
+                                tokio::pin!(ofpa_response_future);
+                                while provider
+                                    .can_handle_requests
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                {
+                                    if let Some(response) =
+                                        ofpa_response_future.as_mut().now_or_never()
+                                    {
+                                        break 'block match response {
+                                            Ok(data) => Ok(data),
+                                            Err(e) => Err::<OFPAFriendlyNamesResponse, String>(
+                                                e.to_string(),
+                                            ),
+                                        };
                                     } else {
-                                        debug!(
-                                            "Error translating file path {}: {}",
-                                            item.file_path, item.error
-                                        );
+                                        tokio::task::yield_now().await;
                                     }
                                 }
-                                web_request_succeeded = true;
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Failed to unpack json response. Falling back to commandlet. Error: {}", e
-                                );
-                            }
-                        };
+                                Err("Canceling friendlynames request due to Unreal being busy"
+                                    .to_string())
+                            };
+
+                            match ofpa_response {
+                                Ok(data) => {
+                                    let mut cache = provider.ofpa_cache.write();
+                                    for item in data.names {
+                                        if item.error.is_empty() {
+                                            cache.add_name(&item.file_path, &item.asset_name, now);
+                                        } else {
+                                            debug!(
+                                                "Error translating file path {}: {}",
+                                                item.file_path, item.error
+                                            );
+                                        }
+                                    }
+                                    web_request_succeeded = true;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Error during request. Falling back to commandlet. Error: {}",
+                                        e
+                                    );
+                                }
+                            };
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Error during request. Falling back to commandlet if possible. Error: {}", e);
                     }
                 }
             }

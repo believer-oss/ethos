@@ -88,6 +88,7 @@ where
             aws_client: Some(self.aws_client.clone()),
             storage: Some(self.storage.clone()),
             allow_offline_communication: false,
+            skip_display_names: true,
             skip_engine_update: false,
         };
         status_op.execute().await?;
