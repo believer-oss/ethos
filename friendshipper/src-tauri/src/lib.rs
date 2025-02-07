@@ -60,6 +60,7 @@ where
         .nest("/servers", servers::router())
         .nest("/storage", storage::router())
         .nest("/system", system::router())
+        .nest("/engine", engine::router())
         .route_layer(middleware::from_fn(move |headers, req, next| {
             nonce::nonce(headers, req, next, NONCE.as_str())
         })))

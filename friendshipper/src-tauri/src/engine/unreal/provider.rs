@@ -9,6 +9,7 @@ use ethos_core::types::config::AppConfig;
 use ethos_core::types::config::RepoConfig;
 use ethos_core::types::gameserver::GameServerResults;
 use ethos_core::types::repo::RepoStatus;
+use futures::FutureExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -22,6 +23,7 @@ pub struct UnrealEngineProvider {
     pub repo_path: PathBuf,
     pub uproject_path: PathBuf,
     pub ofpa_cache: OFPANameCacheRef,
+    pub can_handle_requests: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[async_trait]
@@ -32,6 +34,7 @@ impl EngineProvider for UnrealEngineProvider {
             repo_path: PathBuf::from(app_config.repo_path),
             uproject_path: PathBuf::from(repo_config.uproject_path),
             ofpa_cache: std::sync::Arc::new(parking_lot::RwLock::new(OFPANameCache::new())),
+            can_handle_requests: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -79,13 +82,42 @@ impl EngineProvider for UnrealEngineProvider {
 
     #[instrument(skip(self, status))]
     async fn send_status_update(&self, status: &RepoStatus) {
-        if self.is_editor_process_running() {
+        if self.is_editor_process_running()
+            && self
+                .can_handle_requests
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
             let client = reqwest::Client::new();
-            _ = client
+            let future = client
                 .post("http://localhost:8091/friendshipper-ue/status/update".to_string())
                 .json(status)
-                .send()
-                .await;
+                .send();
+
+            // Because Unreal can get stuck in blocking slow tasks on the main thread and not answer requests
+            // for multiple minutes, the idea here is to manually poll the future to see if it's done or not.
+            // If at any point during the request Unreal goes into a slow task, we can drop it. This is
+            // important because this request could be part of a larger operation that blocks other operations
+            // like StatusOp or LockOp from running, rendering the Friendshipper UI essentially useless and
+            // even causing deadlocks in situations where Unreal is blocking waiting for a commandlet to finish,
+            // but the commandlet is waiting for a Friendshipper request to come back before continuing.
+
+            // Bit of an implementation detail here: pin!() allows us to call now_or_never() on the future
+            // without consuming it. See this forum post for excellent details on how it works:
+            // https://users.rust-lang.org/t/how-to-check-if-a-future-is-immediately-ready/86401
+            tokio::pin!(future);
+
+            while self
+                .can_handle_requests
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                if future.as_mut().now_or_never().is_some() {
+                    break;
+                } else {
+                    // while the task isn't finished, let the task runtime run
+                    tokio::task::yield_now().await;
+                }
+            }
+            warn!("Canceling status update request due to Unreal being busy");
         }
     }
 
@@ -162,6 +194,11 @@ impl EngineProvider for UnrealEngineProvider {
 
     fn is_lockable_file(&self, filepath: &str) -> bool {
         filepath.ends_with(".uasset") || filepath.ends_with(".umap") || filepath.ends_with(".dll")
+    }
+
+    fn set_state(&self, in_slow_task: bool) {
+        self.can_handle_requests
+            .store(!in_slow_task, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

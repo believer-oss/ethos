@@ -76,6 +76,7 @@ where
     pub aws_client: Option<AWSClient>,
     pub storage: Option<ArtifactStorage>,
     pub allow_offline_communication: bool,
+    pub skip_display_names: bool,
     pub skip_engine_update: bool,
 }
 
@@ -191,7 +192,7 @@ where
         }
 
         // get display names if available
-        {
+        if !self.skip_display_names {
             // combine all the requested names into a single batch - this will avoid multiple potentially slow requests
             let mut all_filenames: Vec<String> = vec![];
             for file in status.modified_files.0.iter() {
@@ -587,6 +588,8 @@ pub struct StatusParams {
     #[serde(default)]
     pub allow_offline_communication: bool,
     #[serde(default)]
+    pub skip_display_names: bool,
+    #[serde(default)]
     pub skip_engine_update: bool,
 }
 
@@ -630,6 +633,7 @@ where
         aws_client,
         storage,
         allow_offline_communication: params.allow_offline_communication,
+        skip_display_names: params.skip_display_names,
         skip_engine_update: params.skip_engine_update,
     };
 
