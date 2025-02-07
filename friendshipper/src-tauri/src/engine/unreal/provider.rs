@@ -217,24 +217,80 @@ impl UnrealEngineProvider {
             .replace('\\', "/");
 
         for process in system.processes_by_name("UnrealEditor") {
-            for arg in process.cmd() {
+            let process_cmd = process.cmd();
+            if process_cmd.len() <= 1 {
+                continue;
+            }
+
+            let process_path = PathBuf::from(process_cmd[0].clone().to_lowercase());
+            for arg in &process_cmd[1..] {
                 let arg: String = arg.to_lowercase().replace('\\', "/");
-                let is_editor_running = arg.contains(&repo_path);
+                if arg.contains(".uproject") {
+                    let arg_uproject_path =
+                        resolve_uproject_path(&process_path, PathBuf::from(arg.clone()));
 
-                info!(
-                    "Checked if process '{}' arg '{}' contains '{}': {}",
-                    process.name(),
-                    arg,
-                    repo_path,
-                    is_editor_running
-                );
+                    let is_editor_running = arg_uproject_path.starts_with(&repo_path);
 
-                if is_editor_running {
-                    return true;
+                    info!(
+                        "Checked if process '{}' arg '{}' (computed actual '{}') contains '{}': {}",
+                        process.name(),
+                        arg,
+                        arg_uproject_path,
+                        repo_path,
+                        is_editor_running
+                    );
+
+                    if is_editor_running {
+                        return true;
+                    }
                 }
             }
         }
 
         false
     }
+}
+
+// note that canonicalize() performs IO on the actual components in the path so it's not
+// really testable without actually creating the paths on-disk :/
+fn resolve_uproject_path(engine_path: &Path, uproject_path: PathBuf) -> String {
+    let mut arg_uproject_pathbuf = PathBuf::from(&uproject_path);
+
+    // Combine the engine working dir with the relative uproject dir to get a resolved absolute path
+    if arg_uproject_pathbuf.is_relative() {
+        arg_uproject_pathbuf = engine_path.to_path_buf();
+        arg_uproject_pathbuf.pop(); // pop off executable name to get working dir
+        arg_uproject_pathbuf.push(&uproject_path);
+        arg_uproject_pathbuf.pop(); // pop off uproject filename
+        if let Ok(resolved) = arg_uproject_pathbuf.canonicalize() {
+            arg_uproject_pathbuf = resolved;
+        }
+    }
+
+    // Because windows is more lax with case and slashes, we can get inputs with different cases and
+    // slashes in them. So just simplify everything to use the same case and slashes
+    let arg_uproject_path_str: String = arg_uproject_pathbuf
+        .to_string_lossy()
+        .to_lowercase()
+        .replace('\\', "/")
+        .to_string();
+
+    // Rust canonical paths on windows are always prefixed with \\?\<drive letter>:\<rest of path>
+    // to conform to these rules:
+    // https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats
+    let mut arg_uproject_path_str: String = arg_uproject_path_str
+        .strip_prefix("//?/")
+        .unwrap_or(&arg_uproject_path_str)
+        .to_string();
+
+    loop {
+        let old_len = arg_uproject_path_str.len();
+        arg_uproject_path_str = arg_uproject_path_str.replace("//", "/");
+        let new_len = arg_uproject_path_str.len();
+        if old_len == new_len {
+            break;
+        }
+    }
+
+    arg_uproject_path_str
 }
