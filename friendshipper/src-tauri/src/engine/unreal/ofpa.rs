@@ -185,6 +185,8 @@ impl OFPANameCache {
                     filenames: paths_to_request.clone(),
                 };
 
+                // See UnrealEngineProvider::send_status_update() implementation for an explanation of this approach to
+                // manually polling requests sent to Unreal.
                 let client = reqwest::Client::new();
                 let res_or_err_future = client
                     .post("http://localhost:8091/friendshipper-ue/ofpa/friendlynames".to_string())

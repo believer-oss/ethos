@@ -93,6 +93,17 @@ impl EngineProvider for UnrealEngineProvider {
                 .json(status)
                 .send();
 
+            // Because Unreal can get stuck in blocking slow tasks on the main thread and not answer requests
+            // for multiple minutes, the idea here is to manually poll the future to see if it's done or not.
+            // If at any point during the request Unreal goes into a slow task, we can drop it. This is
+            // important because this request could be part of a larger operation that blocks other operations
+            // like StatusOp or LockOp from running, rendering the Friendshipper UI essentially useless and
+            // even causing deadlocks in situations where Unreal is blocking waiting for a commandlet to finish,
+            // but the commandlet is waiting for a Friendshipper request to come back before continuing.
+
+            // Bit of an implementation detail here: pin!() allows us to call now_or_never() on the future
+            // without consuming it. See this forum post for excellent details on how it works:
+            // https://users.rust-lang.org/t/how-to-check-if-a-future-is-immediately-ready/86401
             tokio::pin!(future);
 
             while self
@@ -102,6 +113,7 @@ impl EngineProvider for UnrealEngineProvider {
                 if future.as_mut().now_or_never().is_some() {
                     break;
                 } else {
+                    // while the task isn't finished, let the task runtime run
                     tokio::task::yield_now().await;
                 }
             }
