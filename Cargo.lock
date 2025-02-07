@@ -502,9 +502,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-ecr"
-version = "1.63.0"
+version = "1.64.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdc21a38957ff5618ec2f6b4c397dd26ccb8e24ab890cef5f5d90831d84500b9"
+checksum = "fe9a5b8d447351821e7251ecba7f3aa76692b4453ea67b94e24127d2a3f25d5b"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -524,9 +524,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-eks"
-version = "1.72.0"
+version = "1.73.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cfbeebb510ba205f67bc8f5bea568b0f318dde3ca0e25b834d7675a2e5c2d39"
+checksum = "938e93faa8ef02141b0133a1cf55c24fbdf4d3a1879829269fa3debf111bdf61"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -547,9 +547,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-s3"
-version = "1.73.0"
+version = "1.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3978e0a211bdc5cddecfd91fb468665a662a27fbdaef39ddf36a2a18fef12cb4"
+checksum = "f551566d462b47c3e49b330f1b86e69e7dc6e4d4efb1959e28c5c82d22e79f7c"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "friendshipper"
-version = "4.10.2"
+version = "4.10.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4131,11 +4131,11 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "9.3.0"
+version = "9.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ae10193d25051e74945f1ea2d0b42e03cc3b890f7e4cc5faa44997d808193f"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.1",
  "js-sys",
  "pem",
  "ring",
@@ -4770,7 +4770,7 @@ dependencies = [
  "mac-notification-sys",
  "serde",
  "tauri-winrt-notification",
- "zbus 5.4.0",
+ "zbus 5.5.0",
 ]
 
 [[package]]
@@ -5128,9 +5128,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.20.2"
+version = "1.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1261fe7e33c73b354eab43b1273a57c8f967d0391e80353e51f764ac02cf6775"
+checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
 
 [[package]]
 name = "open"
@@ -9558,9 +9558,9 @@ dependencies = [
 
 [[package]]
 name = "zbus"
-version = "5.4.0"
+version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbddd8b6cb25d5d8ec1b23277b45299a98bfb220f1761ca11e186d5c702507f8"
+checksum = "59c333f648ea1b647bc95dc1d34807c8e25ed7a6feff3394034dc4776054b236"
 dependencies = [
  "async-broadcast 0.7.2",
  "async-executor",
@@ -9575,7 +9575,7 @@ dependencies = [
  "enumflags2",
  "event-listener 5.4.0",
  "futures-core",
- "futures-util",
+ "futures-lite 2.6.0",
  "hex",
  "nix 0.29.0",
  "ordered-stream",
@@ -9587,9 +9587,9 @@ dependencies = [
  "windows-sys 0.59.0",
  "winnow 0.7.1",
  "xdg-home",
- "zbus_macros 5.4.0",
+ "zbus_macros 5.5.0",
  "zbus_names 4.2.0",
- "zvariant 5.3.0",
+ "zvariant 5.4.0",
 ]
 
 [[package]]
@@ -9608,16 +9608,16 @@ dependencies = [
 
 [[package]]
 name = "zbus_macros"
-version = "5.4.0"
+version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dac404d48b4e9cf193c8b49589f3280ceca5ff63519e7e64f55b4cf9c47ce146"
+checksum = "f325ad10eb0d0a3eb060203494c3b7ec3162a01a59db75d2deee100339709fc0"
 dependencies = [
  "proc-macro-crate 3.2.0",
  "proc-macro2",
  "quote",
  "syn 2.0.98",
  "zbus_names 4.2.0",
- "zvariant 5.3.0",
+ "zvariant 5.4.0",
  "zvariant_utils 3.2.0",
 ]
 
@@ -9641,7 +9641,7 @@ dependencies = [
  "serde",
  "static_assertions",
  "winnow 0.7.1",
- "zvariant 5.3.0",
+ "zvariant 5.4.0",
 ]
 
 [[package]]
@@ -9741,16 +9741,16 @@ dependencies = [
 
 [[package]]
 name = "zvariant"
-version = "5.3.0"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31c951c21879c6e1d46ac5adfc34f698fefb465d498cf4ac87545849bd71bb5a"
+checksum = "b2df9ee044893fcffbdc25de30546edef3e32341466811ca18421e3cd6c5a3ac"
 dependencies = [
  "endi",
  "enumflags2",
  "serde",
  "static_assertions",
  "winnow 0.7.1",
- "zvariant_derive 5.3.0",
+ "zvariant_derive 5.4.0",
  "zvariant_utils 3.2.0",
 ]
 
@@ -9769,9 +9769,9 @@ dependencies = [
 
 [[package]]
 name = "zvariant_derive"
-version = "5.3.0"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eeb539471af098d9e63faf428c71ac4cd4efe0b5baa3c8a6b991c5f2543b70e"
+checksum = "74170caa85b8b84cc4935f2d56a57c7a15ea6185ccdd7eadb57e6edd90f94b2f"
 dependencies = [
  "proc-macro-crate 3.2.0",
  "proc-macro2",
