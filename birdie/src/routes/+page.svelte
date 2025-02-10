@@ -127,8 +127,6 @@
 	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && !loading;
 
 	// directory metadata
-	// Using a boolean to disable metadata features until we have a better use case for it
-	const metadataFeaturesEnabled: boolean = false;
 	let directoryMetadata: Nullable<DirectoryMetadata> = null;
 	let editingDirectoryClass: boolean = false;
 	const defaultDirectoryClass: string = 'none';
@@ -182,8 +180,10 @@
 
 	const handleGetDirectoryMetadata = async () => {
 		try {
-			directoryMetadata = await getDirectoryMetadata($currentRoot);
-			$selectedDirectoryClass = directoryMetadata?.directoryClass ?? defaultDirectoryClass;
+			if ($selectedFile) {
+				directoryMetadata = await getDirectoryMetadata($selectedFile.path);
+				$selectedDirectoryClass = directoryMetadata?.directoryClass ?? defaultDirectoryClass;
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -792,7 +792,8 @@
 		loading = false;
 	};
 
-	const onFileTreeClick = async (_file: LFSFile) => {
+	const onFileTreeClick = async (file: LFSFile) => {
+		await selectFile(file);
 		await handleShowFileHistory();
 	};
 
@@ -879,61 +880,59 @@
 			<Checkbox bind:checked={showSourceControl}>Source Control</Checkbox>
 		</div>
 	</div>
-	{#if metadataFeaturesEnabled && $selectedDirectoryClass === 'character' && directoryMetadata}
+	{#if $selectedDirectoryClass === 'character' && directoryMetadata}
 		<CharacterCard metadata={directoryMetadata} onMetadataSaved={handleUpdateDirectoryMetadata} />
 	{/if}
 	<div class="flex gap-2 overflow-hidden w-full max-w-full max-h-[65vh]">
 		<div class="flex flex-col min-w-[25vw] gap-2 h-full gap-2">
 			<FileTree bind:fileNode={$rootNode} bind:loading onFileClick={onFileTreeClick} />
-			{#if metadataFeaturesEnabled}
-				<Card
-					class="h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
-				>
-					<div class="flex items-center gap-4 h-full">
-						<p class="text-lg my-2 dark:text-primary-400">Directory Class</p>
-						{#if editingDirectoryClass}
-							<div class="flex gap-2">
-								<Select
-									size="sm"
-									class="w-32 text-center"
-									items={directoryClassOptions}
-									bind:value={tempDirectoryClass}
-								/>
+			<Card
+				class="h-10 p-4 sm:p-4 max-w-full max-h-full dark:bg-secondary-600 border-0 shadow-none"
+			>
+				<div class="flex items-center gap-4 h-full">
+					<p class="text-lg my-2 dark:text-primary-400">Directory Class</p>
+					{#if editingDirectoryClass}
+						<div class="flex gap-2">
+							<Select
+								size="sm"
+								class="w-32 text-center"
+								items={directoryClassOptions}
+								bind:value={tempDirectoryClass}
+							/>
 
-								<Button
-									disabled={updatingDirectoryClass}
-									size="xs"
-									class="my-1"
-									on:click={saveDirectoryClass}
-								>
-									<CheckSolid class="w-4 h-4" />
-								</Button>
-								<Button
-									disabled={updatingDirectoryClass}
-									size="xs"
-									class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
-									on:click={cancelEditDirectoryClass}
-								>
-									<CloseSolid class="w-4 h-4" />
-								</Button>
-							</div>
-						{:else}
-							<div class="flex gap-2">
-								<code class="dark:bg-secondary-700 px-2 py-1 w-32 text-center text-white"
-									>{$selectedDirectoryClass}</code
-								>
-								<Button
-									size="xs"
-									disabled={$selectedExplorerFiles.length > 0}
-									on:click={handleEditDirectoryClass}
-								>
-									<EditOutline class="w-4 h-4" />
-								</Button>
-							</div>
-						{/if}
-					</div>
-				</Card>
-			{/if}
+							<Button
+								disabled={updatingDirectoryClass}
+								size="xs"
+								class="my-1"
+								on:click={saveDirectoryClass}
+							>
+								<CheckSolid class="w-4 h-4" />
+							</Button>
+							<Button
+								disabled={updatingDirectoryClass}
+								size="xs"
+								class="my-1 dark:bg-red-800 hover:dark:bg-red-900"
+								on:click={cancelEditDirectoryClass}
+							>
+								<CloseSolid class="w-4 h-4" />
+							</Button>
+						</div>
+					{:else}
+						<div class="flex gap-2">
+							<code class="dark:bg-secondary-700 px-2 py-1 w-32 text-center text-white"
+								>{$selectedDirectoryClass}</code
+							>
+							<Button
+								size="xs"
+								disabled={$selectedExplorerFiles.length > 0}
+								on:click={handleEditDirectoryClass}
+							>
+								<EditOutline class="w-4 h-4" />
+							</Button>
+						</div>
+					{/if}
+				</div>
+			</Card>
 			<Card
 				class="flex flex-col max-w-full p-4 sm:p-4 pt-1 sm:pt-1 min-h-[12rem] max-h-[36rem] h-[32rem] dark:bg-secondary-600 border-0 shadow-none overflow-hidden"
 			>
