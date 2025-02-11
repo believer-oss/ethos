@@ -3,10 +3,18 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { get } from 'svelte/store';
 	import { ProgressModal } from '@ethos/core';
-	import { getServers, launchServer } from '$lib/gameServers';
-	import type { ArtifactEntry, GameServerResult, Nullable, SyncClientRequest } from '$lib/types';
+	import { getServers, launchServer, getServerArgsDisplayString } from '$lib/gameServers';
+
+	import type {
+		ArtifactEntry,
+		GameServerResult,
+		Nullable,
+		SyncClientRequest,
+		PlaytestProfile
+	} from '$lib/types';
 	import {
 		activeProjectConfig,
+		repoConfig,
 		builds,
 		builtCommits,
 		selectedCommit,
@@ -21,10 +29,16 @@
 	let busy = false;
 	let serverName = '';
 	let map = $activeProjectConfig?.maps[0] || '';
+	let profile: string = $repoConfig?.playtestProfiles[0].name; // the backend ensures there's always at least one valid entry here
 	let hasError = false;
 	let autoLaunch = false;
 
 	const maps = $activeProjectConfig?.maps.map((m) => ({ name: m, value: m }));
+
+	const profiles = $repoConfig?.playtestProfiles.map((p) => ({
+		name: p.name,
+		value: p
+	}));
 
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
 	let recentCommits = get(builtCommits);
@@ -109,12 +123,19 @@
 		busy = true;
 
 		try {
+			let cmdArgs = [];
+			if (profile !== undefined) {
+				const selectedProfile: PlaytestProfile = profiles.find((p) => p.name === profile).value;
+				cmdArgs = selectedProfile.args.split(' ');
+			}
+
 			await launchServer({
 				commit: selected.commit,
 				displayName: serverName,
 				checkForExisting: false,
 				map,
-				includeReadinessProbe: false
+				includeReadinessProbe: false,
+				cmdArgs
 			});
 		} catch (e) {
 			await emit('error', e);
@@ -199,6 +220,23 @@
 				bind:value={map}
 				required
 			/>
+		</Label>
+		<Label class="space-y-2 text-xs text-white">
+			<span>Profile</span>
+			<Select
+				size="sm"
+				name="profile"
+				class="text-white bg-secondary-700 dark:bg-space-900"
+				bind:value={profile}
+				required
+			>
+				{#each profiles as profileItem}
+					<option value={profileItem.name}>
+						<span>{profileItem.name}</span>
+						<span>{getServerArgsDisplayString(profileItem.value.args)}</span>
+					</option>
+				{/each}
+			</Select>
 		</Label>
 		<Toggle class="text-white" bind:checked={autoLaunch} name="launch">
 			Sync client and join server immediately

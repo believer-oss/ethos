@@ -80,6 +80,10 @@ pub struct PlaytestSpec {
     #[serde(rename = "includeReadinessProbe")]
     pub include_readiness_probe: bool,
 
+    #[serde(rename = "gameServerCmdArgs")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_server_cmd_args: Option<Vec<String>>,
+
     pub groups: Vec<Group>,
 }
 

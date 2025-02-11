@@ -292,6 +292,7 @@ impl KubeClient {
         display_name: &str,
         map: Option<String>,
         include_readiness_probe: bool,
+        cmd_args: Vec<String>,
     ) -> Result<GameServer, CoreError> {
         let suffix: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
@@ -322,6 +323,7 @@ impl KubeClient {
                 version: tag,
                 map,
                 include_readiness_probe,
+                cmd_args: Some(cmd_args),
             },
             status: None,
         };

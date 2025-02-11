@@ -25,3 +25,10 @@ export const stopLogTail = async (): Promise<void> => invoke('stop_gameserver_lo
 
 export const copyProfileDataFromGameserver = async (name: string): Promise<void> =>
 	invoke('copy_profile_data_from_gameserver', { name });
+
+export const getServerArgsDisplayString = (args: string): string => {
+	if (args === '') {
+		return '';
+	}
+	return `(${args})`;
+};

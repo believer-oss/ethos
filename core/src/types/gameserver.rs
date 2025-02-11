@@ -18,6 +18,9 @@ pub struct GameServerSpec {
     pub map: Option<String>,
 
     pub include_readiness_probe: bool,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cmd_args: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
@@ -61,4 +64,5 @@ pub struct LaunchRequest {
     pub display_name: String,
     pub map: Option<String>,
     pub include_readiness_probe: bool,
+    pub cmd_args: Vec<String>,
 }
