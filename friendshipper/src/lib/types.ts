@@ -68,6 +68,12 @@ export interface AppConfig {
 	initialized: boolean;
 }
 
+export interface PlaytestProfile {
+	name: string;
+	description: string;
+	args: string;
+}
+
 export interface RepoConfig {
 	uprojectPath: string;
 	trunkBranch: string;
@@ -75,6 +81,7 @@ export interface RepoConfig {
 	commitGuidelinesUrl?: string;
 	useConventionalCommits: boolean;
 	conventionalCommitsAllowedTypes: string[];
+	playtestProfiles: PlaytestProfile[];
 }
 
 // Kubernetes API types
@@ -133,6 +140,7 @@ export interface LaunchRequest {
 	displayName: string;
 	map?: string;
 	includeReadinessProbe: boolean;
+	cmdArgs: string[];
 }
 
 // Playtest types
@@ -151,6 +159,7 @@ export interface PlaytestSpec {
 	feedbackURL: string;
 	groups?: Nullable<Group[]>;
 	includeReadinessProbe: boolean;
+	gameServerCmdArgs: Nullable<string[]>;
 }
 
 export interface GroupStatus extends Group {

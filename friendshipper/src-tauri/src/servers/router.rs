@@ -92,6 +92,7 @@ where
             request.display_name.as_str(),
             request.map,
             request.include_readiness_probe,
+            request.cmd_args,
         )
         .await?;
 

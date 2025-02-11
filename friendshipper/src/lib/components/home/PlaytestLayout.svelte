@@ -250,7 +250,8 @@
 			commit: selected.commit,
 			displayName: name,
 			checkForExisting: false,
-			includeReadinessProbe: false
+			includeReadinessProbe: false,
+			cmdArgs: []
 		};
 
 		if ($activeProjectConfig) {

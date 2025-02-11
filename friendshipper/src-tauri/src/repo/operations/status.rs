@@ -561,7 +561,7 @@ where
     }
 }
 
-#[instrument]
+#[instrument(skip(files))]
 fn find_dll_commit(files: &ArtifactList, long_shas: &str, context: &str) -> String {
     for sha in long_shas.lines() {
         let sha = sha.replace('"', "");

@@ -204,9 +204,27 @@ impl AppConfig {
 
         // TODO: We'll need some better error handling here. Because the config file is stored
         // in the project repo itself, all users are impacted by bad config being committed to it.
-        settings
+        let mut repo_config = settings
             .try_deserialize::<RepoConfig>()
-            .map_err(|e| anyhow!(e))
+            .map_err(|e| anyhow!(e))?;
+
+        // add a no-op default profile if none exist
+        let default_profile = PlaytestProfile {
+            name: "Default".to_string(),
+            description: String::new(),
+            args: String::new(),
+        };
+
+        match repo_config.playtest_profiles {
+            Some(ref mut profiles) => {
+                if profiles.is_empty() {
+                    profiles.push(default_profile);
+                }
+            }
+            None => repo_config.playtest_profiles = Some(vec![default_profile]),
+        };
+
+        Ok(repo_config)
     }
 
     pub fn get_uproject_path(&self, repo_config: &RepoConfig) -> PathBuf {
@@ -252,6 +270,13 @@ impl std::fmt::Display for ConfigValidationError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaytestProfile {
+    name: String,
+    description: String,
+    args: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
     #[serde(default, rename = "uprojectPath")]
     pub uproject_path: String,
@@ -274,6 +299,9 @@ pub struct RepoConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub commit_guidelines_url: Option<String>,
+
+    #[serde(default, rename = "playtestProfiles")]
+    pub playtest_profiles: Option<Vec<PlaytestProfile>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -305,6 +333,7 @@ impl Default for RepoConfig {
                 "test".to_string(),
                 "chore".to_string(),
             ],
+            playtest_profiles: vec![].into(),
         }
     }
 }

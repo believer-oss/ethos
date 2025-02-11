@@ -2,10 +2,24 @@
 	import { Button, Checkbox, Input, Label, Modal, Select, Tooltip } from 'flowbite-svelte';
 	import { EditOutline, ExclamationCircleOutline, UndoOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
-	import type { ArtifactEntry, Nullable, Playtest, PlaytestSpec } from '$lib/types';
+	import type {
+		ArtifactEntry,
+		Nullable,
+		Playtest,
+		PlaytestSpec,
+		PlaytestProfile
+	} from '$lib/types';
 	import { createPlaytest, deletePlaytest, ModalState, updatePlaytest } from '$lib/playtests';
-	import { appConfig, activeProjectConfig, allProjects, workflowMap, builds } from '$lib/stores';
+	import {
+		appConfig,
+		repoConfig,
+		activeProjectConfig,
+		allProjects,
+		workflowMap,
+		builds
+	} from '$lib/stores';
 	import { getBuild, getBuilds } from '$lib/builds';
+	import { getServerArgsDisplayString } from '$lib/gameServers';
 
 	export let versions: ArtifactEntry[];
 	export let showModal: boolean;
@@ -18,6 +32,7 @@
 
 	let commits: { name: string; value: string }[] = [];
 	let maps: { value: string; name: string }[] = [];
+	let profiles: { value: PlaytestProfile; name: string }[] = [];
 	let submitting = false;
 	let deleting = false;
 	let project: string = '';
@@ -55,6 +70,11 @@
 		}
 
 		maps = $activeProjectConfig?.maps.map((m) => ({ value: m, name: m })) ?? [];
+
+		profiles = $repoConfig?.playtestProfiles.map((p) => ({
+			name: p.name,
+			value: p
+		}));
 
 		commits = projVersions.map((v) => ({
 			value: v.commit,
@@ -103,6 +123,15 @@
 			data[key] = value as string;
 		}
 
+		let gameServerCmdArgs = [];
+		if (data.profile !== undefined) {
+			const selectedProfileName = data.profile;
+			const selectedProfile: PlaytestProfile = profiles.find(
+				(p) => p.name === selectedProfileName
+			).value;
+			gameServerCmdArgs = selectedProfile.args.split(' ');
+		}
+
 		if (mode === ModalState.Editing && playtest != null) {
 			const doNotPrune = !('autoCleanup' in data);
 			const spec: PlaytestSpec = {
@@ -114,7 +143,8 @@
 				startTime: new Date(`${data.startDate} ${data.startTime}`).toISOString(),
 				groups: playtest.spec.groups,
 				feedbackURL: data.feedbackURL,
-				includeReadinessProbe: playtest?.spec.includeReadinessProbe ?? false
+				includeReadinessProbe: playtest?.spec.includeReadinessProbe ?? false,
+				gameServerCmdArgs
 			};
 
 			try {
@@ -140,7 +170,8 @@
 				startTime: new Date(`${data.startDate} ${data.startTime}`).toISOString(),
 				groups: [],
 				feedbackURL: data.feedbackURL,
-				includeReadinessProbe
+				includeReadinessProbe,
+				gameServerCmdArgs
 			};
 
 			const name = data.name.toLowerCase().replace(/[_\s/]/g, '-');
@@ -403,6 +434,26 @@
 				value={playtest ? playtest.spec.feedbackURL : ''}
 			/>
 		</Label>
+		<div>
+			<Label class="flex flex-col text-xs text-white gap-2">
+				<span>Profile</span>
+				<Select
+					size="sm"
+					name="profile"
+					class={inputClass}
+					required
+					value={playtest ? playtest.spec.gameServerCmdArgs : profiles[0].name}
+					disabled={mode === ModalState.Editing}
+				>
+					{#each profiles as profile}
+						<option value={profile.name}>
+							<span>{profile.name}</span>
+							<span>{getServerArgsDisplayString(profile.value.args)}</span>
+						</option>
+					{/each}
+				</Select>
+			</Label>
+		</div>
 		<div class="flex flex-row gap-2">
 			<Label class="flex flex-row text-xs text-white">
 				<Checkbox
