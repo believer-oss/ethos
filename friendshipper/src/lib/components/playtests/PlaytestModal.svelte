@@ -434,26 +434,28 @@
 				value={playtest ? playtest.spec.feedbackURL : ''}
 			/>
 		</Label>
-		<div>
-			<Label class="flex flex-col text-xs text-white gap-2">
-				<span>Profile</span>
-				<Select
-					size="sm"
-					name="profile"
-					class={inputClass}
-					required
-					value={playtest ? playtest.spec.gameServerCmdArgs : profiles[0].name}
-					disabled={mode === ModalState.Editing}
-				>
-					{#each profiles as profile}
-						<option value={profile.name}>
-							<span>{profile.name}</span>
-							<span>{getServerArgsDisplayString(profile.value.args)}</span>
-						</option>
-					{/each}
-				</Select>
-			</Label>
-		</div>
+		{#if profiles !== null && profiles !== undefined && profiles.length > 0}
+			<div>
+				<Label class="flex flex-col text-xs text-white gap-2">
+					<span>Profile</span>
+					<Select
+						size="sm"
+						name="profile"
+						class={inputClass}
+						required
+						value={playtest ? playtest.spec.gameServerCmdArgs : profiles[0].name}
+						disabled={mode === ModalState.Editing}
+					>
+						{#each profiles as profile}
+							<option value={profile.name}>
+								<span>{profile.name}</span>
+								<span>{getServerArgsDisplayString(profile.value.args)}</span>
+							</option>
+						{/each}
+					</Select>
+				</Label>
+			</div>
+		{/if}
 		<div class="flex flex-row gap-2">
 			<Label class="flex flex-row text-xs text-white">
 				<Checkbox
