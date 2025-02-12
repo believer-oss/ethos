@@ -221,23 +221,25 @@
 				required
 			/>
 		</Label>
-		<Label class="space-y-2 text-xs text-white">
-			<span>Profile</span>
-			<Select
-				size="sm"
-				name="profile"
-				class="text-white bg-secondary-700 dark:bg-space-900"
-				bind:value={profile}
-				required
-			>
-				{#each profiles as profileItem}
-					<option value={profileItem.name}>
-						<span>{profileItem.name}</span>
-						<span>{getServerArgsDisplayString(profileItem.value.args)}</span>
-					</option>
-				{/each}
-			</Select>
-		</Label>
+		{#if profiles !== null && profiles !== undefined && profiles.length > 0}
+			<Label class="space-y-2 text-xs text-white">
+				<span>Profile</span>
+				<Select
+					size="sm"
+					name="profile"
+					class="text-white bg-secondary-700 dark:bg-space-900"
+					bind:value={profile}
+					required
+				>
+					{#each profiles as profileItem}
+						<option value={profileItem.name}>
+							<span>{profileItem.name}</span>
+							<span>{getServerArgsDisplayString(profileItem.value.args)}</span>
+						</option>
+					{/each}
+				</Select>
+			</Label>
+		{/if}
 		<Toggle class="text-white" bind:checked={autoLaunch} name="launch">
 			Sync client and join server immediately
 		</Toggle>

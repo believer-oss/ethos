@@ -333,7 +333,7 @@ impl Default for RepoConfig {
                 "test".to_string(),
                 "chore".to_string(),
             ],
-            playtest_profiles: vec![].into(),
+            playtest_profiles: Some(vec![]),
         }
     }
 }
