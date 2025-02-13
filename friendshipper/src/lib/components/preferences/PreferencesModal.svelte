@@ -103,10 +103,6 @@
 	};
 
 	const onRepoUrlInput = (e: Event) => {
-		if (!configuringNewRepo) {
-			return;
-		}
-
 		const input = (e.target as HTMLInputElement).value;
 		const githubUrlPattern = /[^/]+\/[^/]+\.git$/;
 
@@ -132,12 +128,21 @@
 	};
 
 	const openRepoFolder = async () => {
-		localAppConfig.repoPath = await open({
+		const openDir = await open({
 			directory: true,
 			multiple: false,
 			defaultPath: localAppConfig.repoPath || '.',
 			title: 'Select game repository folder'
 		});
+
+		if (openDir && typeof openDir === 'string') {
+			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath = openDir.replaceAll(
+				'\\',
+				'/'
+			);
+		} else {
+			await emit('error', 'Error selecting folder. Contact an engineer.');
+		}
 	};
 
 	const openEnginePrebuiltFolder = async () => {
@@ -211,9 +216,11 @@
 		} else {
 			await internal();
 		}
+		configuringNewRepo = false;
 	};
 
 	const onDiscardClicked = () => {
+		configuringNewRepo = false;
 		showModal = false;
 		void emit('preferences-closed');
 	};

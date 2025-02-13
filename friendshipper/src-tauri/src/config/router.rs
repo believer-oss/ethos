@@ -108,12 +108,6 @@ where
         .into());
     }
 
-    if current_config.selected_artifact_project.is_some() {
-        payload
-            .selected_artifact_project
-            .clone_from(&current_config.selected_artifact_project)
-    }
-
     // if the server url changed, check its health endpoint
     if payload.server_url != current_config.server_url {
         let friendshipper_client = FriendshipperClient::new(payload.server_url.clone())?;
