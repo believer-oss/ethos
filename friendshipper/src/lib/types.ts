@@ -45,7 +45,13 @@ export interface OktaConfig {
 	issuer: string;
 }
 
+export interface Project {
+	repoPath: string;
+	repoUrl: string;
+}
+
 export interface AppConfig {
+	projects: Record<string, Project>;
 	repoPath: string;
 	repoUrl: string;
 	userDisplayName: string;
