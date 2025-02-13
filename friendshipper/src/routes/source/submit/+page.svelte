@@ -73,6 +73,7 @@
 		syncUprojectWithEngineCommit
 	} from '$lib/repo';
 	import {
+		activeProjectConfig,
 		allModifiedFiles,
 		appConfig,
 		changeSets,
@@ -370,8 +371,19 @@
 	};
 
 	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
+		if ($activeProjectConfig === null) {
+			await emit('error', 'No active project found, unable to save changesets to file.');
+			return;
+		}
+
 		$changeSets = newChangesets;
-		await fs.writeFile(CHANGE_SETS_PATH, JSON.stringify($changeSets, null, 2), {
+		const changeSetsProjectPath = `${$activeProjectConfig.name}/${CHANGE_SETS_PATH}`;
+
+		if (!(await fs.exists($activeProjectConfig.name, { dir: fs.BaseDirectory.AppLocalData }))) {
+			await fs.createDir($activeProjectConfig.name, { dir: fs.BaseDirectory.AppLocalData });
+		}
+
+		await fs.writeFile(changeSetsProjectPath, JSON.stringify($changeSets, null, 2), {
 			dir: BaseDirectory.AppLocalData
 		});
 	};
