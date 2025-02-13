@@ -33,6 +33,7 @@
 		backgroundSyncInProgress,
 		builds,
 		currentSyncedVersion,
+		latestLocalCommit,
 		nextPlaytest,
 		playtests,
 		repoConfig,
@@ -306,6 +307,12 @@
 						<div class="flex gap-2 items-center">
 							<p class="w-60 text-white">Branch:</p>
 							<p class="w-60 text-primary-400 dark:text-primary-400">{$repoStatus?.branch}</p>
+						</div>
+						<div class="flex gap-2 items-center">
+							<p class="w-full text-white">Current synced commit:</p>
+							<p class="w-full text-primary-400 dark:text-primary-400">
+								<code>{$latestLocalCommit?.sha}</code>
+							</p>
 						</div>
 						<div class="flex gap-2 items-center">
 							<p class="w-full text-white">
