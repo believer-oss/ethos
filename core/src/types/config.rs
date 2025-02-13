@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs;
 use std::path::Path;
@@ -66,7 +67,19 @@ impl ToString for RedactedString {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProjectRepoConfig {
+    #[serde(default, rename = "repoPath", alias = "repo_path")]
+    pub repo_path: String,
+
+    #[serde(default, rename = "repoUrl", alias = "repo_url")]
+    pub repo_url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default, rename = "projects")]
+    pub projects: HashMap<String, ProjectRepoConfig>,
+
     #[serde(default, rename = "repoPath", alias = "repo_path")]
     pub repo_path: String,
 
@@ -158,6 +171,7 @@ impl AppConfig {
 
         engine_prebuilt_path.push("f11r_engine_prebuilt");
         AppConfig {
+            projects: HashMap::new(),
             repo_path: Default::default(),
             repo_url: Default::default(),
             tools_path: Default::default(),
@@ -186,11 +200,21 @@ impl AppConfig {
     }
 
     pub fn initialize_repo_config(&self) -> Result<RepoConfig> {
-        if self.repo_path.is_empty() {
+        if self.selected_artifact_project.is_none() {
             return Ok(Default::default());
         }
 
-        let config_file = PathBuf::from(self.repo_path.clone()).join("friendshipper.yaml");
+        let project_config = self
+            .projects
+            .get(self.selected_artifact_project.as_ref().unwrap());
+        if project_config.is_none() {
+            return Ok(Default::default());
+        }
+
+        let project_config = project_config.unwrap();
+
+        let config_file =
+            PathBuf::from(project_config.repo_path.clone()).join("friendshipper.yaml");
 
         if !config_file.exists() {
             return Ok(Default::default());

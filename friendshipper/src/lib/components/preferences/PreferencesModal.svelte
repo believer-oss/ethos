@@ -54,6 +54,7 @@
 	let localAppConfig: AppConfig = {};
 	let isEngineTypePrebuilt: boolean = false;
 	let isEngineTypeSource: boolean = false;
+	let configuringNewRepo: boolean = false;
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -92,6 +93,44 @@
 		clearInterval(uptimeInterval);
 	});
 
+	const onNewProjectClicked = () => {
+		configuringNewRepo = true;
+		localAppConfig.projects['new-project'] = {
+			repoPath: '',
+			repoUrl: ''
+		};
+		localAppConfig.selectedArtifactProject = 'new-project';
+	};
+
+	const onRepoUrlInput = (e: Event) => {
+		if (!configuringNewRepo) {
+			return;
+		}
+
+		const input = (e.target as HTMLInputElement).value;
+		const githubUrlPattern = /[^/]+\/[^/]+\.git$/;
+
+		if (githubUrlPattern.test(input)) {
+			// Extract repo name from URL and use it as project name
+			const repoName = input.split('/').pop()?.replace('.git', '');
+			if (repoName) {
+				// Create new project with owner-repo name
+				const projectData = localAppConfig.projects[localAppConfig.selectedArtifactProject];
+
+				// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+				delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
+
+				// Get just the last two parts of the path (foo/bar.git)
+				const parts = input.split('/');
+				const owner = parts[parts.length - 2];
+				const repo = parts[parts.length - 1].replace('.git', '');
+				const projectName = `${owner}-${repo}`;
+				localAppConfig.projects[projectName] = projectData;
+				localAppConfig.selectedArtifactProject = projectName;
+			}
+		}
+	};
+
 	const openRepoFolder = async () => {
 		localAppConfig.repoPath = await open({
 			directory: true,
@@ -126,6 +165,12 @@
 	const onApplyClicked = async () => {
 		// show the progress modal if the repo URL has changed
 		const shouldShowProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
+
+		localAppConfig.repoPath =
+			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath;
+		localAppConfig.repoUrl =
+			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
+
 		const internal = async () => {
 			try {
 				const accessToken = $oktaAuth?.getAccessToken();
@@ -381,6 +426,36 @@
 	<div class="rounded-lg border border-gray-300 dark:border-gray-300">
 		<div class="mt-4 mb-4 ml-4 mr-4">
 			<div class="flex flex-col gap-2">
+				<div class="flex gap-2 items-end">
+					<div class="flex-1">
+						<Label class="text-white">Project</Label>
+						<Select
+							size="sm"
+							bind:value={localAppConfig.selectedArtifactProject}
+							disabled={configuringNewRepo}
+							class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						>
+							{#each Object.keys(localAppConfig.projects) as project}
+								<option value={project}>{project}</option>
+							{/each}
+						</Select>
+					</div>
+					{#if configuringNewRepo}
+						<Button
+							color="red"
+							class="h-9 mb-0.5"
+							on:click={() => {
+								// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+								delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
+
+								localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
+								configuringNewRepo = false;
+							}}>Cancel</Button
+						>
+					{:else}
+						<Button class="h-9 mb-0.5" on:click={onNewProjectClicked}>New Project</Button>
+					{/if}
+				</div>
 				<Label class="text-white">Repo Path</Label>
 				<div class="flex gap-1 mb-2">
 					<Button class="h-8 gap-2" on:click={openRepoFolder}>
@@ -390,14 +465,14 @@
 					<ButtonGroup class="w-full">
 						<Input
 							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-							bind:value={localAppConfig.repoPath}
+							bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath}
 						/>
 						<Tooltip class="text-sm" placement="bottom">
 							Specified folder must be a game repository.
 						</Tooltip>
 						<Button
 							class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
-							disabled={!localAppConfig.repoPath}
+							disabled={!localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath}
 							on:click={openTerminalToRepo}
 						>
 							<TerminalSolid class="w-4 h-4" color="white" />
@@ -412,7 +487,8 @@
 				<div class="flex gap-1 mb-2">
 					<Input
 						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.repoUrl}
+						bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
+						on:input={onRepoUrlInput}
 					/>
 				</div>
 				<Tooltip class="text-sm" placement="bottom">
