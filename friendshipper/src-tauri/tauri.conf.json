@@ -23,6 +23,8 @@
 				"writeFile": true,
 				"exists": true,
 				"readFile": true,
+				"createDir": true,
+				"removeFile": true,
 				"scope": {
 					"allow": ["*/**"],
 					"requireLiteralLeadingDot": false

@@ -45,6 +45,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
+		activeProjectConfig,
 		allModifiedFiles,
 		appConfig,
 		backgroundSyncInProgress,
@@ -182,8 +183,28 @@
 	};
 
 	const initializeChangeSets = async () => {
+		if ($activeProjectConfig === null) {
+			await emit('error', 'No active project found, unable to load changesets from file.');
+			return;
+		}
+
+		const changeSetsProjectPath = `${$activeProjectConfig.name}/${CHANGE_SETS_PATH}`;
+
+		// if we still have changesets in the deprecated location, migrate them over to {active project name}/CHANGE_SETS_PATH
 		if (await fs.exists(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
-			const changeSetsResponse = await fs.readTextFile(CHANGE_SETS_PATH, {
+			const oldChangeSets = await fs.readTextFile(CHANGE_SETS_PATH, {
+				dir: BaseDirectory.AppLocalData
+			});
+
+			await fs.createDir($activeProjectConfig.name, { dir: fs.BaseDirectory.AppLocalData });
+			await fs.writeFile(changeSetsProjectPath, oldChangeSets, {
+				dir: BaseDirectory.AppLocalData
+			});
+			await fs.removeFile(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.AppLocalData });
+		}
+
+		if (await fs.exists(changeSetsProjectPath, { dir: fs.BaseDirectory.AppLocalData })) {
+			const changeSetsResponse = await fs.readTextFile(changeSetsProjectPath, {
 				dir: BaseDirectory.AppLocalData
 			});
 
@@ -194,7 +215,6 @@
 					indeterminate: false
 				})
 			);
-
 			changeSets.set(parsedChangeSets);
 		}
 	};
