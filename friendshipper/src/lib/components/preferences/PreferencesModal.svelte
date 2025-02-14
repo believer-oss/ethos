@@ -28,6 +28,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/api/dialog';
 	import { onDestroy } from 'svelte';
+	import { ProgressModal } from '@ethos/core';
 	import {
 		appConfig,
 		dynamicConfig,
@@ -140,8 +141,6 @@
 				'\\',
 				'/'
 			);
-		} else {
-			await emit('error', 'Error selecting folder. Contact an engineer.');
 		}
 	};
 
@@ -180,10 +179,11 @@
 			try {
 				const accessToken = $oktaAuth?.getAccessToken();
 				if (accessToken) {
-					await updateAppConfig(localAppConfig, accessToken);
+					progressModalTitle = 'Saving preferences...';
+					await updateAppConfig(localAppConfig, accessToken, true);
 					await emit('success', 'Preferences saved.');
 				} else {
-					await emit('error', 'No access token found.');
+					await emit('error', 'Failed to save preferences. No access token found.');
 				}
 			} catch (e) {
 				await emit('error', e);
@@ -210,7 +210,6 @@
 
 		if (shouldShowProgressModal) {
 			showProgressModal = true;
-			progressModalTitle = 'Cloning repo...';
 			await internal();
 			showProgressModal = false;
 		} else {
@@ -801,3 +800,5 @@
 		</div>
 	</div>
 </Modal>
+
+<ProgressModal title={progressModalTitle} showModal={showProgressModal} />
