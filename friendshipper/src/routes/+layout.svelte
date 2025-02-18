@@ -259,14 +259,17 @@
 			} catch (error) {
 				await emit('error', error);
 				await handleOktaLogout();
-			}
-		} else {
-			try {
-				await handleOktaLogout();
 				await handleOktaLogin();
-			} catch (e) {
-				await emit('error', e);
 			}
+
+			return;
+		}
+
+		try {
+			await handleOktaLogout();
+			await handleOktaLogin();
+		} catch (e) {
+			await emit('error', e);
 		}
 	};
 
