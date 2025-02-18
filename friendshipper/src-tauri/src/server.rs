@@ -21,7 +21,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
-use ethos_core::types::config::{AppConfig, DynamicConfig};
+use ethos_core::types::config::{AppConfig, DynamicConfig, ProjectRepoConfig};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::RepoStatus;
 use ethos_core::types::repo::RepoStatusRef;
@@ -490,6 +490,48 @@ impl Server {
                         info!("Loaded config from {}", &config_file_str);
                         info!("Config: {:?}", config);
 
+                        // If we have a repo path and repo url but no selected project,
+                        // construct owner-repo from github url
+                        if !config.repo_path.is_empty()
+                            && !config.repo_url.is_empty()
+                            && config.selected_artifact_project.is_none()
+                        {
+                            if let Some(repo_name) = config.repo_url.split('/').next_back() {
+                                let owner =
+                                    config.repo_url.split('/').nth_back(1).unwrap_or_default();
+
+                                let project_key = format!(
+                                    "{}-{}",
+                                    owner.to_lowercase(),
+                                    repo_name.trim_end_matches(".git").to_lowercase()
+                                );
+                                config.selected_artifact_project = Some(project_key.clone());
+
+                                // Add project to map if not present
+                                if let std::collections::hash_map::Entry::Vacant(e) =
+                                    config.projects.entry(project_key)
+                                {
+                                    e.insert(ProjectRepoConfig {
+                                        repo_path: config.repo_path.clone(),
+                                        repo_url: config.repo_url.clone(),
+                                    });
+                                }
+
+                                // Write updated config back to disk
+                                let file = fs::OpenOptions::new()
+                                    .write(true)
+                                    .truncate(true)
+                                    .open(&config_file)?;
+
+                                serde_yaml::to_writer(file, &config).map_err(|e| {
+                                    CoreError::Internal(anyhow!(
+                                        "Failed to write updated config to file: {:?}",
+                                        e
+                                    ))
+                                })?;
+                            }
+                        }
+
                         // if there's a PAT in the keyring, load it
                         if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password()
                         {
@@ -497,10 +539,6 @@ impl Server {
                                 config.github_pat = Some(pat.into());
                             }
                         }
-
-                        // Remove any existing selected artifact project. We want to discover this
-                        // based on the repo status, not store this state.
-                        config.selected_artifact_project = None;
 
                         // if we have a server_url but no okta_config, fetch the okta config
                         if !config.server_url.is_empty() && config.okta_config.is_none() {

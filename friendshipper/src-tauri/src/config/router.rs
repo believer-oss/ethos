@@ -86,6 +86,7 @@ where
 #[derive(Debug, Deserialize)]
 struct UpdateConfigParams {
     token: Option<String>,
+    new_project: bool,
 }
 
 #[instrument(skip(state), err)]
@@ -106,12 +107,6 @@ where
             "Display name cannot be empty.".to_string()
         ))
         .into());
-    }
-
-    if current_config.selected_artifact_project.is_some() {
-        payload
-            .selected_artifact_project
-            .clone_from(&current_config.selected_artifact_project)
     }
 
     // if the server url changed, check its health endpoint
@@ -215,11 +210,14 @@ where
 
             payload.repo_path = full_repo_path.to_str().unwrap().to_string();
 
-            // call the DLL download handler
-            let _ = download_dlls_handler(State(state.clone())).await?;
+            // TODO(sylviacx): guard this because we don't have a way to test cloning a new project AND setting up dlls and engine stuff
+            if !params.new_project {
+                // call the DLL download handler
+                let _ = download_dlls_handler(State(state.clone())).await?;
 
-            // call the engine update handler
-            update_engine_handler(State(state.clone())).await?;
+                // call the engine update handler
+                update_engine_handler(State(state.clone())).await?;
+            }
         }
 
         match payload.github_pat.clone() {

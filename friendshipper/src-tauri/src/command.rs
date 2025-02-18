@@ -213,10 +213,14 @@ pub async fn update_app_config(
     state: tauri::State<'_, State>,
     config: AppConfig,
     token: Option<String>,
+    new_project: bool,
 ) -> Result<String, TauriError> {
     let url = match token {
-        Some(token) => format!("{}/config?token={}", state.server_url, token),
-        None => format!("{}/config", state.server_url),
+        Some(token) => format!(
+            "{}/config?new_project={}&token={}",
+            state.server_url, new_project, token
+        ),
+        None => format!("{}/config?new_project={}", state.server_url, new_project),
     };
 
     let res = state.client.post(url).json(&config.clone()).send().await?;

@@ -5,8 +5,11 @@ export const getDynamicConfig = async (): Promise<DynamicConfig> => invoke('get_
 
 export const getAppConfig = async (): Promise<AppConfig> => invoke('get_app_config');
 
-export const updateAppConfig = async (config: AppConfig, token?: string): Promise<string> =>
-	invoke('update_app_config', { config, token });
+export const updateAppConfig = async (
+	config: AppConfig,
+	token?: string,
+	newProject: boolean = false
+): Promise<string> => invoke('update_app_config', { config, token, newProject });
 
 export const getRepoConfig = async (): Promise<RepoConfig> => invoke('get_repo_config');
 
