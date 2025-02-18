@@ -90,6 +90,10 @@
 		}
 	};
 
+	const OnClose = () => {
+		configuringNewRepo = false;
+	};
+
 	onDestroy(() => {
 		clearInterval(uptimeInterval);
 	});
@@ -167,13 +171,13 @@
 	};
 
 	const onApplyClicked = async () => {
-		// show the progress modal if the repo URL has changed
-		const shouldShowProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
-
 		localAppConfig.repoPath =
 			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath;
 		localAppConfig.repoUrl =
 			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
+
+		// show the progress modal if the repo URL has changed
+		showProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
 
 		const internal = async () => {
 			try {
@@ -208,14 +212,13 @@
 		requestInFlight = true;
 		showModal = false;
 
-		if (shouldShowProgressModal) {
-			showProgressModal = true;
+		if (showProgressModal) {
 			await internal();
-			showProgressModal = false;
 		} else {
 			await internal();
 		}
 		configuringNewRepo = false;
+		showProgressModal = false;
 	};
 
 	const onDiscardClicked = () => {
@@ -314,6 +317,7 @@
 	dismissable
 	autoclose={false}
 	on:open={onOpen}
+	on:close={OnClose}
 >
 	<div class="flex items-center justify-between gap-2">
 		<div class="flex items-center gap-2">
