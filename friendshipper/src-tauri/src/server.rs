@@ -104,8 +104,10 @@ impl Server {
 
         let repo_path = shared_state.app_config.read().repo_path.clone();
         if !repo_path.is_empty() {
-            let content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone())
-                .join(shared_state.engine.get_default_content_subdir());
+            let mut content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone());
+            content_dir.push(shared_state.repo_config.read().uproject_path.clone());
+            content_dir.pop(); // pop off uproject filename
+            content_dir.push(shared_state.engine.get_default_content_subdir());
 
             let inner_span = tracing::info_span!("watcher_start_watch").entered();
             debouncer

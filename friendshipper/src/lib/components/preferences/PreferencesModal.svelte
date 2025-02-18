@@ -31,19 +31,21 @@
 	import { ProgressModal } from '@ethos/core';
 	import {
 		appConfig,
+		commits,
 		dynamicConfig,
 		oktaAuth,
 		playtests,
 		repoStatus,
-		startTime
+		startTime,
+		engineWorkflows
 	} from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
-	import { resetLongtail, wipeClientData } from '$lib/builds';
+	import { resetLongtail, wipeClientData, getWorkflows } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
-	import { resetRepo, refetchRepo, getRepoStatus } from '$lib/repo';
+	import { resetRepo, refetchRepo, getRepoStatus, getAllCommits } from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
-	import type { AppConfig } from '$lib/types';
+	import type { AppConfig, Nullable } from '$lib/types';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -127,7 +129,7 @@
 				const repo = parts[parts.length - 1].replace('.git', '');
 				const projectName = `${owner}-${repo}`;
 				localAppConfig.projects[projectName] = projectData;
-				localAppConfig.selectedArtifactProject = projectName;
+				localAppConfig.selectedArtifactProject = projectName.toLowerCase();
 			}
 		}
 	};
@@ -176,8 +178,8 @@
 		localAppConfig.repoUrl =
 			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
 
-		// show the progress modal if the repo URL has changed
-		showProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
+		const hasRepoUrlChanged = $appConfig.repoUrl !== localAppConfig.repoUrl;
+		showProgressModal = hasRepoUrlChanged;
 
 		const internal = async () => {
 			try {
@@ -201,8 +203,46 @@
 				await emit('error', e);
 			}
 
+			let playtestPromise: Nullable<Promise> = null;
+			let statusPromise: Nullable<Promise> = null;
+			let commitsPromise: Nullable<Promise> = null;
+			let workflowsPromise: Nullable<Promise> = null;
+
 			if (regionChanged) {
-				$playtests = await getPlaytests();
+				playtestPromise = getPlaytests();
+			}
+
+			if (hasRepoUrlChanged) {
+				statusPromise = getRepoStatus();
+				commitsPromise = getAllCommits();
+
+				if (localAppConfig.repoUrl !== '') {
+					workflowsPromise = await getWorkflows();
+				}
+			}
+
+			const promises: Promise[] = [
+				playtestPromise,
+				statusPromise,
+				commitsPromise,
+				workflowsPromise
+			];
+			const values = await Promise.all(promises);
+
+			if (values[0] !== null) {
+				playtests.set(values[0]);
+			}
+
+			if (values[1] !== null) {
+				repoStatus.set(values[1]);
+			}
+
+			if (values[2] !== null) {
+				commits.set(values[2]);
+			}
+
+			if (values[3] !== null) {
+				$engineWorkflows = values[3].commits;
 			}
 
 			void emit('preferences-closed');
