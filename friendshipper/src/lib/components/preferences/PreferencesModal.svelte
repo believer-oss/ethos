@@ -32,7 +32,6 @@
 	import {
 		appConfig,
 		commits,
-		activeProjectConfig,
 		changeSets,
 		dynamicConfig,
 		oktaAuth,
@@ -67,8 +66,8 @@
 	let isEngineTypePrebuilt: boolean = false;
 	let isEngineTypeSource: boolean = false;
 	let configuringNewRepo: boolean = false;
-	let newRepoName: string = '';
-	let newRepoPathParent: string = '';
+	let repoName: string = '';
+	let parentRepoPath: string = '';
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -99,10 +98,12 @@
 				issuer: ''
 			};
 		}
+		parentRepoPath = localAppConfig.repoPath.split('/').slice(0, -1).join('/');
+		repoName = localAppConfig.repoPath.split('/').pop() || '';
 	};
 
 	const OnClose = () => {
-		newRepoName = '';
+		repoName = '';
 		configuringNewRepo = false;
 	};
 
@@ -117,6 +118,8 @@
 			repoUrl: ''
 		};
 		localAppConfig.selectedArtifactProject = 'new-project';
+		repoName = '';
+		parentRepoPath = '';
 	};
 
 	const onRepoUrlInput = (e: Event) => {
@@ -125,9 +128,9 @@
 
 		if (githubUrlPattern.test(input)) {
 			// Extract repo name from URL and use it as project name
-			const repoName = input.split('/').pop()?.replace('.git', '');
-			if (repoName) {
-				newRepoName = repoName;
+			const parsedRepoName = input.split('/').pop()?.replace('.git', '');
+			if (parsedRepoName) {
+				repoName = parsedRepoName;
 				// Create new project with owner-repo name
 				const projectData = localAppConfig.projects[localAppConfig.selectedArtifactProject];
 
@@ -140,7 +143,7 @@
 				const repo = parts[parts.length - 1].replace('.git', '');
 				const projectName = `${owner}-${repo}`.toLowerCase();
 				localAppConfig.projects[projectName] = projectData;
-				localAppConfig.projects[projectName].repoPath = `${newRepoPathParent}/${newRepoName}`;
+				localAppConfig.projects[projectName].repoPath = `${parentRepoPath}/${repoName}`;
 				localAppConfig.selectedArtifactProject = projectName.toLowerCase();
 			}
 		}
@@ -155,10 +158,10 @@
 		});
 
 		if (openDir && typeof openDir === 'string') {
-			newRepoPathParent = openDir.replaceAll('\\', '/');
+			parentRepoPath = openDir.replaceAll('\\', '/');
 			localAppConfig.projects[
 				localAppConfig.selectedArtifactProject
-			].repoPath = `${newRepoPathParent}/${newRepoName}`;
+			].repoPath = `${parentRepoPath}/${repoName}`;
 		}
 	};
 
@@ -186,7 +189,7 @@
 
 	const onApplyClicked = async () => {
 		// localAppConfig.repoPath gets reconciled with the full path in updateAppConfig
-		localAppConfig.repoPath = newRepoPathParent;
+		localAppConfig.repoPath = parentRepoPath;
 		localAppConfig.repoUrl =
 			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
 
@@ -195,19 +198,16 @@
 
 		const internal = async () => {
 			requestInFlight = true;
-			progressModalTitle = 'Saving changesets...';
-			if ($activeProjectConfig === null) {
-				await emit('error', 'No active project found, unable to save changesets to file.');
-			}
+
+			progressModalTitle = 'Saving preferences...';
 			await saveChangeSet($changeSets);
 
 			const accessToken = $oktaAuth?.getAccessToken();
 			if (accessToken) {
-				progressModalTitle = 'Saving preferences...';
 				await updateAppConfig(localAppConfig, accessToken, true);
 			} else {
 				await emit('error', 'Failed to save preferences. No access token found.');
-				return;
+				requestInFlight = false;
 			}
 
 			const regionChanged = $appConfig.playtestRegion !== localAppConfig.playtestRegion;
@@ -274,13 +274,13 @@
 		} else {
 			await internal();
 		}
-		newRepoName = '';
+		repoName = '';
 		configuringNewRepo = false;
 		showProgressModal = false;
 	};
 
 	const onDiscardClicked = () => {
-		newRepoName = '';
+		repoName = '';
 		configuringNewRepo = false;
 		showModal = false;
 		void emit('preferences-closed');
@@ -532,7 +532,7 @@
 								delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
 
 								localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
-								newRepoName = '';
+								repoName = '';
 								configuringNewRepo = false;
 							}}>Cancel</Button
 						>
