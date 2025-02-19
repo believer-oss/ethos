@@ -373,20 +373,6 @@
 	on:open={onOpen}
 	on:close={OnClose}
 >
-	<Button
-		on:click={async () => {
-			$changeSets = await loadChangeSet();
-		}}
-	>
-		<span>Load Changesets</span>
-	</Button>
-	<Button
-		on:click={async () => {
-			await saveChangeSet($changeSets);
-		}}
-	>
-		<span>Save Changesets</span>
-	</Button>
 	<div class="flex items-center justify-between gap-2">
 		<div class="flex items-center gap-2">
 			<p class="text-2xl text-primary-400 dark:text-primary-400 mb-2">Preferences</p>
@@ -512,6 +498,14 @@
 							bind:value={localAppConfig.selectedArtifactProject}
 							disabled={configuringNewRepo}
 							class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							on:change={() => {
+								const selectedProject =
+									localAppConfig.projects[localAppConfig.selectedArtifactProject];
+								parentRepoPath = selectedProject.repoPath.split('/').slice(0, -1).join('/');
+								repoName = selectedProject.repoPath.split('/').pop() || '';
+								console.log(parentRepoPath);
+								console.log(repoName);
+							}}
 						>
 							{#each Object.keys(localAppConfig.projects) as project}
 								<option value={project}>{project}</option>

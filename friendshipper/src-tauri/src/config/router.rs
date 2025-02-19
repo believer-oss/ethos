@@ -213,7 +213,12 @@ where
                 }
             }
 
-            payload.repo_path = full_repo_path.to_str().unwrap().to_string();
+            payload.repo_path = full_repo_path
+                .clone()
+                .to_str()
+                .unwrap()
+                .replace("\\", "/")
+                .to_string();
 
             // TODO(sylviacx): guard this because we don't have a way to test cloning a new project AND setting up dlls and engine stuff
             if !params.new_project {
