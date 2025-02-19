@@ -261,10 +261,6 @@
 			}
 
 			progressModalTitle = 'Loading changesets...';
-			$appConfig = {
-				...appConfig,
-				selectedArtifactProject: localAppConfig.selectedArtifactProject
-			};
 			$changeSets = await loadChangeSet();
 
 			void emit('preferences-closed');
