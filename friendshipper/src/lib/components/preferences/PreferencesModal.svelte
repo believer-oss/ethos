@@ -67,6 +67,8 @@
 	let isEngineTypePrebuilt: boolean = false;
 	let isEngineTypeSource: boolean = false;
 	let configuringNewRepo: boolean = false;
+	let newRepoName: string = '';
+	let newRepoPathParent: string = '';
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -100,6 +102,7 @@
 	};
 
 	const OnClose = () => {
+		newRepoName = '';
 		configuringNewRepo = false;
 	};
 
@@ -124,6 +127,7 @@
 			// Extract repo name from URL and use it as project name
 			const repoName = input.split('/').pop()?.replace('.git', '');
 			if (repoName) {
+				newRepoName = repoName;
 				// Create new project with owner-repo name
 				const projectData = localAppConfig.projects[localAppConfig.selectedArtifactProject];
 
@@ -136,6 +140,7 @@
 				const repo = parts[parts.length - 1].replace('.git', '');
 				const projectName = `${owner}-${repo}`.toLowerCase();
 				localAppConfig.projects[projectName] = projectData;
+				localAppConfig.projects[projectName].repoPath = `${newRepoPathParent}/${newRepoName}`;
 				localAppConfig.selectedArtifactProject = projectName.toLowerCase();
 			}
 		}
@@ -150,10 +155,10 @@
 		});
 
 		if (openDir && typeof openDir === 'string') {
-			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath = openDir.replaceAll(
-				'\\',
-				'/'
-			);
+			newRepoPathParent = openDir.replaceAll('\\', '/');
+			localAppConfig.projects[
+				localAppConfig.selectedArtifactProject
+			].repoPath = `${newRepoPathParent}/${newRepoName}`;
 		}
 	};
 
@@ -180,8 +185,8 @@
 	};
 
 	const onApplyClicked = async () => {
-		localAppConfig.repoPath =
-			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath;
+		// localAppConfig.repoPath gets reconciled with the full path in updateAppConfig
+		localAppConfig.repoPath = newRepoPathParent;
 		localAppConfig.repoUrl =
 			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
 
@@ -273,11 +278,13 @@
 		} else {
 			await internal();
 		}
+		newRepoName = '';
 		configuringNewRepo = false;
 		showProgressModal = false;
 	};
 
 	const onDiscardClicked = () => {
+		newRepoName = '';
 		configuringNewRepo = false;
 		showModal = false;
 		void emit('preferences-closed');
@@ -529,6 +536,7 @@
 								delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
 
 								localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
+								newRepoName = '';
 								configuringNewRepo = false;
 							}}>Cancel</Button
 						>
