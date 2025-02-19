@@ -32,6 +32,8 @@
 	import {
 		appConfig,
 		commits,
+		activeProjectConfig,
+		changeSets,
 		dynamicConfig,
 		oktaAuth,
 		playtests,
@@ -42,7 +44,14 @@
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData, getWorkflows } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
-	import { resetRepo, refetchRepo, getRepoStatus, getAllCommits } from '$lib/repo';
+	import {
+		resetRepo,
+		refetchRepo,
+		getRepoStatus,
+		getAllCommits,
+		saveChangeSet,
+		loadChangeSet
+	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
 	import type { AppConfig, Nullable } from '$lib/types';
@@ -80,9 +89,7 @@
 		uptimeInterval = setInterval(() => {
 			uptime = Math.floor((Date.now() - $startTime) / 1000);
 		}, 1000);
-
 		localAppConfig = structuredClone($appConfig);
-
 		// initialize config types to empty object if needed
 		if (!localAppConfig.oktaConfig) {
 			localAppConfig.oktaConfig = {
@@ -127,7 +134,7 @@
 				const parts = input.split('/');
 				const owner = parts[parts.length - 2];
 				const repo = parts[parts.length - 1].replace('.git', '');
-				const projectName = `${owner}-${repo}`;
+				const projectName = `${owner}-${repo}`.toLowerCase();
 				localAppConfig.projects[projectName] = projectData;
 				localAppConfig.selectedArtifactProject = projectName.toLowerCase();
 			}
@@ -182,17 +189,20 @@
 		showProgressModal = hasRepoUrlChanged;
 
 		const internal = async () => {
-			try {
-				const accessToken = $oktaAuth?.getAccessToken();
-				if (accessToken) {
-					progressModalTitle = 'Saving preferences...';
-					await updateAppConfig(localAppConfig, accessToken, true);
-					await emit('success', 'Preferences saved.');
-				} else {
-					await emit('error', 'Failed to save preferences. No access token found.');
-				}
-			} catch (e) {
-				await emit('error', e);
+			requestInFlight = true;
+			progressModalTitle = 'Saving changesets...';
+			if ($activeProjectConfig === null) {
+				await emit('error', 'No active project found, unable to save changesets to file.');
+			}
+			await saveChangeSet($changeSets);
+
+			const accessToken = $oktaAuth?.getAccessToken();
+			if (accessToken) {
+				progressModalTitle = 'Saving preferences...';
+				await updateAppConfig(localAppConfig, accessToken, true);
+			} else {
+				await emit('error', 'Failed to save preferences. No access token found.');
+				return;
 			}
 
 			const regionChanged = $appConfig.playtestRegion !== localAppConfig.playtestRegion;
@@ -245,11 +255,17 @@
 				$engineWorkflows = values[3].commits;
 			}
 
+			progressModalTitle = 'Loading changesets...';
+			$appConfig = {
+				...appConfig,
+				selectedArtifactProject: localAppConfig.selectedArtifactProject
+			};
+			$changeSets = await loadChangeSet();
+
 			void emit('preferences-closed');
 			requestInFlight = false;
 		};
 
-		requestInFlight = true;
 		showModal = false;
 
 		if (showProgressModal) {
@@ -359,6 +375,20 @@
 	on:open={onOpen}
 	on:close={OnClose}
 >
+	<Button
+		on:click={async () => {
+			$changeSets = await loadChangeSet();
+		}}
+	>
+		<span>Load Changesets</span>
+	</Button>
+	<Button
+		on:click={async () => {
+			await saveChangeSet($changeSets);
+		}}
+	>
+		<span>Save Changesets</span>
+	</Button>
 	<div class="flex items-center justify-between gap-2">
 		<div class="flex items-center gap-2">
 			<p class="text-2xl text-primary-400 dark:text-primary-400 mb-2">Preferences</p>

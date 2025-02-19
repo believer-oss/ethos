@@ -14,9 +14,11 @@ use ethos_core::types::playtests::{
     AssignUserRequest, CreatePlaytestRequest, Playtest, UnassignUserRequest, UpdatePlaytestRequest,
 };
 use ethos_core::types::project::ProjectConfig;
-use ethos_core::types::repo::{CommitFileInfo, PushRequest, RepoStatus, Snapshot};
+use ethos_core::types::repo::{ChangeSet, CommitFileInfo, PushRequest, RepoStatus, Snapshot};
 use friendshipper::builds::router::GetWorkflowsResponse;
-use friendshipper::repo::operations::{RestoreSnapshotRequest, SaveSnapshotRequest};
+use friendshipper::repo::operations::{
+    RestoreSnapshotRequest, SaveChangeSetRequest, SaveSnapshotRequest,
+};
 
 // Update the TauriError creation to include status_code
 async fn create_tauri_error(res: reqwest::Response) -> TauriError {
@@ -522,6 +524,46 @@ pub async fn delete_snapshot(
         return Err(err);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn save_changeset(
+    state: tauri::State<'_, State>,
+    change_sets: Vec<ChangeSet>,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/changeset/save", state.server_url))
+        .json(&SaveChangeSetRequest { change_sets })
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn load_changeset(state: tauri::State<'_, State>) -> Result<Vec<ChangeSet>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/changeset/load", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    let body = res.text().await?;
+    let json = serde_json::from_str(&body).map_err(|e| TauriError {
+        message: e.to_string(),
+        status_code: 0,
+    })?;
+
+    Ok(json)
 }
 
 #[tauri::command]

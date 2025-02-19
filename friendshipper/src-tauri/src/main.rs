@@ -210,6 +210,8 @@ fn main() -> Result<(), CoreError> {
                 get_merge_queue,
                 reinstall_git_hooks,
                 save_snapshot,
+                save_changeset,
+                load_changeset,
                 stop_workflow,
                 sync_engine_commit_with_uproject,
                 sync_uproject_commit_with_engine,

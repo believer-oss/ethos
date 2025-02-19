@@ -40,8 +40,6 @@
 		ProgressModal
 	} from '@ethos/core';
 	import { get } from 'svelte/store';
-	import { fs } from '@tauri-apps/api';
-	import { BaseDirectory } from '@tauri-apps/api/path';
 	import type {
 		GitHubPullRequest,
 		Nullable,
@@ -66,6 +64,7 @@
 		reinstallGitHooks,
 		restoreSnapshot,
 		revertFiles,
+		saveChangeSet,
 		saveSnapshot,
 		showCommitFiles,
 		syncEngineCommitWithUproject,
@@ -83,7 +82,6 @@
 		selectedFiles
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
-	import { CHANGE_SETS_PATH } from '$lib/consts';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 
 	let loading = false;
@@ -375,17 +373,7 @@
 			await emit('error', 'No active project found, unable to save changesets to file.');
 			return;
 		}
-
-		$changeSets = newChangesets;
-		const changeSetsProjectPath = `${$activeProjectConfig.name}/${CHANGE_SETS_PATH}`;
-
-		if (!(await fs.exists($activeProjectConfig.name, { dir: fs.BaseDirectory.AppLocalData }))) {
-			await fs.createDir($activeProjectConfig.name, { dir: fs.BaseDirectory.AppLocalData });
-		}
-
-		await fs.writeFile(changeSetsProjectPath, JSON.stringify($changeSets, null, 2), {
-			dir: BaseDirectory.AppLocalData
-		});
+		await saveChangeSet(newChangesets);
 	};
 
 	const handleSyncClicked = async () => {
@@ -779,7 +767,7 @@
 				disabled={loading}
 				bind:selectedFiles={$selectedFiles}
 				bind:selectAll
-				changeSets={$changeSets}
+				bind:changeSets={$changeSets}
 				onChangesetsSaved={handleSaveChangesets}
 				modifiedFiles={$allModifiedFiles}
 				onOpenDirectory={handleOpenDirectory}

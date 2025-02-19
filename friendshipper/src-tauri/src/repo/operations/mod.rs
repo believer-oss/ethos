@@ -1,3 +1,4 @@
+pub use changeset::{load_changeset, save_changeset, SaveChangeSetRequest};
 pub use checkout::{checkout_trunk_handler, CheckoutOp};
 pub use clone::clone_handler;
 pub use diff::{diff_handler, DiffOp};
@@ -20,6 +21,7 @@ pub use update_engine::{update_engine_handler, UpdateEngineOp};
 
 pub use crate::repo::operations::gh::submit::GitHubSubmitOp;
 
+mod changeset;
 mod checkout;
 mod clone;
 pub mod diagnostics;
