@@ -103,7 +103,6 @@
 	};
 
 	const OnClose = () => {
-		repoName = '';
 		configuringNewRepo = false;
 	};
 
@@ -260,9 +259,7 @@
 				$engineWorkflows = values[3].commits;
 			}
 
-			progressModalTitle = 'Loading changesets...';
 			$changeSets = await loadChangeSet();
-
 			void emit('preferences-closed');
 			requestInFlight = false;
 		};
@@ -274,13 +271,11 @@
 		} else {
 			await internal();
 		}
-		repoName = '';
 		configuringNewRepo = false;
 		showProgressModal = false;
 	};
 
 	const onDiscardClicked = () => {
-		repoName = '';
 		configuringNewRepo = false;
 		showModal = false;
 		void emit('preferences-closed');
@@ -532,7 +527,6 @@
 								delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
 
 								localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
-								repoName = '';
 								configuringNewRepo = false;
 							}}>Cancel</Button
 						>
