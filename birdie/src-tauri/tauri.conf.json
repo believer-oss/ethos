@@ -3,99 +3,58 @@
 	"build": {
 		"beforeBuildCommand": "yarn build",
 		"beforeDevCommand": "yarn dev",
-		"devPath": "http://localhost:5173",
-		"distDir": "../build"
+		"frontendDist": "../build",
+		"devUrl": "http://localhost:5173"
 	},
-	"package": {
-		"productName": "Birdie",
-		"version": "1.2.9"
-	},
-	"tauri": {
-		"allowlist": {
-			"all": false,
-			"dialog": {
-				"open": true
-			},
-			"fs": {
-				"readFile": true,
-				"writeFile": true,
-				"exists": true,
-				"scope": ["*/**"]
-			},
-			"path": {
-				"all": true
-			},
-			"shell": {
-				"all": false,
-				"open": true
-			},
-			"notification": {
-				"all": true
-			},
-			"window": {
-				"all": false,
-				"close": true,
-				"hide": true,
-				"show": true,
-				"maximize": true,
-				"minimize": true,
-				"unmaximize": true,
-				"unminimize": true,
-				"startDragging": true
-			},
-			"process": {
-				"relaunch": true
-			}
+	"bundle": {
+		"active": true,
+		"category": "DeveloperTool",
+		"copyright": "",
+		"targets": ["msi", "dmg", "deb", "rpm"],
+		"externalBin": [],
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"windows": {
+			"certificateThumbprint": null,
+			"digestAlgorithm": "sha256",
+			"timestampUrl": ""
 		},
-		"bundle": {
-			"active": true,
-			"category": "DeveloperTool",
-			"copyright": "",
+		"longDescription": "",
+		"macOS": {
+			"entitlements": null,
+			"exceptionDomain": "",
+			"frameworks": [],
+			"providerShortName": null,
+			"signingIdentity": null
+		},
+		"resources": [],
+		"shortDescription": "",
+		"linux": {
 			"deb": {
 				"depends": []
-			},
-			"externalBin": [],
-			"icon": [
-				"icons/32x32.png",
-				"icons/128x128.png",
-				"icons/128x128@2x.png",
-				"icons/icon.icns",
-				"icons/icon.ico"
-			],
-			"identifier": "com.believer.birdie",
-			"longDescription": "",
-			"macOS": {
-				"entitlements": null,
-				"exceptionDomain": "",
-				"frameworks": [],
-				"providerShortName": null,
-				"signingIdentity": null
-			},
-			"resources": [],
-			"shortDescription": "",
-			"targets": ["msi", "dmg", "deb", "rpm", "updater"],
-			"windows": {
-				"certificateThumbprint": null,
-				"digestAlgorithm": "sha256",
-				"timestampUrl": ""
 			}
 		},
-		"security": {
-			"csp": null
-		},
-		"systemTray": {
-			"iconPath": "icons/32x32.png",
-			"iconAsTemplate": true
-		},
+		"createUpdaterArtifacts": "v1Compatible"
+	},
+	"productName": "Birdie",
+	"mainBinaryName": "Birdie",
+	"version": "1.2.9",
+	"identifier": "com.believer.birdie",
+	"plugins": {
 		"updater": {
-			"active": true,
-			"endpoints": ["https://github.com/believer-oss/ethos/releases/latest/download/birdie.json"],
-			"dialog": false,
 			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxODk1OTAyOTMzQjk0MTEKUldRUmxEdVRBbG1Kd1FMdHNlc21rQ3UwTXQ3MStJL2VZYnBUYnhuYkxteStHQ0hTeXNQNFVZS20K",
+			"endpoints": ["https://github.com/believer-oss/ethos/releases/latest/download/birdie.json"],
 			"windows": {
 				"installMode": "passive"
 			}
-		},
+		}
+	},
+	"app": {
 		"windows": [
 			{
 				"fullscreen": false,
@@ -106,8 +65,16 @@
 				"visible": false,
 				"decorations": false,
 				"transparent": true,
-				"fileDropEnabled": false
+				"fileDropEnabled": false,
+				"useHttpsScheme": true
 			}
-		]
+		],
+		"trayIcon": {
+			"iconPath": "icons/32x32.png",
+			"iconAsTemplate": true
+		},
+		"security": {
+			"csp": null
+		}
 	}
 }

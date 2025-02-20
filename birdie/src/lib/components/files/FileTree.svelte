@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Card, Table, TableBody } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { fs } from '@tauri-apps/api';
+	import {} from '@tauri-apps/api';
+	import * as fs from '@tauri-apps/plugin-fs';
 	import { FileType, type LFSFile, type Node } from '$lib/types';
 	import TreeNode from '$lib/components/files/TreeNode.svelte';
 	import { getFiles } from '$lib/repo';

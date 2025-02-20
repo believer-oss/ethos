@@ -3,7 +3,7 @@
 	import { FolderOpenSolid } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
 	import { onMount } from 'svelte';
-	import { open } from '@tauri-apps/api/dialog';
+	import { open } from '@tauri-apps/plugin-dialog';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { getAppConfig, updateAppConfig } from '$lib/config';
 	import { appConfig, onboardingInProgress, repoStatus } from '$lib/stores';

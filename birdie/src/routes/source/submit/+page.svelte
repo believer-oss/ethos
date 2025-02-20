@@ -5,7 +5,8 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { type ChangeSet, ModifiedFilesCard, ProgressModal } from '@ethos/core';
 	import { get } from 'svelte/store';
-	import { fs } from '@tauri-apps/api';
+	import {} from '@tauri-apps/api';
+	import * as fs from '@tauri-apps/plugin-fs';
 	import type { PushRequest, RevertFilesRequest } from '$lib/types';
 	import { getRepoStatus, lockFiles, revertFiles, submit, verifyLocks } from '$lib/repo';
 	import {

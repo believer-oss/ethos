@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { LogEvent } from '$lib/types';
 
 export const getLatestVersion = async (): Promise<string> => invoke('get_latest_version');
