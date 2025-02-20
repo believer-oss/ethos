@@ -235,28 +235,23 @@
 				}
 			}
 
-			const promises: Promise[] = [
-				playtestPromise,
-				statusPromise,
-				commitsPromise,
-				workflowsPromise
-			];
-			const values = await Promise.all(promises);
+			const { playtestResponse, statusResponse, commitsResponse, workflowsResponse } =
+				await Promise.all([playtestPromise, statusPromise, commitsPromise, workflowsPromise]);
 
-			if (values[0] !== null) {
-				playtests.set(values[0]);
+			if (playtestResponse) {
+				playtests.set(playtestResponse);
 			}
 
-			if (values[1] !== null) {
-				repoStatus.set(values[1]);
+			if (statusResponse) {
+				repoStatus.set(statusResponse);
 			}
 
-			if (values[2] !== null) {
-				commits.set(values[2]);
+			if (commitsResponse) {
+				commits.set(commitsResponse);
 			}
 
-			if (values[3] !== null) {
-				$engineWorkflows = values[3].commits;
+			if (workflowsResponse) {
+				$engineWorkflows = workflowsResponse.commits;
 			}
 
 			$changeSets = await loadChangeSet();
