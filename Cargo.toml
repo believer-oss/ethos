@@ -2,10 +2,10 @@
 resolver = "2"
 default-members = ["birdie/src-tauri", "core", "friendshipper/src-tauri", "friendshipper/server"]
 members = [
-    "birdie/src-tauri",
     "core",
     "friendshipper/server",
     "friendshipper/src-tauri",
+    "birdie/src-tauri",
 ]
 
 [workspace.dependencies]

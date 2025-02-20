@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { LogEvent, UnrealVersionSelectorStatus } from '$lib/types';
 
 export const restart = async (): Promise<void> => invoke('restart');

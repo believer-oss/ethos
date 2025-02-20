@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { GameServerResult, LaunchRequest } from '$lib/types';
 
 export const getServer = async (name: string): Promise<GameServerResult> =>

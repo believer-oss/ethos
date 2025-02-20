@@ -3,113 +3,60 @@
 	"build": {
 		"beforeBuildCommand": "yarn build",
 		"beforeDevCommand": "yarn dev",
-		"devPath": "http://localhost:5173",
-		"distDir": "../build"
+		"frontendDist": "../build",
+		"devUrl": "http://localhost:5173"
 	},
-	"package": {
-		"productName": "Friendshipper",
-		"version": "4.10.5"
-	},
-	"tauri": {
-		"allowlist": {
-			"all": false,
-			"clipboard": {
-				"writeText": true
-			},
-			"dialog": {
-				"open": true
-			},
-			"fs": {
-				"writeFile": true,
-				"exists": true,
-				"readFile": true,
-				"createDir": true,
-				"removeFile": true,
-				"scope": {
-					"allow": ["*/**"],
-					"requireLiteralLeadingDot": false
-				}
-			},
-			"os": {
-				"all": true
-			},
-			"path": {
-				"all": true
-			},
-			"shell": {
-				"all": false,
-				"open": true
-			},
-			"notification": {
-				"all": true
-			},
-			"window": {
-				"all": false,
-				"close": true,
-				"hide": true,
-				"show": true,
-				"maximize": true,
-				"minimize": true,
-				"unmaximize": true,
-				"unminimize": true,
-				"startDragging": true
-			},
-			"process": {
-				"relaunch": true
-			}
+	"bundle": {
+		"active": true,
+		"category": "DeveloperTool",
+		"copyright": "",
+		"targets": ["msi", "dmg", "deb", "rpm"],
+		"externalBin": [],
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"windows": {
+			"certificateThumbprint": null,
+			"digestAlgorithm": "sha256",
+			"timestampUrl": ""
 		},
-		"macOSPrivateApi": true,
-		"bundle": {
-			"active": true,
-			"category": "DeveloperTool",
-			"copyright": "",
+		"longDescription": "",
+		"macOS": {
+			"entitlements": null,
+			"exceptionDomain": "",
+			"frameworks": [],
+			"providerShortName": null,
+			"signingIdentity": null
+		},
+		"resources": [],
+		"shortDescription": "",
+		"linux": {
 			"deb": {
 				"depends": []
-			},
-			"externalBin": [],
-			"icon": [
-				"icons/32x32.png",
-				"icons/128x128.png",
-				"icons/128x128@2x.png",
-				"icons/icon.icns",
-				"icons/icon.ico"
-			],
-			"identifier": "com.believer.friendshipper",
-			"longDescription": "",
-			"macOS": {
-				"entitlements": null,
-				"exceptionDomain": "",
-				"frameworks": [],
-				"providerShortName": null,
-				"signingIdentity": null
-			},
-			"resources": [],
-			"shortDescription": "",
-			"targets": ["msi", "dmg", "deb", "rpm", "updater"],
-			"windows": {
-				"certificateThumbprint": null,
-				"digestAlgorithm": "sha256",
-				"timestampUrl": ""
 			}
 		},
-		"security": {
-			"csp": null
-		},
-		"systemTray": {
-			"iconPath": "icons/32x32.png",
-			"iconAsTemplate": true
-		},
+		"createUpdaterArtifacts": "v1Compatible"
+	},
+	"productName": "Friendshipper",
+	"mainBinaryName": "Friendshipper",
+	"version": "4.10.5",
+	"identifier": "com.believer.friendshipper",
+	"plugins": {
 		"updater": {
-			"active": true,
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxODk1OTAyOTMzQjk0MTEKUldRUmxEdVRBbG1Kd1FMdHNlc21rQ3UwTXQ3MStJL2VZYnBUYnhuYkxteStHQ0hTeXNQNFVZS20K",
 			"endpoints": [
 				"https://github.com/believer-oss/ethos/releases/latest/download/friendshipper.json"
 			],
-			"dialog": false,
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxODk1OTAyOTMzQjk0MTEKUldRUmxEdVRBbG1Kd1FMdHNlc21rQ3UwTXQ3MStJL2VZYnBUYnhuYkxteStHQ0hTeXNQNFVZS20K",
 			"windows": {
 				"installMode": "passive"
 			}
-		},
+		}
+	},
+	"app": {
 		"windows": [
 			{
 				"fullscreen": false,
@@ -120,8 +67,16 @@
 				"visible": false,
 				"decorations": false,
 				"transparent": true,
-				"fileDropEnabled": false
+				"useHttpsScheme": true
 			}
-		]
+		],
+		"macOSPrivateApi": true,
+		"trayIcon": {
+			"iconPath": "icons/32x32.png",
+			"iconAsTemplate": true
+		},
+		"security": {
+			"csp": null
+		}
 	}
 }

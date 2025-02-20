@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Hr, Input, Modal, Spinner, Tooltip } from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
-	import { writeText } from '@tauri-apps/api/clipboard';
+	import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 	import { FileCopySolid } from 'flowbite-svelte-icons';
 	import type { JunitOutput, Nullable, Workflow, WorkflowNode } from '$lib/types';
 	import { getWorkflowJunitArtifact, getWorkflowNodeLogs } from '$lib/builds';

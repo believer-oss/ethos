@@ -31,8 +31,8 @@
 	} from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
-	import { open } from '@tauri-apps/api/shell';
-	import { sendNotification } from '@tauri-apps/api/notification';
+	import { open } from '@tauri-apps/plugin-shell';
+	import { sendNotification } from '@tauri-apps/plugin-notification';
 	import {
 		type ChangeSet,
 		type CommitFileInfo,

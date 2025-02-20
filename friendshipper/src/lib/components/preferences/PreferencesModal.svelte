@@ -26,7 +26,7 @@
 		TerminalSolid
 	} from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
-	import { open } from '@tauri-apps/api/dialog';
+	import { open } from '@tauri-apps/plugin-dialog';
 	import { onDestroy } from 'svelte';
 	import { ProgressModal } from '@ethos/core';
 	import {
