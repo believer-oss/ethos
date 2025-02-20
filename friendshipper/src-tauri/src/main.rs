@@ -254,6 +254,7 @@ fn main() -> Result<(), CoreError> {
 
                 let menu_url = url_clone.clone();
                 let _ = TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
                     .menu(&menu)
                     .show_menu_on_left_click(true)
                     .on_menu_event(move |app, event| match event.id.as_ref() {
