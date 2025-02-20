@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { BirdieConfig } from '$lib/types';
 
 export const getAppConfig = async (): Promise<BirdieConfig> => invoke('get_config');

@@ -199,6 +199,12 @@ fn main() -> Result<(), CoreError> {
         let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         tauri::Builder::default()
+            .plugin(tauri_plugin_fs::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_shell::init())
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_process::init())
             .manage(State {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),

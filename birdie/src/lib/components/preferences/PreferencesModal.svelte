@@ -14,7 +14,7 @@
 	} from 'flowbite-svelte';
 	import { FolderOpenSolid, CodeBranchSolid, TerminalSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
-	import { open } from '@tauri-apps/api/dialog';
+	import { open } from '@tauri-apps/plugin-dialog';
 	import { appConfig } from '$lib/stores';
 	import type { BirdieConfig } from '$lib/types';
 	import { getAppConfig, updateAppConfig } from '$lib/config';

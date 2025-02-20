@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { DirectoryMetadata } from '$lib/types';
 
 export const getDirectoryMetadata = async (path: string): Promise<DirectoryMetadata> =>

@@ -26,14 +26,15 @@
 	import { Canvas } from '@threlte/core';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { get } from 'svelte/store';
-	import { invoke } from '@tauri-apps/api/tauri';
+	import { invoke } from '@tauri-apps/api/core';
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 
-	import { appWindow } from '@tauri-apps/api/window';
-	import { fs } from '@tauri-apps/api';
-	import { checkUpdate, installUpdate } from '@tauri-apps/api/updater';
-	import { relaunch } from '@tauri-apps/api/process';
+	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import {} from '@tauri-apps/api';
+	import { checkUpdate, installUpdate } from '@tauri-apps/plugin-updater';
+	import { relaunch } from '@tauri-apps/plugin-process';
+	import * as fs from '@tauri-apps/plugin-fs';
 	import { page } from '$app/stores';
 	import {
 		commits,
@@ -50,6 +51,8 @@
 	import { getAppConfig } from '$lib/config';
 	import { getAllCommits, getRepoStatus, verifyLocks } from '$lib/repo';
 	import { CHANGE_SETS_PATH } from '$lib/consts';
+
+	const appWindow = getCurrentWebviewWindow();
 
 	// Initialization
 	let appVersion = '';

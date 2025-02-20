@@ -41,7 +41,8 @@
 		ProgressModal
 	} from '@ethos/core';
 	import { get } from 'svelte/store';
-	import { fs } from '@tauri-apps/api';
+	import {} from '@tauri-apps/api';
+	import * as fs from '@tauri-apps/plugin-fs';
 	import {
 		cloneRepo,
 		delFetchInclude,
