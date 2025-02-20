@@ -301,6 +301,7 @@ export interface CloneRequest {
 export interface PushRequest {
 	commitMessage: string;
 	files: string[];
+	shouldMerge: boolean;
 }
 
 export interface RevertFilesRequest {

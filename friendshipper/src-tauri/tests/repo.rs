@@ -170,6 +170,7 @@ async fn test_unreal_workflow() -> Result<(), Box<dyn std::error::Error>> {
     let body = PushRequest {
         files: vec![String::from("test.txt")],
         commit_message: String::from("test commit"),
+        should_merge: true,
     };
 
     info!("Sending request");

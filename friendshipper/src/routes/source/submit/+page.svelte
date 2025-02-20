@@ -134,7 +134,12 @@
 		);
 	});
 
-	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
+	$: canPushToRemote = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
+	$: canSubmit =
+		canPushToRemote ||
+		($repoStatus?.commitsAheadOfTrunk !== undefined &&
+			$repoStatus?.commitsAheadOfTrunk > 0 &&
+			$repoStatus?.branch.startsWith('f11r'));
 
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
@@ -325,7 +330,7 @@
 		syncing = false;
 	};
 
-	const handleQuickSubmit = async () => {
+	const handleQuickSubmit = async (shouldMerge: boolean) => {
 		loading = true;
 		quickSubmitting = true;
 		showProgressModal = true;
@@ -340,7 +345,8 @@
 				typeof message === 'string'
 					? message
 					: `${message.type}(${message.scope}): ${message.message}`,
-			files: $selectedFiles.map((file) => file.path)
+			files: $selectedFiles.map((file) => file.path),
+			shouldMerge
 		};
 
 		try {
@@ -798,6 +804,13 @@
 					On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
 				</p>
 			</div>
+			{#if $repoStatus?.commitsAheadOfTrunk !== undefined && $repoStatus?.commitsAheadOfTrunk > 0 && $repoStatus?.branch.startsWith('f11r')}
+				<p class="font-semibold text-sm text-gray-400">
+					Previous commits available to submit: <span class="font-normal text-primary-400"
+						>{$repoStatus?.commitsAheadOfTrunk}</span
+					>
+				</p>
+			{/if}
 		</Card>
 		<Card
 			class="w-full p-4 sm:p-4 max-w-full h-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
@@ -885,10 +898,19 @@
 				<div class="flex flex-row w-full align-middle justify-end">
 					<ButtonGroup class="space-x-px">
 						<Button
+							outline
+							id="push-to-remote"
+							color="primary"
+							disabled={!canPushToRemote}
+							on:click={() => handleQuickSubmit(false)}
+							>Push to Remote
+							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
+						</Button>
+						<Button
 							id="quick-submit"
 							color="primary"
 							disabled={!canSubmit}
-							on:click={handleQuickSubmit}
+							on:click={() => handleQuickSubmit(true)}
 							>Quick Submit
 							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 						</Button>
@@ -1057,6 +1079,16 @@
 		</TabItem>
 	</Tabs>
 </Card>
+<Tooltip
+	triggeredBy="#push-to-remote"
+	class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
+	placement="bottom"
+	><p>
+		<span class="text-primary-400">Push to Remote</span> allows you to push your changes to the
+		remote repository without opening a pull request.<br /><br />
+		This may be useful for triggering builds or other CI-related actions.
+	</p>
+</Tooltip>
 <Tooltip
 	triggeredBy="#quick-submit"
 	class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"

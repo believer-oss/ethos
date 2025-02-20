@@ -53,6 +53,8 @@ where
     pub git_client: git::Git,
     pub token: String,
     pub github_client: github::GraphQLClient,
+
+    pub should_merge: bool,
 }
 
 const SUBMIT_PREFIX: &str = "[quick submit]";
@@ -192,8 +194,8 @@ where
 {
     #[instrument(name = "SubmitOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
-        // abort if there are no files to submit
-        if self.files.is_empty() {
+        // abort if there are no files to submit and we are no commits ahead
+        if self.files.is_empty() && self.repo_status.read().commits_ahead_of_trunk == 0 {
             return Err(CoreError::Input(anyhow!("No files to submit")));
         }
 
@@ -258,18 +260,22 @@ where
 
         // save a snapshot before submitting with all modified/added files
         // make sure we have a temp dir for copying our files
-        let status = self.repo_status.read().clone();
-        let modified_files = status.modified_files.0.clone();
-        let untracked_files = status.untracked_files.0.clone();
-        let all_files = modified_files
-            .into_iter()
-            .chain(untracked_files.into_iter())
-            .map(|file| file.path.clone())
-            .collect();
-        let snapshot = self
-            .git_client
-            .save_snapshot("pre-submit", all_files, SaveSnapshotIndexOption::KeepIndex)
-            .await?;
+        let mut snapshot = None;
+        if !self.files.is_empty() {
+            let status = self.repo_status.read().clone();
+            let modified_files = status.modified_files.0.clone();
+            let untracked_files = status.untracked_files.0.clone();
+            let all_files = modified_files
+                .into_iter()
+                .chain(untracked_files.into_iter())
+                .map(|file| file.path.clone())
+                .collect();
+            snapshot = Some(
+                self.git_client
+                    .save_snapshot("pre-submit", all_files, SaveSnapshotIndexOption::KeepIndex)
+                    .await?,
+            );
+        }
 
         match self.execute_internal().await {
             Ok(_) => Ok(()),
@@ -281,15 +287,17 @@ where
                     let branch = self.repo_status.read().branch.clone();
                     self.git_client.hard_reset(&branch).await?;
 
-                    match self
-                        .git_client
-                        .restore_snapshot(&snapshot.commit, vec![])
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            // log the error, but don't return it
-                            warn!("Failed to restore snapshot after failed submit: {}", e);
+                    if let Some(snapshot) = snapshot {
+                        match self
+                            .git_client
+                            .restore_snapshot(&snapshot.commit, vec![])
+                            .await
+                        {
+                            Ok(_) => {}
+                            Err(e) => {
+                                // log the error, but don't return it
+                                warn!("Failed to restore snapshot after failed submit: {}", e);
+                            }
                         }
                     }
                 } else {
@@ -407,7 +415,7 @@ where
         };
 
         // commit changes
-        {
+        if !self.files.is_empty() {
             let add_op = AddOp {
                 files: self.files.clone(),
                 git_client: self.git_client.clone(),
@@ -457,6 +465,11 @@ where
             // update status now that the files have been committed and there aren't any more
             // staged files
             status_op.execute().await?;
+        }
+
+        // if we're not merging, we're done
+        if !self.should_merge {
+            return Ok(());
         }
 
         if is_quicksubmit_branch(&prev_branch) {
@@ -664,10 +677,6 @@ where
             "GitHub PAT is not configured. Please configure it in the settings."
         )))?;
 
-    if request.files.is_empty() {
-        return Err(CoreError::Input(anyhow!("No files to submit")));
-    }
-
     let github_client = match state.github_client.read().clone() {
         Some(client) => client.clone(),
         None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
@@ -687,6 +696,7 @@ where
         git_client: state.git(),
         token: token.to_string(),
         github_client,
+        should_merge: request.should_merge,
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();

@@ -291,6 +291,9 @@ pub struct PushRequest {
     #[serde(rename = "commitMessage")]
     pub commit_message: String,
     pub files: Vec<String>,
+
+    #[serde(rename = "shouldMerge")]
+    pub should_merge: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
