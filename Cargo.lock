@@ -2388,6 +2388,7 @@ dependencies = [
  "chrono",
  "config",
  "directories-next",
+ "dirs",
  "embed-manifest",
  "embed-resource",
  "ethos-core",

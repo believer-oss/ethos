@@ -31,19 +31,29 @@
 	import { ProgressModal } from '@ethos/core';
 	import {
 		appConfig,
+		commits,
+		changeSets,
 		dynamicConfig,
 		oktaAuth,
 		playtests,
 		repoStatus,
-		startTime
+		startTime,
+		engineWorkflows
 	} from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
-	import { resetLongtail, wipeClientData } from '$lib/builds';
+	import { resetLongtail, wipeClientData, getWorkflows } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
-	import { resetRepo, refetchRepo, getRepoStatus } from '$lib/repo';
+	import {
+		resetRepo,
+		refetchRepo,
+		getRepoStatus,
+		getAllCommits,
+		saveChangeSet,
+		loadChangeSet
+	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
-	import type { AppConfig } from '$lib/types';
+	import type { AppConfig, Nullable } from '$lib/types';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -56,6 +66,8 @@
 	let isEngineTypePrebuilt: boolean = false;
 	let isEngineTypeSource: boolean = false;
 	let configuringNewRepo: boolean = false;
+	let repoName: string = '';
+	let parentRepoPath: string = '';
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -78,9 +90,7 @@
 		uptimeInterval = setInterval(() => {
 			uptime = Math.floor((Date.now() - $startTime) / 1000);
 		}, 1000);
-
 		localAppConfig = structuredClone($appConfig);
-
 		// initialize config types to empty object if needed
 		if (!localAppConfig.oktaConfig) {
 			localAppConfig.oktaConfig = {
@@ -88,6 +98,8 @@
 				issuer: ''
 			};
 		}
+		parentRepoPath = localAppConfig.repoPath.split('/').slice(0, -1).join('/');
+		repoName = localAppConfig.repoPath.split('/').pop() || '';
 	};
 
 	const OnClose = () => {
@@ -105,6 +117,8 @@
 			repoUrl: ''
 		};
 		localAppConfig.selectedArtifactProject = 'new-project';
+		repoName = '';
+		parentRepoPath = '';
 	};
 
 	const onRepoUrlInput = (e: Event) => {
@@ -113,8 +127,9 @@
 
 		if (githubUrlPattern.test(input)) {
 			// Extract repo name from URL and use it as project name
-			const repoName = input.split('/').pop()?.replace('.git', '');
-			if (repoName) {
+			const parsedRepoName = input.split('/').pop()?.replace('.git', '');
+			if (parsedRepoName) {
+				repoName = parsedRepoName;
 				// Create new project with owner-repo name
 				const projectData = localAppConfig.projects[localAppConfig.selectedArtifactProject];
 
@@ -125,9 +140,10 @@
 				const parts = input.split('/');
 				const owner = parts[parts.length - 2];
 				const repo = parts[parts.length - 1].replace('.git', '');
-				const projectName = `${owner}-${repo}`;
+				const projectName = `${owner}-${repo}`.toLowerCase();
 				localAppConfig.projects[projectName] = projectData;
-				localAppConfig.selectedArtifactProject = projectName;
+				localAppConfig.projects[projectName].repoPath = `${parentRepoPath}/${repoName}`;
+				localAppConfig.selectedArtifactProject = projectName.toLowerCase();
 			}
 		}
 	};
@@ -141,10 +157,10 @@
 		});
 
 		if (openDir && typeof openDir === 'string') {
-			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath = openDir.replaceAll(
-				'\\',
-				'/'
-			);
+			parentRepoPath = openDir.replaceAll('\\', '/');
+			localAppConfig.projects[
+				localAppConfig.selectedArtifactProject
+			].repoPath = `${parentRepoPath}/${repoName}`;
 		}
 	};
 
@@ -171,26 +187,26 @@
 	};
 
 	const onApplyClicked = async () => {
-		localAppConfig.repoPath =
-			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath;
+		// localAppConfig.repoPath gets reconciled with the full path in updateAppConfig
+		localAppConfig.repoPath = parentRepoPath;
 		localAppConfig.repoUrl =
 			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
 
-		// show the progress modal if the repo URL has changed
-		showProgressModal = $appConfig.repoUrl !== localAppConfig.repoUrl;
+		const hasRepoUrlChanged = $appConfig.repoUrl !== localAppConfig.repoUrl;
+		showProgressModal = hasRepoUrlChanged;
 
 		const internal = async () => {
-			try {
-				const accessToken = $oktaAuth?.getAccessToken();
-				if (accessToken) {
-					progressModalTitle = 'Saving preferences...';
-					await updateAppConfig(localAppConfig, accessToken, true);
-					await emit('success', 'Preferences saved.');
-				} else {
-					await emit('error', 'Failed to save preferences. No access token found.');
-				}
-			} catch (e) {
-				await emit('error', e);
+			requestInFlight = true;
+
+			progressModalTitle = 'Saving preferences...';
+			await saveChangeSet($changeSets);
+
+			const accessToken = $oktaAuth?.getAccessToken();
+			if (accessToken) {
+				await updateAppConfig(localAppConfig, accessToken, true);
+			} else {
+				await emit('error', 'Failed to save preferences. No access token found.');
+				requestInFlight = false;
 			}
 
 			const regionChanged = $appConfig.playtestRegion !== localAppConfig.playtestRegion;
@@ -201,15 +217,48 @@
 				await emit('error', e);
 			}
 
+			let playtestPromise: Nullable<Promise> = null;
+			let statusPromise: Nullable<Promise> = null;
+			let commitsPromise: Nullable<Promise> = null;
+			let workflowsPromise: Nullable<Promise> = null;
+
 			if (regionChanged) {
-				$playtests = await getPlaytests();
+				playtestPromise = getPlaytests();
 			}
 
+			if (hasRepoUrlChanged) {
+				statusPromise = getRepoStatus();
+				commitsPromise = getAllCommits();
+
+				if (localAppConfig.repoUrl !== '') {
+					workflowsPromise = await getWorkflows();
+				}
+			}
+
+			const { playtestResponse, statusResponse, commitsResponse, workflowsResponse } =
+				await Promise.all([playtestPromise, statusPromise, commitsPromise, workflowsPromise]);
+
+			if (playtestResponse) {
+				playtests.set(playtestResponse);
+			}
+
+			if (statusResponse) {
+				repoStatus.set(statusResponse);
+			}
+
+			if (commitsResponse) {
+				commits.set(commitsResponse);
+			}
+
+			if (workflowsResponse) {
+				$engineWorkflows = workflowsResponse.commits;
+			}
+
+			$changeSets = await loadChangeSet();
 			void emit('preferences-closed');
 			requestInFlight = false;
 		};
 
-		requestInFlight = true;
 		showModal = false;
 
 		if (showProgressModal) {
@@ -444,6 +493,14 @@
 							bind:value={localAppConfig.selectedArtifactProject}
 							disabled={configuringNewRepo}
 							class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							on:change={() => {
+								const selectedProject =
+									localAppConfig.projects[localAppConfig.selectedArtifactProject];
+								parentRepoPath = selectedProject.repoPath.split('/').slice(0, -1).join('/');
+								repoName = selectedProject.repoPath.split('/').pop() || '';
+								console.log(parentRepoPath);
+								console.log(repoName);
+							}}
 						>
 							{#each Object.keys(localAppConfig.projects) as project}
 								<option value={project}>{project}</option>

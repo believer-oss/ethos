@@ -66,6 +66,16 @@ pub struct File {
     pub submit_status: SubmitStatus,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeSet {
+    pub name: String,
+    pub files: Vec<File>,
+    pub open: bool,
+    pub checked: bool,
+    pub indeterminate: bool,
+}
+
 impl File {
     pub fn from_status_line(line: &str) -> Self {
         //  M test/test.dll

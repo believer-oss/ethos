@@ -22,6 +22,8 @@ where
         )
         .route("/snapshots/restore", post(operations::restore_snapshot))
         .route("/snapshots/save", post(operations::save_snapshot))
+        .route("/changeset/save", post(operations::save_changeset))
+        .route("/changeset/load", get(operations::load_changeset))
         .route("/status", get(operations::status_handler))
         .route(
             "/diagnostics/rebase",

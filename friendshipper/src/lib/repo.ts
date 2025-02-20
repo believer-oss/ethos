@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/tauri';
-import type { Commit, CommitFileInfo } from '@ethos/core';
+import type { ChangeSet, Commit, CommitFileInfo } from '@ethos/core';
 import type {
 	CloneRequest,
 	GitHubPullRequest,
@@ -86,8 +86,15 @@ export const saveSnapshot = async (message: string, files: string[]): Promise<vo
 
 export const deleteSnapshot = async (commit: string): Promise<void> =>
 	invoke('delete_snapshot', { commit });
+
+export const saveChangeSet = async (changeSets: ChangeSet[]): Promise<void> =>
+	invoke('save_changeset', { changeSets });
+
+export const loadChangeSet = async (): Promise<ChangeSet[]> => invoke('load_changeset');
+
 export const revertFiles = async (req: RevertFilesRequest): Promise<void> =>
 	invoke('revert_files', { req });
+
 export const getPullRequests = async (limit: number): Promise<GitHubPullRequest[]> =>
 	invoke('get_pull_requests', { limit });
 

@@ -182,7 +182,12 @@ where
                 // we need to short circuit updating the state's repo_path because state.git() relies
                 // on it.
                 let mut state = state.app_config.write();
-                state.repo_path = full_repo_path.clone().to_str().unwrap().to_string();
+                state.repo_path = full_repo_path
+                    .clone()
+                    .to_str()
+                    .unwrap()
+                    .replace("\\", "/")
+                    .to_string();
             }
 
             // call the clone handler
@@ -208,7 +213,12 @@ where
                 }
             }
 
-            payload.repo_path = full_repo_path.to_str().unwrap().to_string();
+            payload.repo_path = full_repo_path
+                .clone()
+                .to_str()
+                .unwrap()
+                .replace("\\", "/")
+                .to_string();
 
             // TODO(sylviacx): guard this because we don't have a way to test cloning a new project AND setting up dlls and engine stuff
             if !params.new_project {

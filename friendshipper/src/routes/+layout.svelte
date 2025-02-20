@@ -35,10 +35,8 @@
 	import { type } from '@tauri-apps/api/os';
 	import { invoke } from '@tauri-apps/api/tauri';
 
-	import { type ChangeSet, ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
+	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { appWindow } from '@tauri-apps/api/window';
-	import { BaseDirectory } from '@tauri-apps/api/path';
-	import { fs } from '@tauri-apps/api';
 	import { checkUpdate, installUpdate } from '@tauri-apps/api/updater';
 	import { relaunch } from '@tauri-apps/api/process';
 	import { jwtDecode } from 'jwt-decode';
@@ -69,12 +67,17 @@
 	import { refreshLogin } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
-	import { getAllCommits, getRepoStatus, SkipDllCheck, AllowOfflineCommunication } from '$lib/repo';
+	import {
+		getAllCommits,
+		getRepoStatus,
+		SkipDllCheck,
+		AllowOfflineCommunication,
+		loadChangeSet
+	} from '$lib/repo';
 	import { openSystemLogsFolder } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
 	import { handleError } from '$lib/utils';
-	import { CHANGE_SETS_PATH } from '$lib/consts';
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
 
@@ -187,36 +190,7 @@
 			await emit('error', 'No active project found, unable to load changesets from file.');
 			return;
 		}
-
-		const changeSetsProjectPath = `${$activeProjectConfig.name}/${CHANGE_SETS_PATH}`;
-
-		// if we still have changesets in the deprecated location, migrate them over to {active project name}/CHANGE_SETS_PATH
-		if (await fs.exists(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
-			const oldChangeSets = await fs.readTextFile(CHANGE_SETS_PATH, {
-				dir: BaseDirectory.AppLocalData
-			});
-
-			await fs.createDir($activeProjectConfig.name, { dir: fs.BaseDirectory.AppLocalData });
-			await fs.writeFile(changeSetsProjectPath, oldChangeSets, {
-				dir: BaseDirectory.AppLocalData
-			});
-			await fs.removeFile(CHANGE_SETS_PATH, { dir: fs.BaseDirectory.AppLocalData });
-		}
-
-		if (await fs.exists(changeSetsProjectPath, { dir: fs.BaseDirectory.AppLocalData })) {
-			const changeSetsResponse = await fs.readTextFile(changeSetsProjectPath, {
-				dir: BaseDirectory.AppLocalData
-			});
-
-			const parsedChangeSets: ChangeSet[] = JSON.parse(changeSetsResponse).map(
-				(changeSet: ChangeSet) => ({
-					...changeSet,
-					checked: false,
-					indeterminate: false
-				})
-			);
-			changeSets.set(parsedChangeSets);
-		}
+		$changeSets = await loadChangeSet();
 	};
 
 	const handleOktaLogout = async () => {

@@ -120,13 +120,15 @@
 	// Make sure every file in every changeset is in modifiedFiles
 	const cleanUpChangeSets = async () => {
 		ensureDefaultChangeset();
-		for (let i = 0; i < changeSets.length; i += 1) {
-			// Keep only files that exist in modifiedFiles, while updating the file state to match the entry in modifiedFiles
-			changeSets[i].files = changeSets[i].files.reduce<ModifiedFile[]>((acc, file) => {
+
+		changeSets.map((changeSet) => ({
+			...changeSet,
+			files: changeSet.files.reduce<ModifiedFile[]>((acc, file) => {
 				const updatedFile = modifiedFiles.find((mf) => mf.path === file.path);
 				return updatedFile ? [...acc, updatedFile] : acc;
-			}, []);
-		}
+			}, [])
+		}));
+
 		await onChangesetsSaved(changeSets);
 	};
 
@@ -345,25 +347,24 @@
 			filesToMove = selectedFiles;
 		}
 
-		// avoid duplicates
-		changeSets[changeSetIndex].files = [
-			...changeSets[changeSetIndex].files,
-			...filesToMove.filter(
-				(file) => !changeSets[changeSetIndex].files.some((f) => f.path === file.path)
-			)
-		];
-
-		// Remove the file from all other changesets
 		changeSets = changeSets.map((changeSet, index) => {
-			if (index !== changeSetIndex) {
+			if (index === changeSetIndex) {
 				return {
 					...changeSet,
-					files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path)),
-					checked: false,
-					indeterminate: false
+					files: [
+						...changeSets[changeSetIndex].files,
+						...filesToMove.filter(
+							(file) => !changeSets[changeSetIndex].files.some((f) => f.path === file.path)
+						)
+					]
 				};
 			}
-			return changeSet;
+			return {
+				...changeSet,
+				files: changeSet.files.filter((f) => !filesToMove.find((ftm) => ftm.path === f.path)),
+				checked: false,
+				indeterminate: false
+			};
 		});
 
 		await onChangesetsSaved(changeSets);
