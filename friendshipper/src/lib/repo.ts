@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/tauri';
 import type { ChangeSet, Commit, CommitFileInfo } from '@ethos/core';
+import { invoke } from '@tauri-apps/api/core';
 import type {
 	CloneRequest,
 	GitHubPullRequest,

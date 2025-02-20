@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { open } from '@tauri-apps/api/shell';
+	import { open } from '@tauri-apps/plugin-shell';
 	import { Button, ButtonGroup, Card, Hr, Tooltip } from 'flowbite-svelte';
 	import {
 		DiscordSolid,

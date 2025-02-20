@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Card, Label, Select, Spinner, Tooltip } from 'flowbite-svelte';
-	import { invoke } from '@tauri-apps/api/tauri';
+	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { CirclePlusOutline, FolderOpenOutline } from 'flowbite-svelte-icons';

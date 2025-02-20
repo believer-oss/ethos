@@ -8,7 +8,7 @@ use crate::types::repo::{
     RevertFilesRequest,
 };
 
-use tauri::api::process::current_binary;
+use tauri::process::current_binary;
 use tauri::Env;
 use tracing::{error, info, Instrument};
 

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { DynamicConfig, AppConfig, RepoConfig, ProjectConfig } from '$lib/types';
 
 export const getDynamicConfig = async (): Promise<DynamicConfig> => invoke('get_dynamic_config');

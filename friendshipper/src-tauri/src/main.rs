@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 #![warn(rust_2018_idioms)]
+#![allow(deprecated)]
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -9,13 +10,12 @@ use ethos_core::longtail::Longtail;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
 use lazy_static::lazy_static;
+use regex::Regex;
 use serde::Serialize;
-use tauri::api::notification::Notification;
-use tauri::regex::Regex;
-use tauri::{
-    CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
-    Window, WindowEvent,
-};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager, WebviewWindow};
+use tauri_plugin_notification::NotificationExt;
 use tracing::{error, info, warn};
 
 use ethos_core::tauri::State;
@@ -46,28 +46,7 @@ lazy_static! {
             .unwrap();
 }
 
-fn initialize_tray() -> SystemTray {
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
-    let show = CustomMenuItem::new("show".to_string(), "Show UI");
-
-    let open_sln = CustomMenuItem::new("open-sln".to_string(), "Open .sln");
-    let generate_and_open_sln = CustomMenuItem::new(
-        "generate-and-open-sln".to_string(),
-        "Generate and open .sln",
-    );
-
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(show)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(open_sln)
-        .add_item(generate_and_open_sln)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
-
-    SystemTray::new().with_menu(tray_menu)
-}
-
-fn force_window_to_front(window: Window) {
+fn force_window_to_front(window: WebviewWindow) {
     if window.is_minimized().unwrap() {
         window.unminimize().unwrap();
     } else {
@@ -135,8 +114,6 @@ fn main() -> Result<(), CoreError> {
             "Starting up"
         );
 
-        let tray = initialize_tray();
-
         let client = match clients::command::new_reqwest_client() {
             Ok(client) => client,
             Err(e) => {
@@ -149,6 +126,14 @@ fn main() -> Result<(), CoreError> {
 
         let url_clone = server_url.clone();
         tauri::Builder::default()
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_shell::init())
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_os::init())
+            .plugin(tauri_plugin_clipboard::init())
+            .plugin(tauri_plugin_fs::init())
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_process::init())
             .manage(State {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),
@@ -238,15 +223,72 @@ fn main() -> Result<(), CoreError> {
                 let handle = app.handle();
                 let (notification_tx, notification_rx) = std::sync::mpsc::channel();
 
-                let identifier = app.config().tauri.bundle.identifier.clone();
+                let notification_handle = handle.clone();
                 thread::spawn(move || {
                     while let Ok(notification) = notification_rx.recv() {
-                        let _ = Notification::new(&identifier)
+                        notification_handle
+                            .notification()
+                            .builder()
                             .title(APP_NAME)
                             .body(&notification)
-                            .show();
+                            .show()
+                            .unwrap();
                     }
                 });
+
+                let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                let show_i = MenuItem::with_id(app, "show", "Show UI", true, None::<&str>)?;
+                let open_sln_i =
+                    MenuItem::with_id(app, "open-sln", "Open .sln", true, None::<&str>)?;
+                let generate_and_open_sln_i = MenuItem::with_id(
+                    app,
+                    "generate-and-open-sln",
+                    "Generate and open .sln",
+                    true,
+                    None::<&str>,
+                )?;
+                let menu = Menu::with_items(
+                    app,
+                    &[&quit_i, &show_i, &open_sln_i, &generate_and_open_sln_i],
+                )?;
+
+                let menu_url = url_clone.clone();
+                let _ = TrayIconBuilder::new()
+                    .menu(&menu)
+                    .show_menu_on_left_click(true)
+                    .on_menu_event(move |app, event| match event.id.as_ref() {
+                        "show" => {
+                            let window = app.get_webview_window("main").unwrap();
+                            force_window_to_front(window);
+                        }
+                        "open-sln" => {
+                            tauri::async_runtime::block_on(async {
+                                match tray_open_sln(menu_url.clone(), client.clone()).await {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        error!("Error opening sln: {:?}", e);
+                                    }
+                                }
+                            });
+                        }
+                        "generate-and-open-sln" => {
+                            tauri::async_runtime::block_on(async {
+                                match tray_generate_and_open_sln(menu_url.clone(), client.clone())
+                                    .await
+                                {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        error!("Error generating and opening sln: {:?}", e);
+                                    }
+                                }
+                            });
+                        }
+                        "quit" => {
+                            std::process::exit(0);
+                        }
+                        _ => {}
+                    })
+                    .build(app)?;
 
                 let (frontend_op_tx, frontend_op_rx) = std::sync::mpsc::channel();
                 {
@@ -255,7 +297,8 @@ fn main() -> Result<(), CoreError> {
                         while let Ok(op) = frontend_op_rx.recv() {
                             match op {
                                 FrontendOp::ShowUI => {
-                                    let window = frontend_op_handle.get_window("main").unwrap();
+                                    let window =
+                                        frontend_op_handle.get_webview_window("main").unwrap();
                                     force_window_to_front(window);
                                 }
                             }
@@ -267,7 +310,7 @@ fn main() -> Result<(), CoreError> {
                 let gameserver_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     while let Ok(msg) = gameserver_log_rx.recv() {
-                        gameserver_handle.emit_all("gameserver-log", &msg).unwrap();
+                        gameserver_handle.emit("gameserver-log", &msg).unwrap();
                     }
                 });
 
@@ -276,7 +319,7 @@ fn main() -> Result<(), CoreError> {
                 tauri::async_runtime::spawn(async move {
                     while let Ok(msg) = git_rx.recv() {
                         let msg = ANSI_REGEX.replace_all(&msg, "");
-                        git_app_handle.emit_all("git-log", &msg).unwrap();
+                        git_app_handle.emit("git-log", &msg).unwrap();
                     }
                 });
 
@@ -287,7 +330,7 @@ fn main() -> Result<(), CoreError> {
                         Longtail::log_message(msg.clone());
 
                         if let LongtailMsg::Log(s) = msg {
-                            longtail_handle.emit_all("longtail-log", &s).unwrap();
+                            longtail_handle.emit("longtail-log", &s).unwrap();
 
                             if let Some(captures) = LONGTAIL_PROGRESS_REGEX.captures(&s) {
                                 let progress: String = captures
@@ -307,7 +350,7 @@ fn main() -> Result<(), CoreError> {
                                     .to_string();
 
                                 longtail_handle
-                                    .emit_all(
+                                    .emit(
                                         "longtail-sync-progress",
                                         LongtailProgressCaptures {
                                             progress,
@@ -327,7 +370,7 @@ fn main() -> Result<(), CoreError> {
                 let startup_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     while let Ok(msg) = startup_rx.recv() {
-                        startup_handle.emit_all("startup-message", &msg).unwrap();
+                        startup_handle.emit("startup-message", &msg).unwrap();
 
                         if msg.eq("Starting server") {
                             break;
@@ -339,7 +382,7 @@ fn main() -> Result<(), CoreError> {
                 let refresh_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     while refresh_rx.recv().is_ok() {
-                        refresh_handle.emit_all("git-refresh", "").unwrap();
+                        refresh_handle.emit("git-refresh", "").unwrap();
                     }
                 });
 
@@ -383,14 +426,14 @@ fn main() -> Result<(), CoreError> {
                     tauri::async_runtime::spawn(async move {
                         let deep_link_request = move |request| {
                             info!("Received deep link: {:?}", request);
-                            match deep_link_handle.emit_all("scheme-request-received", request) {
+                            match deep_link_handle.emit("scheme-request-received", request) {
                                 Ok(_) => {}
                                 Err(e) => {
                                     error!("Failed to emit scheme-request-received: {:?}", e);
                                 }
                             }
 
-                            if let Some(window) = deep_link_handle.get_window("main") {
+                            if let Some(window) = deep_link_handle.get_webview_window("main") {
                                 force_window_to_front(window);
                             }
                         };
@@ -404,58 +447,6 @@ fn main() -> Result<(), CoreError> {
                 }
 
                 Ok(())
-            })
-            .system_tray(tray)
-            .on_system_tray_event(move |app, event| match event {
-                SystemTrayEvent::DoubleClick {
-                    position: _,
-                    size: _,
-                    ..
-                } => {
-                    let window = app.get_window("main").unwrap();
-
-                    force_window_to_front(window);
-                }
-                SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                    "show" => {
-                        let window = app.get_window("main").unwrap();
-
-                        force_window_to_front(window);
-                    }
-                    "open-sln" => {
-                        tauri::async_runtime::block_on(async {
-                            match tray_open_sln(url_clone.clone(), client.clone()).await {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    error!("Error opening sln: {:?}", e);
-                                }
-                            }
-                        });
-                    }
-                    "generate-and-open-sln" => {
-                        tauri::async_runtime::block_on(async {
-                            match tray_generate_and_open_sln(url_clone.clone(), client.clone())
-                                .await
-                            {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    error!("Error generating and opening sln: {:?}", e);
-                                }
-                            }
-                        });
-                    }
-                    "quit" => {
-                        std::process::exit(0);
-                    }
-                    _ => {}
-                },
-                _ => {}
-            })
-            .on_window_event(|event| {
-                if let WindowEvent::CloseRequested { api, .. } = event.event() {
-                    event.window().hide().unwrap();
-                    api.prevent_close();
-                }
             })
             .run(tauri::generate_context!())
             .expect("error while running tauri application");

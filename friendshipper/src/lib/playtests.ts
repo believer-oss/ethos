@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { AssignUserRequest, GroupStatus, Nullable, Playtest, PlaytestSpec } from '$lib/types';
 
 export const getPlaytests = async (): Promise<Playtest[]> => invoke('get_playtests');

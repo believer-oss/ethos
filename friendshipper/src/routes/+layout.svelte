@@ -32,13 +32,13 @@
 	import { Canvas } from '@threlte/core';
 	import { get } from 'svelte/store';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { type } from '@tauri-apps/api/os';
-	import { invoke } from '@tauri-apps/api/tauri';
+	import { type } from '@tauri-apps/plugin-os';
+	import { invoke } from '@tauri-apps/api/core';
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
-	import { appWindow } from '@tauri-apps/api/window';
-	import { checkUpdate, installUpdate } from '@tauri-apps/api/updater';
-	import { relaunch } from '@tauri-apps/api/process';
+	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import { check } from '@tauri-apps/plugin-updater';
+	import { relaunch } from '@tauri-apps/plugin-process';
 	import { jwtDecode } from 'jwt-decode';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -80,6 +80,8 @@
 	import { handleError } from '$lib/utils';
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
+
+	const appWindow = getCurrentWebviewWindow();
 
 	// Initialization
 	let appVersion = '';
@@ -152,9 +154,9 @@
 
 	const handleCheckForUpdates = async () => {
 		try {
-			const { shouldUpdate, manifest } = await checkUpdate();
-			latest = manifest?.version ?? '';
-			updateAvailable = shouldUpdate;
+			const update = await check();
+			latest = update?.version ?? '';
+			updateAvailable = update?.available ?? false;
 
 			if (updateAvailable) {
 				showPreferencesModal = false;
@@ -169,8 +171,11 @@
 		updating = true;
 
 		try {
-			await installUpdate();
-			updateAvailable = false;
+			const update = await check();
+			if (update?.available) {
+				await update.download();
+				updateAvailable = false;
+			}
 
 			await relaunch();
 		} catch (e) {
@@ -190,6 +195,7 @@
 			await emit('error', 'No active project found, unable to load changesets from file.');
 			return;
 		}
+
 		$changeSets = await loadChangeSet();
 	};
 
@@ -231,9 +237,9 @@
 
 			// Initiate the redirect flow
 			if (browser && $oktaAuth) {
-				const osType = await type();
+				const osType = type();
 
-				if (osType === 'Darwin') {
+				if (osType === 'macOS') {
 					await $oktaAuth.token.getWithRedirect({
 						issuer: $appConfig.oktaConfig.issuer,
 						clientId: $appConfig.oktaConfig.clientId,
@@ -519,9 +525,9 @@
 			}
 
 			try {
-				const { shouldUpdate, manifest } = await checkUpdate();
-				latest = manifest?.version ?? '';
-				updateAvailable = shouldUpdate;
+				const update = await check();
+				latest = update?.version ?? '';
+				updateAvailable = update?.available ?? false;
 			} catch (e) {
 				await emit('error', e);
 			}
