@@ -32,7 +32,7 @@
 
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import {} from '@tauri-apps/api';
-	import { checkUpdate, installUpdate } from '@tauri-apps/plugin-updater';
+	import { check } from '@tauri-apps/plugin-updater';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import * as fs from '@tauri-apps/plugin-fs';
 	import { page } from '$app/stores';
@@ -105,9 +105,9 @@
 
 	const handleCheckForUpdates = async () => {
 		try {
-			const { shouldUpdate, manifest } = await checkUpdate();
-			latest = manifest?.version ?? '';
-			updateAvailable = shouldUpdate;
+			const update = await check();
+			latest = update?.version ?? '';
+			updateAvailable = update?.available ?? false;
 
 			if (updateAvailable) {
 				showPreferencesModal = false;
@@ -122,10 +122,13 @@
 		updating = true;
 
 		try {
-			await installUpdate();
-			updateAvailable = false;
+			const update = await check();
+			if (update?.available) {
+				await update.download();
+				updateAvailable = false;
 
-			await relaunch();
+				await relaunch();
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -186,9 +189,9 @@
 			loading = true;
 
 			try {
-				const { shouldUpdate, manifest } = await checkUpdate();
-				latest = manifest?.version ?? '';
-				updateAvailable = shouldUpdate;
+				const update = await check();
+				latest = update?.version ?? '';
+				updateAvailable = update?.available ?? false;
 
 				$locks = await verifyLocks();
 				$repoStatus = await getRepoStatus();

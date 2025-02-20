@@ -239,7 +239,7 @@
 			if (browser && $oktaAuth) {
 				const osType = type();
 
-				if (osType === 'macOS') {
+				if (osType === 'macos') {
 					await $oktaAuth.token.getWithRedirect({
 						issuer: $appConfig.oktaConfig.issuer,
 						clientId: $appConfig.oktaConfig.clientId,

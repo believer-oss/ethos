@@ -65,14 +65,9 @@
 				"visible": false,
 				"decorations": false,
 				"transparent": true,
-				"fileDropEnabled": false,
 				"useHttpsScheme": true
 			}
 		],
-		"trayIcon": {
-			"iconPath": "icons/32x32.png",
-			"iconAsTemplate": true
-		},
 		"security": {
 			"csp": null
 		}

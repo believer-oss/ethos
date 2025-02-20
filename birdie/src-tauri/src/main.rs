@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 #![warn(rust_2018_idioms)]
+#![allow(deprecated)]
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -10,11 +11,7 @@ use birdie::types::config::BirdieRepoConfig;
 use ethos_core::clients::git::Git;
 use ethos_core::types::errors::CoreError;
 use lazy_static::lazy_static;
-use tauri::regex::Regex;
-use tauri::{
-    CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
-    Window, WindowEvent,
-};
+use regex::Regex;
 use tracing::{error, info, warn};
 
 use birdie::server::Server;
@@ -24,6 +21,10 @@ use ethos_core::{clients, utils};
 
 use crate::command::*;
 use ethos_core::tauri::command::*;
+
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager, WebviewWindow};
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static APP_NAME: &str = env!("CARGO_PKG_NAME");
@@ -49,19 +50,7 @@ lazy_static! {
             .unwrap();
 }
 
-fn initialize_tray() -> SystemTray {
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
-    let show = CustomMenuItem::new("show".to_string(), "Show UI");
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(show)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
-
-    SystemTray::new().with_menu(tray_menu)
-}
-
-fn force_window_to_front(window: Window) {
+fn force_window_to_front(window: WebviewWindow) {
     if window.is_minimized().unwrap() {
         window.unminimize().unwrap();
     } else {
@@ -186,8 +175,6 @@ fn main() -> Result<(), CoreError> {
             "Starting up"
         );
 
-        let tray = initialize_tray();
-
         let client = match clients::command::new_reqwest_client() {
             Ok(client) => client,
             Err(e) => {
@@ -256,12 +243,33 @@ fn main() -> Result<(), CoreError> {
             .setup(move |app| {
                 let handle = app.handle();
 
+                // Setup tray menu
+                let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                let show_i = MenuItem::with_id(app, "show", "Show UI", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&quit_i, &show_i])?;
+
+                let _ = TrayIconBuilder::new()
+                    .icon(app.default_window_icon().unwrap().clone())
+                    .menu(&menu)
+                    .show_menu_on_left_click(true)
+                    .on_menu_event(move |app, event| match event.id.as_ref() {
+                        "show" => {
+                            let window = app.get_webview_window("main").unwrap();
+                            force_window_to_front(window);
+                        }
+                        "quit" => {
+                            std::process::exit(0);
+                        }
+                        _ => {}
+                    })
+                    .build(app)?;
+
                 let (git_tx, git_rx) = std::sync::mpsc::channel::<String>();
                 let git_app_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     while let Ok(msg) = git_rx.recv() {
                         let msg = ANSI_REGEX.replace_all(&msg, "");
-                        git_app_handle.emit_all("git-log", &msg).unwrap();
+                        git_app_handle.emit("git-log", &msg).unwrap();
                     }
                 });
 
@@ -269,7 +277,7 @@ fn main() -> Result<(), CoreError> {
                 let startup_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     while let Ok(msg) = startup_rx.recv() {
-                        startup_handle.emit_all("startup-message", &msg).unwrap();
+                        startup_handle.emit("startup-message", &msg).unwrap();
 
                         if msg.eq("Starting server") {
                             break;
@@ -293,36 +301,6 @@ fn main() -> Result<(), CoreError> {
                 });
 
                 Ok(())
-            })
-            .system_tray(tray)
-            .on_system_tray_event(move |app, event| match event {
-                SystemTrayEvent::DoubleClick {
-                    position: _,
-                    size: _,
-                    ..
-                } => {
-                    let window = app.get_window("main").unwrap();
-
-                    force_window_to_front(window);
-                }
-                SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                    "show" => {
-                        let window = app.get_window("main").unwrap();
-
-                        force_window_to_front(window);
-                    }
-                    "quit" => {
-                        std::process::exit(0);
-                    }
-                    _ => {}
-                },
-                _ => {}
-            })
-            .on_window_event(|event| {
-                if let WindowEvent::CloseRequested { api, .. } = event.event() {
-                    event.window().hide().unwrap();
-                    api.prevent_close();
-                }
             })
             .run(tauri::generate_context!())
             .expect("error while running tauri application");
