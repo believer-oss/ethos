@@ -47,6 +47,7 @@
 	export let changeSets: ChangeSet[];
 	export let onChangesetsSaved: (changeSets: ChangeSet[]) => Promise<void>;
 	export let enableGlobalSearch: boolean = false;
+	export let onRightClick: (e: MouseEvent, file: ModifiedFile) => void = () => {};
 
 	let hoveringSetIndex: number = -1;
 	let hoveringCreateNewChangeset: boolean = false;
@@ -605,6 +606,9 @@
 						<TableBody>
 							{#each changeSet.files as file, fileIndex}
 								<TableBodyRow
+									on:contextmenu={(e) => {
+										onRightClick(e, file);
+									}}
 									class="text-left border-b-0 {fileIndex % 2 === 0
 										? 'bg-secondary-800 dark:bg-space-950'
 										: 'bg-secondary-700 dark:bg-space-900'}"
@@ -758,7 +762,7 @@
 			class="bg-secondary-800 dark:bg-space-950 p-2 h-full w-full text-white overflow-auto text-nowrap"
 		>
 			{#each selectedFiles as file}
-				<div class="flex gap-2 items-center">
+				<div class="flex gap-2 items-center" role="listitem">
 					{#if file.state === ModifiedFileState.Added}
 						<PlusOutline class="w-4 h-4 text-lime-500" />
 						<Tooltip
