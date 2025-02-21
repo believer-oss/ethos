@@ -37,7 +37,7 @@
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-	import { check } from '@tauri-apps/plugin-updater';
+	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 	import { jwtDecode } from 'jwt-decode';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { goto } from '$app/navigation';
@@ -110,6 +110,7 @@
 	let updating = false;
 	let latest = '';
 	let updateAvailable = false;
+	let updateProgress = 0;
 
 	// Background sync
 	let backgroundSyncProgress = 0;
@@ -171,9 +172,26 @@
 		updating = true;
 
 		try {
+			let downloadSize = 0;
+			let downloaded = 0;
 			const update = await check();
 			if (update) {
-				await update.download();
+				await update.download((e: DownloadEvent) => {
+					switch (e.event) {
+						case 'Started':
+							downloadSize = e.data.contentLength ?? 0;
+							break;
+						case 'Progress':
+							downloaded += e.data.chunkLength;
+							updateProgress = Math.round((downloaded / downloadSize) * 100);
+							break;
+						case 'Finished':
+							updateProgress = 0;
+							break;
+						default:
+							break;
+					}
+				});
 				await shutdownServer();
 				await update.install();
 
@@ -1025,7 +1043,7 @@
 		updateDismissed.set(true);
 	}}
 >
-	<div class="flex flex-col gap-1">
+	<div class="flex flex-col gap-2">
 		<div class="flex items-center justify-between pr-8">
 			<div class="text-white">
 				Friendshipper <span class="font-mono text-primary-400">v{latest}</span> is available!
@@ -1037,6 +1055,11 @@
 				{/if}
 			</Button>
 		</div>
+		{#if updateProgress > 0}
+			<div class="flex items-center justify-between">
+				<Progressbar progress={updateProgress} size="h-1" />
+			</div>
+		{/if}
 	</div>
 </Modal>
 

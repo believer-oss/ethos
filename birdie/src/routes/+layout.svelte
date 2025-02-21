@@ -5,6 +5,7 @@
 		Button,
 		Img,
 		Modal,
+		Progressbar,
 		Sidebar,
 		SidebarDropdownItem,
 		SidebarDropdownWrapper,
@@ -32,7 +33,7 @@
 
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import {} from '@tauri-apps/api';
-	import { check } from '@tauri-apps/plugin-updater';
+	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import * as fs from '@tauri-apps/plugin-fs';
 	import { page } from '$app/stores';
@@ -72,6 +73,7 @@
 	let updating = false;
 	let latest = '';
 	let updateAvailable = false;
+	let updateProgress = 0;
 
 	const spanClass = 'flex-1 ml-3 whitespace-nowrap';
 	const sidebarSubItemClass = 'my-1 pl-8 text-sm dark:text-primary-400 dark:hover:bg-secondary-700';
@@ -122,9 +124,26 @@
 		updating = true;
 
 		try {
+			let downloadSize = 0;
+			let downloaded = 0;
 			const update = await check();
 			if (update?.available) {
-				await update.download();
+				await update.download((e: DownloadEvent) => {
+					switch (e.event) {
+						case 'Started':
+							downloadSize = e.data.contentLength ?? 0;
+							break;
+						case 'Progress':
+							downloaded += e.data.chunkLength;
+							updateProgress = Math.round((downloaded / downloadSize) * 100);
+							break;
+						case 'Finished':
+							updateProgress = 0;
+							break;
+						default:
+							break;
+					}
+				});
 				await shutdownServer();
 				await update.install();
 
@@ -498,16 +517,23 @@
 		updateDismissed.set(true);
 	}}
 >
-	<div class="flex items-center justify-between pr-8">
-		<div class="text-white">
-			Birdie <span class="font-mono text-primary-400">v{latest}</span> is available!
+	<div class="flex flex-col gap-2">
+		<div class="flex items-center justify-between pr-8">
+			<div class="text-white">
+				Birdie <span class="font-mono text-primary-400">v{latest}</span> is available!
+			</div>
+			<Button disabled={updating} color="green" class="flex gap-2" on:click={handleUpdateClicked}
+				>Upgrade
+				{#if updating}
+					<Spinner color="white" class="h-4 w-4 border-none" />
+				{/if}
+			</Button>
 		</div>
-		<Button disabled={updating} color="green" class="flex gap-2" on:click={handleUpdateClicked}
-			>Upgrade
-			{#if updating}
-				<Spinner color="white" class="h-4 w-4 border-none" />
-			{/if}
-		</Button>
+		{#if updateProgress > 0}
+			<div class="flex items-center justify-between">
+				<Progressbar progress={updateProgress} size="h-1" />
+			</div>
+		{/if}
 	</div>
 </Modal>
 
