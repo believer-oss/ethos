@@ -124,7 +124,7 @@
 		try {
 			const update = await check();
 			if (update?.available) {
-				await update.download();
+				await update.downloadAndInstall();
 				updateAvailable = false;
 
 				await relaunch();
