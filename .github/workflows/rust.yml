@@ -246,6 +246,22 @@ jobs:
           files: |
             friendshipper/server/**/*
 
+      - name: Install ubuntu dependencies
+        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        run: |
+            sudo apt-get update
+            sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libxdo-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: set up rust toolchain
         if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         uses: actions-rust-lang/setup-rust-toolchain@v1

@@ -1,4 +1,4 @@
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.84-bookworm AS builder
 WORKDIR /app
 COPY . .
 RUN apt-get update && apt-get install -y \
@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     pkg-config \
     libsoup2.4-dev \
+    libsoup3-dev \
     javascriptcoregtk-4.0 \
     libgtk-3-dev \
     webkit2gtk-4.0
