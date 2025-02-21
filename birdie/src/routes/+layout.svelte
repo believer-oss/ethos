@@ -46,7 +46,7 @@
 		changeSets
 	} from '$lib/stores';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
-	import { openSystemLogsFolder } from '$lib/system';
+	import { openSystemLogsFolder, shutdownServer } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig } from '$lib/config';
 	import { getAllCommits, getRepoStatus, verifyLocks } from '$lib/repo';
@@ -124,7 +124,10 @@
 		try {
 			const update = await check();
 			if (update?.available) {
-				await update.downloadAndInstall();
+				await update.download();
+				await shutdownServer();
+				await update.install();
+
 				updateAvailable = false;
 
 				await relaunch();

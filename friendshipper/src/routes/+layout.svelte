@@ -39,6 +39,7 @@
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { check } from '@tauri-apps/plugin-updater';
 	import { jwtDecode } from 'jwt-decode';
+	import { relaunch } from '@tauri-apps/plugin-process';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -73,7 +74,7 @@
 		AllowOfflineCommunication,
 		loadChangeSet
 	} from '$lib/repo';
-	import { openSystemLogsFolder, restart } from '$lib/system';
+	import { openSystemLogsFolder, shutdownServer } from '$lib/system';
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
 	import { handleError } from '$lib/utils';
@@ -109,7 +110,6 @@
 	let updating = false;
 	let latest = '';
 	let updateAvailable = false;
-	const updateProgress: number = 0;
 
 	// Background sync
 	let backgroundSyncProgress = 0;
@@ -173,11 +173,13 @@
 		try {
 			const update = await check();
 			if (update) {
-				await update.downloadAndInstall();
+				await update.download();
+				await shutdownServer();
+				await update.install();
+
+				await relaunch();
 
 				updateAvailable = false;
-
-				await restart();
 			}
 		} catch (e) {
 			await emit('error', e);
@@ -1023,17 +1025,18 @@
 		updateDismissed.set(true);
 	}}
 >
-	<div class="flex items-center justify-between pr-8">
-		<div class="text-white">
-			Friendshipper <span class="font-mono text-primary-400">v{latest}</span> is available!
+	<div class="flex flex-col gap-1">
+		<div class="flex items-center justify-between pr-8">
+			<div class="text-white">
+				Friendshipper <span class="font-mono text-primary-400">v{latest}</span> is available!
+			</div>
+			<Button disabled={updating} color="green" class="flex gap-2" on:click={handleUpdateClicked}
+				>Upgrade
+				{#if updating}
+					<Spinner color="white" class="h-4 w-4 border-none" />
+				{/if}
+			</Button>
 		</div>
-		<Button disabled={updating} color="green" class="flex gap-2" on:click={handleUpdateClicked}
-			>Upgrade
-			{#if updating}
-				<Spinner color="white" class="h-4 w-4 border-none" />
-			{/if}
-		</Button>
-		<Progressbar progress={updateProgress} size="h-1" />
 	</div>
 </Modal>
 

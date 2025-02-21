@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { LogEvent, UnrealVersionSelectorStatus } from '$lib/types';
 
 export const restart = async (): Promise<void> => invoke('restart');
+export const shutdownServer = async (): Promise<void> => invoke('shutdown_server');
 
 export const configureGitUser = async (name: string, email: string): Promise<void> =>
 	invoke('configure_git_user', {

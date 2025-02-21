@@ -8,8 +8,9 @@ use crate::types::repo::{
     RevertFilesRequest,
 };
 
+use tauri::process::current_binary;
 use tauri::Env;
-use tracing::{info, Instrument};
+use tracing::{error, info, Instrument};
 
 pub async fn check_error(code: reqwest::StatusCode, body: String) -> Option<TauriError> {
     if code.is_client_error() || code.is_server_error() {
@@ -48,7 +49,22 @@ pub async fn get_log_path(state: tauri::State<'_, State>) -> Result<String, Taur
 }
 
 #[tauri::command]
+pub async fn shutdown_server(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    while state.shutdown_tx.send(()).await.is_ok() {
+        // keep sending until the channel is closed
+        info!("Sent shutdown signal");
+
+        // wait a second
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    use std::process::Command;
+
     let span = tracing::info_span!("shutting_down");
 
     async move {
@@ -63,7 +79,21 @@ pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     .instrument(span)
     .await;
 
-    tauri::process::restart(&Env::default());
+    if let Ok(path) = current_binary(&Env::default()) {
+        match Command::new(path).spawn() {
+            Ok(_) => {
+                info!("Spawned new process. Waiting to restart.");
+
+                // wait a second
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+                std::process::exit(0);
+            }
+            Err(e) => error!("Error restarting: {}", e),
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

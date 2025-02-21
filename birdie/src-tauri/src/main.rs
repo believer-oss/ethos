@@ -230,6 +230,7 @@ fn main() -> Result<(), CoreError> {
                 restart,
                 run_set_env,
                 show_commit_files,
+                shutdown_server,
                 submit,
                 sync_latest,
                 unlock_files,

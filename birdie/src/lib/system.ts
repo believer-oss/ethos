@@ -6,6 +6,7 @@ export const getLatestVersion = async (): Promise<string> => invoke('get_latest_
 export const runUpdate = async (): Promise<void> => invoke('run_update');
 
 export const restart = async (): Promise<void> => invoke('restart');
+export const shutdownServer = async (): Promise<void> => invoke('shutdown_server');
 
 export const configureGitUser = async (name: string, email: string): Promise<void> =>
 	invoke('configure_git_user', {
