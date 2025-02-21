@@ -43,7 +43,9 @@ where
         .join(CHANGE_SETS_PATH);
 
     if let Some(parent) = save_file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+        }
     }
 
     let json = serde_json::to_string_pretty(&req.change_sets)
@@ -91,9 +93,10 @@ where
             .map_err(|e| CoreError::Internal(anyhow!(e)))?;
 
         if let Some(parent) = save_file.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+            if !parent.exists() {
+                std::fs::create_dir_all(parent).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+            }
         }
-        std::fs::create_dir_all(&save_file).map_err(|e| CoreError::Internal(anyhow!(e)))?;
 
         std::fs::write(&save_file, old_changesets).map_err(|e| CoreError::Internal(anyhow!(e)))?;
 
