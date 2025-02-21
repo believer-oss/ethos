@@ -75,10 +75,6 @@
 			}
 		],
 		"macOSPrivateApi": true,
-		"trayIcon": {
-			"iconPath": "icons/32x32.png",
-			"iconAsTemplate": true
-		},
 		"security": {
 			"csp": null
 		}
