@@ -125,6 +125,13 @@ impl Server {
 
                 info!("Shutting down server");
 
+                // cancel any longtail downloads
+                let longtail = shared_state.longtail.clone();
+                let child = longtail.child_process.lock().take();
+                if let Some(mut child) = child {
+                    child.kill().unwrap();
+                }
+
                 // Wait up to 30 seconds for index.lock to go away
                 let repo_path = shared_state.app_config.read().repo_path.clone();
                 if !repo_path.is_empty() {

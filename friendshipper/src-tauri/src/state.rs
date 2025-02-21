@@ -7,7 +7,7 @@ use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::Resource;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender as MPSCSender;
-use tokio::sync::RwLock as TokioRwLock;
+use tokio::sync::{oneshot, RwLock as TokioRwLock};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::config::{DynamicConfigRef, RepoConfigRef};
@@ -60,6 +60,8 @@ pub struct AppState<T> {
     pub git_tx: STDSender<String>,
 
     pub engine: T,
+
+    pub cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
 }
 
 impl<T> AppState<T>
@@ -186,6 +188,7 @@ where
             git_tx,
             gameserver_log_tx: server_log_tx,
             engine,
+            cancel_tx: Arc::new(TokioRwLock::new(None)),
         })
     }
 

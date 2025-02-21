@@ -3,6 +3,8 @@ use core::cmp::Ordering;
 use std::os::unix::prelude::PermissionsExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::process::Child;
+use std::sync::Arc;
 use std::time::SystemTime;
 use std::{
     env,
@@ -17,6 +19,7 @@ use anyhow::{anyhow, Context, Result};
 use aws_credential_types::Credentials;
 use directories_next::ProjectDirs;
 use hex::FromHex;
+use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tracing::{error, info, instrument, warn};
 use which::{which, which_in};
@@ -42,6 +45,9 @@ pub struct Longtail {
     pub app_name: String,
     pub exec_path: Option<PathBuf>,
     pub download_path: LocalDownloadPath,
+
+    #[serde(skip)]
+    pub child_process: Arc<Mutex<Option<Child>>>,
 }
 
 pub struct CacheControl {
@@ -94,6 +100,7 @@ impl Longtail {
             exec_path,
             app_name: app_name.to_string(),
             download_path: LocalDownloadPath::new(app_name),
+            child_process: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -304,6 +311,9 @@ impl Longtail {
 
         let stdout = output.stdout.take().expect("Failed to get stdout!!!");
         let stderr = output.stderr.take().expect("Failed to get stderr!!!");
+
+        self.child_process.lock().replace(output);
+
         let reader = BufReader::new(stdout);
         let errreader = BufReader::new(stderr);
 
@@ -329,7 +339,13 @@ impl Longtail {
                 error_lines.push(line);
             });
 
-        let status = output
+        let mut child = self
+            .child_process
+            .lock()
+            .take()
+            .expect("No child process found");
+
+        let status = child
             .wait()
             .map_err(|e| anyhow::anyhow!("Failed waiting on child: {}", e))?;
 

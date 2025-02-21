@@ -11,6 +11,7 @@ use ethos_core::storage::{
 use ethos_core::utils::junit::JunitOutput;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tracing::{error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
@@ -38,6 +39,7 @@ where
         .route("/", get(get_builds))
         .route("/commit", get(get_build))
         .route("/client/sync", post(sync_client))
+        .route("/client/cancel", post(cancel_download))
         .route("/client/wipe", post(wipe_client_data))
         .route("/longtail/reset", post(reset_longtail))
         .route("/server/verify", get(verify_server_image))
@@ -175,7 +177,7 @@ where
 async fn sync_client<T>(
     State(state): State<AppState<T>>,
     Json(payload): Json<SyncClientRequest>,
-) -> Result<(), CoreError>
+) -> Result<Json<bool>, CoreError>
 where
     T: EngineProvider,
 {
@@ -228,18 +230,48 @@ where
         };
     }
 
-    match fs::create_dir_all(&local_path) {
+    let local_path_clone = local_path.clone();
+    match fs::create_dir_all(&local_path_clone) {
         Ok(_) => {
-            state.longtail.get_archive(
-                &local_path,
-                None,
-                &archive_urls,
-                tx,
-                aws_client.get_credentials().await,
-            )?;
+            let (cancel_tx, mut cancel_rx) = oneshot::channel();
+            state.cancel_tx.write().await.replace(cancel_tx);
+
+            info!("Starting download...");
+            let longtail = state.longtail.clone();
+            tokio::select! {
+                cancel_result = &mut cancel_rx => {
+                    info!("Cancel branch hit with result: {:?}", cancel_result);
+
+                    let mut guard = longtail.child_process.lock();
+                    if let Some(mut child) = guard.take() {
+                        info!("Killing child process");
+                        child.kill().unwrap();
+                    }
+
+                    return Ok(Json(false));
+                }
+                download_result = async move {
+                    let credentials = aws_client.get_credentials().await;
+                    tokio::task::spawn_blocking(move || {
+                        info!("Starting actual download...");
+                        state.longtail.get_archive(
+                            &local_path_clone,
+                            None,
+                            &archive_urls,
+                            tx,
+                            credentials,
+                        )
+                    }).await
+                } => {
+                    info!("Download branch complete with result: {:?}", download_result);
+                }
+            }
         }
         Err(e) => return Err(CoreError::Internal(e.into())),
     }
+
+    // reset cancel_tx to none
+    state.cancel_tx.write().await.take();
 
     T::post_download(&local_path).await;
 
@@ -311,6 +343,23 @@ where
                     });
                 }
             }
+        }
+    }
+
+    Ok(Json(true))
+}
+
+pub async fn cancel_download<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    if let Some(cancel_tx) = state.cancel_tx.write().await.take() {
+        info!("Cancelling download");
+        if let Err(e) = cancel_tx.send(()) {
+            return Err(CoreError::Internal(anyhow::anyhow!(
+                "Failed to cancel download: {:?}",
+                e
+            )));
         }
     }
 

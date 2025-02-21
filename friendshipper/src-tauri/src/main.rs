@@ -142,6 +142,7 @@ fn main() -> Result<(), CoreError> {
             })
             .invoke_handler(tauri::generate_handler![
                 assign_user_to_group,
+                cancel_download,
                 check_login_required,
                 checkout_trunk,
                 clone_repo,

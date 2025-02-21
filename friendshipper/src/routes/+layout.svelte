@@ -63,7 +63,7 @@
 		workflows
 	} from '$lib/stores';
 	import { getPlaytests } from '$lib/playtests';
-	import { getBuilds, getWorkflows } from '$lib/builds';
+	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
 	import { refreshLogin } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
@@ -116,6 +116,20 @@
 	let backgroundSyncProgress = 0;
 	let backgroundSyncElapsed = '';
 	let backgroundSyncRemaining = '';
+
+	const handleCancelBackgroundSync = async () => {
+		try {
+			await cancelDownload();
+
+			backgroundSyncProgress = 0;
+			backgroundSyncElapsed = '';
+			backgroundSyncRemaining = '';
+
+			await emit('background-sync-cancel');
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
 
 	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus?.conflicts.length > 0;
 
@@ -1022,6 +1036,15 @@
 			<code class="text-xs text-gray-400 dark:text-gray-400 text-nowrap">
 				{backgroundSyncElapsed} / {backgroundSyncRemaining}
 			</code>
+			<Button
+				outline
+				color="dark"
+				size="xs"
+				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
+				on:click={handleCancelBackgroundSync}
+			>
+				<CloseOutline class="h-3 w-3" />
+			</Button>
 		</div>
 	{/if}
 </div>

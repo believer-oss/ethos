@@ -243,7 +243,7 @@ pub async fn update_app_config(
 pub async fn sync_client(
     state: tauri::State<'_, State>,
     req: SyncClientRequest,
-) -> Result<(), TauriError> {
+) -> Result<bool, TauriError> {
     let res = state
         .client
         .post(format!("{}/builds/client/sync", state.server_url))
@@ -251,8 +251,23 @@ pub async fn sync_client(
         .send()
         .await?;
 
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn cancel_download(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/builds/client/cancel", state.server_url))
+        .send()
+        .await?;
+
     if let Some(err) = check_error(res.status(), res.text().await?).await {
-        error!("Error syncing client: {}", err.message);
+        error!("Error cancelling download: {}", err.message);
         return Err(err);
     }
 

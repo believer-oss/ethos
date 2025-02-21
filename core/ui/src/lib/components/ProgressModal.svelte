@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { Modal, Spinner, Progressbar, Helper } from 'flowbite-svelte';
+	import { Modal, Spinner, Progressbar, Helper, Button } from 'flowbite-svelte';
 	import { listen } from '@tauri-apps/api/event';
 
 	export let showModal: boolean;
 	export let title: string = 'Syncing';
+	export let cancellable: boolean = false;
+	export let onCancel: () => void = () => {};
 
 	let progress = 0;
 	let elapsed = '';
@@ -45,13 +47,21 @@
 	bind:open={showModal}
 	on:open={onOpen}
 >
-	<div class="flex items-center justify-start gap-2">
-		<Spinner size="4" />
-		<p class="text-xl text-primary-400 whitespace-nowrap">{title}...</p>
+	<div class="flex items-center justify-between gap-2 w-full">
+		<div class="flex items-center justify-start gap-2 w-full">
+			<Spinner size="4" />
+			<p class="text-xl text-primary-400 whitespace-nowrap">{title}...</p>
 
-		{#if progress > 0}
-			<Progressbar {progress} size="h-4" class="w-full" labelInside />
-		{/if}
+			{#if progress > 0}
+				<Progressbar {progress} size="h-4" class="w-full" labelInside />
+			{/if}
+		</div>
+
+		<div class="flex items-center justify-end gap-2">
+			{#if cancellable}
+				<Button color="red" on:click={onCancel}>Cancel</Button>
+			{/if}
+		</div>
 	</div>
 	{#if message}
 		<div class="rounded-md p-2 bg-secondary-800 dark:bg-space-950">
