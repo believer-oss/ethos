@@ -3,13 +3,16 @@ WORKDIR /app
 COPY . .
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    libwebkit2gtk-4.1-dev \
+    build-essential \
+    curl \
+    wget \
+    file \
     libssl-dev \
-    pkg-config \
-    libsoup2.4-dev \
-    libsoup3-dev \
-    javascriptcoregtk-4.0 \
+    libxdo-dev \
     libgtk-3-dev \
-    webkit2gtk-4.0
+    libayatana-appindicator3-dev \
+    librsvg2-dev
 RUN cargo build --release --bin friendshipper-server
 
 FROM debian:bookworm AS runner
