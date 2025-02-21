@@ -122,13 +122,12 @@
 	const cleanUpChangeSets = async () => {
 		ensureDefaultChangeset();
 
-		changeSets.map((changeSet) => ({
-			...changeSet,
-			files: changeSet.files.reduce<ModifiedFile[]>((acc, file) => {
-				const updatedFile = modifiedFiles.find((mf) => mf.path === file.path);
-				return updatedFile ? [...acc, updatedFile] : acc;
-			}, [])
-		}));
+		for (let i = 0; i < changeSets.length; i += 1) {
+			// Keep only files that exist in modifiedFiles
+			changeSets[i].files = changeSets[i].files.filter((file) =>
+				modifiedFiles.some((mf) => mf.path === file.path)
+			);
+		}
 
 		await onChangesetsSaved(changeSets);
 	};
