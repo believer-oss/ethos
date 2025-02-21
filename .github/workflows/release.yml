@@ -5,13 +5,13 @@ on:
     inputs:
       app:
         type: choice
-        description: 'app name (e.g. friendshipper)'
+        description: "app name (e.g. friendshipper)"
         required: true
         options:
           - friendshipper
           - birdie
       version:
-        description: 'version tag (e.g. 1.0.0)'
+        description: "version tag (e.g. 1.0.0)"
         required: true
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
       - name: Update versions
         run: |
           sed -i 's/^version = .*/version = "${{ github.event.inputs.version }}"/' ${{ github.event.inputs.app }}/src-tauri/Cargo.toml
-          sed -i 's/^\t\t"version": ".*"/\t\t"version": "${{ github.event.inputs.version }}"/' ${{ github.event.inputs.app }}/src-tauri/tauri.conf.json
+          sed -i 's/^\t"version": ".*"/\t"version": "${{ github.event.inputs.version }}"/' ${{ github.event.inputs.app }}/src-tauri/tauri.conf.json
           cargo generate-lockfile
 
       - name: Update tags
