@@ -71,7 +71,8 @@
 				"visible": false,
 				"decorations": false,
 				"transparent": true,
-				"useHttpsScheme": true
+				"useHttpsScheme": true,
+				"dragDropEnabled": false
 			}
 		],
 		"macOSPrivateApi": true,

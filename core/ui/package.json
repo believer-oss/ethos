@@ -28,7 +28,7 @@
 		"svelte": "^4.0.0"
 	},
 	"dependencies": {
-		"@tauri-apps/api": "^1.5.1",
+		"@tauri-apps/api": "2.2.0",
 		"@threlte/core": "^6.1.0",
 		"@threlte/extras": "^7.3.0",
 		"dayjs": "^1.11.10",
