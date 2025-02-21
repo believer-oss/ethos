@@ -36,10 +36,12 @@
 	import {
 		type ChangeSet,
 		type CommitFileInfo,
+		type ModifiedFile,
 		ModifiedFilesCard,
 		ProgressModal
 	} from '@ethos/core';
 	import { get } from 'svelte/store';
+	import { Menu, MenuItem } from '@tauri-apps/api/menu';
 	import type {
 		GitHubPullRequest,
 		Nullable,
@@ -114,6 +116,36 @@
 
 	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
 	$: canSync = !quickSubmitting && !syncing;
+
+	const onModifiedFileRightClick = async (e: MouseEvent, file: ModifiedFile) => {
+		e.preventDefault();
+
+		const menuPromise = Menu.new({
+			items: [
+				{
+					id: 'copy-file-path',
+					text: 'Copy File Path',
+					action: () => {
+						void navigator.clipboard.writeText(file.path);
+					}
+				}
+			]
+		});
+
+		const menu = await menuPromise;
+		if (file.displayName !== file.path) {
+			await menu.append(
+				await MenuItem.new({
+					id: 'copy-friendly-path',
+					text: 'Copy Friendly Path',
+					action: () => {
+						void navigator.clipboard.writeText(file.displayName);
+					}
+				})
+			);
+		}
+		await menu.popup();
+	};
 
 	const validateCommitMessage = (): boolean => {
 		const message = get(commitMessage);
@@ -774,6 +806,7 @@
 				onRevertFiles={handleRevertFiles}
 				onSaveSnapshot={handleSaveSnapshot}
 				onLockSelected={handleLockSelected}
+				onRightClick={onModifiedFileRightClick}
 			/>
 		{/key}
 	</div>
