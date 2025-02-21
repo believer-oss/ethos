@@ -13,8 +13,10 @@ export const getBuild = async (commit: string, project?: string): Promise<Artifa
 export const getBuilds = async (limit?: number, project?: string): Promise<ArtifactListResponse> =>
 	invoke('get_builds', { limit, project });
 
-export const syncClient = async (req: SyncClientRequest): Promise<void> =>
+export const syncClient = async (req: SyncClientRequest): Promise<boolean> =>
 	invoke('sync_client', { req });
+
+export const cancelDownload = async (): Promise<void> => invoke('cancel_download');
 
 export const wipeClientData = async (): Promise<void> => invoke('wipe_client_data');
 

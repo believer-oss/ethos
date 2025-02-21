@@ -36,7 +36,7 @@
 		playtests
 	} from '$lib/stores';
 	import { openUrl, handleError } from '$lib/utils';
-	import { getBuild, getBuilds, syncClient } from '$lib/builds';
+	import { cancelDownload, getBuild, getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
 
 	export let playtest: Playtest;
@@ -49,6 +49,8 @@
 	let syncing = false;
 	let backgroundSyncing = false;
 	let progressModalText = '';
+	let progressModalCancellable = false;
+
 	$: owner = playtest.metadata.annotations?.['believer.dev/owner'] ?? '';
 
 	// if the start time changes, reset the countdown
@@ -56,6 +58,17 @@
 
 	const handleCountdownFinished = () => {
 		countdownFinished = true;
+	};
+
+	const handleProgressModalCancel = async () => {
+		try {
+			await cancelDownload();
+		} catch (e) {
+			await handleError(e);
+		}
+
+		progressModalCancellable = false;
+		syncing = false;
 	};
 
 	const handleAssign = async (item: Playtest, group: Group, user: string) => {
@@ -101,6 +114,7 @@
 			return;
 		}
 
+		progressModalCancellable = true;
 		progressModalText = 'Syncing client...';
 		const req: SyncClientRequest = {
 			artifactEntry: entry,
@@ -119,7 +133,9 @@
 		}
 
 		try {
-			await syncClient(req);
+			if (await syncClient(req)) {
+				currentSyncedVersion.set(entry.commit);
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -131,7 +147,7 @@
 			backgroundSyncing = false;
 		}
 
-		currentSyncedVersion.set(entry.commit);
+		progressModalCancellable = false;
 	};
 
 	const shouldShowLaunchButton = (): boolean => {
@@ -490,4 +506,9 @@
 	</div>
 </Tooltip>
 
-<ProgressModal title={progressModalText} showModal={syncing && !backgroundSyncing} />
+<ProgressModal
+	title={progressModalText}
+	showModal={syncing && !backgroundSyncing}
+	cancellable={progressModalCancellable}
+	onCancel={handleProgressModalCancel}
+/>

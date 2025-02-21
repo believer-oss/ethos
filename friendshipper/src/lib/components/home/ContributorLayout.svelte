@@ -39,7 +39,7 @@
 		repoStatus
 	} from '$lib/stores';
 	import { getPlaytestGroupForUser, getPlaytests } from '$lib/playtests';
-	import { getBuild, getBuilds, syncClient } from '$lib/builds';
+	import { cancelDownload, getBuild, getBuilds, syncClient } from '$lib/builds';
 	import { getServers } from '$lib/gameServers';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 	import { handleError } from '$lib/utils';
@@ -51,6 +51,18 @@
 	let mergeQueue: Nullable<MergeQueue> = null;
 	let syncing = false;
 	let progressModalText = '';
+	let progressModalCancellable = false;
+
+	const handleSyncCancelled = async () => {
+		try {
+			await cancelDownload();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		syncing = false;
+		progressModalCancellable = false;
+	};
 
 	const refreshPlaytests = async () => {
 		try {
@@ -167,6 +179,7 @@
 			return;
 		}
 
+		progressModalCancellable = true;
 		syncing = true;
 		progressModalText = 'Syncing client...';
 		const req: SyncClientRequest = {
@@ -178,13 +191,15 @@
 		};
 
 		try {
-			await syncClient(req);
+			if (await syncClient(req)) {
+				currentSyncedVersion.set(entry.commit);
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
 
-		currentSyncedVersion.set(entry.commit);
 		syncing = false;
+		progressModalCancellable = false;
 	};
 
 	const handleSyncAndLaunch = async () => {
@@ -422,4 +437,9 @@
 	</Button>
 {/key}
 
-<ProgressModal title={progressModalText} bind:showModal={syncing} />
+<ProgressModal
+	title={progressModalText}
+	bind:showModal={syncing}
+	cancellable={progressModalCancellable}
+	on:cancel={handleSyncCancelled}
+/>

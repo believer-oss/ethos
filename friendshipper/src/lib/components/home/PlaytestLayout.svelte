@@ -29,7 +29,7 @@
 		TauriError
 	} from '$lib/types';
 	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
-	import { syncClient, getBuilds, getBuild } from '$lib/builds';
+	import { syncClient, getBuilds, getBuild, cancelDownload } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { getPlaytestGroupForUser } from '$lib/playtests';
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
@@ -44,6 +44,7 @@
 	let fetchingServers = false;
 	let fetchingBuilds = false;
 	let showServerModal = false;
+	let progressModalCancellable = false;
 
 	let servers: GameServerResult[] = [];
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
@@ -59,6 +60,17 @@
 		}
 
 		return null;
+	};
+
+	const handleProgressModalCancel = async () => {
+		try {
+			await cancelDownload();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		progressModalCancellable = false;
+		syncing = false;
 	};
 
 	$: nextPlaytest = getNextPlaytest($playtests);
@@ -137,6 +149,7 @@
 	};
 
 	const handleSyncClient = async (entry: Nullable<ArtifactEntry>, server: GameServerResult) => {
+		progressModalCancellable = true;
 		if (entry === null) {
 			return;
 		}
@@ -151,13 +164,15 @@
 		};
 
 		try {
-			await syncClient(req);
+			if (await syncClient(req)) {
+				currentSyncedVersion.set(entry.commit);
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
 
-		currentSyncedVersion.set(entry.commit);
 		syncing = false;
+		progressModalCancellable = false;
 	};
 
 	const shouldDisableLaunchButton = (): boolean => {
@@ -450,4 +465,8 @@
 	</Button>
 {/key}
 
-<ProgressModal bind:showModal={syncing} />
+<ProgressModal
+	bind:showModal={syncing}
+	cancellable={progressModalCancellable}
+	onCancel={handleProgressModalCancel}
+/>
