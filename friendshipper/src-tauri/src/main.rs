@@ -138,7 +138,7 @@ fn main() -> Result<(), CoreError> {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),
                 client: client.clone(),
-                shutdown_tx,
+                shutdown_tx: shutdown_tx.clone(),
             })
             .invoke_handler(tauri::generate_handler![
                 assign_user_to_group,
@@ -286,6 +286,22 @@ fn main() -> Result<(), CoreError> {
                             });
                         }
                         "quit" => {
+                            tauri::async_runtime::block_on(async {
+                                // Try sending shutdown message for up to 5 seconds
+                                let start = std::time::Instant::now();
+                                while start.elapsed() < std::time::Duration::from_secs(5) {
+                                    match shutdown_tx.send(()).await {
+                                        Ok(_) => {
+                                            // Message sent, but keep trying until error or timeout
+                                            std::thread::sleep(std::time::Duration::from_millis(
+                                                100,
+                                            ));
+                                        }
+                                        Err(_) => break, // Channel closed, stop retrying
+                                    }
+                                }
+                            });
+
                             std::process::exit(0);
                         }
                         _ => {}
