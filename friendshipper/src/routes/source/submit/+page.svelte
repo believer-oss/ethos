@@ -401,11 +401,12 @@
 	};
 
 	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
+		$changeSets = newChangesets;
 		if ($activeProjectConfig === null) {
 			await emit('error', 'No active project found, unable to save changesets to file.');
 			return;
 		}
-		await saveChangeSet(newChangesets);
+		await saveChangeSet($changeSets);
 	};
 
 	const handleSyncClicked = async () => {
