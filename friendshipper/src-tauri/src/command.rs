@@ -1,4 +1,5 @@
 use ethos_core::utils::junit::JunitOutput;
+use friendshipper::engine::router::OpenUrlForPathRequest;
 use tracing::error;
 
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
@@ -1069,6 +1070,26 @@ pub async fn open_sln(state: tauri::State<'_, State>) -> Result<(), TauriError> 
         state.client.clone(),
     )
     .await
+}
+
+// engine
+#[tauri::command]
+pub async fn open_url_for_path(
+    state: tauri::State<'_, State>,
+    path: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/engine/open-url", state.server_url))
+        .json(&OpenUrlForPathRequest { path })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
 }
 
 // logout

@@ -89,4 +89,8 @@ pub trait EngineProvider: Clone + Send + Sync + 'static {
     fn is_lockable_file(&self, filepath: &str) -> bool;
 
     fn set_state(&self, in_slow_task: bool);
+
+    // Given a file, returns the URL to view the file in the engine's editor.
+    // If the file is not viewable in the engine, return None.
+    fn get_url_for_path(&self, path: &str) -> Option<String>;
 }

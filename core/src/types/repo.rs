@@ -64,6 +64,9 @@ pub struct File {
     pub is_staged: bool,
     pub locked_by: String,
     pub submit_status: SubmitStatus,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -107,6 +110,7 @@ impl File {
             is_staged: !index_state.is_empty(),
             locked_by: String::new(),
             submit_status: SubmitStatus::Ok,
+            url: None,
         }
     }
 }
