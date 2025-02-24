@@ -99,7 +99,7 @@
 
 	const projects = $allProjects?.map((p) => ({
 		value: p,
-		name: p.split('-')[1]
+		name: p.substring(p.indexOf('-') + 1)
 	}));
 
 	const getPlaytestProject = (item: Nullable<Playtest>): string => {
