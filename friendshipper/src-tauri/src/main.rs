@@ -194,6 +194,7 @@ fn main() -> Result<(), CoreError> {
                 force_download_dlls,
                 force_download_engine,
                 get_merge_queue,
+                open_url_for_path,
                 reinstall_git_hooks,
                 save_snapshot,
                 save_changeset,

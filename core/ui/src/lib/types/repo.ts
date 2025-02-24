@@ -27,6 +27,7 @@ export interface ModifiedFile {
 	isStaged: boolean;
 	lockedBy: string;
 	submitStatus: SubmitStatus;
+	url?: string;
 }
 
 export interface ChangeSet {

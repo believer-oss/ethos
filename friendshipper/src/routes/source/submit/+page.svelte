@@ -85,6 +85,7 @@
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
+	import { openUrlForPath } from '$lib/engine';
 
 	let loading = false;
 	let fetchingPulls = false;
@@ -140,6 +141,20 @@
 					text: 'Copy Friendly Path',
 					action: () => {
 						void navigator.clipboard.writeText(file.displayName);
+					}
+				})
+			);
+		}
+
+		if (file.url) {
+			await menu.append(
+				await MenuItem.new({
+					id: 'open-file-in-editor',
+					text: 'Open File in Editor',
+					action: () => {
+						void openUrlForPath(file.path).catch((error) => {
+							void emit('error', error);
+						});
 					}
 				})
 			);

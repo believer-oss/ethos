@@ -365,6 +365,10 @@ where
                             file.submit_status = SubmitStatus::CheckoutRequired;
                         }
                     }
+
+                    if let Some(url) = self.engine.get_url_for_path(&file.path) {
+                        file.url = Some(url);
+                    }
                 }
             };
 

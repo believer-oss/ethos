@@ -24,6 +24,7 @@ pub struct UnrealEngineProvider {
     pub uproject_path: PathBuf,
     pub ofpa_cache: OFPANameCacheRef,
     pub can_handle_requests: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub editor_url_scheme: Option<String>,
 }
 
 #[async_trait]
@@ -35,6 +36,7 @@ impl EngineProvider for UnrealEngineProvider {
             uproject_path: PathBuf::from(repo_config.uproject_path),
             ofpa_cache: std::sync::Arc::new(parking_lot::RwLock::new(OFPANameCache::new())),
             can_handle_requests: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            editor_url_scheme: repo_config.editor_url_scheme,
         }
     }
 
@@ -199,6 +201,34 @@ impl EngineProvider for UnrealEngineProvider {
     fn set_state(&self, in_slow_task: bool) {
         self.can_handle_requests
             .store(!in_slow_task, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn get_url_for_path(&self, path: &str) -> Option<String> {
+        let scheme = match &self.editor_url_scheme {
+            Some(s) => s,
+            None => return None,
+        };
+
+        // if it's not a uasset or a umap, we can't open it in the editor
+        if !path.ends_with(".uasset") && !path.ends_with(".umap") {
+            return None;
+        }
+
+        if path.contains("__ExternalActors__") {
+            Some(format!(
+                "{}://level_actor/{}",
+                scheme,
+                path.replace("Content", "Game").trim_end_matches(".uasset")
+            ))
+        } else {
+            Some(format!(
+                "{}://content/{}",
+                scheme,
+                path.replace("Content", "Game")
+                    .trim_end_matches(".uasset")
+                    .trim_end_matches(".umap")
+            ))
+        }
     }
 }
 

@@ -326,6 +326,9 @@ pub struct RepoConfig {
 
     #[serde(default, rename = "playtestProfiles")]
     pub playtest_profiles: Option<Vec<PlaytestProfile>>,
+
+    #[serde(default, rename = "editorUrlScheme")]
+    pub editor_url_scheme: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -358,6 +361,7 @@ impl Default for RepoConfig {
                 "chore".to_string(),
             ],
             playtest_profiles: Some(vec![]),
+            editor_url_scheme: None,
         }
     }
 }
