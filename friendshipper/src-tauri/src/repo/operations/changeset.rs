@@ -6,15 +6,17 @@ use axum::Json;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{ChangeSet, File};
 use serde::{Deserialize, Serialize};
+use tracing::instrument;
 
 pub const CHANGE_SETS_PATH: &str = "changesets.json";
 pub const FRIENDSHIPPER_APPDATA_DIR: &str = "com.believer.friendshipper";
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SaveChangeSetRequest {
     pub change_sets: Vec<ChangeSet>,
 }
 
+#[instrument(skip(state), err)]
 pub async fn save_changeset<T>(
     State(state): State<AppState<T>>,
     Json(req): Json<SaveChangeSetRequest>,
@@ -44,18 +46,27 @@ where
 
     if let Some(parent) = save_file.parent() {
         if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                CoreError::Internal(anyhow!(
+                    "Failed to create directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
         }
     }
 
     let json = serde_json::to_string_pretty(&req.change_sets)
         .map_err(|e| CoreError::Internal(anyhow!(e)))?;
 
-    std::fs::write(save_file, json).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+    std::fs::write(&save_file, json).map_err(|e| {
+        CoreError::Internal(anyhow!("Failed to write to {}: {}", save_file.display(), e))
+    })?;
 
     Ok(())
 }
 
+#[instrument(skip(state), err)]
 pub async fn load_changeset<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<Vec<ChangeSet>>, CoreError>
@@ -98,9 +109,17 @@ where
             }
         }
 
-        std::fs::write(&save_file, old_changesets).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+        std::fs::write(&save_file, old_changesets).map_err(|e| {
+            CoreError::Internal(anyhow!("Failed to write to {}: {}", save_file.display(), e))
+        })?;
 
-        std::fs::remove_file(&deprecated_save_file).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+        std::fs::remove_file(&deprecated_save_file).map_err(|e| {
+            CoreError::Internal(anyhow!(
+                "Failed to remove {}: {}",
+                deprecated_save_file.display(),
+                e
+            ))
+        })?;
     }
 
     let mut changesets: Vec<ChangeSet>;
@@ -118,9 +137,20 @@ where
             indeterminate: false,
         }];
     } else {
-        let json =
-            std::fs::read_to_string(&save_file).map_err(|e| CoreError::Internal(anyhow!(e)))?;
-        changesets = serde_json::from_str(&json).map_err(|e| CoreError::Internal(anyhow!(e)))?;
+        let json = std::fs::read_to_string(&save_file).map_err(|e| {
+            CoreError::Internal(anyhow!(
+                "Failed to read from {}: {}",
+                save_file.display(),
+                e
+            ))
+        })?;
+        changesets = serde_json::from_str(&json).map_err(|e| {
+            CoreError::Internal(anyhow!(
+                "Failed to parse changesets from {}: {}",
+                save_file.display(),
+                e
+            ))
+        })?;
 
         for changeset in &mut changesets {
             // reset checked state for UI
