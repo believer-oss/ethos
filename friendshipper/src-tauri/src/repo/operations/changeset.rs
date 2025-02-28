@@ -89,13 +89,28 @@ where
             ))
         })?;
 
-    let deprecated_save_file = std::path::Path::new(&app_data_dir)
-        .join(FRIENDSHIPPER_APPDATA_DIR)
-        .join(CHANGE_SETS_PATH);
-
     let save_file = std::path::Path::new(&app_data_dir)
         .join(FRIENDSHIPPER_APPDATA_DIR)
         .join(&repo_name)
+        .join(CHANGE_SETS_PATH);
+
+    // this code is here to address a bug in a previous version of Friendshipper that accidentally
+    // created a folder at the location of save_file - if that's the case, we'll just delete it and
+    // remake it as a file later
+    if let Ok(metadata) = std::fs::metadata(&save_file) {
+        if metadata.is_dir() {
+            if let Err(e) = std::fs::remove_dir_all(&save_file) {
+                tracing::error!(
+                    "Failed to remove directory {}, changesets will not function correctly: {}",
+                    save_file.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    let deprecated_save_file = std::path::Path::new(&app_data_dir)
+        .join(FRIENDSHIPPER_APPDATA_DIR)
         .join(CHANGE_SETS_PATH);
 
     if deprecated_save_file.exists() {
