@@ -187,7 +187,7 @@ impl StatusOp {
                 for file in files.iter_mut() {
                     if file.state == FileState::Unmerged {
                         file.submit_status = SubmitStatus::Unmerged;
-                    } else if status.conflicts.iter().any(|x| *x == file.path) {
+                    } else if status.conflicts.contains(&file.path) {
                         file.submit_status = SubmitStatus::Conflicted;
                     } else if let Some(lock) = status
                         .locks_theirs

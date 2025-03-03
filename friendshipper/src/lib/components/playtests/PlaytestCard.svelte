@@ -121,6 +121,10 @@
 			methodPrefix: $builds.methodPrefix
 		};
 
+		if ($appConfig.groupDownloadedBuildsByPlaytest) {
+			req.subPath = playtest.metadata.name;
+		}
+
 		syncing = true;
 		if (server) {
 			req.launchOptions = {

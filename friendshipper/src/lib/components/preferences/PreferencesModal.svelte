@@ -408,6 +408,19 @@
 			<Tooltip class="text-sm" placement="bottom">
 				Set your display name for joining playtests inside Friendshipper.
 			</Tooltip>
+			<div class="flex flex-row gap-2 items-center">
+				<Checkbox
+					bind:checked={localAppConfig.groupDownloadedBuildsByPlaytest}
+					class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
+				/>
+				<Label class="text-gray-400">Group downloaded builds by playtest</Label>
+			</div>
+			<Tooltip class="text-sm items-center" placement="bottom">
+				Group downloaded builds by playtest. This will allow you to keep multiple playtests synced
+				at once. However, your initial sync of each playtest <span class="font-bold"
+					>will take longer</span
+				>. This option also uses significantly more disk space.
+			</Tooltip>
 			<div class="flex flex-row gap-2">
 				<Checkbox
 					bind:checked={localAppConfig.gameClientDownloadSymbols}

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct SyncClientRequest {
     pub artifact_entry: ArtifactEntry,
     pub method_prefix: MethodPrefix,
+    pub sub_path: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_options: Option<LaunchOptions>,

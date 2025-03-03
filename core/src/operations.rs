@@ -322,13 +322,7 @@ impl LockOp {
                         });
                     }
                 } else {
-                    let filter_func = |lock: &Lock| {
-                        !lock_response
-                            .batch
-                            .paths
-                            .iter()
-                            .any(|path| *path == lock.path)
-                    };
+                    let filter_func = |lock: &Lock| !lock_response.batch.paths.contains(&lock.path);
 
                     repo_status.locks_ours.retain(filter_func);
 
