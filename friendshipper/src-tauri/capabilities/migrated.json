@@ -10,6 +10,7 @@
 		"fs:allow-mkdir",
 		"fs:allow-remove",
 		"fs:allow-exists",
+		"fs:allow-app-write-recursive",
 		{
 			"identifier": "fs:scope",
 			"allow": [

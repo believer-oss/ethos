@@ -95,6 +95,9 @@ pub struct AppConfig {
     #[serde(default, rename = "userDisplayName", alias = "user_display_name")]
     pub user_display_name: String,
 
+    #[serde(default, rename = "groupDownloadedBuildsByPlaytest")]
+    pub group_downloaded_builds_by_playtest: bool,
+
     #[serde(default, rename = "gameClientDownloadSymbols")]
     pub game_client_download_symbols: bool,
 
@@ -177,6 +180,7 @@ impl AppConfig {
             tools_path: Default::default(),
             tools_url: Default::default(),
             user_display_name: Default::default(),
+            group_downloaded_builds_by_playtest: false,
             game_client_download_symbols: false,
             pull_dlls: true,
             editor_download_symbols: false,

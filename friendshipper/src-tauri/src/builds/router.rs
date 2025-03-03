@@ -183,15 +183,21 @@ where
 {
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
-    let local_path = state
-        .longtail
-        .download_path
-        .0
-        .join(payload.artifact_entry.base_name());
+    let mut local_path = state.longtail.download_path.0.clone();
     let remote_path = payload
         .method_prefix
         .get_storage_url(&payload.artifact_entry);
     let tx = state.longtail_tx.clone();
+
+    if let Some(project) = state.app_config.read().clone().selected_artifact_project {
+        local_path = local_path.join(project);
+    }
+
+    if let Some(sub_path) = payload.sub_path {
+        local_path = local_path.join(sub_path);
+    }
+
+    local_path = local_path.join(payload.artifact_entry.base_name());
 
     let mut archive_urls: Vec<String> = vec![remote_path];
 

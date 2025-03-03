@@ -55,6 +55,7 @@ export interface AppConfig {
 	repoPath: string;
 	repoUrl: string;
 	userDisplayName: string;
+	groupDownloadedBuildsByPlaytest: boolean;
 	gameClientDownloadSymbols: boolean;
 	pullDlls: boolean;
 	editorDownloadSymbols: boolean;
@@ -124,6 +125,7 @@ export interface LaunchOptions {
 export interface SyncClientRequest {
 	artifactEntry: ArtifactEntry;
 	methodPrefix: string;
+	subPath?: string;
 	launchOptions?: LaunchOptions;
 }
 
