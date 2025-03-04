@@ -53,9 +53,7 @@ where
         // We stash changes when switching back to main to avoid cases where local changes may conflict
         // with changes on main. If the stash wasn't restored for whatever reason (e.g. early out due
         // to no changes, or an error)
-        let result = self.execute_internal().await;
-
-        result
+        self.execute_internal().await
     }
 
     fn get_name(&self) -> String {
