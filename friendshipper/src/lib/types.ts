@@ -50,6 +50,12 @@ export interface Project {
 	repoUrl: string;
 }
 
+export enum ConflictStrategy {
+	Error = 'Error',
+	KeepOurs = 'KeepOurs',
+	KeepTheirs = 'KeepTheirs'
+}
+
 export interface AppConfig {
 	projects: Record<string, Project>;
 	repoPath: string;
@@ -60,6 +66,7 @@ export interface AppConfig {
 	pullDlls: boolean;
 	editorDownloadSymbols: boolean;
 	openUprojectAfterSync: boolean;
+	conflictStrategy: ConflictStrategy;
 	githubPAT: string;
 	engineType: string;
 	enginePrebuiltPath: string;

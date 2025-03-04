@@ -541,6 +541,29 @@ impl Server {
                             }
                         }
 
+                        // if selected project is none, set it to the first project in the map
+                        if config.selected_artifact_project.is_none() && !config.projects.is_empty()
+                        {
+                            let project_key = config.projects.keys().next().unwrap().clone();
+                            config.selected_artifact_project = Some(project_key.clone());
+
+                            config.repo_url = config.projects[&project_key].repo_url.clone();
+                            config.repo_path = config.projects[&project_key].repo_path.clone();
+
+                            // Write updated config back to disk
+                            let file = fs::OpenOptions::new()
+                                .write(true)
+                                .truncate(true)
+                                .open(&config_file)?;
+
+                            serde_yaml::to_writer(file, &config).map_err(|e| {
+                                CoreError::Internal(anyhow!(
+                                    "Failed to write updated config to file: {:?}",
+                                    e
+                                ))
+                            })?;
+                        }
+
                         // if there's a PAT in the keyring, load it
                         if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password()
                         {

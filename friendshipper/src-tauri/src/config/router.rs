@@ -126,6 +126,12 @@ where
         payload.okta_config = Some(okta_config);
     }
 
+    // find selected artifact project in the map and set the root repo_path and repo_url to the project's
+    if let Some(project_name) = payload.clone().selected_artifact_project {
+        payload.repo_path = payload.projects[&project_name].repo_path.clone();
+        payload.repo_url = payload.projects[&project_name].repo_url.clone();
+    }
+
     // if our playtest region has changed, we need to replace the aws client
     if payload.playtest_region != current_config.playtest_region {
         if let Some(token) = params.token {
@@ -295,9 +301,6 @@ where
 
     // Get rid of the PAT
     config.github_pat = None;
-
-    // Get rid of the selected artifact project
-    config.selected_artifact_project = None;
 
     {
         let mut lock = state.repo_config.write();

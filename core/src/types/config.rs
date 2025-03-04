@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::AWS_REGION;
@@ -75,6 +76,37 @@ pub struct ProjectRepoConfig {
     pub repo_url: String,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum ConflictStrategy {
+    #[default]
+    Error,
+    KeepOurs,
+    KeepTheirs,
+}
+
+impl std::fmt::Display for ConflictStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConflictStrategy::Error => write!(f, "Error"),
+            ConflictStrategy::KeepOurs => write!(f, "KeepOurs"),
+            ConflictStrategy::KeepTheirs => write!(f, "KeepTheirs"),
+        }
+    }
+}
+
+impl FromStr for ConflictStrategy {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Error" => Ok(ConflictStrategy::Error),
+            "KeepOurs" => Ok(ConflictStrategy::KeepOurs),
+            "KeepTheirs" => Ok(ConflictStrategy::KeepTheirs),
+            _ => Err(anyhow!("Invalid conflict strategy: {}", s)),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default, rename = "projects")]
@@ -85,6 +117,9 @@ pub struct AppConfig {
 
     #[serde(default, rename = "repoUrl", alias = "repo_url")]
     pub repo_url: String,
+
+    #[serde(default, rename = "conflictStrategy", alias = "conflict_strategy")]
+    pub conflict_strategy: ConflictStrategy,
 
     #[serde(default, rename = "toolsPath", alias = "tools_path")]
     pub tools_path: String,
@@ -177,6 +212,7 @@ impl AppConfig {
             projects: HashMap::new(),
             repo_path: Default::default(),
             repo_url: Default::default(),
+            conflict_strategy: Default::default(),
             tools_path: Default::default(),
             tools_url: Default::default(),
             user_display_name: Default::default(),

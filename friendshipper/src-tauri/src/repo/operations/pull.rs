@@ -14,7 +14,7 @@ use ethos_core::clients::github::GraphQLClient;
 use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
-use ethos_core::types::config::{AppConfigRef, RepoConfig, UProject};
+use ethos_core::types::config::{AppConfigRef, ConflictStrategy, RepoConfig, UProject};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
 use ethos_core::types::repo::PullResponse;
@@ -53,12 +53,7 @@ where
         // We stash changes when switching back to main to avoid cases where local changes may conflict
         // with changes on main. If the stash wasn't restored for whatever reason (e.g. early out due
         // to no changes, or an error)
-        let mut did_stash: bool = false;
-        let result = self.execute_internal(&mut did_stash).await;
-
-        if did_stash {
-            self.git_client.stash(git::StashAction::Pop).await?;
-        }
+        let result = self.execute_internal().await;
 
         result
     }
@@ -72,7 +67,7 @@ impl<T> PullOp<T>
 where
     T: EngineProvider,
 {
-    async fn execute_internal(&self, did_stash: &mut bool) -> Result<(), CoreError> {
+    async fn execute_internal(&self) -> Result<(), CoreError> {
         info!("Pulling repo");
         let github_username = self
             .github_client
@@ -102,11 +97,15 @@ where
         // take a snapshot if we have any modified files
         // we need to do this before we check for quicksubmit branch so that the
         // stashes resolve inside out correctly
+        let mut snapshot = None;
         let repo_status = self.repo_status.read().clone();
         if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
-            self.git_client
-                .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::KeepIndex)
-                .await?;
+            snapshot = Some(
+                self.git_client
+                    .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::KeepIndex)
+                    .await?,
+            );
+            self.git_client.stash(git::StashAction::Push).await?;
         }
 
         // No need to hold a lock for this operation, but pass the ref directly to StatusOp so it can
@@ -141,7 +140,6 @@ where
                 )));
             }
 
-            *did_stash = self.git_client.stash(git::StashAction::Push).await?;
             let trunk_branch = self.repo_config.read().trunk_branch.clone();
             self.git_client.checkout(&trunk_branch).await?;
 
@@ -184,8 +182,11 @@ where
             // f11r branch will almost always have a different SHA since there will likely have been other changes that have gone in
             // since the submitter synced. Since we pull using a rebase, the local commits will be safely merged with the upstream ones
             // and essentially disappear.
+
             let repo_status = self.repo_status.read();
-            if !repo_status.conflicts.is_empty() {
+            if !repo_status.conflicts.is_empty()
+                && app_config.conflict_strategy == ConflictStrategy::Error
+            {
                 return Err(CoreError::Input(anyhow!(
                     "Conflicts detected, cannot pull. See Diagnostics."
                 )));
@@ -232,9 +233,11 @@ where
             }
         }
 
-        if *did_stash {
-            *did_stash = false; // don't let the outer code run another 'stash pop' since we're handling it here
-            self.git_client.stash(git::StashAction::Pop).await?;
+        if snapshot.is_some() {
+            let conflict_strategy = self.app_config.read().conflict_strategy.clone();
+            self.git_client
+                .restore_snapshot(&snapshot.unwrap().commit, vec![], conflict_strategy)
+                .await?;
         }
 
         {

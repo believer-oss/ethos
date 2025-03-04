@@ -69,9 +69,10 @@ where
 {
     // get modified files
     let modified_files = state.repo_status.read().clone().modified_files;
+    let conflict_strategy = state.app_config.read().conflict_strategy.clone();
     state
         .git()
-        .restore_snapshot(&req.commit, modified_files.0)
+        .restore_snapshot(&req.commit, modified_files.0, conflict_strategy)
         .await?;
 
     Ok(())
