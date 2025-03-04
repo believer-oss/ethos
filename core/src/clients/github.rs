@@ -17,6 +17,7 @@ use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
 use reqwest::Client;
 use std::collections::HashMap;
+use tracing::error;
 use tracing::instrument;
 
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
@@ -68,7 +69,7 @@ impl GraphQLClient {
         repo: String,
         number: i64,
     ) -> Result<String> {
-        match post_graphql::<GetPullRequestId, _>(
+        let res = match post_graphql::<GetPullRequestId, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
             get_pull_request_id::Variables {
@@ -79,16 +80,38 @@ impl GraphQLClient {
         )
         .await
         {
-            Ok(res) => Ok(res
-                .data
-                .ok_or(anyhow!("Failed to get valid response data"))?
-                .repository
-                .ok_or(anyhow!("Failed to get valid repository"))?
-                .pull_request
-                .ok_or(anyhow!("Failed to get valid PR"))?
-                .id),
-            Err(e) => Err(anyhow!("Error getting PR ID: {}", e)),
-        }
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get PR ID failed: {}", e);
+                return Err(anyhow!("Request to get PR failed"));
+            }
+        };
+
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
+
+        let repo = match &data.repository {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid repository: {:?}", data);
+                return Err(anyhow!("Failed to get valid repository"));
+            }
+        };
+
+        let pr = match &repo.pull_request {
+            Some(pr) => pr,
+            None => {
+                error!("Failed to get valid PR: {:?}", data);
+                return Err(anyhow!("Failed to get valid PR"));
+            }
+        };
+
+        Ok(pr.id.clone())
     }
 
     #[instrument(skip(self))]
@@ -98,7 +121,7 @@ impl GraphQLClient {
         repo: String,
         number: i64,
     ) -> Result<GetPullRequestRepositoryPullRequest> {
-        match post_graphql::<GetPullRequest, _>(
+        let res = match post_graphql::<GetPullRequest, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
             get_pull_request::Variables {
@@ -109,19 +132,38 @@ impl GraphQLClient {
         )
         .await
         {
-            Ok(res) => {
-                let pr: GetPullRequestRepositoryPullRequest = res
-                    .data
-                    .ok_or(anyhow!("Failed to get valid response data"))?
-                    .repository
-                    .ok_or(anyhow!("Failed to get valid repository"))?
-                    .pull_request
-                    .ok_or(anyhow!("Failed to get valid PR"))?;
-
-                Ok(pr)
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get PR failed: {}", e);
+                return Err(anyhow!("Request to get PR failed"));
             }
-            Err(e) => Err(anyhow!("Error getting PR: {}", e)),
-        }
+        };
+
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
+
+        let repo = match &data.repository {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid repository: {:?}", data);
+                return Err(anyhow!("Failed to get valid repository"));
+            }
+        };
+
+        let pr = match &repo.pull_request {
+            Some(pr) => pr,
+            None => {
+                error!("Failed to get valid PR: {:?}", data);
+                return Err(anyhow!("Failed to get valid PR"));
+            }
+        };
+
+        Ok(pr.clone())
     }
 
     #[instrument(skip(self))]
@@ -132,34 +174,46 @@ impl GraphQLClient {
         limit: i64,
     ) -> Result<Vec<GetPullRequestsSearchEdgesNodeOnPullRequest>> {
         let query = format!("is:pr author:{} repo:{}/{}", self.username, owner, repo);
-        match post_graphql::<GetPullRequests, _>(
+        let res = match post_graphql::<GetPullRequests, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
             get_pull_requests::Variables { query, limit },
         )
         .await
         {
-            Ok(res) => {
-                let edges = res
-                    .data
-                    .ok_or(anyhow!("Failed to get valid response data"))?
-                    .search
-                    .edges
-                    .ok_or(anyhow!("Failed to get valid search edges"))?;
-                let prs: Vec<GetPullRequestsSearchEdgesNodeOnPullRequest> = edges
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|edge| edge.node)
-                    .filter_map(|node| match node {
-                        GetPullRequestsSearchEdgesNode::PullRequest(pr) => Some(pr),
-                        _ => None,
-                    })
-                    .collect();
-
-                Ok(prs)
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get PR failed: {}", e);
+                return Err(anyhow!("Request to get PR failed"));
             }
-            Err(e) => Err(anyhow!("Error getting PRs: {}", e)),
-        }
+        };
+
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
+
+        let search_edges = match data.search.edges {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid valid search edges: {:?}", data);
+                return Err(anyhow!("Failed to get valid search edges"));
+            }
+        };
+
+        let prs: Vec<GetPullRequestsSearchEdgesNodeOnPullRequest> = search_edges
+            .into_iter()
+            .flatten()
+            .filter_map(|edge| edge.node)
+            .filter_map(|node| match node {
+                GetPullRequestsSearchEdgesNode::PullRequest(pr) => Some(pr),
+                _ => None,
+            })
+            .collect();
+        Ok(prs)
     }
 
     #[instrument(skip(self))]
@@ -198,7 +252,7 @@ impl GraphQLClient {
         branch: &str,
         limit: i64,
     ) -> Result<bool> {
-        match post_graphql::<IsBranchPrOpen, _>(
+        let res = match post_graphql::<IsBranchPrOpen, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
             is_branch_pr_open::Variables {
@@ -210,24 +264,38 @@ impl GraphQLClient {
         )
         .await
         {
-            Ok(res) => {
-                let exists: bool = !res
-                    .data
-                    .ok_or(anyhow!("Failed to get valid response data"))?
-                    .repository
-                    .ok_or(anyhow!("Failed to get valid repository"))?
-                    .pull_requests
-                    .nodes
-                    .ok_or(anyhow!("Failed to get valid PR nodes"))?
-                    .is_empty();
-                Ok(exists)
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get PR failed: {}", e);
+                return Err(anyhow!("Request to get PR failed"));
             }
-            Err(e) => Err(anyhow!(
-                "Error checking if branch {} PR is open: {}",
-                branch,
-                e
-            )),
-        }
+        };
+
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
+
+        let repo = match &data.repository {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid repository: {:?}", data);
+                return Err(anyhow!("Failed to get valid repository"));
+            }
+        };
+
+        let nodes = match &repo.pull_requests.nodes {
+            Some(pr) => pr,
+            None => {
+                error!("Failed to get valid PR: {:?}", data);
+                return Err(anyhow!("Failed to get valid PR"));
+            }
+        };
+
+        Ok(!nodes.is_empty())
     }
 
     #[instrument(skip(self))]
@@ -236,7 +304,7 @@ impl GraphQLClient {
         owner: &str,
         repo: &str,
     ) -> Result<GetMergeQueueRepositoryMergeQueue> {
-        match post_graphql::<GetMergeQueue, _>(
+        let res = match post_graphql::<GetMergeQueue, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
             get_merge_queue::Variables {
@@ -246,19 +314,38 @@ impl GraphQLClient {
         )
         .await
         {
-            Ok(res) => {
-                let merge_queue: GetMergeQueueRepositoryMergeQueue = res
-                    .data
-                    .ok_or(anyhow!("Failed to get valid response data"))?
-                    .repository
-                    .ok_or(anyhow!("Failed to get valid repository"))?
-                    .merge_queue
-                    .ok_or(anyhow!("Failed to get valid merge queue"))?;
-
-                Ok(merge_queue)
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get merge_queue failed: {}", e);
+                return Err(anyhow!("Request to get merge_queue failed"));
             }
-            Err(e) => Err(anyhow!("Error getting merge queue: {}", e)),
-        }
+        };
+
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
+
+        let repo = match &data.repository {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid repository: {:?}", data);
+                return Err(anyhow!("Failed to get valid repository"));
+            }
+        };
+
+        let merge_queue = match &repo.merge_queue {
+            Some(pr) => pr,
+            None => {
+                error!("Failed to get valid merge_queue: {:?}", data);
+                return Err(anyhow!("Failed to get valid merge_queue"));
+            }
+        };
+
+        Ok(merge_queue.clone())
     }
 
     #[instrument(skip(self))]
@@ -268,8 +355,7 @@ impl GraphQLClient {
         repo: &str,
         limit: i64,
     ) -> Result<CommitStatusMap> {
-        let mut map = HashMap::new();
-        match post_graphql::<GetCommitStatuses, _>(
+        let res = match post_graphql::<GetCommitStatuses, _>(
             &self.client,
             GITHUB_GRAPHQL_URL,
             get_commit_statuses::Variables {
@@ -280,53 +366,83 @@ impl GraphQLClient {
         )
         .await
         {
-            Ok(res) => {
-                let target: GetCommitStatusesRepositoryDefaultBranchRefTarget = res
-                    .data
-                    .ok_or(anyhow!("Failed to get valid response data"))?
-                    .repository
-                    .ok_or(anyhow!("Failed to get valid repository"))?
-                    .default_branch_ref
-                    .ok_or(anyhow!("Failed to get valid default branch ref"))?
-                    .target
-                    .ok_or(anyhow!("Failed to get valid target"))?;
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get commit statuses failed: {}", e);
+                return Err(anyhow!("Request to get commit statuses failed"));
+            }
+        };
 
-                match target {
-                    GetCommitStatusesRepositoryDefaultBranchRefTarget::Commit(commit) => {
-                        commit
-                            .history
-                            .nodes
-                            .ok_or(anyhow!("Failed to get valid nodes"))?
-                            .into_iter()
-                            .for_each(|node| {
-                                if let Some(node) = node {
-                                    let oid = node.oid.clone();
-                                    if let Some(status) = node.status {
-                                        let short_oid = oid.chars().take(8).collect::<String>();
-                                        let status_str: &str = match status.state {
-                                            get_commit_statuses::StatusState::SUCCESS => "success",
-                                            get_commit_statuses::StatusState::FAILURE => "failure",
-                                            get_commit_statuses::StatusState::ERROR => "error",
-                                            get_commit_statuses::StatusState::EXPECTED => {
-                                                "expected"
-                                            }
-                                            get_commit_statuses::StatusState::PENDING => "pending",
-                                            get_commit_statuses::StatusState::Other(_) => "other",
-                                        };
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
 
-                                        map.insert(short_oid, status_str.to_string());
-                                    }
-                                }
-                            });
-                        Ok(map)
-                    }
-                    GetCommitStatusesRepositoryDefaultBranchRefTarget::Tag => {
-                        Err(anyhow!("Default branch ref is a tag"))
-                    }
-                    _ => Err(anyhow!("Default branch ref is not a commit")),
+        let repo = match &data.repository {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid repository: {:?}", data);
+                return Err(anyhow!("Failed to get valid repository"));
+            }
+        };
+
+        let default_branch_ref = match &repo.default_branch_ref {
+            Some(pr) => pr,
+            None => {
+                error!("Failed to get valid default_branch_ref: {:?}", data);
+                return Err(anyhow!("Failed to get valid default_branch_ref"));
+            }
+        };
+
+        let target = match &default_branch_ref.target {
+            Some(pr) => pr,
+            None => {
+                error!("Failed to get valid default_branch_ref target: {:?}", data);
+                return Err(anyhow!("Failed to get valid default_branch_ref target"));
+            }
+        };
+
+        let commit = match target {
+            GetCommitStatusesRepositoryDefaultBranchRefTarget::Commit(commit) => commit,
+            _ => {
+                error!(
+                    "Failed to get valid default_branch_ref is not a commit: {:?}",
+                    data
+                );
+                return Err(anyhow!("Default branch ref is not a commit"));
+            }
+        };
+
+        let history_nodes = match &commit.history.nodes {
+            Some(nodes) => nodes,
+            None => {
+                error!("Failed to get valid history nodes: {:?}", data);
+                return Err(anyhow!("Failed to get valid history nodes"));
+            }
+        };
+
+        let mut map = HashMap::new();
+        history_nodes.iter().for_each(|node| {
+            if let Some(node) = node {
+                let oid = node.oid.clone();
+                if let Some(status) = &node.status {
+                    let short_oid = oid.chars().take(8).collect::<String>();
+                    let status_str: &str = match status.state {
+                        get_commit_statuses::StatusState::SUCCESS => "success",
+                        get_commit_statuses::StatusState::FAILURE => "failure",
+                        get_commit_statuses::StatusState::ERROR => "error",
+                        get_commit_statuses::StatusState::EXPECTED => "expected",
+                        get_commit_statuses::StatusState::PENDING => "pending",
+                        get_commit_statuses::StatusState::Other(_) => "other",
+                    };
+
+                    map.insert(short_oid, status_str.to_string());
                 }
             }
-            Err(e) => Err(anyhow!("Error getting commit statuses: {}", e)),
-        }
+        });
+        Ok(map)
     }
 }
