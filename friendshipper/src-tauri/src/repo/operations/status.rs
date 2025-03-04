@@ -352,7 +352,7 @@ where
                 for file in files.iter_mut() {
                     if file.state == FileState::Unmerged {
                         file.submit_status = SubmitStatus::Unmerged;
-                    } else if status.conflicts.iter().any(|x| *x == file.path) {
+                    } else if status.conflicts.iter().any(|x| x == &file.path) {
                         file.submit_status = SubmitStatus::Conflicted;
                     } else if self.engine.is_lockable_file(&file.path) {
                         if let Some(lock) = status.locks_theirs.iter().find(|x| x.path == file.path)

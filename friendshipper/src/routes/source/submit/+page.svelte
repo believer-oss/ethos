@@ -42,13 +42,14 @@
 	} from '@ethos/core';
 	import { get } from 'svelte/store';
 	import { Menu, MenuItem } from '@tauri-apps/api/menu';
-	import type {
-		GitHubPullRequest,
-		Nullable,
-		PushRequest,
-		RepoStatus,
-		RevertFilesRequest,
-		Snapshot
+	import {
+		ConflictStrategy,
+		type GitHubPullRequest,
+		type Nullable,
+		type PushRequest,
+		type RepoStatus,
+		type RevertFilesRequest,
+		type Snapshot
 	} from '$lib/types';
 	import {
 		acquireLocks,
@@ -115,7 +116,9 @@
 	let loadingSnapshots = false;
 	let snapshots: Snapshot[] = [];
 
-	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
+	$: conflictsDetected =
+		($repoStatus?.conflicts.length ?? 0) > 0 &&
+		$appConfig.conflictStrategy === ConflictStrategy.Error;
 	$: canSync = !quickSubmitting && !syncing;
 
 	const onModifiedFileRightClick = async (e: MouseEvent, file: ModifiedFile) => {

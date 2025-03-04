@@ -281,9 +281,11 @@ where
                     let branch = self.repo_status.read().branch.clone();
                     self.git_client.hard_reset(&branch).await?;
 
+                    let conflict_strategy = self.app_config.read().conflict_strategy.clone();
+
                     match self
                         .git_client
-                        .restore_snapshot(&snapshot.commit, vec![])
+                        .restore_snapshot(&snapshot.commit, vec![], conflict_strategy)
                         .await
                     {
                         Ok(_) => {}

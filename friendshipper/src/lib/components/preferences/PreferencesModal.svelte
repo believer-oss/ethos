@@ -575,7 +575,28 @@
 					Specified URL should be a git URL ending in <code>.git</code>.
 				</Tooltip>
 
-				<div class="flex gap-4">
+				{#if localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
+					<div class="flex flex-col gap-2">
+						<Label class="text-white">Conflict Strategy</Label>
+						<Select
+							class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							bind:value={localAppConfig.conflictStrategy}
+						>
+							<option value="Error">Error</option>
+							<option value="KeepOurs">Keep Ours</option>
+							<option value="KeepTheirs">Keep Theirs</option>
+						</Select>
+						<Tooltip class="text-sm" placement="bottom">
+							How to handle merge conflicts during sync. <code>Error</code> will block you from
+							syncing.
+							<code>KeepOurs</code> will keep your local changes and overwrite incoming upstream
+							changes. <code>KeepTheirs</code> will keep the remote changes and overwrite your local
+							changes.
+						</Tooltip>
+					</div>
+				{/if}
+
+				<div class="flex gap-4 pt-1">
 					<div class="flex flex-row gap-2">
 						<Checkbox
 							bind:checked={localAppConfig.pullDlls}
