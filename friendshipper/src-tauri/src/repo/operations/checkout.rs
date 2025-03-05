@@ -8,6 +8,8 @@ use ethos_core::worker::{Task, TaskSequence};
 
 use crate::state::AppState;
 
+pub const CONTENT_BRANCH_NAME: &str = "content-main";
+
 #[derive(Clone)]
 pub struct CheckoutOp {
     pub repo_path: String,
@@ -46,6 +48,34 @@ where
         CheckoutOp {
             repo_path: app_config.repo_path.clone(),
             branch: repo_config.trunk_branch.clone(),
+            git_client: state.git(),
+        }
+    };
+
+    sequence.push(Box::new(op));
+
+    let _ = state.operation_tx.send(sequence).await;
+    let _ = rx.await;
+
+    Ok(Json(String::from("OK")))
+}
+
+pub async fn checkout_content_branch_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
+    // Block on any other fetch-like operations in the queue
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
+    let mut sequence = TaskSequence::new().with_completion_tx(tx);
+
+    let op = {
+        let app_config = state.app_config.read().clone();
+
+        CheckoutOp {
+            repo_path: app_config.repo_path.clone(),
+            branch: CONTENT_BRANCH_NAME.to_string(),
             git_client: state.git(),
         }
     };

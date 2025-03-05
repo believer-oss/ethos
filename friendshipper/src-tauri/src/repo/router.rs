@@ -13,6 +13,7 @@ where
         .route("/clone", post(operations::clone_handler))
         .route("/diff", get(operations::diff_handler))
         .route("/log", get(operations::log_handler))
+        .route("/push", post(operations::push_handler))
         .route("/pull", post(operations::pull_handler))
         .route("/show", get(operations::show_commit_files))
         .route("/file-history", get(operations::file_history_handler))
@@ -37,6 +38,10 @@ where
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
+        .route(
+            "/checkout/content",
+            post(operations::checkout_content_branch_handler),
+        )
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
         .route("/reset/:commit", post(operations::reset_repo_to_commit))

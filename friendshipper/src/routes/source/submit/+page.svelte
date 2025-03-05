@@ -52,6 +52,7 @@
 	} from '$lib/types';
 	import {
 		acquireLocks,
+		checkoutContentBranch,
 		deleteSnapshot,
 		forceDownloadDlls,
 		forceDownloadEngine,
@@ -69,6 +70,7 @@
 		saveChangeSet,
 		saveSnapshot,
 		showCommitFiles,
+		submit,
 		syncEngineCommitWithUproject,
 		syncLatest,
 		syncUprojectWithEngineCommit
@@ -374,7 +376,12 @@
 		loading = true;
 		quickSubmitting = true;
 		showProgressModal = true;
-		progressModalTitle = 'Opening pull request';
+
+		if ($repoStatus?.branch === 'content-main') {
+			progressModalTitle = 'Pushing to content-main';
+		} else {
+			progressModalTitle = 'Opening pull request';
+		}
 
 		await refreshFiles(false);
 
@@ -389,7 +396,11 @@
 		};
 
 		try {
-			await quickSubmit(req);
+			if ($repoStatus?.branch === 'content-main') {
+				await submit(req);
+			} else {
+				await quickSubmit(req);
+			}
 
 			$commitMessage = '';
 
@@ -402,7 +413,11 @@
 
 			await refreshPulls();
 
-			await emit('success', 'Pull request opened!');
+			if ($repoStatus?.branch === 'content-main') {
+				await emit('success', 'Changes pushed to content-main!');
+			} else {
+				await emit('success', 'Pull request opened!');
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -573,6 +588,7 @@
 		preferencesOpen = true;
 		await emit('open-preferences');
 	};
+
 	const getStatusBadgeText = (pull: GitHubPullRequest): string => {
 		if (pull.state === 'OPEN') {
 			if (pull.mergeable === 'CONFLICTING') {
@@ -652,6 +668,24 @@
 			await acquireLocks(selectedPaths, false);
 			await emit('success', 'Files locked!');
 			await refreshLocks();
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	const handleCheckoutContentBranch = async () => {
+		loading = true;
+		showProgressModal = true;
+		progressModalTitle = 'Checking out content branch...';
+
+		try {
+			await checkoutContentBranch();
+			await refreshFiles(false);
+			await emit('success', 'Content branch checked out!');
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -926,7 +960,8 @@
 							color="primary"
 							disabled={!canSubmit}
 							on:click={handleQuickSubmit}
-							>Quick Submit
+						>
+							Quick Submit
 							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 						</Button>
 					</ButtonGroup>
