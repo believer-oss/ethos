@@ -148,19 +148,22 @@ where
             None => Arc::new(RwLock::new(None)),
         };
 
-        // Always initialize to the defaults, will be replaced in StatusOp if repo is set.
-        debug!("Selecting default artifact project");
-        let selected_artifact_project: Option<String> = match kube_client.read().clone() {
-            Some(kube_client) => {
-                let project = kube_client.default_project();
-                Some(project.name.clone())
-            }
-            None => None,
-        };
+        // Initialize to the defaults if selected artifact is none, will be replaced in StatusOp if repo is set.
+        // Have to wrap this in a check because, with multiple projects we don't want to always initialize to the default.
+        if app_config.read().selected_artifact_project.is_none() {
+            debug!("Selecting default artifact project");
+            let selected_artifact_project: Option<String> = match kube_client.read().clone() {
+                Some(kube_client) => {
+                    let project = kube_client.default_project();
+                    Some(project.name.clone())
+                }
+                None => None,
+            };
 
-        {
-            let mut config = app_config.write();
-            config.selected_artifact_project = selected_artifact_project;
+            {
+                let mut config = app_config.write();
+                config.selected_artifact_project = selected_artifact_project;
+            }
         }
 
         let mut engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());

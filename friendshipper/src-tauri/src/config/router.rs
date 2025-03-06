@@ -166,9 +166,14 @@ where
         // the user to save their repo path regardless of whether or not it's a git dir because a repo clone
         // may not have been started yet.
         if !git_dir.exists() && current_config.initialized {
+            let parent_repo_path = PathBuf::from(&payload.repo_path)
+                .parent()
+                .and_then(|p| p.to_str())
+                .unwrap_or(".")
+                .to_string();
             let req = CloneRequest {
                 url: payload.repo_url.clone(),
-                path: payload.repo_path.clone(),
+                path: parent_repo_path,
             };
 
             // get the name of the repo from the url
