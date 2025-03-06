@@ -100,10 +100,9 @@ where
         if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
             snapshot = Some(
                 self.git_client
-                    .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::KeepIndex)
+                    .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::DiscardIndex)
                     .await?,
             );
-            self.git_client.stash(git::StashAction::Push).await?;
         }
 
         // No need to hold a lock for this operation, but pass the ref directly to StatusOp so it can
