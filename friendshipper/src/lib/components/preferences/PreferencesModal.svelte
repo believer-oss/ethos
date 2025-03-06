@@ -67,7 +67,6 @@
 	let isEngineTypeSource: boolean = false;
 	let configuringNewRepo: boolean = false;
 	let repoName: string = '';
-	let parentRepoPath: string = '';
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -98,7 +97,6 @@
 				issuer: ''
 			};
 		}
-		parentRepoPath = localAppConfig.repoPath.split('/').slice(0, -1).join('/');
 		repoName = localAppConfig.repoPath.split('/').pop() || '';
 	};
 
@@ -118,7 +116,6 @@
 		};
 		localAppConfig.selectedArtifactProject = 'new-project';
 		repoName = '';
-		parentRepoPath = '';
 	};
 
 	const onRepoUrlInput = (e: Event) => {
@@ -142,7 +139,6 @@
 				const repo = parts[parts.length - 1].replace('.git', '');
 				const projectName = `${owner}-${repo}`.toLowerCase();
 				localAppConfig.projects[projectName] = projectData;
-				localAppConfig.projects[projectName].repoPath = `${parentRepoPath}/${repoName}`;
 				localAppConfig.selectedArtifactProject = projectName.toLowerCase();
 			}
 		}
@@ -157,10 +153,10 @@
 		});
 
 		if (openDir && typeof openDir === 'string') {
-			parentRepoPath = openDir.replaceAll('\\', '/');
-			localAppConfig.projects[
-				localAppConfig.selectedArtifactProject
-			].repoPath = `${parentRepoPath}/${repoName}`;
+			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath = openDir.replaceAll(
+				'\\',
+				'/'
+			);
 		}
 	};
 
@@ -187,10 +183,23 @@
 	};
 
 	const onApplyClicked = async () => {
-		// localAppConfig.repoPath gets reconciled with the full path in updateAppConfig
-		localAppConfig.repoPath = parentRepoPath;
-		localAppConfig.repoUrl =
-			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
+		if (configuringNewRepo) {
+			// update repo path from parent dir to full clone path
+			// only need to do this for new projects because the repo path is tracking the parent dir at this point
+			localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath = `${
+				localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath
+			}/${repoName}`;
+		}
+
+		if (
+			configuringNewRepo ||
+			$appConfig.selectedArtifactProject !== localAppConfig.selectedArtifactProject
+		) {
+			localAppConfig.repoPath =
+				localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath;
+			localAppConfig.repoUrl =
+				localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl;
+		}
 
 		const hasRepoUrlChanged = $appConfig.repoUrl !== localAppConfig.repoUrl;
 		showProgressModal = hasRepoUrlChanged;
@@ -261,10 +270,14 @@
 
 		showModal = false;
 
-		if (showProgressModal) {
-			await internal();
-		} else {
-			await internal();
+		await internal();
+		if (hasRepoUrlChanged) {
+			await restart();
+
+			// wait 5 seconds before closing the modal
+			setTimeout(() => {
+				showProgressModal = false;
+			}, 5000);
 		}
 		configuringNewRepo = false;
 		showProgressModal = false;
@@ -509,10 +522,7 @@
 							on:change={() => {
 								const selectedProject =
 									localAppConfig.projects[localAppConfig.selectedArtifactProject];
-								parentRepoPath = selectedProject.repoPath.split('/').slice(0, -1).join('/');
 								repoName = selectedProject.repoPath.split('/').pop() || '';
-								console.log(parentRepoPath);
-								console.log(repoName);
 							}}
 						>
 							{#each Object.keys(localAppConfig.projects) as project}
@@ -537,30 +547,40 @@
 					{/if}
 				</div>
 				<Label class="text-white">Repo Path</Label>
-				<div class="flex gap-1 mb-2">
-					<Button class="h-8 gap-2" on:click={openRepoFolder}>
-						<FolderOpenSolid />
-						Browse
-					</Button>
-					<ButtonGroup class="w-full">
-						<Input
-							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-							bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath}
-						/>
-						<Tooltip class="text-sm" placement="bottom">
-							Specified folder must be a game repository.
-						</Tooltip>
-						<Button
-							class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
-							disabled={!localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath}
-							on:click={openTerminalToRepo}
-						>
-							<TerminalSolid class="w-4 h-4" color="white" />
+				<div class="flex flex-col gap-1 mb-2">
+					<div class="flex gap-1 mb-2">
+						<Button class="h-8 gap-2" on:click={openRepoFolder}>
+							<FolderOpenSolid />
+							Browse
 						</Button>
-						<Tooltip class="text-sm w-max" placement="bottom">
-							Open powershell to git repo path.
-						</Tooltip>
-					</ButtonGroup>
+						<ButtonGroup class="w-full">
+							<Input
+								class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+								bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject]
+									.repoPath}
+							/>
+							<Tooltip class="text-sm" placement="bottom">
+								Specified folder must be a game repository.
+							</Tooltip>
+							<Button
+								class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
+								disabled={!localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath}
+								on:click={openTerminalToRepo}
+							>
+								<TerminalSolid class="w-4 h-4" color="white" />
+							</Button>
+							<Tooltip class="text-sm w-max" placement="bottom">
+								Open powershell to git repo path.
+							</Tooltip>
+						</ButtonGroup>
+					</div>
+					{#if configuringNewRepo && repoName}
+						<span class="text-xs text-gray-400"
+							>Repo will be cloned to {localAppConfig.projects[
+								localAppConfig.selectedArtifactProject
+							].repoPath}/{repoName}</span
+						>
+					{/if}
 				</div>
 
 				<Label class="text-white">Repo URL</Label>
@@ -575,7 +595,7 @@
 					Specified URL should be a git URL ending in <code>.git</code>.
 				</Tooltip>
 
-				{#if localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
+				{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
 					<div class="flex flex-col gap-2">
 						<Label class="text-white">Conflict Strategy</Label>
 						<Select
