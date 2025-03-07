@@ -507,6 +507,14 @@ pub struct DynamicConfig {
 
     #[serde(default, rename = "mobileURLScheme")]
     pub mobile_url_scheme: String,
+
+    // Don't serialize the default of false
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        rename = "useS3TransferAccel"
+    )]
+    pub use_s3ta: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
