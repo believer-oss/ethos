@@ -504,300 +504,303 @@
 		</div>
 	</div>
 
-	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
-		<CodeBranchSolid />
-		Source Control Options
-	</h1>
-	<div class="rounded-lg border border-gray-300 dark:border-gray-300">
-		<div class="mt-4 mb-4 ml-4 mr-4">
-			<div class="flex flex-col gap-2">
-				<div class="flex gap-2 items-end">
-					<div class="flex-1">
-						<Label class="text-white">Project</Label>
-						<Select
-							size="sm"
-							bind:value={localAppConfig.selectedArtifactProject}
-							disabled={configuringNewRepo}
-							class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-							on:change={() => {
-								const selectedProject =
-									localAppConfig.projects[localAppConfig.selectedArtifactProject];
-								repoName = selectedProject.repoPath.split('/').pop() || '';
-							}}
-						>
-							{#each Object.keys(localAppConfig.projects) as project}
-								<option value={project}>{project}</option>
-							{/each}
-						</Select>
-					</div>
-					{#if configuringNewRepo}
-						<Button
-							color="red"
-							class="h-9 mb-0.5"
-							on:click={() => {
-								// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-								delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
-
-								localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
-								configuringNewRepo = false;
-							}}>Cancel</Button
-						>
-					{:else}
-						<Button class="h-9 mb-0.5" on:click={onNewProjectClicked}>New Project</Button>
-					{/if}
-				</div>
-				<Label class="text-white">Repo Path</Label>
-				<div class="flex flex-col gap-1 mb-2">
-					<div class="flex gap-1 mb-2">
-						<Button class="h-8 gap-2" on:click={openRepoFolder}>
-							<FolderOpenSolid />
-							Browse
-						</Button>
-						<ButtonGroup class="w-full">
-							<Input
-								class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-								bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject]
-									.repoPath}
-							/>
-							<Tooltip class="text-sm" placement="bottom">
-								Specified folder must be a game repository.
-							</Tooltip>
-							<Button
-								class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
-								disabled={!localAppConfig.projects[localAppConfig.selectedArtifactProject].repoPath}
-								on:click={openTerminalToRepo}
+	{#if Object.keys(localAppConfig.projects).length > 0}
+		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
+			<CodeBranchSolid />
+			Source Control Options
+		</h1>
+		<div class="rounded-lg border border-gray-300 dark:border-gray-300">
+			<div class="mt-4 mb-4 ml-4 mr-4">
+				<div class="flex flex-col gap-2">
+					<div class="flex gap-2 items-end">
+						<div class="flex-1">
+							<Label class="text-white">Project</Label>
+							<Select
+								size="sm"
+								bind:value={localAppConfig.selectedArtifactProject}
+								disabled={configuringNewRepo}
+								class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+								on:change={() => {
+									const selectedProject =
+										localAppConfig.projects[localAppConfig.selectedArtifactProject];
+									repoName = selectedProject.repoPath.split('/').pop() || '';
+								}}
 							>
-								<TerminalSolid class="w-4 h-4" color="white" />
+								{#each Object.keys(localAppConfig.projects) as project}
+									<option value={project}>{project}</option>
+								{/each}
+							</Select>
+						</div>
+						{#if configuringNewRepo}
+							<Button
+								color="red"
+								class="h-9 mb-0.5"
+								on:click={() => {
+									// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+									delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
+
+									localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
+									configuringNewRepo = false;
+								}}>Cancel</Button
+							>
+						{:else}
+							<Button class="h-9 mb-0.5" on:click={onNewProjectClicked}>New Project</Button>
+						{/if}
+					</div>
+					<Label class="text-white">Repo Path</Label>
+					<div class="flex flex-col gap-1 mb-2">
+						<div class="flex gap-1 mb-2">
+							<Button class="h-8 gap-2" on:click={openRepoFolder}>
+								<FolderOpenSolid />
+								Browse
 							</Button>
-							<Tooltip class="text-sm w-max" placement="bottom">
-								Open powershell to git repo path.
-							</Tooltip>
-						</ButtonGroup>
+							<ButtonGroup class="w-full">
+								<Input
+									class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+									bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject]
+										.repoPath}
+								/>
+								<Tooltip class="text-sm" placement="bottom">
+									Specified folder must be a game repository.
+								</Tooltip>
+								<Button
+									class="h-8 bg-primary-700 hover:bg-primary-800 dark:bg-primary-600 hover:dark:bg-primary-700"
+									disabled={!localAppConfig.projects[localAppConfig.selectedArtifactProject]
+										.repoPath}
+									on:click={openTerminalToRepo}
+								>
+									<TerminalSolid class="w-4 h-4" color="white" />
+								</Button>
+								<Tooltip class="text-sm w-max" placement="bottom">
+									Open powershell to git repo path.
+								</Tooltip>
+							</ButtonGroup>
+						</div>
+						{#if configuringNewRepo && repoName}
+							<span class="text-xs text-gray-400"
+								>Repo will be cloned to {localAppConfig.projects[
+									localAppConfig.selectedArtifactProject
+								].repoPath}/{repoName}</span
+							>
+						{/if}
 					</div>
-					{#if configuringNewRepo && repoName}
-						<span class="text-xs text-gray-400"
-							>Repo will be cloned to {localAppConfig.projects[
-								localAppConfig.selectedArtifactProject
-							].repoPath}/{repoName}</span
-						>
-					{/if}
-				</div>
 
-				<Label class="text-white">Repo URL</Label>
-				<div class="flex gap-1 mb-2">
-					<Input
-						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
-						on:input={onRepoUrlInput}
-					/>
-				</div>
-				<Tooltip class="text-sm" placement="bottom">
-					Specified URL should be a git URL ending in <code>.git</code>.
-				</Tooltip>
-
-				{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
-					<div class="flex flex-col gap-2">
-						<Label class="text-white">Conflict Strategy</Label>
-						<Select
-							class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-							bind:value={localAppConfig.conflictStrategy}
-						>
-							<option value="Error">Error</option>
-							<option value="KeepOurs">Keep Ours</option>
-							<option value="KeepTheirs">Keep Theirs</option>
-						</Select>
-						<Tooltip class="text-sm" placement="bottom">
-							How to handle merge conflicts during sync. <code>Error</code> will block you from
-							syncing.
-							<code>KeepOurs</code> will keep your local changes and overwrite incoming upstream
-							changes. <code>KeepTheirs</code> will keep the remote changes and overwrite your local
-							changes.
-						</Tooltip>
-					</div>
-				{/if}
-
-				<div class="flex gap-4 pt-1">
-					<div class="flex flex-row gap-2">
-						<Checkbox
-							bind:checked={localAppConfig.pullDlls}
-							class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+					<Label class="text-white">Repo URL</Label>
+					<div class="flex gap-1 mb-2">
+						<Input
+							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							bind:value={localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
+							on:input={onRepoUrlInput}
 						/>
-						<Label class="text-white">Download DLLs</Label>
 					</div>
 					<Tooltip class="text-sm" placement="bottom">
-						Syncing latest will download associated game DLLs from AWS if there was a binary update.
-						Content creators: leave this on.
+						Specified URL should be a git URL ending in <code>.git</code>.
 					</Tooltip>
+
+					{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
+						<div class="flex flex-col gap-2">
+							<Label class="text-white">Conflict Strategy</Label>
+							<Select
+								class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+								bind:value={localAppConfig.conflictStrategy}
+							>
+								<option value="Error">Error</option>
+								<option value="KeepOurs">Keep Ours</option>
+								<option value="KeepTheirs">Keep Theirs</option>
+							</Select>
+							<Tooltip class="text-sm" placement="bottom">
+								How to handle merge conflicts during sync. <code>Error</code> will block you from
+								syncing.
+								<code>KeepOurs</code> will keep your local changes and overwrite incoming upstream
+								changes. <code>KeepTheirs</code> will keep the remote changes and overwrite your local
+								changes.
+							</Tooltip>
+						</div>
+					{/if}
+
+					<div class="flex gap-4 pt-1">
+						<div class="flex flex-row gap-2">
+							<Checkbox
+								bind:checked={localAppConfig.pullDlls}
+								class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+							/>
+							<Label class="text-white">Download DLLs</Label>
+						</div>
+						<Tooltip class="text-sm" placement="bottom">
+							Syncing latest will download associated game DLLs from AWS if there was a binary
+							update. Content creators: leave this on.
+						</Tooltip>
+						<div class="flex flex-row gap-2">
+							{#if localAppConfig.pullDlls}
+								<Checkbox
+									id="gameclientDownloadSymbolsCheckbox"
+									bind:checked={localAppConfig.editorDownloadSymbols}
+									class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+								/>
+								<Label class="text-gray-400">Download Debug Symbols</Label>
+							{:else}
+								<Checkbox
+									id="gameclientDownloadSymbolsCheckbox"
+									bind:checked={localAppConfig.editorDownloadSymbols}
+									class="w-8 h-8 text-4xl mb-2 text-gray-500 bg-secondary-800 dark:bg-space-950"
+									disabled
+								/>
+								<Label class="text-gray-400">Download Debug Symbols</Label>
+							{/if}
+						</div>
+						<Tooltip class="text-sm" placement="bottom">
+							For engineers. Enable if you want to debug the game client locally. Increases download
+							size.
+						</Tooltip>
+					</div>
 					<div class="flex flex-row gap-2">
 						{#if localAppConfig.pullDlls}
 							<Checkbox
-								id="gameclientDownloadSymbolsCheckbox"
-								bind:checked={localAppConfig.editorDownloadSymbols}
+								id="pullDllCheckbox"
+								bind:checked={localAppConfig.openUprojectAfterSync}
 								class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
 							/>
-							<Label class="text-gray-400">Download Debug Symbols</Label>
 						{:else}
 							<Checkbox
-								id="gameclientDownloadSymbolsCheckbox"
-								bind:checked={localAppConfig.editorDownloadSymbols}
+								id="pullDllCheckbox"
+								bind:checked={localAppConfig.openUprojectAfterSync}
 								class="w-8 h-8 text-4xl mb-2 text-gray-500 bg-secondary-800 dark:bg-space-950"
 								disabled
 							/>
-							<Label class="text-gray-400">Download Debug Symbols</Label>
 						{/if}
+						<Label class="text-white">Launch editor after sync</Label>
 					</div>
 					<Tooltip class="text-sm" placement="bottom">
-						For engineers. Enable if you want to debug the game client locally. Increases download
-						size.
+						The editor will be launched automatically after syncing latest. Disable if you prefer to
+						launch it manually.
+					</Tooltip>
+
+					<Label class="text-white">Github PAT</Label>
+					<Input
+						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						bind:value={localAppConfig.githubPAT}
+						type="password"
+					/>
+					<Tooltip class="text-sm" placement="bottom">
+						Copy and paste your GitHub Personal Access Token (PAT) here.
 					</Tooltip>
 				</div>
-				<div class="flex flex-row gap-2">
-					{#if localAppConfig.pullDlls}
+			</div>
+		</div>
+
+		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
+			<AtomOutline />
+			Engine Options
+		</h1>
+		<div class="rounded-lg border border-gray-300 dark:border-gray-300">
+			<div class="m-4 flex flex-col gap-4">
+				<div>
+					<div class="flex flex-row gap-2">
 						<Checkbox
-							id="pullDllCheckbox"
-							bind:checked={localAppConfig.openUprojectAfterSync}
+							bind:checked={localAppConfig.engineAllowMultipleProcesses}
 							class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
 						/>
+						<Label class="text-gray-400">Allow launching multiple editors</Label>
+					</div>
+					<Tooltip class="text-sm" placement="top">
+						When unchecked, will only allow one instance of the editor to be open. When checked,
+						multiple editor processes will be launched. Use at your own risk!
+					</Tooltip>
+				</div>
+
+				<div>
+					<Radio
+						name="engineType"
+						bind:group={localAppConfig.engineType}
+						class="mb-2 text-white"
+						value="Prebuilt"
+						>Prebuilt
+					</Radio>
+					<div class="flex gap-1">
+						<Button
+							class="h-8 gap-2"
+							on:click={openEnginePrebuiltFolder}
+							bind:disabled={isEngineTypeSource}
+						>
+							<FolderOpenSolid />
+							Browse
+						</Button>
+						<Input
+							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							bind:value={localAppConfig.enginePrebuiltPath}
+							bind:disabled={isEngineTypeSource}
+						/>
+					</div>
+					<Tooltip class="text-sm" placement="top">
+						For content creators. Prebuilt engine archive is downloaded from AWS into specified
+						directory.
+					</Tooltip>
+				</div>
+
+				<div class="flex flex-row gap-2">
+					{#if isEngineTypePrebuilt}
+						<Checkbox
+							id="gameclientDownloadSymbolsCheckbox"
+							bind:checked={localAppConfig.engineDownloadSymbols}
+							class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+						/>
+						<Label class="text-gray-400">Download Debug Symbols</Label>
 					{:else}
 						<Checkbox
-							id="pullDllCheckbox"
-							bind:checked={localAppConfig.openUprojectAfterSync}
+							id="gameclientDownloadSymbolsCheckbox"
+							bind:checked={localAppConfig.engineDownloadSymbols}
 							class="w-8 h-8 text-4xl mb-2 text-gray-500 bg-secondary-800 dark:bg-space-950"
 							disabled
 						/>
+						<Label class="text-gray-400">Download Debug Symbols</Label>
 					{/if}
-					<Label class="text-white">Launch editor after sync</Label>
 				</div>
 				<Tooltip class="text-sm" placement="bottom">
-					The editor will be launched automatically after syncing latest. Disable if you prefer to
-					launch it manually.
+					For engineers. Greatly increases download size (10+GB).
 				</Tooltip>
 
-				<Label class="text-white">Github PAT</Label>
-				<Input
-					class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-					bind:value={localAppConfig.githubPAT}
-					type="password"
-				/>
-				<Tooltip class="text-sm" placement="bottom">
-					Copy and paste your GitHub Personal Access Token (PAT) here.
-				</Tooltip>
-			</div>
-		</div>
-	</div>
-
-	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
-		<AtomOutline />
-		Engine Options
-	</h1>
-	<div class="rounded-lg border border-gray-300 dark:border-gray-300">
-		<div class="m-4 flex flex-col gap-4">
-			<div>
-				<div class="flex flex-row gap-2">
-					<Checkbox
-						bind:checked={localAppConfig.engineAllowMultipleProcesses}
-						class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
-					/>
-					<Label class="text-gray-400">Allow launching multiple editors</Label>
+				<div>
+					<Radio
+						name="engineType"
+						bind:group={localAppConfig.engineType}
+						class="mb-2 text-white"
+						value="Source"
+						>Source
+					</Radio>
+					<div class="flex gap-1">
+						<Button
+							class="h-8 gap-2"
+							on:click={openEngineSourceFolder}
+							bind:disabled={isEngineTypePrebuilt}
+						>
+							<FolderOpenSolid />
+							Browse
+						</Button>
+						<Input
+							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							bind:value={localAppConfig.engineSourcePath}
+							bind:disabled={isEngineTypePrebuilt}
+						/>
+					</div>
 				</div>
-				<Tooltip class="text-sm" placement="top">
-					When unchecked, will only allow one instance of the editor to be open. When checked,
-					multiple editor processes will be launched. Use at your own risk!
+				<Tooltip class="text-sm" placement="bottom">
+					For engineers. Specified folder must be an engine repository.
 				</Tooltip>
-			</div>
 
-			<div>
-				<Radio
-					name="engineType"
-					bind:group={localAppConfig.engineType}
-					class="mb-2 text-white"
-					value="Prebuilt"
-					>Prebuilt
-				</Radio>
-				<div class="flex gap-1">
-					<Button
-						class="h-8 gap-2"
-						on:click={openEnginePrebuiltFolder}
-						bind:disabled={isEngineTypeSource}
-					>
-						<FolderOpenSolid />
-						Browse
-					</Button>
+				<div class="flex flex-col gap-2">
+					<Label class="text-white">Engine Repo URL</Label>
 					<Input
 						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.enginePrebuiltPath}
-						bind:disabled={isEngineTypeSource}
+						bind:value={localAppConfig.engineRepoUrl}
 					/>
+					<Tooltip class="text-sm" placement="bottom">
+						Specified URL should be a git URL ending in <code>.git</code>. For displaying engine
+						builds.
+					</Tooltip>
 				</div>
-				<Tooltip class="text-sm" placement="top">
-					For content creators. Prebuilt engine archive is downloaded from AWS into specified
-					directory.
-				</Tooltip>
-			</div>
-
-			<div class="flex flex-row gap-2">
-				{#if isEngineTypePrebuilt}
-					<Checkbox
-						id="gameclientDownloadSymbolsCheckbox"
-						bind:checked={localAppConfig.engineDownloadSymbols}
-						class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
-					/>
-					<Label class="text-gray-400">Download Debug Symbols</Label>
-				{:else}
-					<Checkbox
-						id="gameclientDownloadSymbolsCheckbox"
-						bind:checked={localAppConfig.engineDownloadSymbols}
-						class="w-8 h-8 text-4xl mb-2 text-gray-500 bg-secondary-800 dark:bg-space-950"
-						disabled
-					/>
-					<Label class="text-gray-400">Download Debug Symbols</Label>
-				{/if}
-			</div>
-			<Tooltip class="text-sm" placement="bottom">
-				For engineers. Greatly increases download size (10+GB).
-			</Tooltip>
-
-			<div>
-				<Radio
-					name="engineType"
-					bind:group={localAppConfig.engineType}
-					class="mb-2 text-white"
-					value="Source"
-					>Source
-				</Radio>
-				<div class="flex gap-1">
-					<Button
-						class="h-8 gap-2"
-						on:click={openEngineSourceFolder}
-						bind:disabled={isEngineTypePrebuilt}
-					>
-						<FolderOpenSolid />
-						Browse
-					</Button>
-					<Input
-						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.engineSourcePath}
-						bind:disabled={isEngineTypePrebuilt}
-					/>
-				</div>
-			</div>
-			<Tooltip class="text-sm" placement="bottom">
-				For engineers. Specified folder must be an engine repository.
-			</Tooltip>
-
-			<div class="flex flex-col gap-2">
-				<Label class="text-white">Engine Repo URL</Label>
-				<Input
-					class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-					bind:value={localAppConfig.engineRepoUrl}
-				/>
-				<Tooltip class="text-sm" placement="bottom">
-					Specified URL should be a git URL ending in <code>.git</code>. For displaying engine
-					builds.
-				</Tooltip>
 			</div>
 		</div>
-	</div>
+	{/if}
 
 	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
 		<CloudArrowUpSolid />
@@ -835,26 +838,28 @@
 					<span class="text-xs text-gray-300 font-mono w-3/4">In case of emergency...</span>
 				</div>
 				<div class="flex flex-col gap-2 text-white">
-					<div class="flex gap-2 items-center">
-						<Button
-							outline
-							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={handleResetRepo}
-							>Reset Repo to Main
-						</Button>
-						<span class="w-full"
-							>Hard reset to <code>main</code> (will revert all local changes)</span
-						>
-					</div>
-					<div class="flex gap-2 items-center">
-						<Button
-							outline
-							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={handleRefetchRepo}
-							>Refresh Repo and Commit Graph
-						</Button>
-						<span class="w-full">Refetch the repo from github and rebuild the commit-graph</span>
-					</div>
+					{#if Object.keys(localAppConfig.projects).length > 0}
+						<div class="flex gap-2 items-center">
+							<Button
+								outline
+								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+								on:click={handleResetRepo}
+								>Reset Repo to Main
+							</Button>
+							<span class="w-full"
+								>Hard reset to <code>main</code> (will revert all local changes)</span
+							>
+						</div>
+						<div class="flex gap-2 items-center">
+							<Button
+								outline
+								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+								on:click={handleRefetchRepo}
+								>Refresh Repo and Commit Graph
+							</Button>
+							<span class="w-full">Refetch the repo from github and rebuild the commit-graph</span>
+						</div>
+					{/if}
 					<div class="flex gap-2 items-center">
 						<Button
 							outline
