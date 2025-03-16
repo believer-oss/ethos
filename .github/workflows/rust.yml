@@ -26,22 +26,13 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Check if files have changed
-        uses: tj-actions/changed-files@v42
-        id: changes
-        with:
-          files: |
-            ${{ matrix.app }}/src/**/*
-
       - name: Package "core-ui" if needed
-        if: ${{ matrix.app != 'core/ui' && (steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app))) }}
         run: |
           cd core/ui
           yarn
           yarn package
 
       - name: Lint ${{ matrix.app }}
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cd ${{ matrix.app }}
           yarn
@@ -61,17 +52,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Check if files have changed
-        uses: tj-actions/changed-files@v42
-        id: changes
-        with:
-          files: |
-            ${{ matrix.app }}/**/*
-            core/**/*
-            Cargo.lock
-
       - name: Install ubuntu dependencies
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -87,11 +68,9 @@ jobs:
           librsvg2-dev
 
       - name: set up rust toolchain
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: believer-oss/setup-rust-toolchain@ff4c7a2d9523e22eab355f13c7732a4ea3e7a9b1
 
       - name: set up Node
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -99,7 +78,6 @@ jobs:
           cache-dependency-path: "${{ matrix.app }}/yarn.lock"
 
       - name: Check format and linting
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           mkdir -p ${{ matrix.app }}/build
           cargo fmt -p ethos-core -- --check
@@ -108,20 +86,17 @@ jobs:
           cargo clippy --all-features -p ${{ matrix.app }} -- -D warnings
 
       - name: Run unit tests
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cargo test --verbose --release -p ethos-core
           cargo test --verbose --release --bin ${{ matrix.app }}
 
       - name: Build core ui
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cd core/ui
           yarn
           yarn package
 
       - name: Build
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -139,8 +114,8 @@ jobs:
           mv target/release/${capital_app} ${{ matrix.app }}-linux-amd64
 
       - name: Release
-        uses: softprops/action-gh-release@v1
         if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        uses: believer-oss/action-gh-release@ab50eebb6488051c6788d97fa95232267c6a4e23
         with:
           files: |
             ${{ matrix.app }}-linux-amd64
@@ -159,21 +134,9 @@ jobs:
       - name: Check out
         uses: actions/checkout@v3
 
-      - name: Check if files have changed
-        uses: tj-actions/changed-files@v42
-        id: changes
-        with:
-          files: |
-            ${{ matrix.app }}/**/*
-            core/**/*
-            Cargo.lock
-
       - name: set up rust toolchain
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
+        uses: believer-oss/setup-rust-toolchain@ff4c7a2d9523e22eab355f13c7732a4ea3e7a9b1
       - name: set up Node
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -181,7 +144,6 @@ jobs:
           cache-dependency-path: "${{ matrix.app }}/yarn.lock"
 
       - name: Check format and linting
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           mkdir -p ${{ matrix.app }}/build
           cargo fmt -p ethos-core -- --check
@@ -190,20 +152,17 @@ jobs:
           cargo clippy --all-features -p ${{ matrix.app }} -- -D warnings
 
       - name: Run unit tests
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cargo test --verbose --release -p ethos-core
           cargo test --verbose --release --bin ${{ matrix.app }}
 
       - name: Build core ui
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cd core/ui
           yarn
           yarn package
 
       - name: Build
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -220,7 +179,7 @@ jobs:
           mv target/release/bundle/msi/*.msi .
 
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: believer-oss/action-gh-release@ab50eebb6488051c6788d97fa95232267c6a4e23
         if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         env:
           REF: ${{ github.ref_name }}
@@ -241,15 +200,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Check if files have changed
-        uses: tj-actions/changed-files@v42
-        id: changes
-        with:
-          files: |
-            friendshipper/server/**/*
-
       - name: Install ubuntu dependencies
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -265,16 +217,16 @@ jobs:
           librsvg2-dev
 
       - name: set up rust toolchain
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        uses: believer-oss/setup-rust-toolchain@ff4c7a2d9523e22eab355f13c7732a4ea3e7a9b1
 
       - name: Check format and linting
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cargo fmt -p friendshipper-server -- --check
           cargo clippy --all-features -p friendshipper-server -- -D warnings
 
       - name: Run unit tests
-        if: ${{ steps.changes.outputs.any_changed == 'true' || startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
+        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
           cargo test --verbose --release -p friendshipper-server
