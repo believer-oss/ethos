@@ -49,7 +49,7 @@ jobs:
           cache-dependency-path: "${{ github.event.inputs.app }}/yarn.lock"
 
       - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: believer-oss/setup-rust-toolchain@ff4c7a2d9523e22eab355f13c7732a4ea3e7a9b1
         with:
           # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
           targets: ${{ matrix.platform == 'macos-latest-xlarge' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
@@ -83,7 +83,7 @@ jobs:
           cd ${{ github.event.inputs.app }}
           yarn install # change this to npm, pnpm or bun depending on which one you use.
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: believer-oss/tauri-action@62d8e3b287f43a9521448e0cef9e33b74150b2c7
         id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -166,15 +166,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Check if files have changed
-        uses: tj-actions/changed-files@v42
-        id: changes
-        with:
-          files: |
-            friendshipper/server/**/*
-
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -182,7 +175,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -190,7 +183,7 @@ jobs:
 
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4
         with:
           context: .
           file: friendshipper/server/Dockerfile
