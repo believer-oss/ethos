@@ -128,8 +128,10 @@ where
 
     // find selected artifact project in the map and set the root repo_path and repo_url to the project's
     if let Some(project_name) = payload.clone().selected_artifact_project {
-        payload.repo_path = payload.projects[&project_name].repo_path.clone();
-        payload.repo_url = payload.projects[&project_name].repo_url.clone();
+        if let Some(project) = payload.projects.get(&project_name) {
+            payload.repo_path = project.repo_path.clone();
+            payload.repo_url = project.repo_url.clone();
+        }
     }
 
     // if our playtest region has changed, we need to replace the aws client
