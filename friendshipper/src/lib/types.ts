@@ -78,6 +78,7 @@ export interface AppConfig {
 	serverUrl: string;
 	oktaConfig: OktaConfig;
 	selectedArtifactProject: string;
+	maxClientCacheSizeGb: number;
 	playtestRegion: string;
 	initialized: boolean;
 }
