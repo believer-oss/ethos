@@ -210,6 +210,9 @@
 			progressModalTitle = 'Saving preferences...';
 			await saveChangeSet($changeSets);
 
+			// make sure maxClientCacheSizeGb is a number
+			localAppConfig.maxClientCacheSizeGb = Number(localAppConfig.maxClientCacheSizeGb);
+
 			const accessToken = $oktaAuth?.getAccessToken();
 			if (accessToken) {
 				await updateAppConfig(localAppConfig, accessToken, true);
@@ -421,18 +424,31 @@
 			<Tooltip class="text-sm" placement="bottom">
 				Set your display name for joining playtests inside Friendshipper.
 			</Tooltip>
-			<div class="flex flex-row gap-2 items-center">
-				<Checkbox
-					bind:checked={localAppConfig.groupDownloadedBuildsByPlaytest}
-					class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
-				/>
-				<Label class="text-gray-400">Group downloaded builds by playtest</Label>
+			<div class="flex flex-row gap-2 items-center justify-between">
+				<div class="flex flex-row gap-2 items-center">
+					<Checkbox
+						bind:checked={localAppConfig.groupDownloadedBuildsByPlaytest}
+						class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
+					/>
+					<Label class="text-gray-400">Group downloaded builds by playtest</Label>
+				</div>
+				<div class="flex items-center gap-2 ml-4">
+					<Label class="text-gray-400 whitespace-nowrap">Max Cache (GB):</Label>
+					<Input
+						type="number"
+						min="1"
+						class="h-8 w-20 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						bind:value={localAppConfig.maxClientCacheSizeGb}
+					/>
+				</div>
 			</div>
 			<Tooltip class="text-sm items-center" placement="bottom">
 				Group downloaded builds by playtest. This will allow you to keep multiple playtests synced
 				at once. However, your initial sync of each playtest <span class="font-bold"
 					>will take longer</span
-				>. This option also uses significantly more disk space.
+				>. This option also uses significantly more disk space. The max cache size controls when
+				older cached files will be deleted. Old clients will never automatically be deleted, so you
+				will need to manually delete them.
 			</Tooltip>
 			<div class="flex flex-row gap-2">
 				<Checkbox

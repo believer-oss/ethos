@@ -166,6 +166,9 @@ pub struct AppConfig {
     #[serde(default, rename = "engineAllowMultipleProcesses")]
     pub engine_allow_multiple_processes: bool,
 
+    #[serde(default, rename = "maxClientCacheSizeGb")]
+    pub max_client_cache_size_gb: u64,
+
     #[serde(default, rename = "recordPlay")]
     pub record_play: bool,
 
@@ -235,6 +238,7 @@ impl AppConfig {
             playtest_region: default_playtest_region(),
             otlp_endpoint: None,
             otlp_headers: None,
+            max_client_cache_size_gb: 32,
             initialized: false,
         }
     }

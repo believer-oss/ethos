@@ -491,6 +491,8 @@ impl Server {
                 )
                 .unwrap()
                 .set_default("initialized", true)
+                .unwrap()
+                .set_default("maxClientCacheSizeGb", 32)
                 .unwrap();
 
             return match builder.build() {

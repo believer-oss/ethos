@@ -5,6 +5,7 @@ use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
+use ethos_core::longtail::CacheControl;
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -189,6 +190,12 @@ where
         .get_storage_url(&payload.artifact_entry);
     let tx = state.longtail_tx.clone();
 
+    // make a client_cache dir if it doesn't exist
+    let client_cache_dir = local_path.join("client_cache");
+    if !client_cache_dir.exists() {
+        fs::create_dir_all(client_cache_dir.clone())?;
+    }
+
     if let Some(project) = state.app_config.read().clone().selected_artifact_project {
         local_path = local_path.join(project);
     }
@@ -236,6 +243,11 @@ where
         };
     }
 
+    let cache_control = CacheControl {
+        path: client_cache_dir,
+        max_size_bytes: state.app_config.read().max_client_cache_size_gb * 1024 * 1024 * 1024,
+    };
+
     let local_path_clone = local_path.clone();
     match fs::create_dir_all(&local_path_clone) {
         Ok(_) => {
@@ -262,7 +274,7 @@ where
                         info!("Starting actual download...");
                         state.longtail.get_archive(
                             &local_path_clone,
-                            None,
+                            Some(cache_control),
                             &archive_urls,
                             tx,
                             credentials,
