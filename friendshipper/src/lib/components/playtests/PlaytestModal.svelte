@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Checkbox, Input, Label, Modal, Select, Tooltip } from 'flowbite-svelte';
+	import { Button, Checkbox, Input, Label, Modal, Select, Tooltip, Helper } from 'flowbite-svelte';
 	import { EditOutline, ExclamationCircleOutline, UndoOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type {
@@ -38,6 +38,7 @@
 	let project: string = '';
 
 	let playtestError: string = '';
+	let nameError: boolean = false;
 
 	enum CommitSelectMode {
 		Default,
@@ -112,6 +113,17 @@
 
 	const inputClass = 'bg-secondary-700 dark:bg-space-900 text-white';
 
+	const validatePlaytestName = (name: string): boolean => {
+		if (name === '') return true;
+		const regexp = /^[a-zA-Z0-9\s_-]+$/;
+		return regexp.test(name);
+	};
+
+	const handleNameValidation = (e: Event) => {
+		const input = (e.target as HTMLInputElement).value;
+		nameError = !validatePlaytestName(input);
+	};
+
 	const handleSubmit = async (e: SubmitEvent) => {
 		submitting = true;
 		playtestError = '';
@@ -123,13 +135,20 @@
 			data[key] = value as string;
 		}
 
-		let gameServerCmdArgs = [];
+		if (!validatePlaytestName(data.name)) {
+			playtestError =
+				'Invalid playtest name. Only letters, numbers, spaces, underscores, and dashes are allowed.';
+			submitting = false;
+			return;
+		}
+
+		let gameServerCmdArgs: string[] = [];
 		if (data.profile !== undefined) {
 			const selectedProfileName = data.profile;
-			const selectedProfile: PlaytestProfile = profiles.find(
-				(p) => p.name === selectedProfileName
-			).value;
-			gameServerCmdArgs = selectedProfile.args.split(' ');
+			const selectedProfile = profiles.find((p) => p.name === selectedProfileName);
+			if (selectedProfile) {
+				gameServerCmdArgs = selectedProfile.value.args.split(' ');
+			}
 		}
 
 		if (mode === ModalState.Editing && playtest != null) {
@@ -281,8 +300,16 @@
 				value={playtest ? playtest.spec.displayName : ''}
 				maxLength="18"
 				required
+				on:input={handleNameValidation}
+				color={nameError ? 'red' : 'base'}
 			/>
 		</Label>
+		{#if nameError}
+			<Helper class="mt-2" color="red">
+				<span class="font-medium">Error!</span>
+				Playtest names can only include letters, numbers, spaces, underscores, and dashes.
+			</Helper>
+		{/if}
 		<Label class="space-y-2 text-xs text-white">
 			<span>Project</span>
 			<Select
