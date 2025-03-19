@@ -89,6 +89,10 @@ where
     ) -> Result<Self> {
         let mut longtail = Longtail::new(crate::APP_NAME);
 
+        if dynamic_config.read().use_s3ta {
+            longtail.s3_endpoint_resolver_uri = Some(ethos_core::AWS_S3_ACCEL_ENDPOINT.to_string());
+        }
+
         debug!("Checking longtail");
         if longtail.exec_path.is_none() && longtail.update_exec().is_err() {
             match longtail.get_longtail(longtail_tx.clone()) {
