@@ -113,7 +113,7 @@ where
         action,
         date,
         file_size,
-    });
+    })
 }
 
 #[instrument(skip(state))]
