@@ -101,7 +101,7 @@ where
         }
     }
 
-    return Ok(FileHistoryRevision {
+    Ok(FileHistoryRevision {
         filename,
         commit_id,
         short_commit_id,
