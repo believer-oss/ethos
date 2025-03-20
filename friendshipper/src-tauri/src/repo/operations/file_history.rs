@@ -1,9 +1,9 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use ethos_core::types::repo::{FileHistoryResponse, FileHistoryRevision};
+use futures::future::join_all;
 use serde::Deserialize;
 use tracing::instrument;
-use futures::future::{join_all};
 
 use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
@@ -18,25 +18,30 @@ pub struct FileHistoryParams {
 pub async fn get_revision<T>(
     state: &AppState<T>,
     chunk: &[&str],
+    query_file_info: bool,
 ) -> Result<FileHistoryRevision, CoreError>
 where
     T: EngineProvider,
 {
+    // Ensure we have 2 lines as part of the chunk we're parsing
+    // We should have ["{commit}", "{file}"]
     if chunk.len() != 2 {
         return Err(CoreError::Input(anyhow::anyhow!(
-                            "chunk length is incorrect"
-                        )));
+            "chunk format is incorrect"
+        )));
     }
 
     let commit_line = chunk[0];
     let file_line = chunk[1];
 
     // Parse commit line parts
+    // We should have "{commit_id} {user_name} {timestamp} {description}"
+    // eg. "a9b812c76de54f...|Rustuser|1737187200 -0800|fix(Type): Some long description"
     let parts: Vec<&str> = commit_line.split('|').collect();
     if parts.len() < 4 {
         return Err(CoreError::Input(anyhow::anyhow!(
-                            "parts length is incorrect"
-                        )));
+            "parts format is incorrect"
+        )));
     }
 
     let commit_id = parts[0].to_string();
@@ -58,11 +63,13 @@ where
     let description = parts[3].to_string();
 
     // Parse file line
+    // We should have "{action} {filename}"
+    // eg. "modified GameSystem.cpp"
     let file_parts: Vec<&str> = file_line.split_whitespace().collect();
     if file_parts.len() != 2 {
         return Err(CoreError::Input(anyhow::anyhow!(
-                            "file parts length is incorrect"
-                        )));
+            "file parts format is incorrect"
+        )));
     }
 
     let action = translate_action(file_parts[0]);
@@ -71,23 +78,26 @@ where
     // set commit_id_number to hex of short commit id
     let commit_id_number = u32::from_str_radix(&short_commit_id, 16).unwrap_or_default();
 
-    let output = state
-        .git()
-        .run_and_collect_output(
-            &["ls-tree", "--long", &commit_id, "--", &filename],
-            Default::default(),
-        )
-        .await?;
-
     let mut file_hash = String::new();
     let mut file_size = 0;
 
-    // Parse ls-tree output if we got any
-    if !output.is_empty() {
-        let parts: Vec<&str> = output.split_whitespace().collect();
-        if parts.len() >= 4 {
-            file_hash = parts[2].to_string();
-            file_size = parts[3].parse::<u32>().unwrap_or_default();
+    if query_file_info {
+        let output = state
+            .git()
+            .run_and_collect_output(
+                &["ls-tree", "--long", &commit_id, "--", &filename],
+                Default::default(),
+            )
+            .await?;
+
+        // Parse ls-tree output if we got any
+        // We should have "{unused_obj_mode} {unused_obj_type} {file_hash} {file_size} {unused_filename}"
+        if !output.is_empty() {
+            let parts: Vec<&str> = output.split_whitespace().collect();
+            if parts.len() >= 4 {
+                file_hash = parts[2].to_string();
+                file_size = parts[3].parse::<u32>().unwrap_or_default();
+            }
         }
     }
 
@@ -145,17 +155,16 @@ where
     let mut revisions = Vec::new();
 
     for chunk in chunks {
-        revision_futures.push(get_revision(&state, chunk));
+        revision_futures.push(get_revision(&state, chunk, false));
     }
 
-    let results = join_all(revision_futures)
-        .await;
+    let results = join_all(revision_futures).await;
 
     for result in results {
         match result {
             Ok(revision) => {
                 revisions.push(revision);
-            },
+            }
             // Show only the revisions that succeeded and ignore any that failed
             Err(_) => {}
         }
