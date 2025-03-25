@@ -145,6 +145,7 @@ fn main() -> Result<(), CoreError> {
                 cancel_download,
                 check_login_required,
                 checkout_trunk,
+                checkout_main_branch,
                 clone_repo,
                 configure_git_user,
                 copy_profile_data_from_gameserver,

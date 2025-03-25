@@ -326,6 +326,21 @@ pub async fn checkout_trunk(state: tauri::State<'_, State>) -> Result<(), TauriE
 }
 
 #[tauri::command]
+pub async fn checkout_main_branch(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/checkout/main-branch", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn revert_files(
     state: tauri::State<'_, State>,
     req: RevertFilesRequest,

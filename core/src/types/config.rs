@@ -118,6 +118,9 @@ pub struct AppConfig {
     #[serde(default, rename = "repoUrl", alias = "repo_url")]
     pub repo_url: String,
 
+    #[serde(default, rename = "mainBranch", alias = "main_branch")]
+    pub main_branch: String,
+
     #[serde(default, rename = "conflictStrategy", alias = "conflict_strategy")]
     pub conflict_strategy: ConflictStrategy,
 
@@ -215,6 +218,7 @@ impl AppConfig {
             projects: HashMap::new(),
             repo_path: Default::default(),
             repo_url: Default::default(),
+            main_branch: "main".to_string(),
             conflict_strategy: Default::default(),
             tools_path: Default::default(),
             tools_url: Default::default(),

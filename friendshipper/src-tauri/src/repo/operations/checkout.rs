@@ -57,3 +57,31 @@ where
 
     Ok(Json(String::from("OK")))
 }
+
+pub async fn checkout_main_branch_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<String>, CoreError>
+where
+    T: EngineProvider,
+{
+    // Block on any other fetch-like operations in the queue
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
+    let mut sequence = TaskSequence::new().with_completion_tx(tx);
+
+    let op = {
+        let app_config = state.app_config.read().clone();
+
+        CheckoutOp {
+            repo_path: app_config.repo_path.clone(),
+            branch: app_config.main_branch.clone(),
+            git_client: state.git(),
+        }
+    };
+
+    sequence.push(Box::new(op));
+
+    let _ = state.operation_tx.send(sequence).await;
+    let _ = rx.await;
+
+    Ok(Json(String::from("OK")))
+}

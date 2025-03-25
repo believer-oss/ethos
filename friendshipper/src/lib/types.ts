@@ -67,6 +67,7 @@ export interface AppConfig {
 	editorDownloadSymbols: boolean;
 	openUprojectAfterSync: boolean;
 	conflictStrategy: ConflictStrategy;
+	mainBranch: string;
 	githubPAT: string;
 	engineType: string;
 	enginePrebuiltPath: string;

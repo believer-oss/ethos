@@ -37,6 +37,10 @@ where
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
+        .route(
+            "/checkout/main-branch",
+            post(operations::checkout_main_branch_handler),
+        )
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
         .route("/reset/:commit", post(operations::reset_repo_to_commit))
