@@ -1,43 +1,27 @@
-use anyhow::anyhow;
-use axum::extract::State;
-use axum::{async_trait, Json};
-use octocrab::models::pulls::{MergeableState, PullRequest};
-use octocrab::{params, Octocrab};
-use std::path::PathBuf;
-use tracing::{info, instrument, warn};
-
-use crate::engine::CommunicationType;
-use crate::engine::EngineProvider;
-use crate::repo::operations::StatusOp;
+use crate::engine::{CommunicationType, EngineProvider};
+use crate::repo::operations::gh::submit::is_quicksubmit_branch;
+use crate::repo::operations::{GitHubSubmitOp, StatusOp};
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
-use ethos_core::clients::git;
+use anyhow::anyhow;
+use async_trait::async_trait;
+use axum::extract::State;
+use axum::Json;
 use ethos_core::clients::git::SaveSnapshotIndexOption;
-use ethos_core::clients::github;
+use ethos_core::clients::{git, github};
 use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
-use ethos_core::types::config::AppConfigRef;
-use ethos_core::types::config::RepoConfigRef;
+use ethos_core::types::config::{AppConfigRef, RepoConfigRef};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
-use ethos_core::types::repo::SubmitStatus;
-use ethos_core::types::repo::{File, PushRequest};
+use ethos_core::types::repo::{File, PushRequest, SubmitStatus};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
+use std::path::PathBuf;
+use tracing::{instrument, warn};
 
 #[derive(Clone)]
-pub struct GitHubSubmitOp {
-    pub head_branch: String,
-    pub base_branch: String,
-    pub commit_message: String,
-    pub repo_status: RepoStatusRef,
-    pub token: String,
-    pub client: github::GraphQLClient,
-    pub enable_auto_merge: bool,
-}
-
-#[derive(Clone)]
-pub struct SubmitOp<T>
+pub struct CodeSubmitOp<T>
 where
     T: EngineProvider,
 {
@@ -56,158 +40,12 @@ where
     pub github_client: github::GraphQLClient,
 }
 
-const SUBMIT_PREFIX: &str = "[quick submit]";
-
 #[async_trait]
-impl Task for GitHubSubmitOp {
-    #[instrument(name = "GitHubSubmitOp::execute", skip(self))]
-    async fn execute(&self) -> Result<(), CoreError> {
-        let octocrab = Octocrab::builder()
-            .personal_token(self.token.clone())
-            .build()?;
-
-        let truncated_message = if self.commit_message.len() > 50 {
-            format!("{}...", &self.commit_message[..50])
-        } else {
-            self.commit_message.clone()
-        };
-
-        let owner: String;
-        let repo: String;
-        {
-            let status = self.repo_status.read();
-            owner = status.repo_owner.clone();
-            repo = status.repo_name.clone();
-        }
-
-        let pr = octocrab
-            .pulls(owner.clone(), repo.clone())
-            .create(
-                format!("{} {}", SUBMIT_PREFIX, truncated_message),
-                self.head_branch.clone(),
-                self.base_branch.clone(),
-            )
-            .send()
-            .await?;
-
-        let octocrab_clone = octocrab.clone();
-        let owner_clone = owner.clone();
-        let repo_clone = repo.clone();
-        let client_clone = self.client.clone();
-        let enable_auto_merge = self.enable_auto_merge;
-        let self_clone = self.clone();
-
-        // There's a lot of variability in how long this takes, so we give the frontend
-        // a chance to return control to the user before it starts polling
-        tokio::spawn(async move {
-            match self_clone
-                .poll_for_mergeable(
-                    octocrab_clone.clone(),
-                    pr,
-                    owner_clone.clone(),
-                    repo_clone.clone(),
-                )
-                .await
-            {
-                Ok(updated_pr) => {
-                    if let Ok(id) = client_clone
-                        .get_pull_request_id(
-                            owner_clone.clone(),
-                            repo_clone.clone(),
-                            updated_pr.number as i64,
-                        )
-                        .await
-                    {
-                        if enable_auto_merge {
-                            if let Err(e) = octocrab_clone
-                                .pulls(owner_clone.clone(), repo_clone.clone())
-                                .merge(updated_pr.number)
-                                .method(params::pulls::MergeMethod::Rebase)
-                                .send()
-                                .await
-                            {
-                                warn!("Failed to auto-merge pull request: {:?}", e);
-                            }
-                        } else if let Err(e) = client_clone.enqueue_pull_request(id).await {
-                            warn!("Failed to enqueue pull request: {:?}", e);
-                        }
-                    } else {
-                        warn!("Failed to get pull request ID");
-                    }
-                }
-                Err(e) => warn!("Failed to poll for mergeable state: {:?}", e),
-            }
-        });
-
-        Ok(())
-    }
-
-    fn get_name(&self) -> String {
-        "GitHubSubmitOp".to_string()
-    }
-}
-
-impl GitHubSubmitOp {
-    #[instrument(name = "GitHubSubmitOp::poll_for_mergeable", skip(self))]
-    async fn poll_for_mergeable(
-        &self,
-        octocrab: Octocrab,
-        pr: PullRequest,
-        owner: String,
-        repo: String,
-    ) -> Result<PullRequest, CoreError> {
-        let mut pr = pr.clone();
-        while let Some(state) = pr.mergeable_state.clone() {
-            match state {
-                MergeableState::Blocked | MergeableState::Behind | MergeableState::Unknown => {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                    pr = octocrab
-                        .pulls(owner.clone(), repo.clone())
-                        .get(pr.clone().number)
-                        .await?;
-                }
-                MergeableState::Dirty => {
-                    return Err(CoreError::Input(anyhow!(
-                        "PR state is 'dirty'. It's likely a commit check has failed."
-                    )));
-                }
-                _ => {
-                    info!("mergeable state: {:?}", state);
-                    break;
-                }
-            }
-        }
-
-        Ok(pr)
-    }
-}
-
-// Quick submit is a workflow that submits changes via GitHub Pull Requests, taking advantage of the GitHub merge queue to avoid having
-// to sync latest first.
-// When a commit goes through the merge queue, it becomes a different commit due to how the commit is merged into/
-// rebased onto main. When making a successive change, GitHub isn't smart enough to detect that the previous commit is the same one is
-// now in main, so it complains that there is a conflict, due to 2 "different" commits touching the same files, even though they have
-// the exact same contents. To overcome this limitation, quick submits leverage the concept of git worktrees to resolve local changes
-// with the latest changes in main.
-// The general logic for quick submit pushes go like this:
-// 1. User initiates quick submit
-// 2. If the current branch has an existing quick submit change in the merge queue, cancel it. We'll just reuse the current branch.
-//    We need to cancel the in-flight one since if it lands in main, it will conflict with what we try to put in the merge queue, so
-//    instead we just resolve all the changes locally again, push them all up to the same branch, and resubmit to the merge queue.
-// 3. Make a new f11r-<timestamp> branch to contain the changes if needed.
-// 4. Commit new changes
-// 5. If a scratch worktree folder doesn't exist, make one.
-// 6. In the workree directory:
-//    a. Make a branch called f11r-<timestamp>-wt and ensure it's up to date with exactly what's on f11r-<timestamp>.
-//    b. Resolve local changes with latest main
-//    c. Push changes to the remote
-// 7. Trigger PR via github
-#[async_trait]
-impl<T> Task for SubmitOp<T>
+impl<T> Task for CodeSubmitOp<T>
 where
     T: EngineProvider,
 {
-    #[instrument(name = "SubmitOp::execute", skip(self))]
+    #[instrument(name = "CodeSubmitOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         // abort if there are no files to submit
         if self.files.is_empty() {
@@ -296,9 +134,8 @@ where
                     // attempt to reset to original branch and restore snapshot
                     // if this fails for any reason, we should simply log, then return the original error
                     let branch = self.repo_status.read().branch.clone();
-                    self.git_client.hard_reset(&branch).await?;
-
                     let conflict_strategy = self.app_config.read().conflict_strategy.clone();
+                    self.git_client.hard_reset(&branch).await?;
 
                     match self
                         .git_client
@@ -320,101 +157,44 @@ where
     }
 
     fn get_name(&self) -> String {
-        "SubmitOp".to_string()
+        "CodeSubmitOp".to_string()
     }
 }
 
-impl<T> SubmitOp<T>
+impl<T> CodeSubmitOp<T>
 where
     T: EngineProvider,
 {
-    #[instrument(name = "SubmitOp::execute_internal", skip(self))]
+    #[instrument(name = "CodeSubmitOp::execute_internal", skip(self))]
     pub async fn execute_internal(&self) -> Result<(), CoreError> {
         let base_branch = self.app_config.read().main_branch.clone();
 
         // TODO: renable this check once we stop using main to test code-main flow
-        // if base_branch != "main" {
-        //     return Err(CoreError::Internal(anyhow::anyhow!("Attempting to submit while main branch is not 'main'.")));
+        // if base_branch != "code-main" {
+        //     return Err(CoreError::Internal(anyhow::anyhow!("Attempting to code-submit while main branch is not 'code-main'.")));
         // }
 
         let prev_branch = self.repo_status.read().branch.clone();
-        let mut f11r_branch = {
+
+        let f11r_branch = {
             let display_name = &self.app_config.read().user_display_name;
             let santized_display_name = display_name.replace(' ', "-");
             format!(
-                "f11r-{}-{}",
+                "f11r-CM-{}-{}",
                 santized_display_name,
                 chrono::Utc::now().timestamp()
             )
         };
 
-        // If there's an inflight quicksubmit change, cancel it - we can be reasonably sure
-        let mut needs_new_pr = false;
+        self.git_client
+            .run(&["checkout", "-b", &f11r_branch], Default::default())
+            .await?;
 
-        let mut quicksubmit_pr_id: Option<String> = None;
+        // Clean up the old f11r branch, if it was one
         if is_quicksubmit_branch(&prev_branch) {
-            let owner: String;
-            let repo: String;
-            {
-                let status = self.repo_status.read();
-                owner = status.repo_owner.clone();
-                repo = status.repo_name.clone();
-            }
-
-            let merge_queue = self.github_client.get_merge_queue(&owner, &repo).await?;
-            if let Some(entries) = merge_queue.entries {
-                if let Some(nodes) = entries.nodes {
-                    for node in nodes.into_iter().flatten() {
-                        if let Some(commit) = node.head_commit {
-                            if let Some(author) = commit.author {
-                                if let Some(pr) = node.pull_request {
-                                    if let Some(user) = author.user {
-                                        if user.login == self.github_client.username
-                                            && pr.title.starts_with(SUBMIT_PREFIX)
-                                        {
-                                            // There should only be one quicksubmit PR in merge queue at a time
-                                            quicksubmit_pr_id = Some(pr.id);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(id) = &quicksubmit_pr_id {
-                // Silently absorb errors - the PR may have been already merged in this case
-                let res = self
-                    .github_client
-                    .dequeue_pull_request(id.to_string())
-                    .await;
-                if let Err(e) = res {
-                    warn!(
-                        "Failed to cancel existing pull request {}. Reason: {}",
-                        id, e
-                    );
-                    needs_new_pr = true;
-                }
-            }
-        } else {
-            needs_new_pr = true;
-        }
-
-        if needs_new_pr {
             self.git_client
-                .run(&["checkout", "-b", &f11r_branch], Default::default())
+                .delete_branch(&prev_branch, git::BranchType::Local)
                 .await?;
-
-            // Clean up the old f11r branch, if it was one
-            if is_quicksubmit_branch(&prev_branch) {
-                self.git_client
-                    .delete_branch(&prev_branch, git::BranchType::Local)
-                    .await?;
-            }
-        } else {
-            f11r_branch.clone_from(&prev_branch);
         }
 
         let status_op = StatusOp {
@@ -571,7 +351,7 @@ where
                     .run(&["checkout", &worktree_branch], git_opts_lfs_stubs)
                     .await?;
                 git_client_worktree
-                    .run(&["fetch", "origin", &base_branch], git_opts_lfs_stubs)
+                    .run(&["fetch", "origin", &*base_branch], git_opts_lfs_stubs)
                     .await?;
                 git_client_worktree
                     .run(
@@ -598,25 +378,18 @@ where
                 }
             }
 
-            // If we already have a PR, requeue it. Otherwise just make a new PR and submit it to the merge queue
-            match quicksubmit_pr_id {
-                Some(pr_id) => {
-                    self.github_client.enqueue_pull_request(pr_id).await?;
-                }
-                None => {
-                    let gh_op = GitHubSubmitOp {
-                        head_branch: worktree_branch.clone(),
-                        base_branch: base_branch.clone(),
-                        token: self.token.clone(),
-                        commit_message: self.commit_message.clone(),
-                        repo_status: self.repo_status.clone(),
-                        client: self.github_client.clone(),
-                        enable_auto_merge: true,
-                    };
+            // Submit the PR to the merge queue
+            let gh_op = GitHubSubmitOp {
+                head_branch: worktree_branch.clone(),
+                base_branch: base_branch.to_string(),
+                token: self.token.clone(),
+                commit_message: self.commit_message.clone(),
+                repo_status: self.repo_status.clone(),
+                client: self.github_client.clone(),
+                enable_auto_merge: false,
+            };
 
-                    gh_op.execute().await?;
-                }
-            }
+            gh_op.execute().await?;
 
             // cleanup worktree branch
             _ = git_client_worktree
@@ -631,51 +404,22 @@ where
 
         let gh_op = GitHubSubmitOp {
             head_branch: f11r_branch.clone(),
-            base_branch: base_branch.clone(),
+            base_branch: base_branch.to_string(),
             token: self.token.clone(),
             commit_message: self.commit_message.clone(),
             repo_status: self.repo_status.clone(),
             client: self.github_client.clone(),
-            enable_auto_merge: true,
+            enable_auto_merge: false,
         };
 
         gh_op.execute().await?;
 
         Ok(())
     }
-
-    #[instrument(skip(self))]
-    async fn recover(
-        &self,
-        stash_path: PathBuf,
-        target_branch: &str,
-        stashed_files: Vec<String>,
-        deleted_files: Vec<String>,
-    ) -> anyhow::Result<()> {
-        self.git_client.hard_reset(target_branch).await?;
-
-        // for any stashed files, copy them back
-        for file in stashed_files {
-            let src = stash_path.join(&file);
-            let dest = self.git_client.repo_path.join(&file);
-
-            std::fs::copy(src, dest)?;
-        }
-
-        // for any deleted files, we should ensure they are deleted
-        for file in deleted_files {
-            let path = self.git_client.repo_path.join(file);
-            if path.exists() {
-                std::fs::remove_file(path)?;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[instrument(skip(state))]
-pub async fn submit_handler<T>(
+pub async fn code_submit_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<PushRequest>,
 ) -> Result<Json<String>, CoreError>
@@ -700,7 +444,7 @@ where
         None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
     };
 
-    let submit_op = SubmitOp {
+    let code_submit_op = CodeSubmitOp {
         files: request.files.clone(),
         commit_message: request.commit_message.clone(),
 
@@ -718,7 +462,7 @@ where
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
-    sequence.push(Box::new(submit_op));
+    sequence.push(Box::new(code_submit_op));
 
     state.operation_tx.send(sequence).await?;
 
@@ -731,8 +475,4 @@ where
     }
 
     Ok(Json("ok".to_string()))
-}
-
-pub fn is_quicksubmit_branch(branch: &str) -> bool {
-    branch.starts_with("f11r")
 }

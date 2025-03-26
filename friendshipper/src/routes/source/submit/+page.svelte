@@ -53,6 +53,7 @@
 	} from '$lib/types';
 	import {
 		acquireLocks,
+		codeSubmit,
 		deleteSnapshot,
 		forceDownloadDlls,
 		forceDownloadEngine,
@@ -392,7 +393,12 @@
 		};
 
 		try {
-			await quickSubmit(req);
+			if ($repoStatus?.branch === 'code-main') {
+				// TODO: switch these submit methods once the main branch no longer uses merge queue
+				await quickSubmit(req);
+			} else {
+				await codeSubmit(req);
+			}
 
 			$commitMessage = '';
 

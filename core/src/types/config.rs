@@ -107,6 +107,12 @@ impl FromStr for ConflictStrategy {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ExperimentalFeaturesConfig {
+    #[serde(default, rename = "enableCodeMain", alias = "enable_code_main")]
+    pub enable_code_main: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default, rename = "projects")]
@@ -196,6 +202,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub initialized: bool,
+
+    #[serde(default, rename = "experimentalFeatures")]
+    pub experimental_features: ExperimentalFeaturesConfig,
 }
 
 fn default_playtest_region() -> String {
@@ -244,6 +253,7 @@ impl AppConfig {
             otlp_headers: None,
             max_client_cache_size_gb: 32,
             initialized: false,
+            experimental_features: Default::default(),
         }
     }
 

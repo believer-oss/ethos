@@ -7,6 +7,7 @@
 		Card,
 		Checkbox,
 		DarkMode,
+		Helper,
 		Input,
 		Label,
 		Modal,
@@ -274,7 +275,7 @@
 				$engineWorkflows = workflowsResponse.commits;
 			}
 
-			// TODO: handle changesets for separate branches
+			// TODO: handle changesets for main and code-main
 			$changeSets = await loadChangeSet();
 			void emit('preferences-closed');
 			requestInFlight = false;
@@ -623,16 +624,29 @@
 					</Tooltip>
 
 					{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
-						<div class="flex flex-col gap-2">
-							<Label class="text-white">Main Branch</Label>
-							<Select
-								class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-								bind:value={localAppConfig.mainBranch}
-							>
-								<option value="main">Main</option>
-								<option value="content-main">Content Main</option>
-							</Select>
-						</div>
+						{#if $appConfig.experimentalFeatures.enableCodeMain}
+							<div class="flex flex-col gap-2">
+								<Label class="text-white">Main Branch</Label>
+								<Select
+									class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+									bind:value={localAppConfig.mainBranch}
+								>
+									<option value="main">Main</option>
+									<option value="code-main">Code Main</option>
+								</Select>
+								{#if localAppConfig.mainBranch !== $appConfig.mainBranch}
+									<Helper class="text-sm" placement="bottom" color="red">
+										This will restart the app.
+									</Helper>
+								{/if}
+								<Tooltip class="text-sm" placement="bottom">
+									Which branch all your submissions will be merged into. <code>main</code> is the
+									default branch for content changes only. These content changes are submitted
+									WITHOUT the merge queue. <code>code-main</code> is a special branch for code changes
+									only. These code changes are submitted WITH the merge queue.
+								</Tooltip>
+							</div>
+						{/if}
 						<div class="flex flex-col gap-2">
 							<Label class="text-white">Conflict Strategy</Label>
 							<Select
