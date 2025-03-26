@@ -160,14 +160,8 @@ where
 
     let results = join_all(revision_futures).await;
 
-    for result in results {
-        match result {
-            Ok(revision) => {
-                revisions.push(revision);
-            }
-            // Show only the revisions that succeeded and ignore any that failed
-            Err(_) => {}
-        }
+    for result in results.into_iter().flatten() {
+        revisions.push(result);
     }
     // for each, set revision number to length - index
     let len = revisions.len();
