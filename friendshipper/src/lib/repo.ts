@@ -76,6 +76,8 @@ export const submit = async (req: PushRequest): Promise<void> => invoke('submit'
 export const quickSubmit = async (req: PushRequest): Promise<void> =>
 	invoke('quick_submit', { req });
 
+export const codeSubmit = async (req: PushRequest): Promise<void> => invoke('code_submit', { req });
+
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 
 export const restoreSnapshot = async (commit: string): Promise<void> =>
@@ -157,3 +159,5 @@ export const getCommitFileTextClass = (action: string) => {
 };
 
 export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');
+
+export const checkoutMainBranch = async (): Promise<void> => invoke('checkout_main_branch');

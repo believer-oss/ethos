@@ -37,6 +37,10 @@ where
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
+        .route(
+            "/checkout/main-branch",
+            post(operations::checkout_main_branch_handler),
+        )
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
         .route("/reset/:commit", post(operations::reset_repo_to_commit))
@@ -49,6 +53,7 @@ where
         )
         .route("/gh/queue", get(operations::gh::get_merge_queue))
         .route("/gh/submit", post(operations::gh::submit_handler))
+        .route("/gh/code-submit", post(operations::gh::code_submit_handler))
         .route("/gh/pulls", get(operations::gh::get_pull_requests))
         .route("/gh/pulls/:id", get(operations::gh::get_pull_request))
         .route("/gh/user", get(operations::gh::get_user))

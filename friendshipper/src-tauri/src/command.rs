@@ -601,6 +601,25 @@ pub async fn quick_submit(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn code_submit(
+    state: tauri::State<'_, State>,
+    req: PushRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/gh/code-submit", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
 // GitHub
 #[tauri::command]
 pub async fn get_pull_request(

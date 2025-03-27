@@ -7,6 +7,7 @@
 		Card,
 		Checkbox,
 		DarkMode,
+		Helper,
 		Input,
 		Label,
 		Modal,
@@ -49,7 +50,8 @@
 		getRepoStatus,
 		getAllCommits,
 		saveChangeSet,
-		loadChangeSet
+		loadChangeSet,
+		checkoutMainBranch
 	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
@@ -202,7 +204,8 @@
 		}
 
 		const hasRepoUrlChanged = $appConfig.repoUrl !== localAppConfig.repoUrl;
-		showProgressModal = hasRepoUrlChanged;
+		const hasMainBranchChanged = $appConfig.mainBranch !== localAppConfig.mainBranch;
+		showProgressModal = hasRepoUrlChanged || hasMainBranchChanged;
 
 		const internal = async () => {
 			requestInFlight = true;
@@ -238,6 +241,12 @@
 				playtestPromise = getPlaytests();
 			}
 
+			if (hasMainBranchChanged) {
+				await checkoutMainBranch();
+				statusPromise = getRepoStatus();
+				commitsPromise = getAllCommits();
+			}
+
 			if (hasRepoUrlChanged) {
 				statusPromise = getRepoStatus();
 				commitsPromise = getAllCommits();
@@ -266,6 +275,7 @@
 				$engineWorkflows = workflowsResponse.commits;
 			}
 
+			// TODO: handle changesets for main and code-main
 			$changeSets = await loadChangeSet();
 			void emit('preferences-closed');
 			requestInFlight = false;
@@ -274,7 +284,7 @@
 		showModal = false;
 
 		await internal();
-		if (hasRepoUrlChanged) {
+		if (hasRepoUrlChanged || hasMainBranchChanged) {
 			await restart();
 
 			// wait 5 seconds before closing the modal
@@ -614,6 +624,29 @@
 					</Tooltip>
 
 					{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
+						{#if $appConfig.experimentalFeatures.enableCodeMain}
+							<div class="flex flex-col gap-2">
+								<Label class="text-white">Main Branch</Label>
+								<Select
+									class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+									bind:value={localAppConfig.mainBranch}
+								>
+									<option value="main">Main</option>
+									<option value="code-main">Code Main</option>
+								</Select>
+								{#if localAppConfig.mainBranch !== $appConfig.mainBranch}
+									<Helper class="text-sm" placement="bottom" color="red">
+										This will restart the app.
+									</Helper>
+								{/if}
+								<Tooltip class="text-sm" placement="bottom">
+									Which branch all your submissions will be merged into. <code>main</code> is the
+									default branch for content changes only. These content changes are submitted
+									WITHOUT the merge queue. <code>code-main</code> is a special branch for code changes
+									only. These code changes are submitted WITH the merge queue.
+								</Tooltip>
+							</div>
+						{/if}
 						<div class="flex flex-col gap-2">
 							<Label class="text-white">Conflict Strategy</Label>
 							<Select

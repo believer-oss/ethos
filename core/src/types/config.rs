@@ -107,6 +107,12 @@ impl FromStr for ConflictStrategy {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ExperimentalFeaturesConfig {
+    #[serde(default, rename = "enableCodeMain", alias = "enable_code_main")]
+    pub enable_code_main: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default, rename = "projects")]
@@ -117,6 +123,9 @@ pub struct AppConfig {
 
     #[serde(default, rename = "repoUrl", alias = "repo_url")]
     pub repo_url: String,
+
+    #[serde(default, rename = "mainBranch", alias = "main_branch")]
+    pub main_branch: String,
 
     #[serde(default, rename = "conflictStrategy", alias = "conflict_strategy")]
     pub conflict_strategy: ConflictStrategy,
@@ -193,6 +202,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub initialized: bool,
+
+    #[serde(default, rename = "experimentalFeatures")]
+    pub experimental_features: ExperimentalFeaturesConfig,
 }
 
 fn default_playtest_region() -> String {
@@ -215,6 +227,7 @@ impl AppConfig {
             projects: HashMap::new(),
             repo_path: Default::default(),
             repo_url: Default::default(),
+            main_branch: "main".to_string(),
             conflict_strategy: Default::default(),
             tools_path: Default::default(),
             tools_url: Default::default(),
@@ -240,6 +253,7 @@ impl AppConfig {
             otlp_headers: None,
             max_client_cache_size_gb: 32,
             initialized: false,
+            experimental_features: Default::default(),
         }
     }
 
