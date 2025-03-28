@@ -32,6 +32,7 @@
 	import { ProgressModal } from '@ethos/core';
 	import {
 		appConfig,
+		repoConfig,
 		commits,
 		changeSets,
 		dynamicConfig,
@@ -51,7 +52,7 @@
 		getAllCommits,
 		saveChangeSet,
 		loadChangeSet,
-		checkoutMainBranch
+		checkoutTargetBranch
 	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
@@ -92,6 +93,7 @@
 			uptime = Math.floor((Date.now() - $startTime) / 1000);
 		}, 1000);
 		localAppConfig = structuredClone($appConfig);
+		console.log($repoConfig);
 		// initialize config types to empty object if needed
 		if (!localAppConfig.oktaConfig) {
 			localAppConfig.oktaConfig = {
@@ -204,8 +206,8 @@
 		}
 
 		const hasRepoUrlChanged = $appConfig.repoUrl !== localAppConfig.repoUrl;
-		const hasMainBranchChanged = $appConfig.mainBranch !== localAppConfig.mainBranch;
-		showProgressModal = hasRepoUrlChanged || hasMainBranchChanged;
+		const hasTargetBranchChanged = $appConfig.targetBranch !== localAppConfig.targetBranch;
+		showProgressModal = hasRepoUrlChanged || hasTargetBranchChanged;
 
 		const internal = async () => {
 			requestInFlight = true;
@@ -241,8 +243,8 @@
 				playtestPromise = getPlaytests();
 			}
 
-			if (hasMainBranchChanged) {
-				await checkoutMainBranch();
+			if (hasTargetBranchChanged) {
+				await checkoutTargetBranch();
 				statusPromise = getRepoStatus();
 				commitsPromise = getAllCommits();
 			}
@@ -275,7 +277,6 @@
 				$engineWorkflows = workflowsResponse.commits;
 			}
 
-			// TODO: handle changesets for main and code-main
 			$changeSets = await loadChangeSet();
 			void emit('preferences-closed');
 			requestInFlight = false;
@@ -284,7 +285,7 @@
 		showModal = false;
 
 		await internal();
-		if (hasRepoUrlChanged || hasMainBranchChanged) {
+		if (hasRepoUrlChanged || hasTargetBranchChanged) {
 			await restart();
 
 			// wait 5 seconds before closing the modal
@@ -624,17 +625,18 @@
 					</Tooltip>
 
 					{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
-						{#if $appConfig.experimentalFeatures.enableCodeMain}
+						{#if $appConfig.experimentalFeatures.enableCodeMain && $repoConfig}
 							<div class="flex flex-col gap-2">
 								<Label class="text-white">Main Branch</Label>
 								<Select
 									class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-									bind:value={localAppConfig.mainBranch}
+									bind:value={localAppConfig.targetBranch}
 								>
-									<option value="main">Main</option>
-									<option value="code-main">Code Main</option>
+									{#each $repoConfig.targetBranches as branch}
+										<option value={branch.name}>{branch.name}</option>
+									{/each}
 								</Select>
-								{#if localAppConfig.mainBranch !== $appConfig.mainBranch}
+								{#if localAppConfig.targetBranch !== $appConfig.targetBranch}
 									<Helper class="text-sm" placement="bottom" color="red">
 										This will restart the app.
 									</Helper>

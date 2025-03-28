@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+#[cfg(not(target_os = "windows"))]
+use crate::fs::LocalDownloadPath;
+use crate::storage::StorageSchemaVersion;
 use crate::AWS_REGION;
 use anyhow::{anyhow, bail, Result};
 use axum::http::StatusCode;
@@ -15,10 +18,6 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-
-#[cfg(not(target_os = "windows"))]
-use crate::fs::LocalDownloadPath;
-use crate::storage::StorageSchemaVersion;
 
 lazy_static! {
     // Attempts to match the format <branch>-<short sha>. See test_engine_association_regex() for examples.
@@ -124,8 +123,8 @@ pub struct AppConfig {
     #[serde(default, rename = "repoUrl", alias = "repo_url")]
     pub repo_url: String,
 
-    #[serde(default, rename = "mainBranch", alias = "main_branch")]
-    pub main_branch: String,
+    #[serde(default, rename = "targetBranch", alias = "target_branch")]
+    pub target_branch: String,
 
     #[serde(default, rename = "conflictStrategy", alias = "conflict_strategy")]
     pub conflict_strategy: ConflictStrategy,
@@ -227,7 +226,7 @@ impl AppConfig {
             projects: HashMap::new(),
             repo_path: Default::default(),
             repo_url: Default::default(),
-            main_branch: "main".to_string(),
+            target_branch: "main".to_string(),
             conflict_strategy: Default::default(),
             tools_path: Default::default(),
             tools_url: Default::default(),
@@ -359,12 +358,32 @@ pub struct PlaytestProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetBranchConfig {
+    pub name: String,
+
+    #[serde(rename = "usesMergeQueue")]
+    pub uses_merge_queue: bool,
+}
+
+impl Default for TargetBranchConfig {
+    fn default() -> Self {
+        TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
     #[serde(default, rename = "uprojectPath")]
     pub uproject_path: String,
 
     #[serde(default, rename = "trunkBranch")]
     pub trunk_branch: String,
+
+    #[serde(default, rename = "targetBranches")]
+    pub target_branches: Vec<TargetBranchConfig>,
 
     #[serde(default, rename = "gitHooksPath")]
     pub git_hooks_path: Option<String>,
@@ -405,6 +424,7 @@ impl Default for RepoConfig {
         RepoConfig {
             uproject_path: String::default(),
             trunk_branch: "main".to_string(),
+            target_branches: vec![TargetBranchConfig::default()],
             git_hooks_path: None,
             commit_guidelines_url: None,
             use_conventional_commits: false,

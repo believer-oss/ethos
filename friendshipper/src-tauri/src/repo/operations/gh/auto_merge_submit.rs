@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use tracing::{instrument, warn};
 
 #[derive(Clone)]
-pub struct CodeSubmitOp<T>
+pub struct AutoMergeSubmitOp<T>
 where
     T: EngineProvider,
 {
@@ -41,11 +41,11 @@ where
 }
 
 #[async_trait]
-impl<T> Task for CodeSubmitOp<T>
+impl<T> Task for AutoMergeSubmitOp<T>
 where
     T: EngineProvider,
 {
-    #[instrument(name = "CodeSubmitOp::execute", skip(self))]
+    #[instrument(name = "AutoMergeSubmitOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         // abort if there are no files to submit
         if self.files.is_empty() {
@@ -157,30 +157,25 @@ where
     }
 
     fn get_name(&self) -> String {
-        "CodeSubmitOp".to_string()
+        "AutoMergeSubmitOp".to_string()
     }
 }
 
-impl<T> CodeSubmitOp<T>
+impl<T> AutoMergeSubmitOp<T>
 where
     T: EngineProvider,
 {
-    #[instrument(name = "CodeSubmitOp::execute_internal", skip(self))]
+    #[instrument(name = "AutoMergeSubmitOp::execute_internal", skip(self))]
     pub async fn execute_internal(&self) -> Result<(), CoreError> {
-        let base_branch = self.app_config.read().main_branch.clone();
-
-        // TODO: renable this check once we stop using main to test code-main flow
-        // if base_branch != "code-main" {
-        //     return Err(CoreError::Internal(anyhow::anyhow!("Attempting to code-submit while main branch is not 'code-main'.")));
-        // }
-
+        let target_branch = self.app_config.read().target_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
 
         let f11r_branch = {
             let display_name = &self.app_config.read().user_display_name;
             let santized_display_name = display_name.replace(' ', "-");
             format!(
-                "f11r-CM-{}-{}",
+                "f11r-{}-{}-{}",
+                target_branch,
                 santized_display_name,
                 chrono::Utc::now().timestamp()
             )
@@ -351,11 +346,11 @@ where
                     .run(&["checkout", &worktree_branch], git_opts_lfs_stubs)
                     .await?;
                 git_client_worktree
-                    .run(&["fetch", "origin", &*base_branch], git_opts_lfs_stubs)
+                    .run(&["fetch", "origin", &*target_branch], git_opts_lfs_stubs)
                     .await?;
                 git_client_worktree
                     .run(
-                        &["rebase", &format!("origin/{}", base_branch)],
+                        &["rebase", &format!("origin/{}", target_branch)],
                         git_opts_lfs_stubs,
                     )
                     .await?;
@@ -381,12 +376,12 @@ where
             // Submit the PR to the merge queue
             let gh_op = GitHubSubmitOp {
                 head_branch: worktree_branch.clone(),
-                base_branch: base_branch.to_string(),
+                base_branch: target_branch.to_string(),
                 token: self.token.clone(),
                 commit_message: self.commit_message.clone(),
                 repo_status: self.repo_status.clone(),
                 client: self.github_client.clone(),
-                enable_auto_merge: false,
+                enable_auto_merge: true,
             };
 
             gh_op.execute().await?;
@@ -404,12 +399,12 @@ where
 
         let gh_op = GitHubSubmitOp {
             head_branch: f11r_branch.clone(),
-            base_branch: base_branch.to_string(),
+            base_branch: target_branch.to_string(),
             token: self.token.clone(),
             commit_message: self.commit_message.clone(),
             repo_status: self.repo_status.clone(),
             client: self.github_client.clone(),
-            enable_auto_merge: false,
+            enable_auto_merge: true,
         };
 
         gh_op.execute().await?;
@@ -419,7 +414,7 @@ where
 }
 
 #[instrument(skip(state))]
-pub async fn code_submit_handler<T>(
+pub async fn auto_merge_submit_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<PushRequest>,
 ) -> Result<Json<String>, CoreError>
@@ -444,7 +439,7 @@ where
         None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
     };
 
-    let code_submit_op = CodeSubmitOp {
+    let auto_merge_submit_op = AutoMergeSubmitOp {
         files: request.files.clone(),
         commit_message: request.commit_message.clone(),
 
@@ -462,7 +457,7 @@ where
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
-    sequence.push(Box::new(code_submit_op));
+    sequence.push(Box::new(auto_merge_submit_op));
 
     state.operation_tx.send(sequence).await?;
 

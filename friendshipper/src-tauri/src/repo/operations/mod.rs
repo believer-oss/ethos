@@ -1,5 +1,5 @@
 pub use changeset::{load_changeset, save_changeset, SaveChangeSetRequest};
-pub use checkout::{checkout_main_branch_handler, checkout_trunk_handler, CheckoutOp};
+pub use checkout::{checkout_target_branch_handler, checkout_trunk_handler, CheckoutOp};
 pub use clone::clone_handler;
 pub use diff::{diff_handler, DiffOp};
 pub use download_dlls::{download_dlls_handler, DownloadDllsOp};

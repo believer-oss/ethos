@@ -602,13 +602,13 @@ pub async fn quick_submit(
 }
 
 #[tauri::command]
-pub async fn code_submit(
+pub async fn auto_merge_submit(
     state: tauri::State<'_, State>,
     req: PushRequest,
 ) -> Result<(), TauriError> {
     let res = state
         .client
-        .post(format!("{}/repo/gh/code-submit", state.server_url))
+        .post(format!("{}/repo/gh/auto-merge-submit", state.server_url))
         .json(&req)
         .send()
         .await?;

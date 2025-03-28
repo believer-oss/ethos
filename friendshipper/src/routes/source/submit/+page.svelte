@@ -53,7 +53,7 @@
 	} from '$lib/types';
 	import {
 		acquireLocks,
-		codeSubmit,
+		autoMergeSubmit,
 		deleteSnapshot,
 		forceDownloadDlls,
 		forceDownloadEngine,
@@ -393,11 +393,18 @@
 		};
 
 		try {
-			if ($repoStatus?.branch === 'code-main') {
-				// TODO: switch these submit methods once the main branch no longer uses merge queue
-				await quickSubmit(req);
+			const targetBranchConfig = $repoConfig?.targetBranches.find(
+				(branch) => branch.name === $appConfig.targetBranch
+			);
+
+			if (targetBranchConfig) {
+				if (targetBranchConfig.usesMergeQueue) {
+					await quickSubmit(req);
+				} else {
+					await autoMergeSubmit(req);
+				}
 			} else {
-				await codeSubmit(req);
+				await emit('error', 'Target branch invalid, contact an engineer.');
 			}
 
 			$commitMessage = '';
