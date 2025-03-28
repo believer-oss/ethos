@@ -53,6 +53,10 @@
 	let progressModalText = '';
 	let progressModalCancellable = false;
 
+	$: targetBranchConfig = $repoConfig?.targetBranches.find(
+		(branchConfig) => branchConfig.name === $appConfig?.targetBranch
+	);
+
 	const handleSyncCancelled = async () => {
 		try {
 			await cancelDownload();
@@ -88,7 +92,9 @@
 	const refreshMergeQueue = async () => {
 		try {
 			loadingMergeQueue = true;
-			mergeQueue = await getMergeQueue();
+			if (targetBranchConfig?.usesMergeQueue) {
+				mergeQueue = await getMergeQueue();
+			}
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -367,7 +373,12 @@
 	<div class="h-full flex flex-col overflow-hidden">
 		<div class="flex items-center gap-2">
 			<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Merge Queue</p>
-			<Button disabled={loadingMergeQueue} class="!p-1.5" primary on:click={refreshMergeQueue}>
+			<Button
+				disabled={loadingMergeQueue || !targetBranchConfig?.usesMergeQueue}
+				class="!p-1.5"
+				primary
+				on:click={refreshMergeQueue}
+			>
 				{#if loadingMergeQueue}
 					<Spinner size="4" />
 				{:else}
@@ -378,50 +389,56 @@
 		<Card
 			class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 		>
-			{#if mergeQueue !== null}
-				{#if mergeQueue.entries.nodes.length === 0}
-					<p class="text-white">No changes in queue!</p>
-				{:else}
-					<Table color="custom" divClass="w-full" class="w-full h-full" striped>
-						<TableHead class="text-center border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
-							<TableHeadCell class="p-2">#</TableHeadCell>
-							<TableHeadCell class="p-2">Message</TableHeadCell>
-							<TableHeadCell class="p-2">Author</TableHeadCell>
-							<TableHeadCell class="p-2">Submitted At</TableHeadCell>
-							<TableHeadCell class="p-2">Status</TableHeadCell>
-						</TableHead>
-						<TableBody>
-							{#each mergeQueue.entries.nodes as node, index}
-								<TableBodyRow
-									class="text-left border-b-0 p-2 {index % 2 === 0
-										? 'bg-secondary-700 dark:bg-space-900'
-										: 'bg-secondary-800 dark:bg-space-950'}"
-								>
-									<TableBodyCell id="pr-{index}" class="p-2">
-										{index + 1}
-									</TableBodyCell>
-									<TableBodyCell
-										class="p-2 text-primary-400 dark:text-primary-400 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-1/2 max-w-[22vw]"
+			{#if targetBranchConfig && targetBranchConfig.usesMergeQueue}
+				{#if mergeQueue !== null}
+					{#if mergeQueue.entries.nodes.length === 0}
+						<p class="text-white">No changes in queue!</p>
+					{:else}
+						<Table color="custom" divClass="w-full" class="w-full h-full" striped>
+							<TableHead class="text-center border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+								<TableHeadCell class="p-2">#</TableHeadCell>
+								<TableHeadCell class="p-2">Message</TableHeadCell>
+								<TableHeadCell class="p-2">Author</TableHeadCell>
+								<TableHeadCell class="p-2">Submitted At</TableHeadCell>
+								<TableHeadCell class="p-2">Status</TableHeadCell>
+							</TableHead>
+							<TableBody>
+								{#each mergeQueue.entries.nodes as node, index}
+									<TableBodyRow
+										class="text-left border-b-0 p-2 {index % 2 === 0
+											? 'bg-secondary-700 dark:bg-space-900'
+											: 'bg-secondary-800 dark:bg-space-950'}"
 									>
-										{getCommitMessage(node.headCommit)}
-									</TableBodyCell>
-									<TableBodyCell class="p-2 text-center"
-										>{getCommitAuthor(node.headCommit)}</TableBodyCell
-									>
-									<TableBodyCell class="p-2 text-center"
-										>{new Date(node.enqueuedAt).toLocaleString()}</TableBodyCell
-									>
-									<TableBodyCell class="p-2">
-										<Badge
-											class="text-white dark:text-white w-full {getMergeQueueEntryBadgeClass(node)}"
-											>Queued
-										</Badge>
-									</TableBodyCell>
-								</TableBodyRow>
-							{/each}
-						</TableBody>
-					</Table>
+										<TableBodyCell id="pr-{index}" class="p-2">
+											{index + 1}
+										</TableBodyCell>
+										<TableBodyCell
+											class="p-2 text-primary-400 dark:text-primary-400 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-1/2 max-w-[22vw]"
+										>
+											{getCommitMessage(node.headCommit)}
+										</TableBodyCell>
+										<TableBodyCell class="p-2 text-center"
+											>{getCommitAuthor(node.headCommit)}</TableBodyCell
+										>
+										<TableBodyCell class="p-2 text-center"
+											>{new Date(node.enqueuedAt).toLocaleString()}</TableBodyCell
+										>
+										<TableBodyCell class="p-2">
+											<Badge
+												class="text-white dark:text-white w-full {getMergeQueueEntryBadgeClass(
+													node
+												)}"
+												>Queued
+											</Badge>
+										</TableBodyCell>
+									</TableBodyRow>
+								{/each}
+							</TableBody>
+						</Table>
+					{/if}
 				{/if}
+			{:else}
+				<p class="text-gray-400">Merge queue is not enabled for selected target branch.</p>
 			{/if}
 		</Card>
 	</div>

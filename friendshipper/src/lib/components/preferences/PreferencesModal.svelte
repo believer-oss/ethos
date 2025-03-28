@@ -40,7 +40,8 @@
 		playtests,
 		repoStatus,
 		startTime,
-		engineWorkflows
+		engineWorkflows,
+		allModifiedFiles
 	} from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData, getWorkflows } from '$lib/builds';
@@ -207,6 +208,15 @@
 
 		const hasRepoUrlChanged = $appConfig.repoUrl !== localAppConfig.repoUrl;
 		const hasTargetBranchChanged = $appConfig.targetBranch !== localAppConfig.targetBranch;
+
+		if (hasTargetBranchChanged && $allModifiedFiles.length > 0) {
+			await emit(
+				'error',
+				'Cannot change target branch with pending changes. Submit or revert your changes first.'
+			);
+			return;
+		}
+
 		showProgressModal = hasRepoUrlChanged || hasTargetBranchChanged;
 
 		const internal = async () => {
@@ -630,6 +640,7 @@
 								<Label class="text-white">Main Branch</Label>
 								<Select
 									class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+									disabled={$allModifiedFiles.length > 0}
 									bind:value={localAppConfig.targetBranch}
 								>
 									{#each $repoConfig.targetBranches as branch}
@@ -641,12 +652,19 @@
 										This will restart the app.
 									</Helper>
 								{/if}
-								<Tooltip class="text-sm" placement="bottom">
-									Which branch all your submissions will be merged into. <code>main</code> is the
-									default branch for content changes only. These content changes are submitted
-									WITHOUT the merge queue. <code>code-main</code> is a special branch for code changes
-									only. These code changes are submitted WITH the merge queue.
-								</Tooltip>
+								{#if $allModifiedFiles.length > 0}
+									<Tooltip class="text-sm" placement="bottom">
+										Cannot change target branch with pending changes. Submit or revert your changes
+										first.
+									</Tooltip>
+								{:else}
+									<Tooltip class="text-sm" placement="bottom">
+										Which branch all your submissions will be merged into. <code>main</code> is the
+										default branch for content changes only. These content changes are submitted
+										WITHOUT the merge queue. <code>code-main</code> is a special branch for code changes
+										only. These code changes are submitted WITH the merge queue.
+									</Tooltip>
+								{/if}
 							</div>
 						{/if}
 						<div class="flex flex-col gap-2">
