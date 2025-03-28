@@ -330,13 +330,7 @@ where
 {
     #[instrument(name = "SubmitOp::execute_internal", skip(self))]
     pub async fn execute_internal(&self) -> Result<(), CoreError> {
-        let base_branch = self.app_config.read().main_branch.clone();
-
-        // TODO: renable this check once we stop using main to test code-main flow
-        // if base_branch != "main" {
-        //     return Err(CoreError::Internal(anyhow::anyhow!("Attempting to submit while main branch is not 'main'.")));
-        // }
-
+        let target_branch = self.app_config.read().target_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
         let mut f11r_branch = {
             let display_name = &self.app_config.read().user_display_name;
@@ -571,11 +565,11 @@ where
                     .run(&["checkout", &worktree_branch], git_opts_lfs_stubs)
                     .await?;
                 git_client_worktree
-                    .run(&["fetch", "origin", &base_branch], git_opts_lfs_stubs)
+                    .run(&["fetch", "origin", &target_branch], git_opts_lfs_stubs)
                     .await?;
                 git_client_worktree
                     .run(
-                        &["rebase", &format!("origin/{}", base_branch)],
+                        &["rebase", &format!("origin/{}", target_branch)],
                         git_opts_lfs_stubs,
                     )
                     .await?;
@@ -606,12 +600,12 @@ where
                 None => {
                     let gh_op = GitHubSubmitOp {
                         head_branch: worktree_branch.clone(),
-                        base_branch: base_branch.clone(),
+                        base_branch: target_branch.clone(),
                         token: self.token.clone(),
                         commit_message: self.commit_message.clone(),
                         repo_status: self.repo_status.clone(),
                         client: self.github_client.clone(),
-                        enable_auto_merge: true,
+                        enable_auto_merge: false,
                     };
 
                     gh_op.execute().await?;
@@ -631,12 +625,12 @@ where
 
         let gh_op = GitHubSubmitOp {
             head_branch: f11r_branch.clone(),
-            base_branch: base_branch.clone(),
+            base_branch: target_branch.clone(),
             token: self.token.clone(),
             commit_message: self.commit_message.clone(),
             repo_status: self.repo_status.clone(),
             client: self.github_client.clone(),
-            enable_auto_merge: true,
+            enable_auto_merge: false,
         };
 
         gh_op.execute().await?;

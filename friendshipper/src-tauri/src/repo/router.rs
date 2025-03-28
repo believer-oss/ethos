@@ -38,8 +38,8 @@ where
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
         .route(
-            "/checkout/main-branch",
-            post(operations::checkout_main_branch_handler),
+            "/checkout/target-branch",
+            post(operations::checkout_target_branch_handler),
         )
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
@@ -53,7 +53,10 @@ where
         )
         .route("/gh/queue", get(operations::gh::get_merge_queue))
         .route("/gh/submit", post(operations::gh::submit_handler))
-        .route("/gh/code-submit", post(operations::gh::code_submit_handler))
+        .route(
+            "/gh/auto-merge-submit",
+            post(operations::gh::auto_merge_submit_handler),
+        )
         .route("/gh/pulls", get(operations::gh::get_pull_requests))
         .route("/gh/pulls/:id", get(operations::gh::get_pull_request))
         .route("/gh/user", get(operations::gh::get_user))

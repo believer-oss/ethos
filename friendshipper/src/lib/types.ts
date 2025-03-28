@@ -71,7 +71,7 @@ export interface AppConfig {
 	editorDownloadSymbols: boolean;
 	openUprojectAfterSync: boolean;
 	conflictStrategy: ConflictStrategy;
-	mainBranch: string;
+	targetBranch: string;
 	githubPAT: string;
 	engineType: string;
 	enginePrebuiltPath: string;
@@ -95,9 +95,15 @@ export interface PlaytestProfile {
 	args: string;
 }
 
+export interface TargetBranchConfig {
+	name: string;
+	usesMergeQueue: boolean;
+}
+
 export interface RepoConfig {
 	uprojectPath: string;
 	trunkBranch: string;
+	targetBranches: TargetBranchConfig[];
 	gitHooksPath: string;
 	commitGuidelinesUrl?: string;
 	useConventionalCommits: boolean;

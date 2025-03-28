@@ -58,7 +58,7 @@ where
     Ok(Json(String::from("OK")))
 }
 
-pub async fn checkout_main_branch_handler<T>(
+pub async fn checkout_target_branch_handler<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<String>, CoreError>
 where
@@ -73,7 +73,7 @@ where
 
         CheckoutOp {
             repo_path: app_config.repo_path.clone(),
-            branch: app_config.main_branch.clone(),
+            branch: app_config.target_branch.clone(),
             git_client: state.git(),
         }
     };
