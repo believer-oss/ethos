@@ -493,6 +493,8 @@ impl Server {
                 .set_default("initialized", true)
                 .unwrap()
                 .set_default("maxClientCacheSizeGb", 32)
+                .unwrap()
+                .set_default("targetBranch", "main".to_string())
                 .unwrap();
 
             return match builder.build() {
