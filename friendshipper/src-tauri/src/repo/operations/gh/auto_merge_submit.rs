@@ -9,11 +9,12 @@ use axum::extract::State;
 use axum::Json;
 use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::{git, github};
-use ethos_core::operations::{AddOp, CommitOp, RestoreOp};
+use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfigRef};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
+use ethos_core::types::locks::LockOperation;
 use ethos_core::types::repo::{File, PushRequest, SubmitStatus};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
@@ -408,6 +409,34 @@ where
         };
 
         gh_op.execute().await?;
+        let owner = self.repo_status.read().repo_owner.clone();
+        let repo_name = self.repo_status.read().repo_name.clone();
+
+        let start = std::time::Instant::now();
+        let mut has_open_prs = true;
+        while has_open_prs && start.elapsed().as_secs() < 10 {
+            has_open_prs = self
+                .github_client
+                .is_branch_pr_open(&owner, &repo_name, &f11r_branch, 25)
+                .await?;
+            if has_open_prs {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        }
+
+        // unlock all files submitted
+        let github_username = self.github_client.username.clone();
+        let lock_op = LockOp {
+            git_client: self.git_client.clone(),
+            paths: self.files.clone(),
+            op: LockOperation::Unlock,
+            response_tx: None,
+            github_pat: self.token.clone(),
+            repo_status: self.repo_status.clone(),
+            github_username,
+            force: false,
+        };
+        lock_op.execute().await?;
 
         Ok(())
     }

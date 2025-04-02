@@ -16,7 +16,6 @@ use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, ConflictStrategy, RepoConfig, UProject};
 use ethos_core::types::errors::CoreError;
-use ethos_core::types::github::TokenNotFoundError;
 use ethos_core::types::repo::PullResponse;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
@@ -110,13 +109,9 @@ where
         let app_config = self.app_config.read().clone();
 
         let branch: String;
-        let owner: String;
-        let repo_name: String;
         {
             let repo_status = self.repo_status.read();
             branch = repo_status.branch.clone();
-            owner = repo_status.repo_owner.clone();
-            repo_name = repo_status.repo_name.clone();
         }
 
         // The workflow for Quick Submit branches is that syncs switch back to main, preserving
@@ -124,21 +119,8 @@ where
         // Quick Submit branch with the commits that have flowed through the merge queue, and avoids
         // potential conflicts when making another Quick Submit.
         if is_quicksubmit_branch(&branch) {
-            let github_client = match &self.github_client {
-                Some(c) => c,
-                None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
-            };
-            let has_open_prs = github_client
-                .is_branch_pr_open(&owner, &repo_name, &branch, 25)
-                .await?;
-            if has_open_prs {
-                return Err(CoreError::Input(anyhow!(
-                    "You may only sync when all Quick Submit changes have been merged."
-                )));
-            }
-
-            let trunk_branch = self.repo_config.read().trunk_branch.clone();
-            self.git_client.checkout(&trunk_branch).await?;
+            let target_branch = self.app_config.read().target_branch.clone();
+            self.git_client.checkout(&target_branch).await?;
 
             // cleanup the old quicksubmit branch
             if self.git_client.has_remote_branch(&branch).await? {

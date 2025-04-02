@@ -142,12 +142,12 @@ where
         }
 
         // if we're not on the main branch, we need to get the ahead/behind counts
-        let trunk_branch = self.repo_config.read().trunk_branch.clone();
-        let remote_trunk_branch = format!("origin/{}", trunk_branch);
-        if status.branch != trunk_branch {
+        let target_branch = self.app_config.read().target_branch.clone();
+        let remote_target_branch = format!("origin/{}", target_branch);
+        if status.branch != target_branch {
             let (commits_ahead, commits_behind) = self
                 .git_client
-                .get_ahead_behind(&remote_trunk_branch, &status.branch)
+                .get_ahead_behind(&remote_target_branch, &status.branch)
                 .await?;
             status.commits_ahead_of_trunk = commits_ahead;
             status.commits_behind_trunk = commits_behind;
@@ -336,6 +336,17 @@ where
 
         {
             status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
+
+            // for each target branch, get modified upstream and add uniques
+            let target_branches = self.repo_config.read().target_branches.clone();
+            for target_branch in target_branches {
+                let modified_upstream = self.get_modified_upstream(&target_branch.name).await?;
+                status.modified_upstream.extend(modified_upstream);
+            }
+
+            // remove duplicates
+            status.modified_upstream.sort_unstable();
+            status.modified_upstream.dedup();
 
             status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
             if !status.conflicts.is_empty() {
