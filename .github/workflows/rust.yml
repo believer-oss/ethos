@@ -15,7 +15,7 @@ env:
 
 jobs:
   frontend-checks:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     strategy:
       matrix:
         app: ["core/ui", "friendshipper", "birdie"]
@@ -39,7 +39,7 @@ jobs:
           yarn lint
 
   build-linux:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     runs-on:
       group: ethos-linux
     strategy:
@@ -121,7 +121,7 @@ jobs:
             ${{ matrix.app }}-linux-amd64
 
   build-windows:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     runs-on:
       group: ethos-windows
     strategy:
@@ -188,7 +188,7 @@ jobs:
             ${{ matrix.app }}.exe
 
   build-f11r-server:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: believer-oss/f11r-server
