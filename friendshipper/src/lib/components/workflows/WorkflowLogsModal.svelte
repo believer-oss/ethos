@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { Button, Hr, Input, Modal, Spinner, Tooltip } from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
-	import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-	import { FileCopySolid } from 'flowbite-svelte-icons';
+	import { FileCopySolid, LinkOutline } from 'flowbite-svelte-icons';
 	import type { JunitOutput, Nullable, Workflow, WorkflowNode } from '$lib/types';
 	import { getWorkflowJunitArtifact, getWorkflowNodeLogs } from '$lib/builds';
 	import JunitDisplay from './junit/JunitDisplay.svelte';
@@ -124,7 +123,17 @@
 
 	const copyLogToClipboard = async () => {
 		try {
-			await writeText(rawLogs);
+			await navigator.clipboard.writeText(rawLogs);
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const copyLinkToClipboard = async () => {
+		try {
+			const sha = workflow.metadata.labels['believer.dev/commit'];
+			const link: string = `friendshipper://builds/game/${sha}/${workflow.metadata.name}`;
+			await navigator.clipboard.writeText(link);
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -165,6 +174,14 @@
 				class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 				placement="bottom"
 				>Copy entire log to clipboard
+			</Tooltip>
+			<Button on:click={() => copyLinkToClipboard()} class="px-3 py-2 focus:outline-none">
+				<LinkOutline />
+			</Button>
+			<Tooltip
+				class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+				placement="bottom"
+				>Copy link to this build log to clipboard
 			</Tooltip>
 		</div>
 		<div class="flex gap-2">
