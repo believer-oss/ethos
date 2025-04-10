@@ -150,7 +150,7 @@ jobs:
           rm -rf temp
 
   push-f11r-server:
-    if: ${{ github.event.inputs.app == 'friendshipper' && (contains(github.event.pull_request.labels.*.name, 'ci ready') || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push') }}
+    if: ${{ github.event.inputs.app == 'friendshipper' && (github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push') }}
     needs: publish-tauri
     env:
       REGISTRY: ghcr.io
