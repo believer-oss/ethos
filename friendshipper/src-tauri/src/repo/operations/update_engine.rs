@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -27,6 +28,12 @@ use crate::system::unreal;
 use crate::AppState;
 
 #[derive(Clone)]
+pub struct WipeEngineOp {
+    pub engine_path: PathBuf,
+    pub engine_cache_path: PathBuf,
+}
+
+#[derive(Clone)]
 pub struct UpdateEngineOp<T> {
     pub engine_path: PathBuf,
     pub old_uproject: Option<UProject>,
@@ -40,6 +47,41 @@ pub struct UpdateEngineOp<T> {
     pub storage: ArtifactStorage,
     pub project: Project,
     pub engine: T,
+}
+
+#[async_trait]
+impl Task for WipeEngineOp {
+    async fn execute(&self) -> Result<(), CoreError> {
+        let mut errors: Vec<String> = vec![];
+
+        let paths: Vec<&Path> = vec![&self.engine_path, &self.engine_cache_path];
+        for path in paths {
+            match path.try_exists() {
+                Ok(exists) => {
+                    if exists {
+                        if let Err(e) = std::fs::remove_dir_all(path) {
+                            errors.push(format!("{}: {}", path.display(), e));
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("{}: {}", path.display(), e)),
+            }
+        }
+
+        if !errors.is_empty() {
+            let e = errors.join("\n");
+            return Err(CoreError::Internal(anyhow!(
+                "Failed to delete directories: {}",
+                e
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        String::from("WipeEngine")
+    }
 }
 
 #[async_trait]
@@ -112,7 +154,7 @@ where
                     };
                 }
 
-                let cache_path = self.longtail.download_path.0.join("engine_cache/");
+                let cache_path = get_engine_cache_path(&self.longtail);
 
                 let download_result = self.longtail.get_archive(
                     &PathBuf::from(&self.engine_path),
@@ -194,8 +236,12 @@ where
     }
 }
 
+fn get_engine_cache_path(longtail: &longtail::Longtail) -> PathBuf {
+    longtail.download_path.0.join("engine_cache/")
+}
+
 #[instrument(skip(state))]
-pub async fn update_engine_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+async fn get_update_op<T>(state: &AppState<T>) -> Result<UpdateEngineOp<T>, CoreError>
 where
     T: EngineProvider,
 {
@@ -210,115 +256,152 @@ where
         }
     };
 
-    let update_op = {
-        let tx_lock = state.longtail_tx.clone();
-        let app_config = state.app_config.read();
+    let tx_lock = state.longtail_tx.clone();
+    let app_config = state.app_config.read();
 
-        let uproject_path =
-            PathBuf::from(&app_config.repo_path).join(&state.repo_config.read().uproject_path);
-        let uproject = match UProject::load(&uproject_path) {
-            Ok(p) => p,
-            Err(e) => {
-                return Err(CoreError::Internal(anyhow!(
-                    "Unable to update engine due to missing uproject at {}. Error: {}",
-                    uproject_path.display(),
-                    e
-                )));
-            }
-        };
-
-        // FIXME: Temporary reverse compat for the engine path. This should be removed
-        // after everyone is working with the source engine.
-        //
-        // The engine path should be less than 50 characters, and the old scheme was
-        // too long.
-        //
-        // IF:
-        //      Engine path matches the old default
-        //  and no files are found at that path (or doesn't exist)
-        // THEN:
-        //      force their config to the new default
-        let mut old_default_engine_path = LocalDownloadPath::new(crate::APP_NAME).to_path_buf();
-        old_default_engine_path.push("engine_prebuilt");
-        let engine_path = state.app_config.read().engine_prebuilt_path.clone();
-        if engine_path == old_default_engine_path.to_string_lossy()
-            && (!PathBuf::from(&engine_path).exists()
-                || PathBuf::from(&engine_path)
-                    .read_dir()
-                    .unwrap()
-                    .next()
-                    .is_none())
-        {
-            warn!(
-                "Detected old engine path at {:?}, no files found. Forcing new default engine path.",
-                engine_path
-            );
-            let new_engine_path = PathBuf::from("C:\\").join("f11r_engine_prebuilt");
-            warn!(
-                "New default engine path has been set to {:?}",
-                new_engine_path
-            );
-
-            state.app_config.write().engine_prebuilt_path =
-                new_engine_path.to_string_lossy().to_string();
-
-            // Write the new config to disk
-            // This was copied from ../../config/router.rs
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(&state.config_file)
-                .unwrap();
-
-            let mut config = state.app_config.read().clone();
-            let repo_config = config.initialize_repo_config()?;
-
-            // Get rid of the PAT
-            config.github_pat = None;
-
-            // Get rid of the selected artifact project
-            config.selected_artifact_project = None;
-
-            {
-                let mut lock = state.repo_config.write();
-                *lock = repo_config;
-            }
-
-            serde_yaml::to_writer(file, &config).unwrap();
-            info!("Preferences successfully saved!");
-        }
-
-        let status = state.repo_status.read().clone();
-        let project = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
-            let (owner, repo) = match app_config.selected_artifact_project {
-                Some(ref project) => {
-                    let (owner, repo) =
-                        project.split_once('-').ok_or(anyhow!("Invalid project"))?;
-                    (owner, repo)
-                }
-                None => return Err(CoreError::Internal(anyhow!("No project selected"))),
-            };
-
-            Project::new(owner, repo)
-        } else {
-            Project::new(&status.repo_owner, &status.repo_name)
-        };
-
-        UpdateEngineOp {
-            engine_path: app_config.get_engine_path(&uproject),
-            old_uproject: None,
-            new_uproject: uproject,
-            engine_type: app_config.engine_type,
-            longtail: state.longtail.clone(),
-            longtail_tx: tx_lock.clone(),
-            aws_client,
-            git_client: state.git(),
-            download_symbols: app_config.engine_download_symbols,
-            storage,
-            project,
-            engine: state.engine.clone(),
+    let uproject_path =
+        PathBuf::from(&app_config.repo_path).join(&state.repo_config.read().uproject_path);
+    let uproject = match UProject::load(&uproject_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(CoreError::Internal(anyhow!(
+                "Unable to update engine due to missing uproject at {}. Error: {}",
+                uproject_path.display(),
+                e
+            )));
         }
     };
+
+    // FIXME: Temporary reverse compat for the engine path. This should be removed
+    // after everyone is working with the source engine.
+    //
+    // The engine path should be less than 50 characters, and the old scheme was
+    // too long.
+    //
+    // IF:
+    //      Engine path matches the old default
+    //  and no files are found at that path (or doesn't exist)
+    // THEN:
+    //      force their config to the new default
+    let mut old_default_engine_path = LocalDownloadPath::new(crate::APP_NAME).to_path_buf();
+    old_default_engine_path.push("engine_prebuilt");
+    let engine_path = state.app_config.read().engine_prebuilt_path.clone();
+    if engine_path == old_default_engine_path.to_string_lossy()
+        && (!PathBuf::from(&engine_path).exists()
+            || PathBuf::from(&engine_path)
+                .read_dir()
+                .unwrap()
+                .next()
+                .is_none())
+    {
+        warn!(
+            "Detected old engine path at {:?}, no files found. Forcing new default engine path.",
+            engine_path
+        );
+        let new_engine_path = PathBuf::from("C:\\").join("f11r_engine_prebuilt");
+        warn!(
+            "New default engine path has been set to {:?}",
+            new_engine_path
+        );
+
+        state.app_config.write().engine_prebuilt_path =
+            new_engine_path.to_string_lossy().to_string();
+
+        // Write the new config to disk
+        // This was copied from ../../config/router.rs
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&state.config_file)
+            .unwrap();
+
+        let mut config = state.app_config.read().clone();
+        let repo_config = config.initialize_repo_config()?;
+
+        // Get rid of the PAT
+        config.github_pat = None;
+
+        // Get rid of the selected artifact project
+        config.selected_artifact_project = None;
+
+        {
+            let mut lock = state.repo_config.write();
+            *lock = repo_config;
+        }
+
+        serde_yaml::to_writer(file, &config).unwrap();
+        info!("Preferences successfully saved!");
+    }
+
+    let status = state.repo_status.read().clone();
+    let project = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
+        let (owner, repo) = match app_config.selected_artifact_project {
+            Some(ref project) => {
+                let (owner, repo) = project.split_once('-').ok_or(anyhow!("Invalid project"))?;
+                (owner, repo)
+            }
+            None => return Err(CoreError::Internal(anyhow!("No project selected"))),
+        };
+
+        Project::new(owner, repo)
+    } else {
+        Project::new(&status.repo_owner, &status.repo_name)
+    };
+
+    Ok(UpdateEngineOp {
+        engine_path: app_config.get_engine_path(&uproject),
+        old_uproject: None,
+        new_uproject: uproject,
+        engine_type: app_config.engine_type,
+        longtail: state.longtail.clone(),
+        longtail_tx: tx_lock.clone(),
+        aws_client,
+        git_client: state.git(),
+        download_symbols: app_config.engine_download_symbols,
+        storage,
+        project,
+        engine: state.engine.clone(),
+    })
+}
+
+#[instrument(skip(state))]
+pub async fn reset_engine_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    if state.app_config.read().engine_type != EngineType::Prebuilt {
+        return Err(CoreError::Internal(anyhow!(
+            "Engine wipes are only allowed for prebuilt engines."
+        )));
+    }
+
+    let update_op = get_update_op(&state).await?;
+
+    let wipe_op = WipeEngineOp {
+        engine_path: update_op.engine_path.clone(),
+        engine_cache_path: get_engine_cache_path(&state.longtail),
+    };
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
+    let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    sequence.push(Box::new(wipe_op));
+    sequence.push(Box::new(update_op));
+    let _ = state.operation_tx.send(sequence).await;
+
+    let res: Result<Option<CoreError>, RecvError> = rx.await;
+    if let Ok(Some(e)) = res {
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+#[instrument(skip(state))]
+pub async fn update_engine_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let update_op = get_update_op(&state).await?;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);

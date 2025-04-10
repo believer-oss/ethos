@@ -9,7 +9,7 @@
 		DropdownItem
 	} from 'flowbite-svelte';
 	import { ChevronDownOutline, RefreshOutline, FileCodeSolid } from 'flowbite-svelte-icons';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen } from '@tauri-apps/api/event';
 	import { CommitTable, ProgressModal } from '@ethos/core';
 	import {
 		getAllCommits,
@@ -193,6 +193,13 @@
 
 		inAsyncOperation = false;
 	};
+
+	void listen('progress-modal', (event) => {
+		inAsyncOperation = event.payload.show;
+		if (inAsyncOperation) {
+			asyncModalText = event.payload.title as string;
+		}
+	});
 </script>
 
 <div class="flex items-center justify-between gap-2">
