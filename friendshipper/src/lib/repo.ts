@@ -113,6 +113,8 @@ export const forceDownloadDlls = async (): Promise<void> => invoke('force_downlo
 
 export const forceDownloadEngine = async (): Promise<void> => invoke('force_download_engine');
 
+export const resetEngine = async (): Promise<void> => invoke('reset_engine');
+
 export const reinstallGitHooks = async (): Promise<void> => invoke('reinstall_git_hooks');
 
 export const syncEngineCommitWithUproject = async (): Promise<string> =>

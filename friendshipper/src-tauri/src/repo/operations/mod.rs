@@ -17,7 +17,9 @@ pub use snapshot::{
     SaveSnapshotRequest,
 };
 pub use status::{status_handler, RepoStatusRef, StatusOp};
-pub use update_engine::{update_engine_handler, UpdateEngineOp};
+pub use update_engine::{
+    reset_engine_handler, update_engine_handler, UpdateEngineOp, WipeEngineOp,
+};
 
 pub use crate::repo::operations::gh::submit::GitHubSubmitOp;
 

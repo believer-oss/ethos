@@ -53,11 +53,13 @@
 		getAllCommits,
 		saveChangeSet,
 		loadChangeSet,
-		checkoutTargetBranch
+		checkoutTargetBranch,
+		resetEngine
 	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
 	import type { AppConfig, Nullable } from '$lib/types';
+	import { goto } from '$app/navigation';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -94,7 +96,7 @@
 			uptime = Math.floor((Date.now() - $startTime) / 1000);
 		}, 1000);
 		localAppConfig = structuredClone($appConfig);
-		console.log($repoConfig);
+
 		// initialize config types to empty object if needed
 		if (!localAppConfig.oktaConfig) {
 			localAppConfig.oktaConfig = {
@@ -352,6 +354,20 @@
 		} catch (e) {
 			await emit('error', e);
 		}
+	};
+
+	const handleResetEngine = async () => {
+		try {
+			showModal = false;
+
+			await goto('/source/history');
+			await emit('progress-modal', { show: true, title: 'Resetting Engine...' });
+			await resetEngine();
+			await emit('success', 'Engine wiped and redownloaded.');
+		} catch (e) {
+			await emit('error', e);
+		}
+		await emit('progress-modal', { show: false });
 	};
 
 	const handleResetLongtail = async () => {
@@ -958,6 +974,17 @@
 						</Button>
 						<span class="w-full">Reset Longtail installation (requires app restart)</span>
 					</div>
+					{#if localAppConfig.engineType === 'Prebuilt'}
+						<div class="flex gap-2 items-center">
+							<Button
+								outline
+								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+								on:click={handleResetEngine}
+								>Reset Engine
+							</Button>
+							<span class="w-full">Completely delete and redownload engine</span>
+						</div>
+					{/if}
 					<div class="flex gap-2 items-center">
 						<Button
 							outline

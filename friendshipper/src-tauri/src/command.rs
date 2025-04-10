@@ -975,6 +975,22 @@ pub async fn force_download_engine(state: tauri::State<'_, State>) -> Result<(),
 }
 
 #[tauri::command]
+pub async fn reset_engine(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/reset-engine", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        error!("Error reset engine: {}", err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     let res = state
         .client

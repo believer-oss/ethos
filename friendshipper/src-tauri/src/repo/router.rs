@@ -35,6 +35,7 @@ where
             post(operations::diagnostics::remediate_rebase_handler),
         )
         .route("/download-dlls", post(operations::download_dlls_handler))
+        .route("/reset-engine", post(operations::reset_engine_handler))
         .route("/download-engine", post(operations::update_engine_handler))
         .route("/checkout/trunk", post(operations::checkout_trunk_handler))
         .route(
