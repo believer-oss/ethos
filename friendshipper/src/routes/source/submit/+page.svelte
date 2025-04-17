@@ -94,6 +94,7 @@
 	let quickSubmitting = false;
 	let syncing = false;
 	let promptForPAT = false;
+	let promptRevertUProject = false;
 	let preferencesOpen = false;
 
 	// commit inputs
@@ -181,6 +182,17 @@
 				inRepoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
 				inRepoStatus?.untrackedFiles.some((f) => f.path === file.path)
 		);
+
+		// If a user is pulling their own game DLLs, they likely are not an engineer and should not be
+		// making changes to the .uproject.
+		if ($appConfig.pullDlls && $appConfig.engineType === 'Prebuilt') {
+			const files = inRepoStatus?.modifiedFiles ?? [];
+			for (const file of files) {
+				if (file.path === $repoConfig?.uprojectPath) {
+					promptRevertUProject = true;
+				}
+			}
+		}
 	});
 
 	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
@@ -589,6 +601,44 @@
 		preferencesOpen = true;
 		await emit('open-preferences');
 	};
+
+	const handleRevertUproject = async () => {
+		promptRevertUProject = false;
+
+		loading = true;
+		syncing = true;
+		showProgressModal = true;
+		progressModalTitle = `Reverting ${$repoConfig?.uprojectPath}`;
+
+		const req: RevertFilesRequest = {
+			files: [$repoConfig?.uprojectPath],
+			skipEngineCheck: false
+		};
+
+		try {
+			await revertFiles(req);
+
+			const SelectedIndex = $selectedFiles.indexOf(req.files[0]);
+			if (SelectedIndex > -1) {
+				$selectedFiles.splice(SelectedIndex, 1);
+			}
+			selectAll = false;
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		await refreshFiles(false);
+
+		loading = false;
+		promptRevertUProject = false;
+		showProgressModal = false;
+		syncing = false;
+	};
+
+	const handleCloseRevertUproject = () => {
+		promptRevertUProject = false;
+	};
+
 	const getStatusBadgeText = (pull: GitHubPullRequest): string => {
 		if (pull.state === 'OPEN') {
 			if (pull.mergeable === 'CONFLICTING') {
@@ -1136,6 +1186,23 @@
 	<div class="flex items-center justify-between gap-2">
 		<span>Looks like you haven't provided a GitHub Personal Access Token yet!</span>
 		<Button size="xs" on:click={handleOpenPreferences}>Open Preferences</Button>
+	</div>
+</Modal>
+
+<Modal
+	open={promptRevertUProject}
+	dismissable={false}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+>
+	<div class="flex items-center justify-between gap-2">
+		<span
+			>You have modifications to the uproject. It is STRONGLY recommended to revert this file to
+			remain on a correct engine version.</span
+		>
+		<Button size="xs" color="green" on:click={handleRevertUproject}>Revert</Button>
+		<Button size="xs" color="red" on:click={handleCloseRevertUproject}>Keep Changes</Button>
 	</div>
 </Modal>
 
