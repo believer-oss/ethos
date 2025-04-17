@@ -259,11 +259,27 @@ impl Longtail {
                 let mut result: Result<()> =
                     self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials);
                 if result.is_err() {
-                    warn!("Longtail download failed. Attempting to clear cache and retrying download. Original error was: {:?}", result);
-                    std::fs::remove_dir_all(&cache.path)?;
+                    warn!("Longtail get failed. Attempting to clear target path and retry unpack. Original error was: {:?}", result);
+                    if path.exists() {
+                        std::fs::remove_dir_all(path)?;
+                    }
                     result =
                         self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials);
+
+                    if result.is_err() {
+                        warn!("Longtail get failed AGAIN - assuming bad chunks in cache. Attempting to clear cache and retry download + unpack. Original error was: {:?}", result);
+                        std::fs::remove_dir_all(&cache.path)?;
+                        result = self.get_archive_internal(
+                            path,
+                            Some(&cache),
+                            archives,
+                            &tx,
+                            &credentials,
+                        );
+                    }
                 }
+
+                info!("Longtail get result: {:?}", result);
                 result
             }
         }
