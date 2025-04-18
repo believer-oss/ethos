@@ -12,8 +12,8 @@
 		"lint:fix": "prettier --plugin-search-dir . --write . && eslint . --cache --fix",
 		"format": "prettier --plugin-search-dir . --write .",
 		"postinstall": "cd .. && husky install friendshipper/.husky && cd core/ui && yarn package",
-		"tauri:build": "tauri build -v",
-		"tauri:build:debug": "tauri build -v --debug",
+		"tauri:build": "tauri build -v --no-bundle",
+		"tauri:build:debug": "tauri build -v --debug --no-bundle",
 		"tauri:dev": "tauri dev"
 	},
 	"devDependencies": {
