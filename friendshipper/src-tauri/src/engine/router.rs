@@ -15,6 +15,7 @@ where
     Router::new()
         .route("/notify-state", post(notify_state))
         .route("/open-url", post(open_url_for_path))
+        .route("/check-engine-ready", post(check_engine_ready))
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -51,10 +52,23 @@ where
 {
     let url = state.engine.get_url_for_path(&request.path);
     if let Some(url) = url {
-        open::that(url).unwrap();
+        open::that(url)?;
     } else {
         return Err(CoreError::Input(anyhow::anyhow!("No URL found for path")));
     }
 
     Ok("ok".to_string())
+}
+
+#[instrument(skip(state))]
+pub async fn check_engine_ready<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<bool>, CoreError>
+where
+    T: EngineProvider,
+{
+    match state.engine.check_ready_to_sync_repo().await {
+        Ok(()) => Ok(Json(true)),
+        Err(_) => Ok(Json(false)),
+    }
 }

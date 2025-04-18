@@ -59,6 +59,7 @@
 		repoConfig,
 		repoStatus,
 		selectedCommit,
+		showPreferences,
 		updateDismissed,
 		workflows
 	} from '$lib/stores';
@@ -101,7 +102,6 @@
 	let showWelcomeModal = false;
 
 	// Preferences Modal
-	let showPreferencesModal = false;
 	let showProgressModal = false;
 	let progressModalTitle: string = '';
 	let preferencesModalRequestInFlight = false;
@@ -170,11 +170,12 @@
 	const handleCheckForUpdates = async () => {
 		try {
 			const update = await check();
-			latest = update?.version ?? '';
-			updateAvailable = update?.available ?? false;
 
-			if (updateAvailable) {
-				showPreferencesModal = false;
+			if (update !== null) {
+				updateAvailable = true;
+				latest = update?.version ?? '';
+
+				$showPreferences = false;
 				updateDismissed.set(false);
 			}
 		} catch (e) {
@@ -512,7 +513,7 @@
 		});
 
 		const refresh = async () => {
-			if (!$appConfig.initialized || $onboardingInProgress) return;
+			if (!$appConfig.initialized || $onboardingInProgress || $showPreferences) return;
 
 			const buildsPromise = getBuilds(250);
 			const playtestsPromise = getPlaytests();
@@ -562,7 +563,7 @@
 			try {
 				const update = await check();
 				latest = update?.version ?? '';
-				updateAvailable = update?.available ?? false;
+				updateAvailable = update !== null;
 			} catch (e) {
 				await emit('error', e);
 			}
@@ -657,7 +658,7 @@
 	});
 
 	void listen('open-preferences', () => {
-		showPreferencesModal = true;
+		$showPreferences = true;
 	});
 
 	void listen('scheme-request-received', (e) => {
@@ -699,7 +700,7 @@
 {/key}
 
 <PreferencesModal
-	bind:showModal={showPreferencesModal}
+	bind:showModal={$showPreferences}
 	bind:requestInFlight={preferencesModalRequestInFlight}
 	bind:showProgressModal
 	bind:progressModalTitle
@@ -989,7 +990,7 @@
 									class="!p-2 active:border-none focus:outline-none"
 									label="Preferences"
 									on:click={() => {
-										showPreferencesModal = true;
+										$showPreferences = true;
 									}}
 									bind:disabled={preferencesModalRequestInFlight}
 								>

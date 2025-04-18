@@ -1050,6 +1050,22 @@ pub async fn sync_uproject_commit_with_engine(
     Ok(response_text)
 }
 
+#[tauri::command]
+pub async fn check_engine_ready(state: tauri::State<'_, State>) -> Result<bool, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/engine/check-engine-ready", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    let response_text = res.text().await?;
+    Ok(response_text == "true")
+}
+
 async fn generate_and_open_sln(
     url: String,
     open: bool,

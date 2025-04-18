@@ -23,9 +23,9 @@ use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::config::RepoConfigRef;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::Lock;
-use ethos_core::types::repo::FileState;
 use ethos_core::types::repo::SubmitStatus;
 use ethos_core::types::repo::{File, RepoStatus};
+use ethos_core::types::repo::{FileList, FileState};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
@@ -170,14 +170,6 @@ where
                 ?status.commits_behind_trunk,
                 "local state"
         );
-
-        // check modified files in local commits
-        let mut modified_committed: Vec<String> = vec![];
-        if status.commits_ahead > 0 {
-            let range = format!("HEAD~{}...HEAD", status.commits_ahead);
-
-            modified_committed = self.git_client.diff_filenames(&range).await?;
-        }
 
         {
             status.lock_user.clone_from(&self.github_username);
@@ -348,7 +340,7 @@ where
             status.modified_upstream.sort_unstable();
             status.modified_upstream.dedup();
 
-            status.conflicts = self.get_upstream_conflicts(&modified_committed, &status);
+            status.conflicts = self.get_upstream_conflicts(&status.modified_files, &status);
             if !status.conflicts.is_empty() {
                 status.conflict_upstream = true;
             }
@@ -442,14 +434,14 @@ where
 
     fn get_upstream_conflicts(
         &self,
-        modified_committed: &[String],
+        local_modified: &FileList,
         repo_status: &RepoStatus,
     ) -> Vec<String> {
         repo_status
             .modified_upstream
             .iter()
             .filter(|file| {
-                modified_committed.contains(file)
+                local_modified.contains(file)
                     || repo_status.modified_files.contains(file)
                     || repo_status.untracked_files.contains(file)
             })

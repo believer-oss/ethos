@@ -671,7 +671,7 @@ impl Git {
                 Opts::default(),
             )
             .await?;
-        let behind_count = output.lines().next().unwrap_or("0").parse::<u32>().unwrap();
+        let behind_count = output.lines().next().unwrap_or("0").parse::<u32>()?;
 
         let output = self
             .run_and_collect_output(
@@ -684,7 +684,7 @@ impl Git {
                 Opts::default(),
             )
             .await?;
-        let ahead_count = output.lines().next().unwrap_or("0").parse::<u32>().unwrap();
+        let ahead_count = output.lines().next().unwrap_or("0").parse::<u32>()?;
 
         Ok((ahead_count, behind_count))
     }
