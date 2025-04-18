@@ -60,6 +60,7 @@
 	import { regions } from '$lib/regions';
 	import type { AppConfig, Nullable } from '$lib/types';
 	import { goto } from '$app/navigation';
+	import { checkEngineReady } from '$lib/engine';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -73,6 +74,7 @@
 	let isEngineTypeSource: boolean = false;
 	let configuringNewRepo: boolean = false;
 	let repoName: string = '';
+	let configError: string = '';
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -96,6 +98,9 @@
 			uptime = Math.floor((Date.now() - $startTime) / 1000);
 		}, 1000);
 		localAppConfig = structuredClone($appConfig);
+
+		// reset error
+		configError = '';
 
 		// initialize config types to empty object if needed
 		if (!localAppConfig.oktaConfig) {
@@ -212,11 +217,17 @@
 		const hasTargetBranchChanged = $appConfig.targetBranch !== localAppConfig.targetBranch;
 
 		if (hasTargetBranchChanged && $allModifiedFiles.length > 0) {
-			await emit(
-				'error',
-				'Cannot change target branch with pending changes. Submit or revert your changes first.'
-			);
+			configError =
+				'Cannot change target branch with pending changes. Submit or revert your changes first.';
 			return;
+		}
+
+		if (hasTargetBranchChanged) {
+			const engineReady = await checkEngineReady();
+			if (!engineReady) {
+				configError = 'Engine is not prepared to switch branches. Is the editor running?';
+				return;
+			}
 		}
 
 		showProgressModal = hasRepoUrlChanged || hasTargetBranchChanged;
@@ -594,8 +605,9 @@
 
 									localAppConfig.selectedArtifactProject = $appConfig.selectedArtifactProject;
 									configuringNewRepo = false;
-								}}>Cancel</Button
-							>
+								}}
+								>Cancel
+							</Button>
 						{:else}
 							<Button class="h-9 mb-0.5" on:click={onNewProjectClicked}>New Project</Button>
 						{/if}
@@ -1000,8 +1012,13 @@
 	</Card>
 
 	<div
-		class="absolute bottom-0 left-0 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900"
+		class="absolute flex flex-col gap-2 bottom-0 left-0 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900"
 	>
+		{#if configError !== ''}
+			<Helper class="p-2 rounded-md bg-red-800 dark:bg-red-800">
+				<code class="text-white text-md">Error: {configError}</code>
+			</Helper>
+		{/if}
 		<div class="flex flex-row-reverse justify-between gap-2 h-full">
 			<div class="flex gap-2">
 				<Button on:click={onApplyClicked}>Apply</Button>

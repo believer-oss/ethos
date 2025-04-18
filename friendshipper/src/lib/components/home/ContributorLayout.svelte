@@ -330,7 +330,7 @@
 						</div>
 						<div class="flex gap-2 items-center">
 							<p class="w-full text-white">
-								Commits behind <code>{$repoConfig?.trunkBranch}</code>:
+								Commits behind <code>{$appConfig?.targetBranch}</code>:
 							</p>
 							<p class="w-full text-primary-400 dark:text-primary-400">
 								{$repoStatus?.commitsBehindTrunk}

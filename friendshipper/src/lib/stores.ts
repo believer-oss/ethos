@@ -38,6 +38,7 @@ export const changeSets = writable(<ChangeSet[]>[]);
 export const startTime = writable(Date.now());
 export const backgroundSyncInProgress = writable(false);
 export const currentSyncedVersion = writable('');
+export const showPreferences = writable(false);
 
 export const nextPlaytest = derived([playtests, appConfig], ([$playtests, $appConfig]) => {
 	if ($playtests.length > 0) {
