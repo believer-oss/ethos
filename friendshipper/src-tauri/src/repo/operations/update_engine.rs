@@ -160,7 +160,7 @@ where
                     &PathBuf::from(&self.engine_path),
                     Some(longtail::CacheControl {
                         path: cache_path,
-                        max_size_bytes: 50 * 1024 * 1024 * 1024, // 50 GB
+                        max_size_bytes: 100 * 1024 * 1024 * 1024, // 100 GB
                     }),
                     &archive_urls,
                     self.longtail_tx.clone(),
