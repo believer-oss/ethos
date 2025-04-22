@@ -312,6 +312,8 @@ pub struct RevertFilesRequest {
     pub files: Vec<String>,
     #[serde(rename = "skipEngineCheck")]
     pub skip_engine_check: bool,
+    #[serde(rename = "takeSnapshot")]
+    pub take_snapshot: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

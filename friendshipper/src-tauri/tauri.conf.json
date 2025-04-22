@@ -19,12 +19,12 @@
 			"icons/icon.icns",
 			"icons/icon.ico"
 		],
+		"longDescription": "",
 		"windows": {
 			"certificateThumbprint": null,
 			"digestAlgorithm": "sha256",
 			"timestampUrl": ""
 		},
-		"longDescription": "",
 		"macOS": {
 			"entitlements": null,
 			"exceptionDomain": "",
