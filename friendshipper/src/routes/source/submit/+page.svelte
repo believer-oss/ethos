@@ -325,7 +325,8 @@
 
 		const req: RevertFilesRequest = {
 			files: $selectedFiles.map((file) => file.path),
-			skipEngineCheck: false
+			skipEngineCheck: false,
+			takeSnapshot: true
 		};
 
 		try {

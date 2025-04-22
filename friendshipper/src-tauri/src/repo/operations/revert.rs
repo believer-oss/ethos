@@ -25,6 +25,7 @@ pub struct RevertFilesOp<T> {
     pub git_client: git::Git,
     pub repo_status: RepoStatusRef,
     pub engine: Option<T>,
+    pub take_snapshot: bool,
 }
 
 // Note: This is not "git revert", it's "git checkout -- <files>"
@@ -41,6 +42,13 @@ where
 
         if self.files.is_empty() {
             return Err(CoreError::Input(anyhow!("no files provided")));
+        }
+
+        if self.take_snapshot {
+            let _ = self
+                .git_client
+                .save_snapshot_all("pre-revert", git::SaveSnapshotIndexOption::DiscardIndex)
+                .await?;
         }
 
         let branch = self.repo_status.read().branch.clone();
@@ -136,6 +144,7 @@ where
             } else {
                 Some(state.engine.clone())
             },
+            take_snapshot: request.take_snapshot,
         };
 
         sequence.push(Box::new(op));
