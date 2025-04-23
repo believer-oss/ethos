@@ -162,17 +162,6 @@ jobs:
           yarn
           yarn package
 
-      - name: import windows certificate
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.TAURI_PRIVATE_KEY }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-        run: |
-          New-Item -ItemType directory -Path certificate
-          Set-Content -Path certificate/tempCert.txt -Value $env:WINDOWS_CERTIFICATE
-          certutil -decode certificate/tempCert.txt certificate/certificate.pfx
-          Remove-Item -path certificate -include tempCert.txt
-          Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText)
-
       - name: Build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
