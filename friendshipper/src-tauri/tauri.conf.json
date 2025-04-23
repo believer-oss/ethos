@@ -20,7 +20,7 @@
 			"icons/icon.ico"
 		],
 		"windows": {
-			"certificateThumbprint": "",
+			"certificateThumbprint": null,
 			"digestAlgorithm": "sha256",
 			"timestampUrl": ""
 		},
@@ -43,7 +43,7 @@
 			},
 			"appimage": {}
 		},
-		"createUpdaterArtifacts": "v1Compatible"
+		"createUpdaterArtifacts": true
 	},
 	"productName": "Friendshipper",
 	"mainBinaryName": "Friendshipper",
@@ -51,7 +51,7 @@
 	"identifier": "com.believer.friendshipper",
 	"plugins": {
 		"updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4RkQ2MkJGNDBEMkVGN0EKUldSNjc5SkF2Mkw5cUxITTJSK3o0cmtsUHdkbzJEcTI3am00SmkrSm5oYjVuK1dEN0lGbTJ2aTcK",
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg1NEE3MEE2QjU3OTZGNTEKUldSUmIzbTFwbkJLaFVrYnBqdms5U3ZWRVV4WW52ZXo2bjBhaXNwRDFjejJkZXZKL3BpeTJuSCsK",
 			"endpoints": [
 				"https://github.com/believer-oss/ethos/releases/latest/download/friendshipper.json"
 			],
