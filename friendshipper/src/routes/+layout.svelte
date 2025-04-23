@@ -582,15 +582,7 @@
 
 		initialize()
 			.then(() => {
-				const interval = setInterval(() => {
-					void refresh();
-				}, refreshInterval);
-
 				showWelcomeModal = !get(appConfig).initialized;
-
-				return () => {
-					clearInterval(interval);
-				};
 			})
 			.catch((e) => {
 				if (e instanceof Error) {
