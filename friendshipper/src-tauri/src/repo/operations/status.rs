@@ -396,15 +396,20 @@ where
     }
 
     async fn get_modified_upstream(&self, branch: &str) -> Result<Vec<String>, anyhow::Error> {
-        let commit_range = format!("HEAD...origin/{}", self.repo_config.read().trunk_branch);
+        let commit_range = format!("HEAD...origin/{}", branch);
 
         // check for files modified on the upstream trunk branch
         let modified_upstream: Vec<String> = self.git_client.diff_filenames(&commit_range).await?;
 
-        // if the user is on a quicksubmit branch, any conflicts with files modified by their own
+        // if the user is on a quicksubmit branch or a non-trunk branch, any conflicts with files modified by their own
         // user are most likely due to files they've already submitted and merged into trunk
         // from an earlier quicksubmit, so filter those out to avoid blocking them
-        let user_modified_upstream: Vec<String> = if is_quicksubmit_branch(branch) {
+        //
+        // In the future, this could use some more complex hardening, because this logic isn't
+        // actually doing a diff, it's assuming that a committed modification in both places
+        // is the same modification.
+        let user_modified_upstream: Vec<String> = if branch != self.app_config.read().target_branch
+        {
             let args = &[
                 "log",
                 "--pretty=",
