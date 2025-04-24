@@ -396,6 +396,19 @@ where
     }
 
     async fn get_modified_upstream(&self, branch: &str) -> Result<Vec<String>, anyhow::Error> {
+        let upstream_exists = self
+            .git_client
+            .run_and_collect_output(
+                &["ls-remote", "--exit-code", "--heads", "origin", branch],
+                git::Opts::default(),
+            )
+            .await
+            .is_ok();
+
+        if !upstream_exists {
+            return Ok(vec![]);
+        }
+
         let commit_range = format!("HEAD...origin/{}", branch);
 
         // check for files modified on the upstream trunk branch
