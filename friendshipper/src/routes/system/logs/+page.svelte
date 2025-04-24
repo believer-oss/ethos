@@ -26,7 +26,7 @@
 		loading = false;
 	};
 
-	let selectedLevels: string[] = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+	let selectedLevels: string[] = ['WARN', 'ERROR'];
 	const levels = [
 		{ value: 'DEBUG', name: 'DEBUG' },
 		{ value: 'INFO', name: 'INFO' },
@@ -36,7 +36,7 @@
 
 	$: () => {
 		if (selectedLevels.length === 0) {
-			selectedLevels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+			selectedLevels = ['WARN', 'ERROR'];
 		}
 	};
 
