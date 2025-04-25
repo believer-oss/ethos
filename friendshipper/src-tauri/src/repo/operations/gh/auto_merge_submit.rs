@@ -321,6 +321,14 @@ where
             // they remain stubs
             let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
 
+            // make sure the worktree is hard reset
+            git_client_worktree
+                .run(&["reset", "--hard"], git_opts_lfs_stubs)
+                .await?;
+            git_client_worktree
+                .run(&["clean", "-fd"], git_opts_lfs_stubs)
+                .await?;
+
             // resolve changes with latest main and push up to the remote
             {
                 let worktree_prev_branch = git_client_worktree.current_branch().await?;
