@@ -479,19 +479,23 @@ where
         }
 
         if is_quicksubmit_branch(&prev_branch) {
-            let worktree_path: PathBuf = {
+            let worktree_path: PathBuf = 'path: {
                 let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
 
                 let worktrees = self.git_client.list_worktrees().await?;
                 for tree in worktrees.iter() {
                     if tree.directory != repo_path {
-                        // remove the worktree so we get a fresh one
+                        // if the directory exists on disk, break
+                        if tree.directory.exists() {
+                            break 'path tree.directory.clone();
+                        }
+
+                        // if the directory doesn't exist, remove the worktree
                         self.git_client
                             .run(
                                 &[
                                     "worktree",
                                     "remove",
-                                    "--force",
                                     tree.directory.to_string_lossy().as_ref(),
                                 ],
                                 Default::default(),
@@ -534,6 +538,14 @@ where
             // To make the worktree as cheap as possible, we need to make sure no LFS files are checked out and
             // they remain stubs
             let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
+
+            // make sure the worktree is hard reset
+            git_client_worktree
+                .run(&["reset", "--hard"], git_opts_lfs_stubs)
+                .await?;
+            git_client_worktree
+                .run(&["clean", "-fd"], git_opts_lfs_stubs)
+                .await?;
 
             // resolve changes with latest main and push up to the remote
             {
