@@ -329,13 +329,6 @@ where
         {
             status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
 
-            // for each target branch, get modified upstream and add uniques
-            let target_branches = self.repo_config.read().target_branches.clone();
-            for target_branch in target_branches {
-                let modified_upstream = self.get_modified_upstream(&target_branch.name).await?;
-                status.modified_upstream.extend(modified_upstream);
-            }
-
             // remove duplicates
             status.modified_upstream.sort_unstable();
             status.modified_upstream.dedup();
@@ -405,14 +398,22 @@ where
             .await
             .is_ok();
 
-        if !upstream_exists {
-            return Ok(vec![]);
-        }
-
         let commit_range = format!("HEAD...origin/{}", branch);
 
-        // check for files modified on the upstream trunk branch
-        let modified_upstream: Vec<String> = self.git_client.diff_filenames(&commit_range).await?;
+        // check for files modified on the upstream branch
+        let mut modified_upstream: Vec<String> = match upstream_exists {
+            true => self.git_client.diff_filenames(&commit_range).await?,
+            false => vec![],
+        };
+
+        // check for files modified on the target upstream branches
+        let target_branches = self.repo_config.read().target_branches.clone();
+        for target_branch in target_branches {
+            let commit_range = format!("HEAD...origin/{}", target_branch.name);
+            let modified_in_target_branch: Vec<String> =
+                self.git_client.diff_filenames(&commit_range).await?;
+            modified_upstream.extend(modified_in_target_branch);
+        }
 
         // if the user is on a quicksubmit branch or a non-trunk branch, any conflicts with files modified by their own
         // user are most likely due to files they've already submitted and merged into trunk
@@ -421,8 +422,9 @@ where
         // In the future, this could use some more complex hardening, because this logic isn't
         // actually doing a diff, it's assuming that a committed modification in both places
         // is the same modification.
-        let user_modified_upstream: Vec<String> = if branch != self.app_config.read().target_branch
-        {
+        let target_branch = self.app_config.read().target_branch.clone();
+        let user_modified_upstream: Vec<String> = if branch != target_branch {
+            let commit_range = format!("HEAD...origin/{}", &target_branch);
             let args = &[
                 "log",
                 "--pretty=",
@@ -434,6 +436,7 @@ where
                 .git_client
                 .run_and_collect_output_into_lines(args, git::Opts::default())
                 .await?;
+
             files.dedup();
             files
         } else {
