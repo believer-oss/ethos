@@ -393,8 +393,6 @@
 		showProgressModal = true;
 		progressModalTitle = 'Opening pull request';
 
-		await refreshFiles(false);
-
 		const message = get(commitMessage);
 
 		const req: PushRequest = {

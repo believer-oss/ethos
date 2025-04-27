@@ -1,6 +1,6 @@
 use crate::engine::{CommunicationType, EngineProvider};
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
-use crate::repo::operations::{GitHubSubmitOp, StatusOp};
+use crate::repo::operations::GitHubSubmitOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use anyhow::anyhow;
@@ -193,20 +193,6 @@ where
                 .await?;
         }
 
-        let status_op = StatusOp {
-            repo_status: self.repo_status.clone(),
-            app_config: self.app_config.clone(),
-            repo_config: self.repo_config.clone(),
-            engine: self.engine.clone(),
-            git_client: self.git_client.clone(),
-            github_username: self.github_client.username.clone(),
-            aws_client: None,
-            storage: None,
-            allow_offline_communication: false,
-            skip_display_names: true,
-            skip_engine_update: false,
-        };
-
         // commit changes
         {
             let add_op = AddOp {
@@ -254,11 +240,19 @@ where
 
             // push up the branch - this way the commit's files are saved to the remote
             self.git_client.push(&f11r_branch).await?;
-
-            // update status now that the files have been committed and there aren't any more
-            // staged files
-            status_op.execute().await?;
         }
+
+        let github_username = self.github_client.username.clone();
+        let lock_op = LockOp {
+            git_client: self.git_client.clone(),
+            paths: self.files.clone(),
+            op: LockOperation::Unlock,
+            response_tx: None,
+            github_pat: self.token.clone(),
+            repo_status: self.repo_status.clone(),
+            github_username,
+            force: false,
+        };
 
         if is_quicksubmit_branch(&prev_branch) {
             let worktree_path: PathBuf = 'path: {
@@ -403,6 +397,9 @@ where
                 .delete_branch(&worktree_branch, git::BranchType::Local)
                 .await;
 
+            // unlock all files submitted
+            lock_op.execute().await?;
+
             return Ok(());
         }
 
@@ -433,17 +430,6 @@ where
         }
 
         // unlock all files submitted
-        let github_username = self.github_client.username.clone();
-        let lock_op = LockOp {
-            git_client: self.git_client.clone(),
-            paths: self.files.clone(),
-            op: LockOperation::Unlock,
-            response_tx: None,
-            github_pat: self.token.clone(),
-            repo_status: self.repo_status.clone(),
-            github_username,
-            force: false,
-        };
         lock_op.execute().await?;
 
         Ok(())
