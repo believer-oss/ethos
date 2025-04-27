@@ -146,7 +146,7 @@
 	let accessToken: string | null = null;
 	let refreshToken: string | null = null;
 
-	const refreshInterval = 30 * 1000;
+	const refreshInterval = 60 * 1000;
 
 	let loading = false;
 	const loadingText = 'Refreshing data...';

@@ -8,6 +8,7 @@ use tracing::{info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
+use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use ethos_core::clients::git;
@@ -212,6 +213,26 @@ where
         if self.files.is_empty() {
             return Err(CoreError::Input(anyhow!("No files to submit")));
         }
+
+        let status_op = StatusOp {
+            repo_status: self.repo_status.clone(),
+            app_config: self.app_config.clone(),
+            repo_config: self.repo_config.clone(),
+            engine: self.engine.clone(),
+            git_client: self.git_client.clone(),
+            github_username: self.github_client.username.clone(),
+            aws_client: None,
+            storage: None,
+            allow_offline_communication: false,
+            skip_display_names: true,
+
+            // we'll make sure this gets done at the end
+            skip_engine_update: true,
+        };
+
+        // We're moving this call from the frontend to the backend so we can customize
+        // some submit-specific behavior.
+        status_op.execute().await?;
 
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {

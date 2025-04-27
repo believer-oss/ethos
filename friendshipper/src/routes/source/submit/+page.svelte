@@ -435,6 +435,7 @@
 		}
 
 		// refresh files after quick submit, whether it was successful or not
+		progressModalTitle = 'Refreshing files';
 		await refreshFiles(true);
 
 		showProgressModal = false;

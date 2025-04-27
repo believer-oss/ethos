@@ -208,11 +208,15 @@
 				(file) => !changeSet.files.some((csFile) => csFile.path === file.path)
 			);
 		} else {
-			// avoid duplicates
+			// avoid duplicates and files that don't match the current search input
 			selectedFiles = [
 				...selectedFiles,
 				...changeSet.files.filter(
-					(file) => !selectedFiles.some((selectedFile) => selectedFile.path === file.path)
+					(file) =>
+						!selectedFiles.some((selectedFile) => selectedFile.path === file.path) &&
+						(searchInput.length < 3 ||
+							file.path.toLowerCase().includes(searchInput.toLowerCase()) ||
+							file.displayName.toLowerCase().includes(searchInput.toLowerCase()))
 				)
 			];
 		}
@@ -424,7 +428,10 @@
 	class="w-full relative p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 h-full overflow-y-hidden border-0 shadow-none"
 >
 	<div class="flex justify-between items-center gap-2 pb-2">
-		<h3 class="text-primary-400 text-xl">Modified Files</h3>
+		<div class="flex gap-2 items-center">
+			<h3 class="text-primary-400 text-xl">Modified Files</h3>
+			<span class="text-xs text-gray-400 font-italic">({selectedFiles.length} selected)</span>
+		</div>
 		<div class="flex gap-2">
 			{#if lockSelectedEnabled}
 				<Button
@@ -475,7 +482,7 @@
 							on:keydown={async (e) => {
 								if (e.key === 'Enter') {
 									changeSets[editingChangeSetIndex] = {
-										...changeSet,
+										...changeSets[editingChangeSetIndex],
 										name: editingChangeSetValue
 									};
 									editingChangeSetIndex = -1;
@@ -496,7 +503,7 @@
 									on:click={() => {
 										handleToggleAllFilesInChangeset(index);
 										changeSets[index] = {
-											...changeSet,
+											...changeSets[index],
 											checked: isChecked(changeSet.files),
 											indeterminate: isIndeterminate(changeSet.files)
 										};
