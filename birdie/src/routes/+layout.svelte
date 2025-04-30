@@ -84,8 +84,6 @@
 
 	$: activeUrl = $page.url.pathname;
 
-	const refreshInterval = 30 * 1000;
-
 	let loading = false;
 	const loadingText = 'Refreshing data...';
 
@@ -213,7 +211,7 @@
 			try {
 				const update = await check();
 				latest = update?.version ?? '';
-				updateAvailable = update?.available ?? false;
+				updateAvailable = update !== null;
 
 				$locks = await verifyLocks();
 				$repoStatus = await getRepoStatus();
@@ -228,13 +226,7 @@
 			.then(() => {
 				void refresh();
 
-				const interval = setInterval(refresh, refreshInterval);
-
 				showWelcomeModal = !get(appConfig).initialized;
-
-				return () => {
-					clearInterval(interval);
-				};
 			})
 			.catch((e) => {
 				if (e instanceof Error) {

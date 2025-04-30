@@ -1,13 +1,14 @@
-use std::fs;
-use std::path::PathBuf;
-use std::sync::mpsc::Sender as STDSender;
-use std::sync::Arc;
-
 use anyhow::{bail, Result};
 use config::Config;
 use directories_next::BaseDirs;
 use ethos_core::types::errors::CoreError;
+use log::warn;
 use parking_lot::RwLock;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::mpsc::Sender as STDSender;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::error;
 use tracing::info;
@@ -141,6 +142,24 @@ impl Server {
                 shutdown_rx.recv().await;
 
                 info!("Shutting down server");
+
+                // Wait up to 30 seconds for index.lock to go away
+                let repo_path = shared_state.app_config.read().repo_path.clone();
+                if !repo_path.is_empty() {
+                    info!("Waiting for index.lock to be removed");
+                    let index_lock_path = PathBuf::from(repo_path).join(".git").join("index.lock");
+                    let mut attempts = 0;
+                    while index_lock_path.exists() && attempts < 30 {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        attempts += 1;
+                    }
+
+                    if index_lock_path.exists() {
+                        warn!("index.lock still present after 30 seconds");
+                    } else {
+                        info!("index.lock removed after {} seconds", attempts);
+                    }
+                }
             })
             .await;
 
@@ -199,8 +218,7 @@ impl Server {
 
             let builder = Config::builder()
                 .add_source(config::File::with_name(config_file_str))
-                .set_default("initialized", true)
-                .unwrap();
+                .set_default("initialized", true)?;
 
             match builder.build() {
                 Ok(settings) => match settings.try_deserialize::<BirdieConfig>() {

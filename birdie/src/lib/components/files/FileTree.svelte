@@ -18,13 +18,15 @@
 	const level = 0;
 
 	const handleSaveFileTree = async () => {
-		await fs.writeFile(FILE_TREE_PATH, JSON.stringify(fileNode, null, 2), {
-			dir: fs.BaseDirectory.AppLocalData
+		await fs.writeTextFile(FILE_TREE_PATH, JSON.stringify(fileNode, null, 2), {
+			baseDir: fs.BaseDirectory.AppLocalData
 		});
 	};
 
 	const handleSaveCurrentRoot = async () => {
-		await fs.writeFile(CURRENT_ROOT_PATH, $currentRoot, { dir: fs.BaseDirectory.AppLocalData });
+		await fs.writeTextFile(CURRENT_ROOT_PATH, $currentRoot, {
+			baseDir: fs.BaseDirectory.AppLocalData
+		});
 	};
 
 	// recursively update the tree starting from the root node
