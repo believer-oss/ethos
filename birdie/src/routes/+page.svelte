@@ -30,7 +30,8 @@
 		HeartSolid,
 		LockOpenOutline,
 		LockSolid,
-		RotateOutline
+		RotateOutline,
+		SearchOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import {
@@ -154,6 +155,12 @@
 		}
 
 		inAsyncOperation = false;
+	};
+
+	const handleSearchClicked = async () => {
+		showSearchModal = true;
+		await tick();
+		searchInput.focus();
 	};
 
 	const handleSyncToolsClicked = async () => {
@@ -624,7 +631,7 @@
 		return selected.lockInfo.lock.owner?.name ?? 'None';
 	};
 
-	const onKeyDown = async (event: KeyboardEvent) => {
+	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Shift') {
 			shiftHeld = true;
 			return;
@@ -632,16 +639,6 @@
 
 		if (event.key === 'Control') {
 			ctrlHeld = true;
-			return;
-		}
-
-		if (!$enableGlobalSearch) return;
-
-		if (search === '' && event.key.match(/^[a-z]$/) && $appConfig.repoPath !== '') {
-			showSearchModal = true;
-
-			await tick();
-			searchInput.focus();
 		}
 	};
 
@@ -730,15 +727,15 @@
 	};
 
 	const handleSaveFileTree = async () => {
-		await fs.writeFile(FILE_TREE_PATH, JSON.stringify($rootNode, null, 2), {
-			dir: fs.BaseDirectory.AppLocalData
+		await fs.writeTextFile(FILE_TREE_PATH, JSON.stringify($rootNode, null, 2), {
+			baseDir: fs.BaseDirectory.AppLocalData
 		});
 	};
 
 	const handleLoadFileTree = async () => {
-		if (await fs.exists(FILE_TREE_PATH, { dir: fs.BaseDirectory.AppLocalData })) {
+		if (await fs.exists(FILE_TREE_PATH, { baseDir: fs.BaseDirectory.AppLocalData })) {
 			const fileTreeResponse = await fs.readTextFile(FILE_TREE_PATH, {
-				dir: fs.BaseDirectory.AppLocalData
+				baseDir: fs.BaseDirectory.AppLocalData
 			});
 			const parsedFileTree: Node = JSON.parse(fileTreeResponse);
 			rootNode.set(parsedFileTree);
@@ -746,7 +743,9 @@
 	};
 
 	const handleSaveCurrentRoot = async () => {
-		await fs.writeFile(CURRENT_ROOT_PATH, $currentRoot, { dir: fs.BaseDirectory.AppLocalData });
+		await fs.writeTextFile(CURRENT_ROOT_PATH, $currentRoot, {
+			baseDir: fs.BaseDirectory.AppLocalData
+		});
 	};
 
 	const handleLoadCurrentRoot = async () => {
@@ -755,7 +754,7 @@
 			(await fs.exists(CURRENT_ROOT_PATH, { dir: fs.BaseDirectory.AppLocalData }))
 		) {
 			const currentRootResponse = await fs.readTextFile(CURRENT_ROOT_PATH, {
-				dir: fs.BaseDirectory.AppLocalData
+				baseDir: fs.BaseDirectory.AppLocalData
 			});
 			currentRoot.set(currentRootResponse);
 		}
@@ -764,8 +763,8 @@
 
 	const handleSaveChangesets = async (newChangesets: ChangeSet[]) => {
 		$changeSets = newChangesets;
-		await fs.writeFile(CHANGE_SETS_PATH, JSON.stringify($changeSets, null, 2), {
-			dir: fs.BaseDirectory.AppLocalData
+		await fs.writeTextFile(CHANGE_SETS_PATH, JSON.stringify($changeSets, null, 2), {
+			baseDir: fs.BaseDirectory.AppLocalData
 		});
 	};
 
@@ -812,15 +811,6 @@
 			$selectedDirectoryClass = defaultDirectoryClass;
 		};
 		void setup();
-
-		// refresh every 30 seconds
-		const interval = setInterval(() => {
-			void refreshFiles();
-		}, 30000);
-
-		return () => {
-			clearInterval(interval);
-		};
 	});
 
 	onDestroy(() => {
@@ -833,9 +823,16 @@
 <div class="flex flex-col h-full gap-2">
 	<div class="flex items-baseline gap-2">
 		<p class="text-2xl mt-2 dark:text-primary-400">Asset Explorer</p>
-		<span class="text-sm text-gray-300 italic tracking-wide"
-			>(Start typing to search all files!)</span
-		>
+		<Button disabled={loading} class="!p-1.5" primary on:click={() => refreshFiles()}>
+			{#if loading}
+				<Spinner size="4" />
+			{:else}
+				<RotateOutline class="w-4 h-4" />
+			{/if}
+		</Button>
+		<Button disabled={loading} class="!p-1.5" primary on:click={handleSearchClicked}>
+			<SearchOutline class="w-4 h-4" />
+		</Button>
 		{#if loading}
 			<Spinner class="w-4 h-4 dark:text-gray-500 fill-white" />
 		{/if}

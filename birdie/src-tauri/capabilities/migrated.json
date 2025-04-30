@@ -12,6 +12,20 @@
 			"identifier": "fs:scope",
 			"allow": ["*/**", "**"]
 		},
+		"fs:allow-app-write-recursive",
+		{
+			"identifier": "fs:scope",
+			"allow": [
+				{
+					"path": "*/**",
+					"recursive": true
+				},
+				{
+					"path": "**",
+					"recursive": true
+				}
+			]
+		},
 		"core:window:allow-maximize",
 		"core:window:allow-unmaximize",
 		"core:window:allow-toggle-maximize",
