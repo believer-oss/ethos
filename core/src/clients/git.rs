@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -653,6 +654,72 @@ impl Git {
             .next()
             .unwrap_or_default()
             .to_string())
+    }
+
+    // this looks at two refs and identifies commits that are likely the
+    // same commit, but have different shas due to a rebase or cherry-pick
+    // the file paths that are shared are returned
+    pub async fn get_shared_changed_files(
+        &self,
+        from_ref: &str,
+        to_ref: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let range = format!("{}...origin/{}", from_ref, to_ref);
+        let output = self
+            .run_and_collect_output(&["log", "--pretty=format:%H|%s", &range], Opts::default())
+            .await?;
+
+        // commit messages that are both local and upstream will appear twice
+        // we can confirm they have the same changed files
+        // if they have the same message and modified files, add those files to the list
+        let mut shared_files = vec![];
+        let mut commit_map: HashMap<String, String> = HashMap::new();
+        for line in output.lines() {
+            let parts = line.split('|').collect::<Vec<_>>();
+            if parts.len() < 2 {
+                continue;
+            }
+            let commit = parts[0].to_string();
+            let message = parts[1].to_string();
+
+            if commit_map.contains_key(&message) {
+                // get the files for the stored commit and the current commit and compare
+                let stored_commit = commit_map.get(&message).unwrap();
+
+                let output = self
+                    .run_and_collect_output(
+                        &["show", "--name-only", "--oneline", stored_commit],
+                        Opts::default(),
+                    )
+                    .await?;
+
+                // drop the first line, which is the commit message
+                let changed_files = output.lines().skip(1).collect::<Vec<_>>();
+
+                let output = self
+                    .run_and_collect_output(
+                        &["show", "--name-only", "--oneline", &commit],
+                        Opts::default(),
+                    )
+                    .await?;
+
+                // drop the first line, which is the commit message
+                let changed_files2 = output.lines().skip(1).collect::<Vec<_>>();
+
+                // if the commits share files, add them to the list
+                for file in changed_files {
+                    if changed_files2.contains(&file) && !shared_files.contains(&file.to_string()) {
+                        shared_files.push(file.to_string());
+                    }
+                }
+
+                continue;
+            }
+
+            commit_map.insert(message.clone(), commit.clone());
+        }
+
+        Ok(shared_files)
     }
 
     pub async fn get_ahead_behind(

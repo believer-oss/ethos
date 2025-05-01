@@ -407,12 +407,21 @@ where
         };
 
         // check for files modified on the target upstream branches
+        let mut shared_files = vec![];
         let target_branches = self.repo_config.read().target_branches.clone();
         for target_branch in target_branches {
             let commit_range = format!("HEAD...origin/{}", target_branch.name);
             let modified_in_target_branch: Vec<String> =
                 self.git_client.diff_filenames(&commit_range).await?;
             modified_upstream.extend(modified_in_target_branch);
+
+            // find commits between the current target branch and each other target branch that share the same
+            // message, then filter out files from those commits
+            shared_files.extend(
+                self.git_client
+                    .get_shared_changed_files(branch, &target_branch.name)
+                    .await?,
+            );
         }
 
         // if the user is on a quicksubmit branch or a non-trunk branch, any conflicts with files modified by their own
@@ -447,6 +456,7 @@ where
             .iter()
             .filter(|file| self.engine.is_lockable_file(file))
             .filter(|file| !user_modified_upstream.iter().any(|x| x == *file))
+            .filter(|file| !shared_files.iter().any(|x| x == *file))
             .cloned()
             .collect::<Vec<_>>();
 
