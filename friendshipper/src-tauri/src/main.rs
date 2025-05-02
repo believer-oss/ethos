@@ -186,7 +186,6 @@ fn main() -> Result<(), CoreError> {
                 get_unrealversionselector_status,
                 open_url,
                 quick_submit,
-                auto_merge_submit,
                 rebase,
                 refresh_login,
                 acquire_locks,
