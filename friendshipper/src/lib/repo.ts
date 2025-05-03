@@ -76,9 +76,6 @@ export const submit = async (req: PushRequest): Promise<void> => invoke('submit'
 export const quickSubmit = async (req: PushRequest): Promise<void> =>
 	invoke('quick_submit', { req });
 
-export const autoMergeSubmit = async (req: PushRequest): Promise<void> =>
-	invoke('auto_merge_submit', { req });
-
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 
 export const restoreSnapshot = async (commit: string): Promise<void> =>

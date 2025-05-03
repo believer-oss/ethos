@@ -53,7 +53,6 @@
 	} from '$lib/types';
 	import {
 		acquireLocks,
-		autoMergeSubmit,
 		deleteSnapshot,
 		forceDownloadDlls,
 		forceDownloadEngine,
@@ -404,19 +403,7 @@
 		};
 
 		try {
-			const targetBranchConfig = $repoConfig?.targetBranches.find(
-				(branch) => branch.name === $appConfig.targetBranch
-			);
-
-			if (targetBranchConfig) {
-				if (targetBranchConfig.usesMergeQueue) {
-					await quickSubmit(req);
-				} else {
-					await autoMergeSubmit(req);
-				}
-			} else {
-				await emit('error', 'Target branch invalid, contact an engineer.');
-			}
+			await quickSubmit(req);
 
 			$commitMessage = '';
 
@@ -612,7 +599,8 @@
 
 		const req: RevertFilesRequest = {
 			files: [$repoConfig?.uprojectPath],
-			skipEngineCheck: false
+			skipEngineCheck: false,
+			takeSnapshot: true
 		};
 
 		try {
