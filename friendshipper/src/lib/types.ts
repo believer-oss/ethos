@@ -56,10 +56,6 @@ export enum ConflictStrategy {
 	KeepTheirs = 'KeepTheirs'
 }
 
-export interface ExperimentalFeaturesConfig {
-	enableCodeMain: boolean;
-}
-
 export interface AppConfig {
 	projects: Record<string, Project>;
 	repoPath: string;
@@ -86,7 +82,6 @@ export interface AppConfig {
 	maxClientCacheSizeGb: number;
 	playtestRegion: string;
 	initialized: boolean;
-	experimentalFeatures: ExperimentalFeaturesConfig;
 }
 
 export interface PlaytestProfile {

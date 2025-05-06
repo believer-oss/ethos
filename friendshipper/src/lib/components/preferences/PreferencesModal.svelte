@@ -663,7 +663,7 @@
 					</Tooltip>
 
 					{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
-						{#if $appConfig.experimentalFeatures.enableCodeMain && $repoConfig}
+						{#if $repoConfig}
 							<div class="flex flex-col gap-2">
 								<Label class="text-white">Main Branch</Label>
 								<Select
