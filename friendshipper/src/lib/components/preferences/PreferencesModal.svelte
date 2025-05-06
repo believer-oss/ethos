@@ -665,7 +665,7 @@
 					{#if !configuringNewRepo && localAppConfig.projects[localAppConfig.selectedArtifactProject].repoUrl}
 						{#if $repoConfig}
 							<div class="flex flex-col gap-2">
-								<Label class="text-white">Main Branch</Label>
+								<Label class="text-white">Target Branch</Label>
 								<Select
 									class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
 									disabled={$allModifiedFiles.length > 0}
@@ -687,10 +687,10 @@
 									</Tooltip>
 								{:else}
 									<Tooltip class="text-sm" placement="bottom">
-										Which branch all your submissions will be merged into. <code>main</code> is the
-										default branch where changes are submitted WITH the merge queue.
-										<code>content-main</code> is a special branch for content changes only. These content
-										changes are submitted WITHOUT the merge queue.
+										Which branch all your submissions will be merged into. <code>main</code> is the default
+										branch where all changes are submitted WITH the merge queue. Other branches in this
+										list may or may not use the merge queue. Contact an engineer if you are unsure of
+										which branch to target.
 									</Tooltip>
 								{/if}
 							</div>
