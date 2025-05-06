@@ -688,9 +688,9 @@
 								{:else}
 									<Tooltip class="text-sm" placement="bottom">
 										Which branch all your submissions will be merged into. <code>main</code> is the
-										default branch for content changes only. These content changes are submitted
-										WITHOUT the merge queue. <code>code-main</code> is a special branch for code changes
-										only. These code changes are submitted WITH the merge queue.
+										default branch where changes are submitted WITH the merge queue.
+										<code>content-main</code> is a special branch for content changes only. These content
+										changes are submitted WITHOUT the merge queue.
 									</Tooltip>
 								{/if}
 							</div>
