@@ -397,7 +397,7 @@
 			await resetRepo();
 			$repoStatus = await getRepoStatus();
 
-			await emit('success', 'Repo reset to main.');
+			await emit('success', 'Repo successfully reset.');
 		} catch (e) {
 			showModal = false;
 			await emit('error', e);
@@ -941,7 +941,7 @@
 								outline
 								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
 								on:click={handleResetRepo}
-								>Reset Repo to Main
+								>Reset Repo to {$appConfig ? $appConfig.targetBranch : 'main'}
 							</Button>
 							<span class="w-full"
 								>Hard reset to <code>main</code> (will revert all local changes)</span
