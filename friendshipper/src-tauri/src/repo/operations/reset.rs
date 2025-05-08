@@ -27,7 +27,7 @@ pub async fn reset_repo<T>(State(state): State<AppState<T>>) -> Result<(), CoreE
 where
     T: EngineProvider,
 {
-    let branch = state.repo_config.read().trunk_branch.clone();
+    let branch = state.app_config.read().target_branch.clone();
     state.git().hard_reset(&branch).await.map_err(|e| e.into())
 }
 
