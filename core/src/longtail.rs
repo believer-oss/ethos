@@ -45,6 +45,7 @@ pub struct Longtail {
     pub app_name: String,
     pub exec_path: Option<PathBuf>,
     pub download_path: LocalDownloadPath,
+    pub s3_endpoint_resolver_uri: Option<String>,
 
     #[serde(skip)]
     pub child_process: Arc<Mutex<Option<Child>>>,
@@ -101,6 +102,7 @@ impl Longtail {
             app_name: app_name.to_string(),
             download_path: LocalDownloadPath::new(app_name),
             child_process: Arc::new(Mutex::new(None)),
+            s3_endpoint_resolver_uri: None,
         }
     }
 
@@ -303,6 +305,8 @@ impl Longtail {
 
         exec.arg("get");
         for archive in archives {
+            // FIXME: This will break on golongtail v0.4.3 or later.
+            // Replace with --source-paths and a vertical bar separated list of sources...
             exec.arg("--source-path").arg(archive);
         }
         exec.arg("--target-path")
@@ -311,6 +315,11 @@ impl Longtail {
 
         if let Some(cache) = &cache {
             exec.arg("--cache-path").arg(&cache.path);
+        }
+
+        if let Some(s3_endpoint_resolver_uri) = &self.s3_endpoint_resolver_uri {
+            exec.arg("--s3-endpoint-resolver-uri")
+                .arg(s3_endpoint_resolver_uri);
         }
 
         send_msg(tx, LongtailMsg::ExecEvt(format!("{:?}", exec)));
