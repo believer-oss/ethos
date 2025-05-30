@@ -165,7 +165,7 @@ async fn initialize_test_repo() {
     match init.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to initialize test repo: {:?}", e);
+            panic!("failed to initialize test repo: {e:?}");
         }
     }
 
@@ -179,7 +179,7 @@ async fn initialize_test_repo() {
     match init.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to initialize test remote: {:?}", e);
+            panic!("failed to initialize test remote: {e:?}");
         }
     }
 
@@ -197,7 +197,7 @@ async fn initialize_test_repo() {
     match config.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git config: {:?}", e);
+            panic!("failed to set git config: {e:?}");
         }
     }
 
@@ -215,7 +215,7 @@ async fn initialize_test_repo() {
     match config.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git config: {:?}", e);
+            panic!("failed to set git config: {e:?}");
         }
     }
 
@@ -232,7 +232,7 @@ async fn initialize_test_repo() {
     match config.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git config: {:?}", e);
+            panic!("failed to set git config: {e:?}");
         }
     }
 
@@ -249,7 +249,7 @@ async fn initialize_test_repo() {
     match config.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git config: {:?}", e);
+            panic!("failed to set git config: {e:?}");
         }
     }
 
@@ -266,7 +266,7 @@ async fn initialize_test_repo() {
     match config.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git config: {:?}", e);
+            panic!("failed to set git config: {e:?}");
         }
     }
 
@@ -283,7 +283,7 @@ async fn initialize_test_repo() {
     match config.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git config: {:?}", e);
+            panic!("failed to set git config: {e:?}");
         }
     }
 
@@ -301,7 +301,7 @@ async fn initialize_test_repo() {
     match remote.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to set git remote: {:?}", e);
+            panic!("failed to set git remote: {e:?}");
         }
     }
 
@@ -318,7 +318,7 @@ async fn initialize_test_repo() {
     match checkout_temp.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to checkout temp branch on remote: {:?}", e);
+            panic!("failed to checkout temp branch on remote: {e:?}");
         }
     }
 
@@ -335,7 +335,7 @@ async fn initialize_test_repo() {
     match checkout.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to checkout main branch: {:?}", e);
+            panic!("failed to checkout main branch: {e:?}");
         }
     }
 
@@ -353,7 +353,7 @@ async fn initialize_test_repo() {
     match commit.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to commit initial commit: {:?}", e);
+            panic!("failed to commit initial commit: {e:?}");
         }
     }
 
@@ -370,7 +370,7 @@ async fn initialize_test_repo() {
     match push.output().await {
         Ok(_) => {}
         Err(e) => {
-            panic!("failed to push initial commit: {:?}", e);
+            panic!("failed to push initial commit: {e:?}");
         }
     }
 }
@@ -629,7 +629,7 @@ pub async fn get_latest_commit_message(branch: &str) -> String {
             message.trim().to_string()
         }
         Err(e) => {
-            panic!("failed to get latest commit message: {:?}", e);
+            panic!("failed to get latest commit message: {e:?}");
         }
     }
 }
