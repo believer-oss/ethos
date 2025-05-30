@@ -147,7 +147,7 @@ pub async fn get_files(
     let repo_path = state.app_config.read().repo_path.clone();
 
     let query_path = if let Some(root) = &params.root {
-        format!("{}/{}", repo_path, root)
+        format!("{repo_path}/{root}")
     } else {
         repo_path
     };

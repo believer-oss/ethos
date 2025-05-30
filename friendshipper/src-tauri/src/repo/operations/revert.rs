@@ -55,7 +55,7 @@ where
 
         let mut temp_file = NamedTempFile::new()?;
         for file in &self.files {
-            writeln!(temp_file, "{}", file)?;
+            writeln!(temp_file, "{file}")?;
         }
         temp_file.flush()?;
 

@@ -1053,7 +1053,7 @@ async fn generate_and_open_sln(
     generate: bool,
     client: reqwest::Client,
 ) -> Result<(), TauriError> {
-    let endpoint: String = format!("{}/project/sln?open={}&generate={}", url, open, generate);
+    let endpoint: String = format!("{url}/project/sln?open={open}&generate={generate}");
     let res = client.post(endpoint).send().await?;
 
     if is_error_status(res.status()) {

@@ -143,7 +143,7 @@ where
 
         // if we're not on the main branch, we need to get the ahead/behind counts
         let target_branch = self.app_config.read().target_branch.clone();
-        let remote_target_branch = format!("origin/{}", target_branch);
+        let remote_target_branch = format!("origin/{target_branch}");
         if status.branch != target_branch {
             let (commits_ahead, commits_behind) = self
                 .git_client
@@ -398,7 +398,7 @@ where
             .await
             .is_ok();
 
-        let commit_range = format!("HEAD...origin/{}", branch);
+        let commit_range = format!("HEAD...origin/{branch}");
 
         // check for files modified on the upstream branch
         let mut modified_upstream: Vec<String> = match upstream_exists {
@@ -537,7 +537,7 @@ where
             true => self.repo_config.read().trunk_branch.clone(),
             false => status.branch.clone(),
         };
-        let dll_branch_remote = format!("origin/{}", dll_branch);
+        let dll_branch_remote = format!("origin/{dll_branch}");
 
         let git_opts = git::Opts::new_without_logs();
         let local_commit_shas: String = self

@@ -293,7 +293,7 @@ where
         }
     };
 
-    let engine_association = format!("believer-{}", engine_commit);
+    let engine_association = format!("believer-{engine_commit}");
 
     info!(
         "Updating uproject EngineAssociation at path {:?} to {}",

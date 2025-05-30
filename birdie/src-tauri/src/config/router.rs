@@ -107,8 +107,7 @@ async fn update_config(
                     }
 
                     return Err(anyhow!(ConfigValidationError(format!(
-                        "Error cloning repo: {}",
-                        e
+                        "Error cloning repo: {e}"
                     )))
                     .into());
                 }
@@ -134,8 +133,7 @@ async fn update_config(
                     }
                     Err(e) => {
                         return Err(anyhow!(ConfigValidationError(format!(
-                            "Error creating GitHub client: {}",
-                            e
+                            "Error creating GitHub client: {e}"
                         )))
                         .into());
                     }

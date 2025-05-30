@@ -99,7 +99,7 @@ impl OFPANameCache {
         let mut display_name = asset_name.to_string();
         if let Some(caps) = OFPA_PATH_REGEX.captures(file) {
             let path_to_map = &caps[1];
-            display_name = format!("Content/{}/{}", path_to_map, asset_name);
+            display_name = format!("Content/{path_to_map}/{asset_name}");
         }
         _ = self.path_to_name_map.insert(
             file.to_string(),
@@ -295,7 +295,7 @@ impl OFPANameCache {
                     let mut cmd_request_id = cache.cmd_request_id.write();
                     *cmd_request_id += 1;
 
-                    listfile_path.push(format!("ofpa_names_request_{}.txt", cmd_request_id));
+                    listfile_path.push(format!("ofpa_names_request_{cmd_request_id}.txt"));
                 }
 
                 let is_listfile_valid: bool = {
@@ -339,7 +339,7 @@ impl OFPANameCache {
                     cmd.arg(provider.uproject_path);
                     cmd.arg("-unattended");
                     cmd.arg("-Run=TranslateOFPAFilenames");
-                    cmd.arg(format!("-ListFile=\'{}\'", listfile_path_str));
+                    cmd.arg(format!("-ListFile=\'{listfile_path_str}\'"));
 
                     #[cfg(windows)]
                     cmd.creation_flags(CREATE_NO_WINDOW);

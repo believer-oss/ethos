@@ -465,7 +465,7 @@ where
             .trim_end_matches(".git")
             .to_lowercase();
 
-        selected_artifact_project = format!("{}-{}", repo_owner, repo_name);
+        selected_artifact_project = format!("{repo_owner}-{repo_name}");
     }
 
     let workflows = kube_client

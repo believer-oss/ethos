@@ -72,7 +72,7 @@ where
                     (false, format!("{} is not a file!", path.display()))
                 }
             }
-            Err(e) => (false, format!("UnrealVersionSelector.exe: {}", e)),
+            Err(e) => (false, format!("UnrealVersionSelector.exe: {e}")),
         }
     };
 

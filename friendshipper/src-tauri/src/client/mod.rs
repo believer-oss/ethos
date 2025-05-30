@@ -76,7 +76,7 @@ impl FriendshipperClient {
         let response = self
             .client
             .get(format!("{}/config", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
             .map_err(|e| {
@@ -97,7 +97,7 @@ impl FriendshipperClient {
         let response = self
             .client
             .get(format!("{}/aws/credentials", self.base_url))
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
             .map_err(|e| CoreError::Internal(anyhow!("Failed to fetch AWS credentials: {}", e)))?;

@@ -61,9 +61,9 @@ pub async fn clone_handler(
 
             if size > 1024.0 {
                 size /= 1024.0;
-                tx.send(format!("Downloaded: {:.2} GB", size)).unwrap();
+                tx.send(format!("Downloaded: {size:.2} GB")).unwrap();
             } else {
-                tx.send(format!("Downloaded: {:.2} MB", size)).unwrap();
+                tx.send(format!("Downloaded: {size:.2} MB")).unwrap();
             }
 
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;

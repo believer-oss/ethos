@@ -167,7 +167,7 @@ fn main() -> Result<(), CoreError> {
             }
         }
 
-        let server_url = format!("http://localhost:{}", PORT);
+        let server_url = format!("http://localhost:{PORT}");
         info!(
             version = VERSION,
             address = &server_url,
