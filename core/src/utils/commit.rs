@@ -14,11 +14,11 @@ pub fn format_commit(commit: &String, commit_map: &Arc<HashMap<String, Commit>>)
                 message += "...";
             }
 
-            displayed_name = format!("{} - {}", displayed_name, message);
+            displayed_name = format!("{displayed_name} - {message}");
         }
 
         if let Some(author) = &local_commit.author {
-            displayed_name = format!("{} ({})", displayed_name, author);
+            displayed_name = format!("{displayed_name} ({author})");
         }
     }
 

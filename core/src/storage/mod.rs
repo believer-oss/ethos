@@ -82,7 +82,7 @@ impl ArtifactStorage {
         let path = self.resolve_path(&artifact_config);
 
         self.provider
-            .get_artifact_by_prefix(&format!("{}{}", path, short_sha))
+            .get_artifact_by_prefix(&format!("{path}{short_sha}"))
             .await
     }
 

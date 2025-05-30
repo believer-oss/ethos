@@ -229,15 +229,7 @@ impl Git {
         // In the event that a fetch is already running, we will ignore the prune flag and return
         // after the current fetch completes. This should not be a problem, as the next fetch that
         // is not under contention will respect the prune flag.
-        let fetch_running = GIT_FETCH_LOCK.clone().try_lock_owned();
-
-        if fetch_running.is_err() {
-            // If we get a TryLockError, it means that a fetch is already running, so we should
-            // just block until it's done.
-            GIT_FETCH_LOCK.clone().lock_owned().await;
-            Ok(())
-        } else {
-            let mut running = fetch_running.unwrap();
+        if let Ok(mut running) = GIT_FETCH_LOCK.clone().try_lock_owned() {
             *running = true;
             if prune == ShouldPrune::Yes {
                 self.run(
@@ -258,6 +250,11 @@ impl Git {
                 .await?
             }
             *running = false;
+            Ok(())
+        } else {
+            // If we get a TryLockError, it means that a fetch is already running, so we should
+            // just block until it's done.
+            GIT_FETCH_LOCK.clone().lock_owned().await;
             Ok(())
         }
     }
@@ -407,7 +404,7 @@ impl Git {
         } else {
             let mut temp_file = NamedTempFile::new()?;
             for path in &paths {
-                writeln!(temp_file, "{}", path)?;
+                writeln!(temp_file, "{path}")?;
             }
             temp_file.flush()?;
 
@@ -422,7 +419,7 @@ impl Git {
             .await?;
         }
 
-        let stash_message = format!("{} {}", SNAPSHOT_PREFIX, message);
+        let stash_message = format!("{SNAPSHOT_PREFIX} {message}");
         let mut stash_create_args = vec!["stash", "create"];
         if keep_index == SaveSnapshotIndexOption::KeepIndex {
             stash_create_args.push("--keep-index");
@@ -435,7 +432,7 @@ impl Git {
         } else {
             // set up a temp file
             for path in &paths {
-                writeln!(temp_file, "{}", path)?;
+                writeln!(temp_file, "{path}")?;
             }
             temp_file.flush()?;
 
@@ -470,7 +467,7 @@ impl Git {
 
         let mut temp_file = NamedTempFile::new()?;
         for path in &paths {
-            writeln!(temp_file, "{}", path)?;
+            writeln!(temp_file, "{path}")?;
         }
         temp_file.flush()?;
 
@@ -539,7 +536,7 @@ impl Git {
         // reset so everything is unstaged
         let mut temp_file = NamedTempFile::new()?;
         for path in files.lines() {
-            writeln!(temp_file, "{}", path)?;
+            writeln!(temp_file, "{path}")?;
         }
         temp_file.flush()?;
 
@@ -614,7 +611,7 @@ impl Git {
             &[
                 "--no-pager",
                 "log",
-                &format!("-{}", limit),
+                &format!("-{limit}"),
                 "--pretty=format:%H|%B|%an|%aI|END",
                 git_ref,
             ],
@@ -664,7 +661,7 @@ impl Git {
         from_ref: &str,
         to_ref: &str,
     ) -> anyhow::Result<Vec<String>> {
-        let range = format!("{}...origin/{}", from_ref, to_ref);
+        let range = format!("{from_ref}...origin/{to_ref}");
         let output = self
             .run_and_collect_output(&["log", "--pretty=format:%H|%s", &range], Opts::default())
             .await?;
@@ -733,7 +730,7 @@ impl Git {
                     "rev-list",
                     "--count",
                     "--left-only",
-                    &format!("{}...{}", from_ref, to_ref),
+                    &format!("{from_ref}...{to_ref}"),
                 ],
                 Opts::default(),
             )
@@ -746,7 +743,7 @@ impl Git {
                     "rev-list",
                     "--count",
                     "--right-only",
-                    &format!("{}...{}", from_ref, to_ref),
+                    &format!("{from_ref}...{to_ref}"),
                 ],
                 Opts::default(),
             )

@@ -176,11 +176,11 @@ impl Longtail {
         exe_path.push(Longtail::get_longtail_exec_name());
 
         let url = Longtail::get_longtail_dl_url();
-        send_msg(&tx, LongtailMsg::ExecEvt(format!("{:?}", url)));
+        send_msg(&tx, LongtailMsg::ExecEvt(format!("{url:?}")));
 
         let response = ureq::get(&url).call()?;
         let mut dest = {
-            send_msg(&tx, LongtailMsg::Log(format!("dl_path: [{:?}]", exe_path)));
+            send_msg(&tx, LongtailMsg::Log(format!("dl_path: [{exe_path:?}]")));
             tracing::info!("[longtail] get_longtail dl_path: [{:?}]", exe_path);
 
             let exe_dir = exe_path.parent().unwrap();
@@ -188,7 +188,7 @@ impl Longtail {
             File::create(exe_path.clone())?
         };
         let bytes = copy(&mut response.into_reader(), &mut dest)?;
-        send_msg(&tx, LongtailMsg::Log(format!("Copied {} bytes", bytes)));
+        send_msg(&tx, LongtailMsg::Log(format!("Copied {bytes} bytes")));
 
         send_msg(&tx, LongtailMsg::DoneLtDlEvt);
 
@@ -201,7 +201,7 @@ impl Longtail {
         if hash.as_slice() != <[u8; 32]>::from_hex(crate::LONGTAIL_SHA256).unwrap() {
             send_msg(
                 &tx,
-                LongtailMsg::ErrEvt(format!("Failed to validate hash! {}/{:x}", bytes, hash)),
+                LongtailMsg::ErrEvt(format!("Failed to validate hash! {bytes}/{hash:x}")),
             );
             send_msg(&tx, LongtailMsg::Log("Deleting file!".to_string()));
             match fs::remove_file(exe_path.clone()) {
@@ -212,7 +212,7 @@ impl Longtail {
 
         send_msg(
             &tx,
-            LongtailMsg::Log(format!("Hash from {} bytes: {:x}", bytes, hash)),
+            LongtailMsg::Log(format!("Hash from {bytes} bytes: {hash:x}")),
         );
 
         #[cfg(unix)]
@@ -313,7 +313,7 @@ impl Longtail {
             exec.arg("--cache-path").arg(&cache.path);
         }
 
-        send_msg(tx, LongtailMsg::ExecEvt(format!("{:?}", exec)));
+        send_msg(tx, LongtailMsg::ExecEvt(format!("{exec:?}")));
 
         // Add creds separately so they aren't logged in the above msg
         exec.env("AWS_ACCESS_KEY_ID", credentials.access_key_id())
@@ -414,6 +414,7 @@ impl Longtail {
         Ok(())
     }
 
+    #[instrument]
     pub fn log_message(msg: LongtailMsg) {
         match msg {
             LongtailMsg::Log(s) => {

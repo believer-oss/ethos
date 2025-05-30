@@ -13,14 +13,14 @@ pub enum CoreError {
 impl IntoResponse for CoreError {
     fn into_response(self) -> Response {
         match self {
-            CoreError::Input(e) => (StatusCode::BAD_REQUEST, format!("{}", e)).into_response(),
+            CoreError::Input(e) => (StatusCode::BAD_REQUEST, format!("{e}")).into_response(),
             CoreError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized").into_response(),
             CoreError::Internal(e) => {
                 if e.downcast_ref::<TokenNotFoundError>().is_some() {
                     return TokenNotFoundError.into_response();
                 }
 
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", e)).into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
             }
         }
     }
@@ -29,9 +29,9 @@ impl IntoResponse for CoreError {
 impl std::fmt::Display for CoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CoreError::Input(e) => write!(f, "{}", e),
+            CoreError::Input(e) => write!(f, "{e}"),
             CoreError::Unauthorized => write!(f, "Unauthorized"),
-            CoreError::Internal(e) => write!(f, "{}", e),
+            CoreError::Internal(e) => write!(f, "{e}"),
         }
     }
 }

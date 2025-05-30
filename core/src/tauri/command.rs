@@ -481,7 +481,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
         Ok(r) => r,
         Err(e) => {
             return Err(TauriError {
-                message: format!("Failed to parse pull response: {}.", e),
+                message: format!("Failed to parse pull response: {e}."),
                 status_code: 500, // Internal Server Error as a default
             });
         }

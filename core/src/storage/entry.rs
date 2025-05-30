@@ -56,7 +56,7 @@ impl ObjectLocation {
         let kind = parts.get(parts.len() - 4);
         let platform = parts.get(parts.len() - 3);
         if let (Some(kind), Some(platform)) = (kind, platform) {
-            format!("{}-{}", kind, platform)
+            format!("{kind}-{platform}")
         } else {
             "".to_string()
         }

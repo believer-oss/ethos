@@ -38,7 +38,7 @@ impl GraphQLClient {
             .default_headers(
                 std::iter::once((
                     reqwest::header::AUTHORIZATION,
-                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))?,
+                    reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?,
                 ))
                 .collect(),
             )
