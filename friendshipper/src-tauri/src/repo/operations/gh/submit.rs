@@ -84,7 +84,7 @@ impl Task for GitHubSubmitOp {
         let pr = octocrab
             .pulls(owner.clone(), repo.clone())
             .create(
-                format!("{} {}", SUBMIT_PREFIX, truncated_message),
+                format!("{SUBMIT_PREFIX} {truncated_message}"),
                 self.head_branch.clone(),
                 self.base_branch.clone(),
             )
@@ -530,7 +530,7 @@ where
             // create worktree if it doesn't exist yet
             let mut worktree_path = repo_path.clone();
             worktree_path.pop();
-            worktree_path.push(format!(".{}-wt", repo_folder_name));
+            worktree_path.push(format!(".{repo_folder_name}-wt"));
 
             self.git_client
                 .run(
@@ -547,7 +547,7 @@ where
             worktree_path.clone()
         };
 
-        let worktree_branch = format!("{}-wt", f11r_branch);
+        let worktree_branch = format!("{f11r_branch}-wt");
 
         let mut git_client_worktree = self.git_client.clone();
         git_client_worktree.repo_path.clone_from(&worktree_path);
@@ -594,7 +594,7 @@ where
                 .await?;
             git_client_worktree
                 .run(
-                    &["rebase", &format!("origin/{}", target_branch)],
+                    &["rebase", &format!("origin/{target_branch}")],
                     git_opts_lfs_stubs,
                 )
                 .await?;

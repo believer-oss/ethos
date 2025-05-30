@@ -124,10 +124,10 @@ where
 
     if let Some(proj_dirs) = ProjectDirs::from("", "", crate::APP_NAME) {
         let mut log_path = proj_dirs.data_dir().to_path_buf();
-        log_path.push(format!("server_logs/{}.log", name));
+        log_path.push(format!("server_logs/{name}.log"));
 
         let mut previous_log_path = proj_dirs.data_dir().to_path_buf();
-        previous_log_path.push(format!("server_logs/{}_previous.log", name));
+        previous_log_path.push(format!("server_logs/{name}_previous.log"));
 
         // Create the directory if needed
         if let Some(p) = log_path.parent() {
@@ -184,7 +184,7 @@ where
     if let Some(proj_dirs) = ProjectDirs::from("", "", crate::APP_NAME) {
         let mut profiles_path = proj_dirs.data_dir().to_path_buf();
         let now = chrono::Utc::now().timestamp_millis();
-        profiles_path.push(format!("server_profiles/{}-{}.tar.gz", name, now));
+        profiles_path.push(format!("server_profiles/{name}-{now}.tar.gz"));
 
         if let Some(p) = profiles_path.parent() {
             fs::create_dir_all(p)?
