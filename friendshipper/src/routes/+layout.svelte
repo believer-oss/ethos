@@ -145,6 +145,7 @@
 	let tokenRefreshInterval: ReturnType<typeof setInterval> | undefined;
 	let accessToken: string | null = null;
 	let refreshToken: string | null = null;
+	let showLogin: boolean = true;
 
 	const refreshInterval = 60 * 1000;
 
@@ -428,7 +429,33 @@
 			}
 		}
 
-		if (!$oktaAuth) {
+		if ($appConfig.serverless) {
+			try {
+				await refreshLogin('');
+				showLogin = false;
+			} catch (e) {
+				await emit('error', e);
+			}
+			// Wait until the dynamic config is available
+			for (;;) {
+				try {
+					const dynamicConfigResponse = await getDynamicConfig();
+					if (!dynamicConfigResponse.playtestRegions.length) {
+						throw new Error('waiting');
+					}
+					break;
+				} catch (_) {
+					// wait one second before retrying
+					await new Promise((resolve) => {
+						setTimeout(() => {
+							resolve(null);
+						}, 1000);
+					});
+				}
+			}
+		}
+
+		if (!$oktaAuth && !$appConfig.serverless) {
 			try {
 				$oktaAuth = createOktaAuth($appConfig.oktaConfig.issuer, $appConfig.oktaConfig.clientId);
 				await handleOktaState();
@@ -438,7 +465,7 @@
 			}
 		}
 
-		if (accessToken) {
+		if (accessToken || $appConfig.serverless) {
 			try {
 				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
 					getDynamicConfig(),
@@ -528,7 +555,7 @@
 			try {
 				const updatedBuilds = await buildsPromise;
 				if (selected) {
-					const found = updatedBuilds.entries.find((build) => build.commit === selected.commit);
+					const found = updatedBuilds.entries?.find((build) => build.commit === selected.commit);
 					if (found) {
 						selectedCommit.set(found);
 					}
@@ -745,7 +772,7 @@
 			</Button>
 		</div>
 	</div>
-	{#if !initialized || !accessToken}
+	{#if (!initialized || !accessToken) && showLogin}
 		{#if initialized}
 			<div>
 				<div
@@ -922,8 +949,8 @@
 								>
 									<svelte:fragment slot="subtext">
 										<span
-											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$repoStatus
-												?.locksOurs.length > 0
+											class="items-center px-2 ms-3 text-sm font-medium text-white rounded-full {$repoStatus &&
+											$repoStatus?.locksOurs.length > 0
 												? 'bg-primary-600 dark:bg-primary-600'
 												: 'bg-gray-500 dark:bg-gray-500'}"
 										>

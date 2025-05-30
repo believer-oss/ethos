@@ -48,7 +48,6 @@
 
 	let servers: GameServerResult[] = [];
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
-	let recentCommits = get(builtCommits);
 
 	const getNextPlaytest = (pts: Playtest[]): Nullable<Playtest> => {
 		if (pts.length > 0) {
@@ -76,6 +75,9 @@
 	$: nextPlaytest = getNextPlaytest($playtests);
 
 	const verifyBuild = async (commit: ArtifactEntry) => {
+		if (commit === null || commit.commit === undefined) {
+			return;
+		}
 		verifyingServer = true;
 		try {
 			buildVerified = await invoke('verify_build', { commit: commit.commit });
@@ -107,7 +109,7 @@
 	};
 
 	const handleCommitChange = async (newCommit: Nullable<ArtifactEntry>) => {
-		if (newCommit === null) {
+		if (newCommit === null || newCommit.commit === '') {
 			return;
 		}
 
@@ -124,11 +126,6 @@
 	};
 
 	$: void handleCommitChange(selected);
-
-	$: $builtCommits,
-		() => {
-			recentCommits = get(builtCommits);
-		};
 
 	$: $selectedCommit,
 		() => {
@@ -208,7 +205,7 @@
 				const project = nextPlaytest.metadata.annotations?.['believer.dev/project'];
 				let entry = project
 					? await getBuilds(250, project).then((a) =>
-							a.entries.find((b) => b.commit === nextPlaytest.spec.version)
+							a.entries?.find((b) => b.commit === nextPlaytest.spec.version)
 					  )
 					: null;
 
@@ -302,7 +299,7 @@
 	});
 
 	onMount(() => {
-		if (selected !== null) {
+		if (selected && selected.commit !== '') {
 			void verifyBuild(selected);
 			void updateServers(selected.commit);
 		}
@@ -344,8 +341,8 @@
 							bind:value={selected}
 							required
 						>
-							{#if recentCommits}
-								{#each recentCommits as commit}
+							{#if $builtCommits}
+								{#each $builtCommits as commit}
 									<option value={commit.value}
 										>{commit.name.substring(0, 8)}
 										{$workflowMap.get(commit.name)?.message || ''}</option
@@ -353,7 +350,7 @@
 								{/each}
 							{/if}
 						</Select>
-						{#if recentCommits.length > 0 && selected.commit === recentCommits[0].value.commit}
+						{#if $builtCommits && $builtCommits.length > 0 && selected.commit === $builtCommits[0].value.commit}
 							<span class="text-white">✅ Latest</span>
 						{/if}
 					</Label>

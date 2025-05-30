@@ -78,6 +78,7 @@ export interface AppConfig {
 	recordPlay: boolean;
 	serverUrl: string;
 	oktaConfig: OktaConfig;
+	serverless: boolean;
 	selectedArtifactProject: string;
 	maxClientCacheSizeGb: number;
 	playtestRegion: string;
