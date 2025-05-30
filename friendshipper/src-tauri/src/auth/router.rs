@@ -2,7 +2,7 @@ use anyhow::Result;
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use ethos_core::AWSClient;
+use ethos_core::{AWSClient, AWS_ACCESS_KEY_ID, AWS_ARTIFACT_BUCKET_NAME, AWS_SECRET_ACCESS_KEY};
 use serde::Deserialize;
 use tracing::error;
 
@@ -49,20 +49,35 @@ async fn refresh_aws_credentials<T>(
 where
     T: EngineProvider,
 {
-    let client = FriendshipperClient::new(state.app_config.read().server_url.clone())?;
-    let credentials = client.get_aws_credentials(&params.token).await?;
+    let new_aws_client = if state.app_config.read().serverless {
+        let access_key_id = AWS_ACCESS_KEY_ID;
+        let secret_access_key = AWS_SECRET_ACCESS_KEY;
+        let artifact_bucket_name = AWS_ARTIFACT_BUCKET_NAME;
 
-    // get config
-    let friendshipper_config = client.get_config(&params.token).await?;
+        AWSClient::from_static_creds(
+            access_key_id,
+            secret_access_key,
+            None,
+            None,
+            artifact_bucket_name.to_string(),
+        )
+        .await
+    } else {
+        let client = FriendshipperClient::new(state.app_config.read().server_url.clone())?;
+        let credentials = client.get_aws_credentials(&params.token).await?;
 
-    let new_aws_client = AWSClient::from_static_creds(
-        &credentials.access_key_id,
-        &credentials.secret_access_key,
-        credentials.session_token.as_deref(),
-        credentials.expiration,
-        friendshipper_config.artifact_bucket_name.clone(),
-    )
-    .await;
+        // get config
+        let friendshipper_config = client.get_config(&params.token).await?;
+
+        AWSClient::from_static_creds(
+            &credentials.access_key_id,
+            &credentials.secret_access_key,
+            credentials.session_token.as_deref(),
+            credentials.expiration,
+            friendshipper_config.artifact_bucket_name.clone(),
+        )
+        .await
+    };
 
     let username = state.app_config.read().user_display_name.clone();
     let playtest_region = state.app_config.read().playtest_region.clone();

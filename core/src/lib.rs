@@ -33,6 +33,20 @@ pub static AWS_SSO_START_URL: &str = match option_env!("AWS_SSO_START_URL") {
     None => "",
 };
 
+// These should only be set if there's no friendshipper-server deployed
+pub static AWS_ACCESS_KEY_ID: &str = match option_env!("AWS_ACCESS_KEY_ID") {
+    Some(aws_access_key_id) => aws_access_key_id,
+    None => "",
+};
+pub static AWS_SECRET_ACCESS_KEY: &str = match option_env!("AWS_SECRET_ACCESS_KEY") {
+    Some(aws_secret_access_key) => aws_secret_access_key,
+    None => "",
+};
+pub static AWS_ARTIFACT_BUCKET_NAME: &str = match option_env!("AWS_ARTIFACT_BUCKET_NAME") {
+    Some(aws_artifact_bucket_name) => aws_artifact_bucket_name,
+    None => "",
+};
+
 #[cfg(target_os = "windows")]
 pub const BIN_SUFFIX: &str = ".exe";
 #[cfg(target_os = "linux")]

@@ -53,7 +53,7 @@
 	};
 
 	const handleSyncClient = async (server: GameServerResult) => {
-		const entry = $builds.entries.find((e) => e.commit === server.version);
+		const entry = $builds.entries?.find((e) => e.commit === server.version);
 
 		if (!entry) {
 			return;
@@ -202,7 +202,7 @@
 							placement="bottom"
 							>{logTooltip}
 						</Tooltip>
-						{#if $dynamicConfig.profileDataPath.length > 0}
+						{#if $dynamicConfig.profileDataPath?.length > 0}
 							<Button
 								outline
 								size="sm"
@@ -236,7 +236,7 @@
 							placement="bottom"
 							>Copy launch URL
 						</Tooltip>
-						{#if $dynamicConfig.mobileURLScheme.length > 0}
+						{#if $dynamicConfig.mobileURLScheme?.length > 0}
 							<Button
 								outline
 								size="sm"

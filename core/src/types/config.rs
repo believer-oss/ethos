@@ -181,6 +181,9 @@ pub struct AppConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub okta_config: Option<OktaConfig>,
 
+    #[serde(default)]
+    pub serverless: bool,
+
     #[serde(default, rename = "selectedArtifactProject")]
     pub selected_artifact_project: Option<String>,
 
@@ -237,6 +240,7 @@ impl AppConfig {
             record_play: false,
             server_url: Default::default(),
             okta_config: None,
+            serverless: false,
             selected_artifact_project: None,
             playtest_region: default_playtest_region(),
             otlp_endpoint: None,

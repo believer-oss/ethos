@@ -576,6 +576,9 @@ impl Server {
                             }
                         }
 
+                        // if we've been compiled with AWS credentials, use them
+                        config.serverless = !(ethos_core::AWS_ACCESS_KEY_ID.is_empty());
+
                         // if we have a server_url but no okta_config, fetch the okta config
                         if !config.server_url.is_empty() && config.okta_config.is_none() {
                             info!("Fetching Okta config");
