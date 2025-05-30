@@ -736,7 +736,7 @@ mod tests {
         ]
         .join("\n");
 
-        println!("{:?}", long_shas);
+        println!("{long_shas:?}");
         let sha = find_dll_commit(&list, &long_shas, "test");
         assert_eq!(sha, "9c351d7dacd6c412f55a825d77727761d9c1268b");
     }

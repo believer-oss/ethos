@@ -18,7 +18,7 @@ async fn test_v1_builds() -> Result<(), Box<dyn std::error::Error>> {
 
     let artifact_list = resp.json::<ArtifactList>().await?;
 
-    println!("{:?}", artifact_list);
+    println!("{artifact_list:?}");
     assert_eq!(artifact_list.entries.len(), 4);
     assert_eq!(artifact_list.method_prefix, "file://".into());
     assert_eq!(

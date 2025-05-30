@@ -159,7 +159,7 @@ mod tests {
             Platform::Win64,
         );
         let al = storage.artifact_list(ac).await;
-        al.entries.iter().for_each(|e| println!("Entry: {:?}", e));
+        al.entries.iter().for_each(|e| println!("Entry: {e:?}"));
         assert!(!al.entries.is_empty());
     }
 
@@ -182,7 +182,7 @@ mod tests {
             Platform::Win64,
         );
         let al = storage.artifact_list(ac).await;
-        al.entries.iter().for_each(|e| println!("Entry: {:?}", e));
+        al.entries.iter().for_each(|e| println!("Entry: {e:?}"));
         assert_eq!(al.entries.len(), 0);
     }
 

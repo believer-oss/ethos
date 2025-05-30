@@ -87,7 +87,7 @@ mod tests {
 </testsuites>"#;
 
         let parsed: JunitOutput = JunitOutput::new_from_xml_str(TEST_JUNIT_XML).unwrap();
-        println!("{:?}", parsed);
+        println!("{parsed:?}");
 
         assert_eq!(parsed.testsuites.len(), 4);
 

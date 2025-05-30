@@ -31,7 +31,7 @@ pub async fn router(oidc_endpoint: String) -> Result<Router<ServerConfig>> {
         u.sub.contains('@') // must be an email
     }
 
-    let validation = Validation::new().aud(&[oidc_endpoint.clone()]);
+    let validation = Validation::new().aud(std::slice::from_ref(&oidc_endpoint));
 
     // Set up JWT authorizer
     let jwt_authorizer: Authorizer<User> = JwtAuthorizer::from_oidc(&oidc_endpoint)
