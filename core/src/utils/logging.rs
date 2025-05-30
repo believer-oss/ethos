@@ -83,7 +83,7 @@ pub fn init(
         fs::create_dir_all(&log_path)?;
     }
     let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
-        .filename_prefix(format!("{}-{}", app, prefix))
+        .filename_prefix(format!("{app}-{prefix}"))
         .filename_suffix("log")
         .max_log_files(12)
         .rotation(tracing_appender::rolling::Rotation::HOURLY)

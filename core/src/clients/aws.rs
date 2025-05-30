@@ -363,7 +363,7 @@ impl AWSClient {
         // v1 uses the full 40-char sha and no linux-server- prepend.
         let tag = match commit.len() {
             40 => commit,
-            _ => format!("linux-server-{}", commit),
+            _ => format!("linux-server-{commit}"),
         };
 
         let img = client

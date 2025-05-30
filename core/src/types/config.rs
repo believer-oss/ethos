@@ -334,7 +334,7 @@ pub struct ConfigValidationError(pub String);
 
 impl IntoResponse for ConfigValidationError {
     fn into_response(self) -> Response {
-        (StatusCode::BAD_REQUEST, format!("{}", self)).into_response()
+        (StatusCode::BAD_REQUEST, format!("{self}")).into_response()
     }
 }
 

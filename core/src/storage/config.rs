@@ -44,7 +44,7 @@ pub enum ArtifactKind {
 
 impl Display for ArtifactKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -57,7 +57,7 @@ impl ArtifactKind {
             "editor-symbols" => ArtifactKind::EditorSymbols,
             "engine" => ArtifactKind::Engine,
             "engine-symbols" => ArtifactKind::EngineSymbols,
-            _ => panic!("Unknown artifact kind: {}", kind),
+            _ => panic!("Unknown artifact kind: {kind}"),
         }
     }
 
@@ -85,7 +85,7 @@ pub enum ArtifactBuildConfig {
 
 impl Display for ArtifactBuildConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -97,7 +97,7 @@ impl ArtifactBuildConfig {
             "development" => ArtifactBuildConfig::Development,
             "shipping" => ArtifactBuildConfig::Shipping,
             "test" => ArtifactBuildConfig::Test,
-            _ => panic!("Unknown artifact kind config: {}", config),
+            _ => panic!("Unknown artifact kind config: {config}"),
         }
     }
 
@@ -125,7 +125,7 @@ pub enum Platform {
 
 impl Display for Platform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -138,7 +138,7 @@ impl Platform {
             "android" => Platform::Android,
             "linux" => Platform::Linux,
             "linux-arm64" => Platform::LinuxArm64,
-            _ => panic!("Unknown platform: {}", platform),
+            _ => panic!("Unknown platform: {platform}"),
         }
     }
 

@@ -25,14 +25,14 @@ pub async fn get_latest_github_release(
             }
 
             // if release doesn't match the format app_name-vX.Y.Z, skip it
-            if !release.tag_name.starts_with(&format!("{}-v", app_name)) {
+            if !release.tag_name.starts_with(&format!("{app_name}-v")) {
                 return None;
             }
 
             // get semver
             let version = release
                 .tag_name
-                .strip_prefix(&format!("{}-v", app_name))
+                .strip_prefix(&format!("{app_name}-v"))
                 .unwrap();
             if semver::Version::parse(version).is_err() {
                 return None;
