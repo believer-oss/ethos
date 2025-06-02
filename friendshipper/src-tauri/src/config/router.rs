@@ -218,10 +218,9 @@ where
                         state.repo_path = current_repo_path;
                     }
 
-                    return Err(anyhow!(ConfigValidationError(format!(
-                        "Error cloning repo: {e}"
-                    )))
-                    .into());
+                    return Err(
+                        anyhow!(ConfigValidationError(format!("Error cloning repo: {e}"))).into(),
+                    );
                 }
             }
 
