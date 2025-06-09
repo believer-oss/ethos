@@ -107,7 +107,7 @@ export const workflowMap = derived(workflows, ($workflows) => {
 export const builtCommits = derived(
 	builds,
 	($builds) =>
-		$builds.entries.map((v) => ({
+		$builds.entries?.map((v) => ({
 			value: v,
 			name: v.commit
 		})),
