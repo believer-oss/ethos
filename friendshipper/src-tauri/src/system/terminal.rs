@@ -18,10 +18,10 @@ where
         .arg("powershell")
         .arg("-NoExit")
         .arg("-Command")
-        .arg(format!("cd {}", path))
+        .arg(format!("cd {path}"))
         .spawn()
     {
-        error!("Error opening terminal to path: {:?}", e);
+        error!("Error opening terminal to path: {e:?}");
     }
 }
 
