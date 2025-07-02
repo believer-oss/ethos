@@ -400,6 +400,12 @@ pub struct RepoConfig {
 
     #[serde(default, rename = "editorUrlScheme")]
     pub editor_url_scheme: Option<String>,
+
+    #[serde(default, rename = "buildsEnabled")]
+    pub builds_enabled: bool,
+
+    #[serde(default, rename = "serversEnabled")]
+    pub servers_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -434,6 +440,8 @@ impl Default for RepoConfig {
             ],
             playtest_profiles: Some(vec![]),
             editor_url_scheme: None,
+            builds_enabled: false,
+            servers_enabled: false,
         }
     }
 }

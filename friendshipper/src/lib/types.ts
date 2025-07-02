@@ -105,6 +105,8 @@ export interface RepoConfig {
 	useConventionalCommits: boolean;
 	conventionalCommitsAllowedTypes: string[];
 	playtestProfiles: PlaytestProfile[];
+	buildsEnabled: boolean;
+	serversEnabled: boolean;
 }
 
 // Kubernetes API types
