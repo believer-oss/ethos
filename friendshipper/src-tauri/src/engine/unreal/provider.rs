@@ -21,6 +21,7 @@ use tracing::warn;
 #[derive(Clone)]
 pub struct UnrealEngineProvider {
     pub repo_path: PathBuf,
+    pub engine_path: PathBuf,
     pub uproject_path: PathBuf,
     pub ofpa_cache: OFPANameCacheRef,
     pub can_handle_requests: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -33,6 +34,7 @@ impl EngineProvider for UnrealEngineProvider {
     fn new_from_config(app_config: AppConfig, repo_config: RepoConfig) -> Self {
         Self {
             repo_path: PathBuf::from(app_config.repo_path),
+            engine_path: PathBuf::from(app_config.engine_prebuilt_path),
             uproject_path: PathBuf::from(repo_config.uproject_path),
             ofpa_cache: std::sync::Arc::new(parking_lot::RwLock::new(OFPANameCache::new())),
             can_handle_requests: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -132,7 +134,7 @@ impl EngineProvider for UnrealEngineProvider {
     }
 
     async fn open_project(&self, allow_multiple: AllowMultipleProcesses) -> Result<()> {
-        let path_absolute: PathBuf = self.repo_path.join(self.uproject_path.clone());
+        let uproject_path: PathBuf = self.repo_path.join(self.uproject_path.clone());
 
         let mut can_launch_editor = allow_multiple == AllowMultipleProcesses::True;
         if !can_launch_editor {
@@ -140,7 +142,40 @@ impl EngineProvider for UnrealEngineProvider {
         }
 
         if can_launch_editor {
-            open::that(path_absolute)?
+            #[cfg(target_os = "windows")]
+            let editor_exe = self
+                .engine_path
+                .join("Engine")
+                .join("Binaries")
+                .join("Win64")
+                .join("UnrealEditor.exe");
+
+            #[cfg(target_os = "linux")]
+            let editor_exe = self
+                .engine_path
+                .join("Engine")
+                .join("Binaries")
+                .join("Linux")
+                .join("UnrealEditor");
+
+            #[cfg(target_os = "macos")]
+            let editor_exe = self
+                .engine_path
+                .join("Engine")
+                .join("Binaries")
+                .join("Mac")
+                .join("UnrealEditor.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("UnrealEditor");
+
+            if !editor_exe.exists() {
+                bail!("Could not find UnrealEditor executable at {:?}", editor_exe);
+            }
+
+            tokio::process::Command::new(editor_exe)
+                .arg(uproject_path)
+                .spawn()?;
         } else {
             return Err(anyhow!(
                 "Attempted to open uproject - Unreal Editor is already running."

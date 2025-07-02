@@ -232,181 +232,182 @@ impl LockOp {
         }
 
         let repo_path = self.git_client.repo_path.to_str().unwrap().to_string();
-        let lfs_config = RepoConfig::read_lfs_config(&repo_path)?;
-
-        let server_url = match lfs_config.lfs.url {
-            Some(url) => url,
-            None => bail!(".lfsconfig is not configured with a url"),
-        };
-
-        let endpoint = match self.op {
-            LockOperation::Lock => "locks/batch/lock",
-            LockOperation::Unlock => "locks/batch/unlock",
-        };
-
-        let client = reqwest::ClientBuilder::new()
-            .connection_verbose(true)
-            .build()
-            .unwrap();
-        let mut unique_paths = {
-            let mut unique = self.paths.clone();
-            unique.sort();
-            unique.dedup();
-            unique
-        };
-
-        // if we're locking, filter out files that are already in locks.ours, otherwise
-        // filter out files that are not
-        let repo_status = self.repo_status.read().clone();
-        unique_paths = unique_paths
-            .into_iter()
-            .filter(|path| {
-                if self.op == LockOperation::Lock {
-                    !repo_status.locks_ours.iter().any(|lock| lock.path == *path)
-                } else if !self.force {
-                    repo_status.locks_ours.iter().any(|lock| lock.path == *path)
-                } else {
-                    true
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let span = tracing::info_span!("lfs_batch_request");
-        let request_url = format!("{}/{}", server_url.clone(), endpoint);
-        let response = async move {
-            client
-                .post(request_url)
-                .bearer_auth(&self.github_pat)
-                .json(&LockRequest {
-                    paths: unique_paths,
-                    force: self.force,
-                })
-                .send()
-                .await
-        }
-        .instrument(span)
-        .await?;
-
-        let status = response.status();
-        if status.is_success() {
-            let lock_response = response.json::<LockResponse>().await?;
-
-            // update file readonly flag for requested paths as appropriate
-            // See the GIT_LFS_SET_LOCKABLE_READONLY section at https://www.mankier.com/5/git-lfs-config#List_of_Options-Other_settings
-            let mut should_set_read_flag = false; // this flag defaults to false if it is left unspecified
-
-            if let Ok(env_str) = env::var("GIT_LFS_SET_LOCKABLE_READONLY") {
-                if let Ok(env_bool) = git::parse_bool_string(&env_str) {
-                    should_set_read_flag = env_bool;
-                }
-            }
-
-            for failure in lock_response.batch.failures.iter() {
-                warn!("Failed to lock path {}: {}", failure.path, failure.reason);
-            }
-
-            // update repo status to ensure any status updates sent to the engine have the latest lock info
-            {
-                let mut repo_status = self.repo_status.write();
-                if self.op == LockOperation::Lock {
-                    let timestamp: String = chrono::Utc::now().to_rfc3339();
-                    for lock in lock_response.batch.paths.iter() {
-                        repo_status.locks_ours.push(Lock {
-                            id: String::new(),
-                            path: lock.clone(),
-                            display_name: Some(String::new()),
-                            locked_at: timestamp.clone(),
-                            owner: Some(OwnerInfo {
-                                name: self.github_username.clone(),
-                            }),
-                        });
-                    }
-                } else {
-                    let filter_func = |lock: &Lock| !lock_response.batch.paths.contains(&lock.path);
-
-                    repo_status.locks_ours.retain(filter_func);
-
-                    if self.force {
-                        repo_status.locks_theirs.retain(filter_func)
-                    }
-                }
-            }
-
-            // if we're honoring the GIT_LFS_SET_LOCKABLE_READONLY flag, we set the readonly flag for the locked files
-            // if NOT, we ensure the readonly flag is not set
-            let set_readonly = match should_set_read_flag {
-                true => self.op != LockOperation::Lock,
-                false => false,
+        if let Ok(lfs_config) = RepoConfig::read_lfs_config(&repo_path) {
+            let server_url = match lfs_config.lfs.url {
+                Some(url) => url,
+                None => bail!(".lfsconfig is not configured with a url"),
             };
-            let operation_str = if set_readonly { "set" } else { "clear" };
 
-            let span = tracing::info_span!("set_readonly").entered();
-            for path in &self.paths {
-                if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
-                    let mut absolute_path = PathBuf::from(&repo_path);
-                    absolute_path.push(path);
+            let endpoint = match self.op {
+                LockOperation::Lock => "locks/batch/lock",
+                LockOperation::Unlock => "locks/batch/unlock",
+            };
 
-                    match absolute_path.try_exists() {
-                        Ok(exists) => {
-                            if exists {
-                                // canonicalize path (this cleans up the path and ensures existence)
-                                match absolute_path.canonicalize() {
-                                    Ok(canonical_path) => {
-                                        // set readonly flag for the canonical path (not the original path
-                                        match std::fs::metadata(&canonical_path) {
-                                            Ok(metadata) => {
-                                                let mut perms = metadata.permissions().clone();
-                                                if perms.readonly() != set_readonly {
-                                                    perms.set_readonly(set_readonly);
+            let client = reqwest::ClientBuilder::new()
+                .connection_verbose(true)
+                .build()
+                .unwrap();
+            let mut unique_paths = {
+                let mut unique = self.paths.clone();
+                unique.sort();
+                unique.dedup();
+                unique
+            };
 
-                                                    if let Err(e) = std::fs::set_permissions(
-                                                        &canonical_path,
-                                                        perms,
-                                                    ) {
-                                                        error!(
+            // if we're locking, filter out files that are already in locks.ours, otherwise
+            // filter out files that are not
+            let repo_status = self.repo_status.read().clone();
+            unique_paths = unique_paths
+                .into_iter()
+                .filter(|path| {
+                    if self.op == LockOperation::Lock {
+                        !repo_status.locks_ours.iter().any(|lock| lock.path == *path)
+                    } else if !self.force {
+                        repo_status.locks_ours.iter().any(|lock| lock.path == *path)
+                    } else {
+                        true
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let span = tracing::info_span!("lfs_batch_request");
+            let request_url = format!("{}/{}", server_url.clone(), endpoint);
+            let response = async move {
+                client
+                    .post(request_url)
+                    .bearer_auth(&self.github_pat)
+                    .json(&LockRequest {
+                        paths: unique_paths,
+                        force: self.force,
+                    })
+                    .send()
+                    .await
+            }
+            .instrument(span)
+            .await?;
+
+            let status = response.status();
+            if status.is_success() {
+                let lock_response = response.json::<LockResponse>().await?;
+
+                // update file readonly flag for requested paths as appropriate
+                // See the GIT_LFS_SET_LOCKABLE_READONLY section at https://www.mankier.com/5/git-lfs-config#List_of_Options-Other_settings
+                let mut should_set_read_flag = false; // this flag defaults to false if it is left unspecified
+
+                if let Ok(env_str) = env::var("GIT_LFS_SET_LOCKABLE_READONLY") {
+                    if let Ok(env_bool) = git::parse_bool_string(&env_str) {
+                        should_set_read_flag = env_bool;
+                    }
+                }
+
+                for failure in lock_response.batch.failures.iter() {
+                    warn!("Failed to lock path {}: {}", failure.path, failure.reason);
+                }
+
+                // update repo status to ensure any status updates sent to the engine have the latest lock info
+                {
+                    let mut repo_status = self.repo_status.write();
+                    if self.op == LockOperation::Lock {
+                        let timestamp: String = chrono::Utc::now().to_rfc3339();
+                        for lock in lock_response.batch.paths.iter() {
+                            repo_status.locks_ours.push(Lock {
+                                id: String::new(),
+                                path: lock.clone(),
+                                display_name: Some(String::new()),
+                                locked_at: timestamp.clone(),
+                                owner: Some(OwnerInfo {
+                                    name: self.github_username.clone(),
+                                }),
+                            });
+                        }
+                    } else {
+                        let filter_func =
+                            |lock: &Lock| !lock_response.batch.paths.contains(&lock.path);
+
+                        repo_status.locks_ours.retain(filter_func);
+
+                        if self.force {
+                            repo_status.locks_theirs.retain(filter_func)
+                        }
+                    }
+                }
+
+                // if we're honoring the GIT_LFS_SET_LOCKABLE_READONLY flag, we set the readonly flag for the locked files
+                // if NOT, we ensure the readonly flag is not set
+                let set_readonly = match should_set_read_flag {
+                    true => self.op != LockOperation::Lock,
+                    false => false,
+                };
+                let operation_str = if set_readonly { "set" } else { "clear" };
+
+                let span = tracing::info_span!("set_readonly").entered();
+                for path in &self.paths {
+                    if !lock_response.batch.failures.iter().any(|x| x.path == *path) {
+                        let mut absolute_path = PathBuf::from(&repo_path);
+                        absolute_path.push(path);
+
+                        match absolute_path.try_exists() {
+                            Ok(exists) => {
+                                if exists {
+                                    // canonicalize path (this cleans up the path and ensures existence)
+                                    match absolute_path.canonicalize() {
+                                        Ok(canonical_path) => {
+                                            // set readonly flag for the canonical path (not the original path
+                                            match std::fs::metadata(&canonical_path) {
+                                                Ok(metadata) => {
+                                                    let mut perms = metadata.permissions().clone();
+                                                    if perms.readonly() != set_readonly {
+                                                        perms.set_readonly(set_readonly);
+
+                                                        if let Err(e) = std::fs::set_permissions(
+                                                            &canonical_path,
+                                                            perms,
+                                                        ) {
+                                                            error!(
                                                     "Failed to {} readonly flag for file {:?}: {}",
                                                     operation_str, &canonical_path, e
                                                 );
+                                                        }
                                                     }
                                                 }
+                                                Err(e) => error!(
+                                                    "Failed to {} readonly flag for file {:?}: {}",
+                                                    operation_str, &canonical_path, e
+                                                ),
                                             }
-                                            Err(e) => error!(
-                                                "Failed to {} readonly flag for file {:?}: {}",
-                                                operation_str, &canonical_path, e
-                                            ),
                                         }
-                                    }
-                                    Err(e) => error!(
+                                        Err(e) => error!(
                                         "Failed to canonicalize path {:?} for readonly flag: {}",
                                         &absolute_path, e
                                     ),
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            error!(
-                                "Failed to check existence of path {:?} for readonly flag: {}",
-                                &absolute_path, e
-                            );
+                            Err(e) => {
+                                error!(
+                                    "Failed to check existence of path {:?} for readonly flag: {}",
+                                    &absolute_path, e
+                                );
+                            }
                         }
                     }
                 }
-            }
-            span.exit();
+                span.exit();
 
-            if let Some(response_tx) = &self.response_tx {
-                response_tx.send(lock_response.clone()).await?;
+                if let Some(response_tx) = &self.response_tx {
+                    response_tx.send(lock_response.clone()).await?;
+                }
+                return Ok(lock_response);
+            } else if status == StatusCode::NOT_FOUND {
+                info!(
+                    "Batch lock API at {} unavailable, falling back to git lfs",
+                    server_url
+                );
+            } else {
+                let body = response.text().await?;
+                error!("Failed lock request at {} with error {}", server_url, body);
+                bail!("Failed lock request. Check log for details.");
             }
-            return Ok(lock_response);
-        } else if status == StatusCode::NOT_FOUND {
-            info!(
-                "Batch lock API at {} unavailable, falling back to git lfs",
-                server_url
-            );
-        } else {
-            let body = response.text().await?;
-            error!("Failed lock request at {} with error {}", server_url, body);
-            bail!("Failed lock request. Check log for details.");
         }
 
         // try falling back to git lfs if the batch endpoint isn't available for our LFS server

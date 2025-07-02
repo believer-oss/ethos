@@ -542,34 +542,38 @@
 		const refresh = async () => {
 			if (!$appConfig.initialized || $onboardingInProgress || $showPreferences) return;
 
-			const buildsPromise = getBuilds(250);
-			const playtestsPromise = getPlaytests();
-
 			loading = true;
 
 			const selected = get(selectedCommit);
+			if ($repoConfig?.buildsEnabled) {
+				const buildsPromise = getBuilds(250);
 
-			// There's some backend ID nonsense happening - when we refresh the builds, even if there are a bunch
-			// of builds in the list that are the same, they're "different" from Svelte's perspective, so we need
-			// to make sure our selected commit is still valid.
-			try {
-				const updatedBuilds = await buildsPromise;
-				if (selected) {
-					const found = updatedBuilds.entries?.find((build) => build.commit === selected.commit);
-					if (found) {
-						selectedCommit.set(found);
+				// There's some backend ID nonsense happening - when we refresh the builds, even if there are a bunch
+				// of builds in the list that are the same, they're "different" from Svelte's perspective, so we need
+				// to make sure our selected commit is still valid.
+				try {
+					const updatedBuilds = await buildsPromise;
+					if (selected) {
+						const found = updatedBuilds.entries.find((build) => build.commit === selected.commit);
+						if (found) {
+							selectedCommit.set(found);
+						}
 					}
-				}
 
-				builds.set(updatedBuilds);
-			} catch (e) {
-				await emit('error', e);
+					builds.set(updatedBuilds);
+				} catch (e) {
+					await emit('error', e);
+				}
 			}
 
-			try {
-				playtests.set(await playtestsPromise);
-			} catch (e) {
-				await handleError(e);
+			if ($repoConfig?.serversEnabled) {
+				const playtestsPromise = getPlaytests();
+
+				try {
+					playtests.set(await playtestsPromise);
+				} catch (e) {
+					await handleError(e);
+				}
 			}
 
 			if ($appConfig.repoPath !== '') {
@@ -693,7 +697,7 @@
 			void goto('/');
 		} else if (payload === 'home') {
 			void goto('/');
-		} else if (payload === 'playtests') {
+		} else if (payload === 'playtests' && $repoConfig?.serversEnabled) {
 			void goto('/playtests');
 		} else if (payload.startsWith('builds/')) {
 			const [, group, commitSha, name] = payload.split('/');
@@ -829,59 +833,63 @@
 								/>
 							</svelte:fragment>
 						</SidebarItem>
-						<SidebarItem
-							class="group/item"
-							label="Playtests"
-							href="/playtests"
-							active={activeUrl === '/playtests'}
-							{spanClass}
-						>
-							<svelte:fragment slot="icon">
-								<UserSolid
-									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-								/>
-							</svelte:fragment>
-						</SidebarItem>
-						<SidebarItem
-							class="group/item"
-							label="Servers"
-							href="/servers"
-							active={activeUrl === '/servers'}
-							{spanClass}
-						>
-							<svelte:fragment slot="icon">
-								<ServerOutline
-									class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-								/>
-							</svelte:fragment>
-						</SidebarItem>
-
-						{#if loadingBuilds}
-							<Button
-								class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
-								disabled
-							>
-								<Spinner class="w-5 h-5 border-none" />
-								<span class="font-normal text-base text-gray-400 dark:text-gray-300">Builds</span>
-							</Button>
-						{:else}
+						{#if $repoConfig?.serversEnabled}
 							<SidebarItem
 								class="group/item"
-								label="Builds"
-								href="/builds"
-								active={activeUrl === '/builds'}
+								label="Playtests"
+								href="/playtests"
+								active={activeUrl === '/playtests'}
 								{spanClass}
 							>
 								<svelte:fragment slot="icon">
-									{#if loadingBuilds}
-										<Spinner class="w-5 h-5 border-none" />
-									{:else}
-										<BuildingSolid
-											class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
-										/>
-									{/if}
+									<UserSolid
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+									/>
 								</svelte:fragment>
 							</SidebarItem>
+							<SidebarItem
+								class="group/item"
+								label="Servers"
+								href="/servers"
+								active={activeUrl === '/servers'}
+								{spanClass}
+							>
+								<svelte:fragment slot="icon">
+									<ServerOutline
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+									/>
+								</svelte:fragment>
+							</SidebarItem>
+						{/if}
+
+						{#if $repoConfig?.buildsEnabled}
+							{#if loadingBuilds}
+								<Button
+									class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
+									disabled
+								>
+									<Spinner class="w-5 h-5 border-none" />
+									<span class="font-normal text-base text-gray-400 dark:text-gray-300">Builds</span>
+								</Button>
+							{:else}
+								<SidebarItem
+									class="group/item"
+									label="Builds"
+									href="/builds"
+									active={activeUrl === '/builds'}
+									{spanClass}
+								>
+									<svelte:fragment slot="icon">
+										{#if loadingBuilds}
+											<Spinner class="w-5 h-5 border-none" />
+										{:else}
+											<BuildingSolid
+												class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+											/>
+										{/if}
+									</svelte:fragment>
+								</SidebarItem>
+							{/if}
 						{/if}
 						{#if $appConfig.repoPath !== ''}
 							<SidebarDropdownWrapper
