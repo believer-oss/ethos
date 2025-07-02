@@ -145,8 +145,7 @@ pub fn check_unreal_file_association() -> anyhow::Result<(bool, Vec<String>)> {
                 let value: String = uproject_key.get_value("").unwrap();
                 if value != "Unreal.ProjectFile" {
                     messages.push(format!(
-                        ".uproject key is set to {} instead of Unreal.ProjectFile",
-                        value
+                        ".uproject key is set to {value} instead of Unreal.ProjectFile"
                     ));
                     result = false;
                 }
