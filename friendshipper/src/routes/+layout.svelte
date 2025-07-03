@@ -553,7 +553,7 @@
 			loading = true;
 
 			const selected = get(selectedCommit);
-			if ($repoConfig?.buildsEnabled) {
+			if ($repoConfig == null || $repoConfig?.buildsEnabled) {
 				const buildsPromise = getBuilds(250);
 
 				// There's some backend ID nonsense happening - when we refresh the builds, even if there are a bunch
@@ -574,7 +574,7 @@
 				}
 			}
 
-			if ($repoConfig?.serversEnabled) {
+			if ($repoConfig == null || $repoConfig.serversEnabled) {
 				const playtestsPromise = getPlaytests();
 
 				try {
@@ -705,7 +705,7 @@
 			void goto('/');
 		} else if (payload === 'home') {
 			void goto('/');
-		} else if (payload === 'playtests' && $repoConfig?.serversEnabled) {
+		} else if (payload === 'playtests' && ($repoConfig == null || $repoConfig.serversEnabled)) {
 			void goto('/playtests');
 		} else if (payload.startsWith('builds/')) {
 			const [, group, commitSha, name] = payload.split('/');
@@ -849,7 +849,7 @@
 								/>
 							</svelte:fragment>
 						</SidebarItem>
-						{#if $repoConfig?.serversEnabled}
+						{#if $repoConfig == null || $repoConfig.serversEnabled}
 							<SidebarItem
 								class="group/item"
 								label="Playtests"
@@ -878,7 +878,7 @@
 							</SidebarItem>
 						{/if}
 
-						{#if $repoConfig?.buildsEnabled}
+						{#if $repoConfig == null || $repoConfig.buildsEnabled}
 							{#if loadingBuilds}
 								<Button
 									class="flex gap-3 w-full p-2 justify-start hover:bg-secondary-700 dark:hover:bg-space-900 bg-secondary-700 dark:bg-space-950"
