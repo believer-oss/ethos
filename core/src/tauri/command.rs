@@ -7,9 +7,11 @@ use crate::types::repo::{
     CloneRequest, ConfigureUserRequest, LockRequest, PullResponse, RebaseStatusResponse,
     RevertFilesRequest,
 };
+use futures::TryFutureExt;
 
 use tauri::process::current_binary;
 use tauri::Env;
+use tokio::fs;
 use tracing::{error, info, Instrument};
 
 pub async fn check_error(code: reqwest::StatusCode, body: String) -> Option<TauriError> {
@@ -522,15 +524,12 @@ pub async fn get_app_config(state: tauri::State<'_, State>) -> Result<AppConfig,
 
 #[tauri::command]
 pub async fn reset_config(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/config/reset", state.server_url))
-        .send()
+    fs::remove_file(state.config_path.clone())
+        .map_err(|e| TauriError {
+            message: e.to_string(),
+            status_code: 500, // Internal Server Error as a default
+        })
         .await?;
-
-    if let Some(err) = check_error(res.status(), res.text().await?).await {
-        return Err(err);
-    }
 
     restart(state).await?;
 

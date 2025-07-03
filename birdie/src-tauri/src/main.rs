@@ -194,6 +194,7 @@ fn main() -> Result<(), CoreError> {
             .plugin(tauri_plugin_process::init())
             .manage(State {
                 server_url: server_url.clone(),
+                config_path: config_file.clone(),
                 log_path: log_path.clone(),
                 client,
                 shutdown_tx: shutdown_tx.clone(),

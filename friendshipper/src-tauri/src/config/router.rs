@@ -2,7 +2,6 @@ use std::{fs, path::PathBuf};
 
 use anyhow::anyhow;
 use axum::extract::Query;
-use axum::routing::post;
 use axum::{extract::State, routing::get, Json, Router};
 use ethos_core::AWSClient;
 use serde::Deserialize;
@@ -31,7 +30,6 @@ where
         .route("/repo", get(get_repo_config))
         .route("/dynamic", get(get_dynamic_config))
         .route("/projects", get(get_project_config))
-        .route("/reset", post(reset_config))
 }
 
 async fn get_config<T>(State(state): State<AppState<T>>) -> Result<Json<AppConfig>, CoreError>
@@ -282,14 +280,6 @@ where
     Ok("ok".to_string())
 }
 
-async fn reset_config<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
-where
-    T: EngineProvider,
-{
-    // delete file at config path
-    fs::remove_file(state.config_file).map_err(|e| CoreError::Internal(anyhow!(e)))
-}
-
 fn save_config_to_file<T>(state: AppState<T>, log_msg: &str) -> Result<(), CoreError>
 where
     T: EngineProvider,
@@ -297,8 +287,7 @@ where
     let file = fs::OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(&state.config_file)
-        .unwrap();
+        .open(&state.config_file)?;
 
     let mut config = state.app_config.read().clone();
     let repo_config = config.initialize_repo_config()?;
@@ -311,7 +300,7 @@ where
         *lock = repo_config;
     }
 
-    serde_yaml::to_writer(file, &config).unwrap();
+    serde_yaml::to_writer(file, &config)?;
 
     info!("{}", log_msg);
 
