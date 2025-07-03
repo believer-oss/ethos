@@ -263,7 +263,7 @@ impl AWSClient {
 
     // Ported from: https://github.com/awslabs/aws-sdk-rust/issues/980#issuecomment-1859340980
     #[instrument(skip_all)]
-    pub async fn generate_k8s_token<'a>(&self, cluster_name: &str, region: &str) -> Result<String> {
+    pub async fn generate_k8s_token(&self, cluster_name: &str, region: &str) -> Result<String> {
         let credentials = self.get_credentials().await;
         let expiration = credentials.expiry();
         let identity = Identity::new(credentials.clone(), expiration);
