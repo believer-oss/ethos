@@ -137,6 +137,7 @@ fn main() -> Result<(), CoreError> {
             .manage(State {
                 server_url: server_url.clone(),
                 log_path: log_path.clone(),
+                config_path: config_file.clone(),
                 client: client.clone(),
                 shutdown_tx: shutdown_tx.clone(),
             })

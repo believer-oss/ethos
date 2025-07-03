@@ -6,17 +6,10 @@
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { updateAppConfig } from '$lib/config';
-	import { appConfig, onboardingInProgress, repoStatus } from '$lib/stores';
+	import { appConfig, onboardingInProgress } from '$lib/stores';
 	import UnrealEngineLogo from '$lib/icons/UnrealEngineLogo.svelte';
 	import { configureGitUser, installGit, restart } from '$lib/system';
-	import {
-		cloneRepo,
-		forceDownloadDlls,
-		forceDownloadEngine,
-		getRepoStatus,
-		SkipDllCheck,
-		AllowOfflineCommunication
-	} from '$lib/repo';
+	import { cloneRepo } from '$lib/repo';
 	import type { AppConfig } from '$lib/types';
 
 	enum Page {
@@ -154,19 +147,6 @@
 			await handleUpdateAppConfig();
 
 			await cloneRepo({ url: repoUrl, path: cloneLocation });
-
-			// force update of repo status
-			message = 'Updating repo status...';
-			$repoStatus = await getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False);
-
-			// run initial fetch of DLLs - it may be worth moving this and the engine fetch
-			// to the clone endpoint on the backend
-			message = 'Performing initial fetch of DLLs...';
-			await forceDownloadDlls();
-
-			// run initial fetch of Engine binaries
-			message = 'Performing initial fetch of Engine binaries...';
-			await forceDownloadEngine();
 		} catch (e) {
 			const error = e as Error;
 			errorMessage = String(error.message);
@@ -206,6 +186,7 @@
 
 		if (currentPage === Page.CloneStatus) {
 			await initiateRepoClone();
+			await restart();
 		}
 	};
 
@@ -222,12 +203,6 @@
 			await emit('error', e);
 		}
 		showModal = false;
-
-		// if we're a contributor, we should restart to ensure all of our
-		// file watchers and other repo components initialize correctly
-		if (!isPlaytesterOnly) {
-			await restart();
-		}
 	};
 
 	const openCloneLocation = async () => {

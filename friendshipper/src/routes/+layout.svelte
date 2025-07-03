@@ -12,7 +12,8 @@
 		SidebarGroup,
 		SidebarItem,
 		SidebarWrapper,
-		Spinner
+		Spinner,
+		Tooltip
 	} from 'flowbite-svelte';
 	import {
 		BuildingSolid,
@@ -40,6 +41,7 @@
 	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 	import { jwtDecode } from 'jwt-decode';
 	import { relaunch } from '@tauri-apps/plugin-process';
+	import { openSystemLogsFolder, shutdownServer } from '$lib/system';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import {
@@ -75,9 +77,15 @@
 		AllowOfflineCommunication,
 		loadChangeSet
 	} from '$lib/repo';
-	import { openSystemLogsFolder, shutdownServer } from '$lib/system';
+
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
-	import { getAppConfig, getDynamicConfig, getProjectConfig, getRepoConfig } from '$lib/config';
+	import {
+		getAppConfig,
+		getDynamicConfig,
+		getProjectConfig,
+		getRepoConfig,
+		resetConfig
+	} from '$lib/config';
 	import { handleError } from '$lib/utils';
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
@@ -98,7 +106,7 @@
 	let quickLaunching = false;
 	let quickLaunchServerName = '';
 
-	// Welcome Modal
+	// Welcome modal
 	let showWelcomeModal = false;
 
 	// Preferences Modal
@@ -773,7 +781,15 @@
 						<code class="text-sm text-gray-300 dark:text-gray-300 m-0">{gitStartupMessage}</code>
 					</div>
 				{/if}
-				<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
+				<div class="flex gap-2">
+					<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
+					<Button color="red" on:click={resetConfig}>Reset Config & Restart</Button>
+					<Tooltip
+						class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+						placement="bottom"
+						>Restart the app and repeat the onboarding flow
+					</Tooltip>
+				</div>
 			</div>
 		{/if}
 	{:else}
