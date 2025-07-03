@@ -682,35 +682,6 @@ where
 
         Ok(())
     }
-
-    #[instrument(skip(self))]
-    async fn recover(
-        &self,
-        stash_path: PathBuf,
-        target_branch: &str,
-        stashed_files: Vec<String>,
-        deleted_files: Vec<String>,
-    ) -> anyhow::Result<()> {
-        self.git_client.hard_reset(target_branch).await?;
-
-        // for any stashed files, copy them back
-        for file in stashed_files {
-            let src = stash_path.join(&file);
-            let dest = self.git_client.repo_path.join(&file);
-
-            std::fs::copy(src, dest)?;
-        }
-
-        // for any deleted files, we should ensure they are deleted
-        for file in deleted_files {
-            let path = self.git_client.repo_path.join(file);
-            if path.exists() {
-                std::fs::remove_file(path)?;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[instrument(skip(state))]
