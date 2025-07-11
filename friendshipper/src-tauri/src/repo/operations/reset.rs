@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use axum::extract::{Path, State};
 use ethos_core::storage::config::Project;
@@ -94,14 +94,15 @@ where
         status_op.execute().await?;
 
         // download dlls
-        let artifact_prefix = match self.app_config.read().selected_artifact_project.clone() {
-            Some(project) => project,
-            None => {
-                return Err(CoreError::Input(anyhow!(
-                    "No selected artifact project found in config."
-                )));
-            }
-        };
+        let project = self
+            .app_config
+            .read()
+            .selected_artifact_project
+            .clone()
+            .context("No selected artifact project found in config.")?
+            .as_str()
+            .into();
+
         let uproject = UProject::load(&uproject_path)?;
         let engine_path = self.app_config.read().get_engine_path(&uproject);
         match RepoConfig::get_project_name(&uproject_path_relative) {
@@ -115,7 +116,7 @@ where
                     longtail: self.longtail.clone(),
                     tx: self.longtail_tx.clone(),
                     aws_client: self.aws_client.clone(),
-                    artifact_prefix,
+                    project,
                     engine: self.engine.clone(),
                     engine_path: engine_path.clone(),
                 };

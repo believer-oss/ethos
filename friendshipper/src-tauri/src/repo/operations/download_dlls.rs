@@ -18,6 +18,7 @@ use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::longtail;
 use ethos_core::msg::LongtailMsg;
+use ethos_core::storage::config::Project;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::storage::{ArtifactBuildConfig, ArtifactConfig, ArtifactKind, Platform};
 use ethos_core::types::config::RepoConfig;
@@ -42,7 +43,7 @@ pub struct DownloadDllsOp<T> {
     pub longtail: longtail::Longtail,
     pub tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
-    pub artifact_prefix: String,
+    pub project: Project,
     pub engine: T,
     pub engine_path: PathBuf,
 }
@@ -60,7 +61,7 @@ where
             project_name = %self.project_name,
             dll_commit = %self.dll_commit,
             download_symbols = %self.download_symbols,
-            artifact_prefix = %self.artifact_prefix
+            project = %self.project
         )
     )]
     async fn execute(&self) -> Result<(), CoreError> {
@@ -92,7 +93,7 @@ where
         };
 
         let editor_config = ArtifactConfig::new(
-            self.artifact_prefix.as_str().into(),
+            self.project.clone(),
             ArtifactKind::Editor,
             ArtifactBuildConfig::Development,
             Platform::Win64,
@@ -121,7 +122,7 @@ where
 
         if self.download_symbols {
             let symbols_config = ArtifactConfig::new(
-                self.artifact_prefix.as_str().into(),
+                self.project.clone(),
                 ArtifactKind::EditorSymbols,
                 ArtifactBuildConfig::Development,
                 Platform::Win64,
@@ -216,12 +217,14 @@ where
             .clone()
             .context("Storage not configured. AWS may still be initializing.")?;
 
-        let artifact_prefix = state
+        let project = state
             .app_config
             .read()
             .clone()
             .selected_artifact_project
-            .context("Project not configured. Repo may still be initializing.")?;
+            .context("Project not configured. Repo may still be initializing.")?
+            .as_str()
+            .into();
 
         let engine_path = state
             .app_config
@@ -237,7 +240,7 @@ where
             longtail: state.longtail.clone(),
             tx: tx_lock.clone(),
             aws_client: aws_client.clone(),
-            artifact_prefix,
+            project,
             engine: state.engine.clone(),
             engine_path,
         }

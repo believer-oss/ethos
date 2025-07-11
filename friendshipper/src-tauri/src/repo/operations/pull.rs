@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use axum::{async_trait, extract::State, Json};
 use ethos_core::storage::config::Project;
 use tokio::sync::oneshot::error::RecvError;
@@ -212,13 +212,24 @@ where
             }
         }
 
-        if snapshot.is_some() {
+        // Collect any errors from the following operations, but continue where possible
+        // This needs to remain serial because we don't have support for multiple concurrent
+        // progress bars, and longtail already saturates most connections.
+        let mut errors: Vec<Option<CoreError>> = Vec::new();
+
+        // Attempt to restore any snapshots that were made above.
+        if let Some(snapshot) = snapshot {
             let conflict_strategy = self.app_config.read().conflict_strategy.clone();
-            self.git_client
-                .restore_snapshot(&snapshot.unwrap().commit, vec![], conflict_strategy)
-                .await?;
+            errors.push(
+                self.git_client
+                    .restore_snapshot(&snapshot.commit, vec![], conflict_strategy)
+                    .await
+                    .map_err(|e| e.into())
+                    .err(),
+            );
         }
 
+        // Refresh the repo status with new information from the pull
         {
             let status_op = {
                 StatusOp {
@@ -236,103 +247,102 @@ where
                 }
             };
 
-            status_op.execute().await?;
+            errors.push(status_op.execute().await.err());
         }
 
-        let artifact_prefix = match app_config.selected_artifact_project.clone() {
-            Some(project) => project,
-            None => {
-                return Err(CoreError::Input(anyhow!(
-                    "No selected artifact project found in config."
-                )));
-            }
-        };
+        // Download DLL artifacts or engine updates from the new pull
+        {
+            let new_uproject: Option<UProject> = UProject::load(&uproject_path)
+                .map_err(|e| {
+                    errors.push(Some(
+                        e.context(
+                            "Failed to load uproject after sync, skipping dll and engine update. Error: {}",
+                        )
+                        .into(),
+                    ))
+                })
+                .ok();
 
-        if app_config.pull_dlls {
-            let uproject = UProject::load(&uproject_path)?;
+            // We should have a selected_artifact_project because how else did we pull?
+            let project: Project = self
+                .app_config
+                .read()
+                .selected_artifact_project
+                .clone()
+                .context("No selected artifact project found in config.")?
+                .as_str()
+                .into();
 
-            let engine_path = self.app_config.read().get_engine_path(&uproject);
+            if let Some(uproject) = new_uproject {
+                if app_config.pull_dlls {
+                    let engine_path = self.app_config.read().get_engine_path(&uproject);
 
-            match RepoConfig::get_project_name(&uproject_path_relative) {
-                Some(project_name) => {
-                    let download_op = DownloadDllsOp {
-                        git_client: self.git_client.clone(),
-                        project_name,
-                        dll_commit: self.repo_status.read().dll_commit_remote.clone(),
-                        download_symbols: self.app_config.read().editor_download_symbols,
-                        storage: self.storage.clone(),
-                        longtail: self.longtail.clone(),
-                        tx: self.longtail_tx.clone(),
-                        aws_client: self.aws_client.clone(),
-                        artifact_prefix,
-                        engine: self.engine.clone(),
-                        engine_path,
-                    };
-                    download_op.execute().await?
-                }
-                None => {
-                    error!("Unable to parse project name from uproject path {}. DLL download unavailable.", &uproject_path_relative);
-                }
-            }
-        }
+                    let project = project.clone();
 
-        let new_uproject: Option<UProject> = match UProject::load(&uproject_path) {
-            Err(e) => {
-                error!(
-                    "Failed to load uproject after sync, skipping engine update. Error: {}",
-                    e
-                );
-                None
-            }
-            Ok(uproject) => Some(uproject),
-        };
-
-        if let [Some(new_uproject), Some(old_uproject)] = [new_uproject, old_uproject] {
-            info!(
-                "Found engine association {} (previous was {}).",
-                new_uproject.engine_association, old_uproject.engine_association
-            );
-
-            if new_uproject.engine_association != old_uproject.engine_association {
-                let engine_path: PathBuf = app_config.get_engine_path(&new_uproject);
-
-                let status = self.repo_status.read().clone();
-                let project = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
-                    let (owner, repo) = match app_config.selected_artifact_project {
-                        Some(ref project) => {
-                            let (owner, repo) =
-                                project.split_once('-').ok_or(anyhow!("Invalid project"))?;
-
-                            (owner, repo)
+                    match RepoConfig::get_project_name(&uproject_path_relative) {
+                        Some(project_name) => {
+                            let download_op = DownloadDllsOp {
+                                git_client: self.git_client.clone(),
+                                project_name,
+                                dll_commit: self.repo_status.read().dll_commit_remote.clone(),
+                                download_symbols: self.app_config.read().editor_download_symbols,
+                                storage: self.storage.clone(),
+                                longtail: self.longtail.clone(),
+                                tx: self.longtail_tx.clone(),
+                                aws_client: self.aws_client.clone(),
+                                project,
+                                engine: self.engine.clone(),
+                                engine_path,
+                            };
+                            errors.push(download_op.execute().await.err())
                         }
                         None => {
-                            return Err(CoreError::Input(anyhow!(
-                                "No selected artifact project found in config."
-                            )));
+                            let e = CoreError::Input(
+                                anyhow!("Unable to parse project name from uproject path {}. DLL download unavailable.", &uproject_path_relative)
+                            );
+                            errors.push(Some(e))
                         }
-                    };
+                    }
+                }
 
-                    Project::new(owner, repo)
-                } else {
-                    Project::new(&status.repo_owner, &status.repo_name)
-                };
+                if let Some(old_uproject) = old_uproject {
+                    info!(
+                        "Found engine association {} (previous was {}).",
+                        uproject.engine_association, old_uproject.engine_association
+                    );
 
-                let update_engine_op = UpdateEngineOp {
-                    engine_path,
-                    old_uproject: Some(old_uproject.clone()),
-                    new_uproject: new_uproject.clone(),
-                    engine_type: app_config.engine_type,
-                    longtail: self.longtail.clone(),
-                    longtail_tx: self.longtail_tx.clone(),
-                    aws_client: self.aws_client.clone(),
-                    git_client: self.git_client.clone(),
-                    download_symbols: app_config.engine_download_symbols,
-                    storage: self.storage.clone(),
-                    project,
-                    engine: self.engine.clone(),
-                };
-                update_engine_op.execute().await?;
+                    if uproject.engine_association != old_uproject.engine_association {
+                        let engine_path: PathBuf = app_config.get_engine_path(&uproject);
+
+                        let update_engine_op = UpdateEngineOp {
+                            engine_path,
+                            old_uproject: Some(old_uproject.clone()),
+                            new_uproject: uproject.clone(),
+                            engine_type: app_config.engine_type,
+                            longtail: self.longtail.clone(),
+                            longtail_tx: self.longtail_tx.clone(),
+                            aws_client: self.aws_client.clone(),
+                            git_client: self.git_client.clone(),
+                            download_symbols: app_config.engine_download_symbols,
+                            storage: self.storage.clone(),
+                            project,
+                            engine: self.engine.clone(),
+                        };
+                        errors.push(update_engine_op.execute().await.err());
+                    }
+                }
             }
+        }
+
+        if !errors.is_empty() {
+            // Log and return all of the errors
+            let error_messages: Vec<String> =
+                errors.iter().flatten().map(|e| format!("{e}")).collect();
+            error!("Failures during repo pull: {}", error_messages.join("\n"));
+            return Err(CoreError::Internal(anyhow!(
+                "Failures during repo pull: {}",
+                error_messages.join("\n")
+            )));
         }
 
         Ok(())
