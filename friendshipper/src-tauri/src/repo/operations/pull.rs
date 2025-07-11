@@ -294,7 +294,7 @@ where
                                 engine: self.engine.clone(),
                                 engine_path,
                             };
-                            download_op.execute().await?
+                            errors.push(download_op.execute().await.err())
                         }
                         None => {
                             let e = CoreError::Input(
