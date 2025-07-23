@@ -13,6 +13,9 @@ use ethos_core::CREATE_NO_WINDOW;
 
 use crate::state::AppState;
 
+#[cfg(target_os = "windows")]
+static GIT_VERSION: &str = "2.47.1";
+
 pub async fn install<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
 where
     T: EngineProvider,
@@ -20,10 +23,19 @@ where
     #[cfg(target_os = "windows")]
     {
         let mut cmd = Command::new("winget");
-        cmd.args(["install", "--id", "Git.Git", "-e", "--source", "winget"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .await?;
+        cmd.args([
+            "install",
+            "--id",
+            "Git.Git",
+            "-e",
+            "--source",
+            "winget",
+            "-v",
+            GIT_VERSION,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .await?;
     }
 
     #[cfg(target_os = "macos")]
