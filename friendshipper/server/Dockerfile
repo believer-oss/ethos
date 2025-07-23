@@ -1,4 +1,4 @@
-FROM rust:1.84-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 COPY . .
 RUN apt-get update && apt-get install -y \
