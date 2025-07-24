@@ -424,7 +424,7 @@
 					name="maxPlayersPerGroup"
 					min="1"
 					max="12"
-					value={playtest ? playtest.spec.playersPerGroup : 1}
+					value={playtest ? playtest.spec.playersPerGroup : 4}
 					required
 				/>
 			</Label>

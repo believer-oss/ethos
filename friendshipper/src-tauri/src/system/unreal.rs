@@ -137,11 +137,7 @@ pub fn check_unreal_file_association() -> anyhow::Result<(bool, Vec<String>)> {
         {
             info!("Checking .uproject file association");
             let uproject_key = hkcr.open_subkey(".uproject");
-            if uproject_key.is_err() {
-                messages.push("No .uproject key found".to_string());
-                result = false;
-            } else {
-                let uproject_key = uproject_key.unwrap();
+            if let Ok(uproject_key) = uproject_key {
                 let value: String = uproject_key.get_value("").unwrap();
                 if value != "Unreal.ProjectFile" {
                     messages.push(format!(
@@ -149,6 +145,9 @@ pub fn check_unreal_file_association() -> anyhow::Result<(bool, Vec<String>)> {
                     ));
                     result = false;
                 }
+            } else {
+                messages.push("No .uproject key found".to_string());
+                result = false;
             }
         }
 
@@ -161,11 +160,7 @@ pub fn check_unreal_file_association() -> anyhow::Result<(bool, Vec<String>)> {
                 .join("command");
             // let project_file_key = hkcr.open_subkey("Unreal.ProjectFile");
             let project_file_key = hkcr.open_subkey(path);
-            if project_file_key.is_err() {
-                messages.push("No Unreal.ProjectFile key found".to_string());
-                result = false;
-            } else {
-                let project_file_key = project_file_key.unwrap();
+            if let Ok(project_file_key) = project_file_key {
                 let value: String = project_file_key.get_value("").unwrap();
                 let value = value.split('"').nth(1).unwrap();
                 let value = Path::new(&value);
@@ -176,6 +171,9 @@ pub fn check_unreal_file_association() -> anyhow::Result<(bool, Vec<String>)> {
                     ));
                     result = false;
                 }
+            } else {
+                messages.push("No Unreal.ProjectFile key found".to_string());
+                result = false;
             }
         }
 
