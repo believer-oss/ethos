@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use axum::{async_trait, debug_handler, extract::State, Json};
-use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 
 use ethos_core::clients::git;
@@ -15,14 +14,6 @@ use crate::repo::pull::PullOp;
 use crate::state::AppState;
 
 use super::StatusOp;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PushResponse {
-    #[serde(rename = "pushAttempted")]
-    pub push_attempted: bool,
-
-    pub conflicts: Option<Vec<String>>,
-}
 
 #[derive(Clone)]
 pub struct PushOp {
