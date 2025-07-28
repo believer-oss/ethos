@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { invokeWithAuth } from '$lib/http';
 import type { AssignUserRequest, GroupStatus, Nullable, Playtest, PlaytestSpec } from '$lib/types';
 
@@ -21,7 +20,7 @@ export const createPlaytest = async (
 		do_not_prune,
 		spec
 	};
-	await invoke('create_playtest', { req });
+	await invokeWithAuth('create_playtest', { req });
 };
 
 export const updatePlaytest = async (
@@ -35,22 +34,22 @@ export const updatePlaytest = async (
 		do_not_prune,
 		spec
 	};
-	await invoke('update_playtest', { playtest, req });
+	await invokeWithAuth('update_playtest', { playtest, req });
 };
 
 export const deletePlaytest = async (playtest: string): Promise<void> => {
-	await invoke('delete_playtest', { playtest });
+	await invokeWithAuth('delete_playtest', { playtest });
 };
 
 export const assignUserToGroup = async (req: AssignUserRequest): Promise<void> => {
-	await invoke('assign_user_to_group', { req });
+	await invokeWithAuth('assign_user_to_group', { req });
 };
 export const unassignUserFromPlaytest = async (playtest: string, user: string): Promise<void> => {
 	const req = {
 		playtest,
 		user
 	};
-	await invoke('unassign_user_from_playtest', { req });
+	await invokeWithAuth('unassign_user_from_playtest', { req });
 };
 
 export const getPlaytestGroupForUser = (

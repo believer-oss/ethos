@@ -29,10 +29,10 @@ export const getWorkflows = async (engine: boolean = false): Promise<GetWorkflow
 export const getWorkflowJunitArtifact = async (
 	uid: string,
 	nodeId: string
-): Promise<JunitOutput | null> => invoke('get_workflow_junit_artifact', { uid, nodeId });
+): Promise<JunitOutput | null> => invokeWithAuth('get_workflow_junit_artifact', { uid, nodeId });
 
 export const getWorkflowNodeLogs = async (uid: string, nodeId: string): Promise<string> =>
-	invoke('get_workflow_node_logs', { uid, nodeId });
+	invokeWithAuth('get_workflow_node_logs', { uid, nodeId });
 
 export const stopWorkflow = async (workflow: string): Promise<string> =>
-	invoke('stop_workflow', { workflow });
+	invokeWithAuth('stop_workflow', { workflow });
