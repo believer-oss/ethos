@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { invokeWithAuth } from '$lib/http';
 import type {
 	GetWorkflowsResponse,
 	ArtifactListResponse,
@@ -8,13 +9,13 @@ import type {
 } from '$lib/types';
 
 export const getBuild = async (commit: string, project?: string): Promise<ArtifactEntry> =>
-	invoke('get_build', { commit, project });
+	invokeWithAuth('get_build', { commit, project });
 
 export const getBuilds = async (limit?: number, project?: string): Promise<ArtifactListResponse> =>
-	invoke('get_builds', { limit, project });
+	invokeWithAuth('get_builds', { limit, project });
 
 export const syncClient = async (req: SyncClientRequest): Promise<boolean> =>
-	invoke('sync_client', { req });
+	invokeWithAuth('sync_client', { req });
 
 export const cancelDownload = async (): Promise<void> => invoke('cancel_download');
 
@@ -23,7 +24,7 @@ export const wipeClientData = async (): Promise<void> => invoke('wipe_client_dat
 export const resetLongtail = async (): Promise<void> => invoke('reset_longtail');
 
 export const getWorkflows = async (engine: boolean = false): Promise<GetWorkflowsResponse> =>
-	invoke('get_workflows', { engine });
+	invokeWithAuth('get_workflows', { engine });
 
 export const getWorkflowJunitArtifact = async (
 	uid: string,

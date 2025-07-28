@@ -25,16 +25,14 @@
 		Nullable,
 		Playtest,
 		QuickLaunchEvent,
-		SyncClientRequest,
-		TauriError
+		SyncClientRequest
 	} from '$lib/types';
 	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
 	import { syncClient, getBuilds, getBuild, cancelDownload } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { getPlaytestGroupForUser } from '$lib/playtests';
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
-	import { restart } from '$lib/system';
-	import { checkLoginRequired } from '$lib/auth';
+	import { handleError } from '$lib/utils';
 
 	// Loading states
 	let playtestLoading = false;
@@ -93,16 +91,7 @@
 			try {
 				servers = await getServers(commit);
 			} catch (e) {
-				await emit('error', e);
-
-				const error = e as TauriError;
-				if (error.status_code === 401) {
-					// check auth status
-					const loginRequired = await checkLoginRequired();
-					if (loginRequired) {
-						await restart();
-					}
-				}
+				await handleError(e, () => getServers(commit));
 			}
 			fetchingServers = false;
 		}

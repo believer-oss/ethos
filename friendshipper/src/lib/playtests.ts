@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import { invokeWithAuth } from '$lib/http';
 import type { AssignUserRequest, GroupStatus, Nullable, Playtest, PlaytestSpec } from '$lib/types';
 
-export const getPlaytests = async (): Promise<Playtest[]> => invoke('get_playtests');
+export const getPlaytests = async (): Promise<Playtest[]> => invokeWithAuth('get_playtests');
 
 export enum ModalState {
 	Creating,
