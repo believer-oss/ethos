@@ -28,6 +28,7 @@
 		SyncClientRequest,
 		TauriError
 	} from '$lib/types';
+	import { LaunchMode } from '$lib/types';
 	import { getServers, launchServer, openLogsFolder } from '$lib/gameServers';
 	import { syncClient, getBuilds, getBuild, cancelDownload } from '$lib/builds';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
@@ -157,7 +158,7 @@
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
 				name: server.name,
-				launchWithoutServer: false
+				launchMode: LaunchMode.WithServer
 			}
 		};
 

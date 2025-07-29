@@ -24,7 +24,7 @@ use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::clients::obs;
 use ethos_core::types::argo::workflow::{Workflow, WorkflowStatus};
-use ethos_core::types::builds::SyncClientRequest;
+use ethos_core::types::builds::{LaunchMode, SyncClientRequest};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::GameServerResults;
 
@@ -294,84 +294,89 @@ where
     T::post_download(&local_path).await;
 
     if let Some(launch_options) = payload.launch_options {
-        if !launch_options.name.is_empty() {
-            let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
-            let game_server = kube_client.get_gameserver(&launch_options.name).await?;
+        match launch_options.launch_mode {
+            LaunchMode::WithServer => {
+                if !launch_options.name.is_empty() {
+                    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+                    let game_server = kube_client.get_gameserver(&launch_options.name).await?;
 
-            if let Some(status) = game_server.status {
-                info!(
-                    "Launching game client with server host {:?}:{}",
-                    status.ip, status.port
-                );
+                    if let Some(status) = game_server.status {
+                        info!(
+                            "Launching game client with server host {:?}:{}",
+                            status.ip, status.port
+                        );
 
-                // Assume this GameServerResults type will become an engine-specific type in the future.
-                // Right now, we're asking the client to basically look up game servers, then send us back
-                // the IP, port, and netimgui port, and that seems inefficient. We should be able to have the client
-                // send us a unique identifier for the server, and then we can call a generic GameServer -> LaunchConfig
-                // style method.
-                let game_server_results = GameServerResults {
-                    // these fields don't matter
-                    name: "".to_string(),
-                    display_name: "".to_string(),
-                    version: "".to_string(),
-                    creation_timestamp: Time(Utc::now()),
+                        // Assume this GameServerResults type will become an engine-specific type in the future.
+                        // Right now, we're asking the client to basically look up game servers, then send us back
+                        // the IP, port, and netimgui port, and that seems inefficient. We should be able to have the client
+                        // send us a unique identifier for the server, and then we can call a generic GameServer -> LaunchConfig
+                        // style method.
+                        let game_server_results = GameServerResults {
+                            // these fields don't matter
+                            name: "".to_string(),
+                            display_name: "".to_string(),
+                            version: "".to_string(),
+                            creation_timestamp: Time(Utc::now()),
 
-                    // these fields matter
-                    ip: status.ip,
-                    port: status.port,
-                    netimgui_port: status.netimgui_port,
-                    ready: status.ready.unwrap_or(false),
-                };
+                            // these fields matter
+                            ip: status.ip,
+                            port: status.port,
+                            netimgui_port: status.netimgui_port,
+                            ready: status.ready.unwrap_or(false),
+                        };
 
-                let args = state.engine.create_launch_args(
-                    state.app_config.read().clone(),
-                    state.repo_config.read().clone(),
-                    game_server_results,
-                );
-                let child = match state.engine.launch(local_path, args) {
-                    Ok(child) => child,
+                        let args = state.engine.create_launch_args(
+                            state.app_config.read().clone(),
+                            state.repo_config.read().clone(),
+                            game_server_results,
+                        );
+                        let child = match state.engine.launch(local_path, args) {
+                            Ok(child) => child,
+                            Err(e) => {
+                                error!("Failed to launch game client with error: {}", e);
+                                return Err(CoreError::Internal(e));
+                            }
+                        };
+
+                        if let Some(mut child) = child {
+                            if state.app_config.read().record_play {
+                                let client = obs::Client::default();
+                                match client.start_recording().await {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        return Err(e);
+                                    }
+                                };
+
+                                tokio::spawn(async move {
+                                    match child.wait() {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            error!("Error waiting for child: {}", e);
+                                        }
+                                    }
+                                    match client.stop_recording().await {
+                                        Ok(_) => {}
+                                        Err(_) => {
+                                            error!("Error stopping recording");
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            LaunchMode::WithoutServer => {
+                let empty_args: Vec<String> = Vec::new();
+                let _child = match state.engine.launch(local_path, empty_args) {
+                    Ok(_child) => _child,
                     Err(e) => {
                         error!("Failed to launch game client with error: {}", e);
                         return Err(CoreError::Internal(e));
                     }
                 };
-
-                if let Some(mut child) = child {
-                    if state.app_config.read().record_play {
-                        let client = obs::Client::default();
-                        match client.start_recording().await {
-                            Ok(_) => {}
-                            Err(e) => {
-                                return Err(e);
-                            }
-                        };
-
-                        tokio::spawn(async move {
-                            match child.wait() {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    error!("Error waiting for child: {}", e);
-                                }
-                            }
-                            match client.stop_recording().await {
-                                Ok(_) => {}
-                                Err(_) => {
-                                    error!("Error stopping recording");
-                                }
-                            }
-                        });
-                    }
-                }
             }
-        } else if launch_options.launch_without_server {
-            let empty_args: Vec<String> = Vec::new();
-            let _child = match state.engine.launch(local_path, empty_args) {
-                Ok(_child) => _child,
-                Err(e) => {
-                    error!("Failed to launch game client with error: {}", e);
-                    return Err(CoreError::Internal(e));
-                }
-            };
         }
     }
 

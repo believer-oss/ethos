@@ -14,7 +14,14 @@ pub struct SyncClientRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum LaunchMode {
+    WithServer,
+    WithoutServer,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LaunchOptions {
     pub name: String,
-    pub launch_without_server: bool,
+    pub launch_mode: LaunchMode,
 }

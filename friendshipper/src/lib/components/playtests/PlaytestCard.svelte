@@ -20,6 +20,7 @@
 		Playtest,
 		SyncClientRequest
 	} from '$lib/types';
+	import { LaunchMode } from '$lib/types';
 	import Countdown from '$lib/components/playtests/Countdown.svelte';
 	import {
 		assignUserToGroup,
@@ -129,7 +130,7 @@
 		if (server) {
 			req.launchOptions = {
 				name: server.name,
-				launchWithoutServer: false
+				launchMode: LaunchMode.WithServer
 			};
 		} else {
 			// this is a sync only, run it in the background
@@ -232,7 +233,7 @@
 						methodPrefix: $builds.methodPrefix,
 						launchOptions: {
 							name: '',
-							launchWithoutServer: true
+							launchMode: LaunchMode.WithoutServer
 						}
 					};
 
