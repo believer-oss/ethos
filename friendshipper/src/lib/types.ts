@@ -138,6 +138,7 @@ export interface ArtifactListResponse {
 
 export interface LaunchOptions {
 	name: string;
+	launchWithoutServer: bool;
 }
 
 export interface SyncClientRequest {

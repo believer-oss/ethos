@@ -128,7 +128,8 @@
 		syncing = true;
 		if (server) {
 			req.launchOptions = {
-				name: server.name
+				name: server.name,
+				launchWithoutServer: false
 			};
 		} else {
 			// this is a sync only, run it in the background
@@ -199,6 +200,51 @@
 
 				if (entry) {
 					await handleSyncClient(entry);
+				} else {
+					await emit('error', 'No build found for playtest');
+				}
+			}
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const handleLaunchClientWithoutServer = async () => {
+		try {
+			if (playtest.metadata.annotations) {
+				const project = playtest.metadata.annotations['believer.dev/project'];
+				let entry = await getBuilds(250, project).then((a) =>
+					a.entries.find((b) => b.commit === playtest.spec.version)
+				);
+
+				if (!entry) {
+					entry = await getBuild(playtest.spec.version, project);
+
+					if (!entry) {
+						await emit('error', 'No build found for playtest');
+						return;
+					}
+				}
+
+				if (entry) {
+					const req: SyncClientRequest = {
+						artifactEntry: entry,
+						methodPrefix: $builds.methodPrefix,
+						launchOptions: {
+							name: '',
+							launchWithoutServer: true
+						}
+					};
+
+					if ($appConfig.groupDownloadedBuildsByPlaytest) {
+						req.subPath = playtest.metadata.name;
+					}
+
+					try {
+						await syncClient(req);
+					} catch (e) {
+						await emit('error', e);
+					}
 				} else {
 					await emit('error', 'No build found for playtest');
 				}
@@ -306,6 +352,17 @@
 					🎲 Join random group
 				</Button>
 				{#key playtest}
+					{#if $currentSyncedVersion === playtest.spec.version}
+						<Button
+							size="xs"
+							class="text-xs py-1"
+							disabled={$backgroundSyncInProgress}
+							color="primary"
+							on:click={handleLaunchClientWithoutServer}
+						>
+							Launch Without Server
+						</Button>
+					{/if}
 					{#if shouldShowLaunchButton()}
 						<Button
 							size="xs"
