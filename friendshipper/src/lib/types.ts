@@ -136,9 +136,14 @@ export interface ArtifactListResponse {
 	entries: ArtifactEntry[];
 }
 
+export enum LaunchMode {
+	WithServer = 'withServer',
+	WithoutServer = 'withoutServer'
+}
+
 export interface LaunchOptions {
 	name: string;
-	launchWithoutServer: bool;
+	launchMode: LaunchMode;
 }
 
 export interface SyncClientRequest {

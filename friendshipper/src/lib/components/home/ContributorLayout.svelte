@@ -26,6 +26,7 @@
 		Commit,
 		SyncClientRequest
 	} from '$lib/types';
+	import { LaunchMode } from '$lib/types';
 	import PlaytestCard from '$lib/components/playtests/PlaytestCard.svelte';
 	import {
 		allModifiedFiles,
@@ -193,7 +194,7 @@
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
 				name: server.name,
-				launchWithoutServer: false
+				launchMode: LaunchMode.WithServer
 			}
 		};
 

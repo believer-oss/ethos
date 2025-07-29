@@ -12,6 +12,7 @@
 		SyncClientRequest,
 		PlaytestProfile
 	} from '$lib/types';
+	import { LaunchMode } from '$lib/types';
 	import {
 		activeProjectConfig,
 		repoConfig,
@@ -83,7 +84,7 @@
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
 				name: server.name,
-				launchWithoutServer: false
+				launchMode: LaunchMode.WithServer
 			}
 		};
 
