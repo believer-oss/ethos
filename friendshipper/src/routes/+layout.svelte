@@ -52,6 +52,7 @@
 		builds,
 		changeSets,
 		commits,
+		currentSyncedVersion,
 		dynamicConfig,
 		engineWorkflows,
 		oktaAuth,
@@ -475,6 +476,9 @@
 
 		if (accessToken || $appConfig.serverless) {
 			try {
+				// Initialize the current synced version from localStorage
+				currentSyncedVersion.initialize();
+
 				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
 					getDynamicConfig(),
 					getProjectConfig(),

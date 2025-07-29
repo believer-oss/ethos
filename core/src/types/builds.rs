@@ -16,4 +16,5 @@ pub struct SyncClientRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LaunchOptions {
     pub name: String,
+    pub launch_without_server: bool,
 }
