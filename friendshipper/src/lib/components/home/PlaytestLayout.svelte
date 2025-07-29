@@ -156,7 +156,8 @@
 			artifactEntry: entry,
 			methodPrefix: $builds.methodPrefix,
 			launchOptions: {
-				name: server.name
+				name: server.name,
+				launchWithoutServer: false
 			}
 		};
 

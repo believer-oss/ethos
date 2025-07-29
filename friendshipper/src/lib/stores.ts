@@ -37,7 +37,30 @@ export const onboardingInProgress = writable(false);
 export const changeSets = writable(<ChangeSet[]>[]);
 export const startTime = writable(Date.now());
 export const backgroundSyncInProgress = writable(false);
-export const currentSyncedVersion = writable('');
+function createCurrentSyncedVersion() {
+	const { subscribe, set, update } = writable('');
+
+	return {
+		subscribe,
+		set: (value: string) => {
+			if (typeof window !== 'undefined') {
+				localStorage.setItem('currentSyncedVersion', value);
+			}
+			set(value);
+		},
+		update,
+		initialize: () => {
+			if (typeof window !== 'undefined') {
+				const stored = localStorage.getItem('currentSyncedVersion');
+				if (stored) {
+					set(stored);
+				}
+			}
+		}
+	};
+}
+
+export const currentSyncedVersion = createCurrentSyncedVersion();
 export const showPreferences = writable(false);
 
 export const nextPlaytest = derived([playtests, appConfig], ([$playtests, $appConfig]) => {
