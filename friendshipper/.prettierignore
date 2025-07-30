@@ -13,4 +13,4 @@ package-lock.json
 yarn.lock
 
 # Ignore tauri schema files
-**/gen/schemas/*.json
+/src-tauri/gen/schemas/*.json
