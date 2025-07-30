@@ -126,6 +126,9 @@
 	let backgroundSyncElapsed = '';
 	let backgroundSyncRemaining = '';
 
+	// Reset config confirmation at startup
+	let showResetConfirmModal = false;
+
 	const handleCancelBackgroundSync = async () => {
 		try {
 			await cancelDownload();
@@ -138,6 +141,15 @@
 		} catch (e) {
 			await emit('error', e);
 		}
+	};
+
+	const handleResetConfigRequest = () => {
+		showResetConfirmModal = true;
+	};
+
+	const confirmResetConfig = async () => {
+		showResetConfirmModal = false;
+		await resetConfig();
 	};
 
 	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus?.conflicts.length > 0;
@@ -818,7 +830,7 @@
 				{/if}
 				<div class="flex gap-2">
 					<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
-					<Button color="red" on:click={resetConfig}>Reset Config & Restart</Button>
+					<Button color="red" on:click={handleResetConfigRequest}>Reset Config & Restart</Button>
 					<Tooltip
 						class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
 						placement="bottom"
@@ -1131,6 +1143,40 @@
 				<Progressbar progress={updateProgress} size="h-1" />
 			</div>
 		{/if}
+	</div>
+</Modal>
+
+<!-- Bootup Reset config confirmation modal -->
+<Modal
+	open={showResetConfirmModal}
+	size="sm"
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	on:close={() => {
+		showResetConfirmModal = false;
+	}}
+>
+	<div class="flex flex-col gap-4">
+		<div class="text-white">
+			<h3 class="text-lg font-semibold mb-2">Reset Configuration</h3>
+			<p class="text-gray-300">
+				Are you sure you want to reset Friendshipper's configuration? This will clear all settings
+				and restart the app, requiring you to go through the setup process again.
+			</p>
+		</div>
+		<div class="flex gap-2 justify-end">
+			<Button
+				color="gray"
+				on:click={() => {
+					showResetConfirmModal = false;
+				}}
+			>
+				Cancel
+			</Button>
+			<Button color="red" on:click={confirmResetConfig}>Reset & Restart</Button>
+		</div>
 	</div>
 </Modal>
 
