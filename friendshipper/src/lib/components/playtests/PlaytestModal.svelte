@@ -37,7 +37,7 @@
 	let deleting = false;
 	let project: string = '';
 
-	let playtestError: string = '';
+	let playtestError: string | null = null;
 	let nameError: boolean = false;
 
 	enum CommitSelectMode {
@@ -46,6 +46,41 @@
 	}
 
 	let commitSelectMode: CommitSelectMode = CommitSelectMode.Default;
+
+	const getCommitPhase = (commit: string): string => {
+		const commitWorkflow = $workflowMap.get(commit);
+		if (!commitWorkflow) return 'unknown';
+
+		// if any workflow is running, return "Running"
+		if (commitWorkflow.workflows.some((workflow) => workflow.status.phase === 'Running'))
+			return 'Running';
+
+		// if any workflow has failed, return "Failed"
+		if (commitWorkflow.workflows.some((workflow) => workflow.status.phase === 'Failed'))
+			return 'Failed';
+
+		// if any workflow is pending, return "Pending"
+		if (commitWorkflow.workflows.some((workflow) => workflow.status.phase === 'Pending'))
+			return 'Pending';
+
+		// if all workflows have succeeded, return "Succeeded"
+		if (commitWorkflow.workflows.every((workflow) => workflow.status.phase === 'Succeeded'))
+			return 'Succeeded';
+
+		return 'unknown';
+	};
+
+	const getBranchInfo = (commit: string): { branch: string | null; isMain: boolean } => {
+		const commitWorkflow = $workflowMap.get(commit);
+		if (!commitWorkflow || !commitWorkflow.branch) {
+			return { branch: null, isMain: false };
+		}
+
+		const cleanBranchName = commitWorkflow.branch.replace('refs/heads/', '');
+		const isMain = cleanBranchName.toLowerCase() === 'main';
+
+		return { branch: cleanBranchName, isMain };
+	};
 
 	const getProjectValues = async (
 		item: Nullable<Playtest>,
@@ -77,7 +112,13 @@
 			value: p
 		}));
 
-		commits = projVersions.map((v) => ({
+		// Filter out failed builds from the available commits
+		const filteredVersions = projVersions.filter((v) => {
+			const phase = getCommitPhase(v.commit);
+			return phase !== 'Failed';
+		});
+
+		commits = filteredVersions.map((v) => ({
 			value: v.commit,
 			name: v.commit
 		}));
@@ -335,10 +376,15 @@
 							required
 						>
 							{#each commits as commit}
-								<option value={commit.value}
-									>{commit.name.substring(0, 8)}
-									{$workflowMap.get(commit.name)?.message || ''}</option
+								{@const branchInfo = getBranchInfo(commit.value)}
+								<option
+									value={commit.value}
+									class={branchInfo.isMain ? 'text-green-400' : 'text-blue-400'}
 								>
+									{commit.name.substring(0, 8)}
+									{branchInfo.branch && !branchInfo.isMain ? ` (${branchInfo.branch})` : ''}
+									{$workflowMap.get(commit.name)?.message || ''}
+								</option>
 							{/each}
 						</Select>
 						<Button
