@@ -139,8 +139,8 @@
 
 	const isMainBranch = (branch: string | null): boolean => {
 		if (!branch) return false;
-		const cleanBranch = formatBranchName(branch).toLowerCase();
-		return cleanBranch === 'main';
+		const cleanBranchName = formatBranchName(branch).toLowerCase();
+		return cleanBranchName === 'main';
 	};
 
 	onMount(() => {
