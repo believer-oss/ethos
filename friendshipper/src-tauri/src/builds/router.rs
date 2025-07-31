@@ -19,6 +19,7 @@ use crate::engine::EngineProvider;
 use ethos_core::clients::argo::{
     ARGO_WORKFLOW_COMMIT_LABEL_KEY, ARGO_WORKFLOW_COMPARE_ANNOTATION_KEY,
     ARGO_WORKFLOW_MESSAGE_ANNOTATION_KEY, ARGO_WORKFLOW_PUSHER_LABEL_KEY,
+    ARGO_WORKFLOW_REF_LABEL_KEY,
 };
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::kube::ensure_kube_client;
@@ -444,6 +445,7 @@ pub struct CommitWorkflowInfo {
     pub compare_url: Option<String>,
     pub commit: String,
     pub pusher: String,
+    pub branch: Option<String>,
     pub workflows: Vec<Workflow>,
 }
 
@@ -520,6 +522,7 @@ where
         let pusher = argolabels
             .get(ARGO_WORKFLOW_PUSHER_LABEL_KEY)
             .unwrap_or(&unknown_pusher);
+        let branch = argolabels.get(ARGO_WORKFLOW_REF_LABEL_KEY).cloned();
         let message = argoannotations
             .get(ARGO_WORKFLOW_MESSAGE_ANNOTATION_KEY)
             .cloned();
@@ -536,6 +539,7 @@ where
                 compare_url,
                 commit: commit.clone(),
                 pusher: pusher.clone(),
+                branch,
                 workflows: Vec::new(),
             });
         commit_info.workflows.push(workflow);

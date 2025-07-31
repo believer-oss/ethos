@@ -422,6 +422,7 @@ export interface CommitWorkflowInfo {
 	compareUrl: Nullable<string>;
 	commit: string;
 	pusher: string;
+	branch: Nullable<string>;
 	workflows: Workflow[];
 }
 

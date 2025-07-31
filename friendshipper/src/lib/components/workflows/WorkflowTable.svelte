@@ -5,7 +5,8 @@
 		ChevronDownOutline,
 		ChevronUpOutline,
 		CloseOutline,
-		CodeOutline
+		CodeOutline,
+		CodeBranchOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
@@ -124,6 +125,24 @@
 		}
 	};
 
+	const formatBranchName = (branch: string | null): string => {
+		if (!branch) return '';
+		// Remove refs/heads/ prefix if present
+		return branch.replace('refs/heads/', '');
+	};
+
+	const truncateBranchName = (branch: string | null): string => {
+		const formatted = formatBranchName(branch);
+		if (formatted.length <= 10) return formatted;
+		return `${formatted.substring(0, 10)}...`;
+	};
+
+	const isMainBranch = (branch: string | null): boolean => {
+		if (!branch) return false;
+		const cleanBranch = formatBranchName(branch).toLowerCase();
+		return cleanBranch === 'main';
+	};
+
 	onMount(() => {
 		void listen('build-deep-link', (e) => {
 			const workflowInfo = e.payload;
@@ -150,12 +169,26 @@
 
 {#each commits as commit}
 	<div class="flex items-center justify-between gap-0">
-		<a
-			class="text-sm text-center w-24 text-primary-400 dark:text-primary-400 hover:underline flex-none"
-			href={commit.compareUrl}
-			target="_blank"
-			rel="noopener noreferrer"><code>{commit.commit.substring(0, 8)}</code></a
-		>
+		<div class="flex items-center gap-2 w-40 flex-none">
+			<a
+				class="text-sm text-center text-primary-400 dark:text-primary-400 hover:underline"
+				href={commit.compareUrl}
+				target="_blank"
+				rel="noopener noreferrer"><code>{commit.commit.substring(0, 8)}</code></a
+			>
+			{#if commit.branch}
+				<div class="flex items-center gap-1">
+					{#if isMainBranch(commit.branch)}
+						<CodeBranchOutline class="w-3 h-3 text-green-400" />
+					{:else}
+						<CodeBranchOutline class="w-3 h-3 text-blue-400" />
+					{/if}
+					<span class="text-xs text-gray-300" title={formatBranchName(commit.branch)}>
+						{truncateBranchName(commit.branch)}
+					</span>
+				</div>
+			{/if}
+		</div>
 		<p
 			class="text-xs text-left w-80 text-primary-400 dark:text-primary-400 text-ellipsis whitespace-nowrap overflow-hidden flex-auto"
 		>
