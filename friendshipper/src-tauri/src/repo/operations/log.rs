@@ -6,7 +6,7 @@ use ethos_core::clients::github::CommitStatusMap;
 use ethos_core::operations::{LogOp, LogResponse};
 use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
-use tracing::{instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::state::AppState;
 
@@ -44,13 +44,26 @@ where
 
     let github_client = state.github_client.read().clone();
     let statuses: Option<CommitStatusMap> = match github_client {
-        Some(github_client) => match github_client.get_commit_statuses(&owner, &repo, 100).await {
-            Ok(statuses) => Some(statuses),
-            Err(e) => {
-                warn!("Error getting commit statuses: {}", e.to_string());
+        Some(github_client) => {
+            // Skip GitHub API calls if repo owner/name are not set (during startup)
+            if owner.is_empty() || repo.is_empty() {
+                debug!("Skipping commit status fetch: repo owner/name not yet configured (owner='{}', repo='{}')", owner, repo);
                 None
+            } else {
+                match github_client.get_commit_statuses(&owner, &repo, 100).await {
+                    Ok(statuses) => Some(statuses),
+                    Err(e) => {
+                        warn!(
+                            "Error getting commit statuses for {}/{}: {}",
+                            owner,
+                            repo,
+                            e.to_string()
+                        );
+                        None
+                    }
+                }
             }
-        },
+        }
         None => None,
     };
 

@@ -4,7 +4,7 @@ use axum::{async_trait, Json};
 use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::{params, Octocrab};
 use std::path::PathBuf;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
@@ -387,6 +387,12 @@ where
                 let status = self.repo_status.read();
                 owner = status.repo_owner.clone();
                 repo = status.repo_name.clone();
+            }
+
+            // Skip merge queue check if repo owner/name are not set (during startup)
+            if owner.is_empty() || repo.is_empty() {
+                debug!("Skipping merge queue check: repo owner/name not yet configured (owner='{}', repo='{}')", owner, repo);
+                return Err(CoreError::Internal(anyhow::anyhow!("Repository information not yet available - please wait for repo status to initialize")));
             }
 
             let merge_queue = self.github_client.get_merge_queue(&owner, &repo).await?;
