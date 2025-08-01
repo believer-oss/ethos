@@ -72,7 +72,8 @@ pub fn init(
 
     let env_filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
-        .from_env_lossy();
+        .from_env_lossy()
+        .add_directive("tao::platform_impl::platform::event_loop::runner=error".parse()?);
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
 
     let proj_dirs = ProjectDirs::from("", "", app).expect("Unable to get project dirs");
