@@ -12,6 +12,8 @@ use crate::utils::serde::json_date_format;
 // Credit for this SSO code goes to @sturmm / https://github.com/sturmm/aws-easy-sso/blob/main/src/aws/token.rs
 // We've only slightly modified it to fit our needs.
 
+// NOTE: This code is currently not used: Okta flow is currently /friendshipper/src/routes/+layout.svelte
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenExpiredError;
 

@@ -273,7 +273,7 @@
 		if (!$oktaAuth) return;
 
 		const { tokens } = await $oktaAuth.token.getWithoutPrompt({
-			scopes: ['openid', 'email', 'profile']
+			scopes: ['openid', 'email', 'profile', 'offline_access']
 		});
 
 		if (tokens && tokens.accessToken) {
@@ -303,11 +303,11 @@
 						clientId: $appConfig.oktaConfig.clientId,
 						redirectUri: `${window.location.origin}/auth/callback`,
 						pkce: true,
-						scopes: ['openid', 'email', 'profile']
+						scopes: ['openid', 'email', 'profile', 'offline_access']
 					});
 				} else {
 					const { tokens } = await $oktaAuth.token.getWithPopup({
-						scopes: ['openid', 'email', 'profile']
+						scopes: ['openid', 'email', 'profile', 'offline_access']
 					});
 
 					if (tokens && tokens.accessToken) {
