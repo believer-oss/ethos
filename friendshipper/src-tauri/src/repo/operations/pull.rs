@@ -173,9 +173,14 @@ where
         }
 
         // Check repo status to see if we need to pull at all.
+        // Skip this check if this is the first sync after startup (last_updated is Unix epoch),
+        // because commits_behind may be 0 due to stale remote refs before any fetch occurs.
         {
             let repo_status = self.repo_status.read().clone();
-            if repo_status.commits_behind == 0 {
+            let unix_epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
+            let is_first_sync = repo_status.last_updated == unix_epoch;
+
+            if !is_first_sync && repo_status.commits_behind == 0 {
                 info!("no commits behind, skipping pull");
 
                 return Ok(());
@@ -334,14 +339,13 @@ where
             }
         }
 
-        if !errors.is_empty() {
-            // Log and return all of the errors
-            let error_messages: Vec<String> =
-                errors.iter().flatten().map(|e| format!("{e}")).collect();
-            error!("Failures during repo pull: {}", error_messages.join("\n"));
+        // Check if there are any actual errors (not just None values)
+        let actual_errors: Vec<String> = errors.iter().flatten().map(|e| format!("{e}")).collect();
+        if !actual_errors.is_empty() {
+            error!("Failures during repo pull: {}", actual_errors.join("\n"));
             return Err(CoreError::Internal(anyhow!(
                 "Failures during repo pull: {}",
-                error_messages.join("\n")
+                actual_errors.join("\n")
             )));
         }
 

@@ -119,6 +119,12 @@ where
         {
             let current_status = self.repo_status.read();
 
+            // Preserve the Unix epoch marker for first sync detection if it's still set
+            let unix_epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
+            if current_status.last_updated == unix_epoch {
+                status.last_updated = unix_epoch;
+            }
+
             // because dll checking can be skipped, default to current values
             status.origin_has_new_dlls = current_status.origin_has_new_dlls;
             status.pull_dlls = pull_dlls;

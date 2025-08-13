@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use chrono::TimeZone;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::Resource;
@@ -103,10 +102,7 @@ where
 
         debug!("Creating repo status");
         let repo_status = Arc::new(RwLock::new(RepoStatus {
-            last_updated: chrono::Utc
-                .with_ymd_and_hms(1970, 1, 1, 0, 0, 0)
-                .single()
-                .unwrap(),
+            last_updated: chrono::DateTime::from_timestamp(0, 0).unwrap(),
             ..Default::default()
         }));
 
