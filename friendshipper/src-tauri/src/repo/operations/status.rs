@@ -120,9 +120,8 @@ where
             let current_status = self.repo_status.read();
 
             // Preserve the Unix epoch marker for first sync detection if it's still set
-            let unix_epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
-            if current_status.last_updated == unix_epoch {
-                status.last_updated = unix_epoch;
+            if current_status.last_updated == chrono::DateTime::UNIX_EPOCH {
+                status.last_updated = chrono::DateTime::UNIX_EPOCH;
             }
 
             // because dll checking can be skipped, default to current values

@@ -177,8 +177,7 @@ where
         // because commits_behind may be 0 due to stale remote refs before any fetch occurs.
         {
             let repo_status = self.repo_status.read().clone();
-            let unix_epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
-            let is_first_sync = repo_status.last_updated == unix_epoch;
+            let is_first_sync = repo_status.last_updated == chrono::DateTime::UNIX_EPOCH;
 
             if !is_first_sync && repo_status.commits_behind == 0 {
                 info!("no commits behind, skipping pull");

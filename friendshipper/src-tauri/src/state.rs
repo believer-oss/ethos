@@ -102,7 +102,7 @@ where
 
         debug!("Creating repo status");
         let repo_status = Arc::new(RwLock::new(RepoStatus {
-            last_updated: chrono::DateTime::from_timestamp(0, 0).unwrap(),
+            last_updated: chrono::DateTime::UNIX_EPOCH,
             ..Default::default()
         }));
 
