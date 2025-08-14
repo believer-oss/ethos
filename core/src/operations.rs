@@ -256,38 +256,67 @@ impl BranchCompareOp {
             None => return Ok(vec![]),
         };
 
-        // Get commits in primary_branch that are not in content_branch
+        // Use git cherry to find commits that are truly new (not cherry-picked)
+        let upstream = format!("origin/{content_branch}");
+        let head = format!("origin/{}", self.primary_branch);
+
+        debug!("Using git cherry to compare {} vs {}", upstream, head);
+        let cherry_output = self.git_client.cherry(&upstream, &head).await?;
+
+        // Parse cherry output to get only new commits (those with + prefix)
+        let new_commit_shas: Vec<&str> = cherry_output
+            .lines()
+            .filter_map(|line| {
+                if line.starts_with('+') {
+                    // Extract SHA from "+ <sha> <subject>" format
+                    line.split_whitespace().nth(1)
+                } else {
+                    None // Skip commits with - prefix (already cherry-picked)
+                }
+            })
+            .collect();
+
+        if new_commit_shas.is_empty() {
+            debug!("No new commits found after cherry filtering");
+            return Ok(vec![]);
+        }
+
+        // Get detailed information for the new commits
         let commit_range = format!("origin/{content_branch}..origin/{}", self.primary_branch);
-
-        debug!("Getting commits in range: {}", commit_range);
-
+        debug!(
+            "Getting commit details for {} commits in range: {}",
+            new_commit_shas.len(),
+            commit_range
+        );
         let output = self.git_client.log(self.limit, &commit_range).await?;
         let result = output
             .split("END\n")
             .filter(|line| !line.trim().is_empty())
-            .map(|line| {
+            .filter_map(|line| {
                 let parts = line.split('|').collect::<Vec<_>>();
 
                 if parts.len() >= 4 {
-                    let timestamp = DateTime::parse_from_rfc3339(parts[3])
-                        .unwrap_or_else(|_| chrono::Utc::now().into());
+                    let full_sha = parts[0];
+                    // Only include commits that are in our cherry filter list
+                    if new_commit_shas
+                        .iter()
+                        .any(|&cherry_sha| full_sha.starts_with(cherry_sha))
+                    {
+                        let timestamp = DateTime::parse_from_rfc3339(parts[3])
+                            .unwrap_or_else(|_| chrono::Utc::now().into());
 
-                    Commit {
-                        sha: parts[0][..8.min(parts[0].len())].to_string(),
-                        message: Some(parts[1].to_string()),
-                        author: Some(parts[2].to_string()),
-                        timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
-                        status: None,
+                        Some(Commit {
+                            sha: parts[0][..8.min(parts[0].len())].to_string(),
+                            message: Some(parts[1].to_string()),
+                            author: Some(parts[2].to_string()),
+                            timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
+                            status: None,
+                        })
+                    } else {
+                        None
                     }
                 } else {
-                    // Handle malformed lines gracefully
-                    Commit {
-                        sha: "unknown".to_string(),
-                        message: Some("Malformed commit data".to_string()),
-                        author: Some("Unknown".to_string()),
-                        timestamp: Some(chrono::Local::now().to_string()),
-                        status: None,
-                    }
+                    None
                 }
             })
             .collect::<Vec<_>>();
