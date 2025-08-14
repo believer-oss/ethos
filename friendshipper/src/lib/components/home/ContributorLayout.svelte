@@ -501,7 +501,6 @@
 								<TableHeadCell class="p-2">Message</TableHeadCell>
 								<TableHeadCell class="p-2">Author</TableHeadCell>
 								<TableHeadCell class="p-2">Timestamp</TableHeadCell>
-								<TableHeadCell class="p-2">Status</TableHeadCell>
 							</TableHead>
 							<TableBody>
 								{#each branchComparison as commit, index}
@@ -511,6 +510,15 @@
 											: 'bg-secondary-800 dark:bg-space-950'}"
 									>
 										<TableBodyCell class="p-2 font-mono text-sm">
+											{#if commit.status === 'success'}
+												<span class="text-xs pr-1">🟢</span>
+											{:else if commit.status === 'pending'}
+												<span class="text-xs pr-1">🟡</span>
+											{:else if commit.status === 'error' || commit.status === 'failure'}
+												<span class="text-xs pr-1">🔴</span>
+											{:else}
+												<span class="text-xs pr-1">⚪</span>
+											{/if}
 											{commit.sha}
 										</TableBodyCell>
 										<TableBodyCell
@@ -523,17 +531,6 @@
 										</TableBodyCell>
 										<TableBodyCell class="p-2 text-center">
 											{commit.timestamp ? new Date(commit.timestamp).toLocaleString() : 'Unknown'}
-										</TableBodyCell>
-										<TableBodyCell class="p-2">
-											{#if commit.status}
-												<Badge class="text-white dark:text-white w-full bg-green-500">
-													{commit.status.state}
-												</Badge>
-											{:else}
-												<Badge class="text-white dark:text-white w-full bg-gray-500">
-													No status
-												</Badge>
-											{/if}
 										</TableBodyCell>
 									</TableBodyRow>
 								{/each}
