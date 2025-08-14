@@ -2,10 +2,11 @@ use crate::engine::EngineProvider;
 use anyhow::anyhow;
 use axum::extract::{Query, State};
 use axum::Json;
+use ethos_core::clients::github::CommitStatusMap;
 use ethos_core::operations::{BranchCompareOp, LogResponse};
 use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
+use tracing::{debug, instrument, warn};
 
 use crate::state::AppState;
 
@@ -45,8 +46,48 @@ where
         content_branch,
     };
 
+    let owner = state.repo_status.read().repo_owner.clone();
+    let repo = state.repo_status.read().repo_name.clone();
+
+    let github_client = state.github_client.read().clone();
+    let statuses: Option<CommitStatusMap> = match github_client {
+        Some(github_client) => {
+            // Skip GitHub API calls if repo owner/name are not set (during startup)
+            if owner.is_empty() || repo.is_empty() {
+                debug!("Skipping commit status fetch: repo owner/name not yet configured (owner='{}', repo='{}')", owner, repo);
+                None
+            } else {
+                match github_client.get_commit_statuses(&owner, &repo, 100).await {
+                    Ok(statuses) => Some(statuses),
+                    Err(e) => {
+                        warn!(
+                            "Error getting commit statuses for {}/{}: {}",
+                            owner,
+                            repo,
+                            e.to_string()
+                        );
+                        None
+                    }
+                }
+            }
+        }
+        None => None,
+    };
+
     match branch_compare_op.run().await {
-        Ok(output) => Ok(Json(output)),
+        Ok(mut output) => {
+            return if let Some(statuses) = statuses {
+                output.iter_mut().for_each(|commit| {
+                    if let Some(status) = statuses.get(&commit.sha) {
+                        commit.status = Some(status.clone());
+                    }
+                });
+
+                Ok(Json(output))
+            } else {
+                Ok(Json(output))
+            }
+        }
         Err(e) => Err(CoreError::Internal(anyhow!(
             "Error executing branch comparison: {}",
             e.to_string()
