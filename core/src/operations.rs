@@ -224,6 +224,94 @@ impl Task for LockOp {
     }
 }
 
+#[derive(Clone)]
+pub struct BranchCompareOp {
+    pub limit: usize,
+    pub repo_path: String,
+    pub repo_status: RepoStatusRef,
+    pub git_client: git::Git,
+    pub target_branches: Vec<crate::types::config::TargetBranchConfig>,
+}
+
+#[async_trait]
+impl Task for BranchCompareOp {
+    #[instrument(name = "BranchCompareOp::execute", skip(self))]
+    async fn execute(&self) -> Result<(), CoreError> {
+        let _ = self.run().await?;
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        String::from("BranchCompare")
+    }
+}
+
+impl BranchCompareOp {
+    #[instrument(name = "BranchCompareOp::run", skip(self))]
+    pub async fn run(&self) -> anyhow::Result<LogResponse> {
+        // Only proceed if there are exactly 2 target branches
+        if self.target_branches.len() != 2 {
+            return Ok(vec![]);
+        }
+
+        // Find the branch with merge queue and the one without
+        let merge_queue_branch = self
+            .target_branches
+            .iter()
+            .find(|branch| branch.uses_merge_queue);
+        let non_merge_queue_branch = self
+            .target_branches
+            .iter()
+            .find(|branch| !branch.uses_merge_queue);
+
+        if merge_queue_branch.is_none() || non_merge_queue_branch.is_none() {
+            return Ok(vec![]);
+        }
+
+        let merge_queue_branch_name = &merge_queue_branch.unwrap().name;
+        let non_merge_queue_branch_name = &non_merge_queue_branch.unwrap().name;
+
+        // Get commits in merge_queue_branch that are not in non_merge_queue_branch
+        let commit_range =
+            format!("origin/{non_merge_queue_branch_name}..origin/{merge_queue_branch_name}");
+
+        debug!("Getting commits in range: {}", commit_range);
+
+        let output = self.git_client.log(self.limit, &commit_range).await?;
+        let result = output
+            .split("END\n")
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let parts = line.split('|').collect::<Vec<_>>();
+
+                if parts.len() >= 4 {
+                    let timestamp = DateTime::parse_from_rfc3339(parts[3])
+                        .unwrap_or_else(|_| chrono::Utc::now().into());
+
+                    Commit {
+                        sha: parts[0][..8.min(parts[0].len())].to_string(),
+                        message: Some(parts[1].to_string()),
+                        author: Some(parts[2].to_string()),
+                        timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
+                        status: None,
+                    }
+                } else {
+                    // Handle malformed lines gracefully
+                    Commit {
+                        sha: "unknown".to_string(),
+                        message: Some("Malformed commit data".to_string()),
+                        author: Some("Unknown".to_string()),
+                        timestamp: Some(chrono::Local::now().to_string()),
+                        status: None,
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(result)
+    }
+}
+
 impl LockOp {
     #[instrument(name = "LockOp::run", skip(self))]
     pub async fn run(&self) -> anyhow::Result<LockResponse> {

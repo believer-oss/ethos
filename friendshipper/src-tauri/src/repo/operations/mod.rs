@@ -1,3 +1,4 @@
+pub use branch_compare::branch_compare_handler;
 pub use changeset::{load_changeset, save_changeset, SaveChangeSetRequest};
 pub use checkout::{checkout_target_branch_handler, checkout_trunk_handler, CheckoutOp};
 pub use clone::clone_handler;
@@ -23,6 +24,7 @@ pub use update_engine::{
 
 pub use crate::repo::operations::gh::submit::GitHubSubmitOp;
 
+mod branch_compare;
 mod changeset;
 mod checkout;
 mod clone;
