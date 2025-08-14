@@ -11,6 +11,7 @@
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
 	import { stopWorkflow } from '$lib/builds';
+	import { appConfig, repoConfig } from '$lib/stores';
 
 	export let selectedCommit = '';
 	export let showWorkflowLogsModal = false;
@@ -137,10 +138,20 @@
 		return `${formatted.substring(0, 10)}...`;
 	};
 
-	const isMainBranch = (branch: string | null): boolean => {
+	const isPrimaryBranch = (branch: string | null): boolean => {
 		if (!branch) return false;
 		const cleanBranchName = formatBranchName(branch).toLowerCase();
-		return cleanBranchName === 'main';
+
+		// Get primary branch from config, with fallback to first target branch, then "main"
+		let primaryBranch = $appConfig?.primaryBranch;
+		if (!primaryBranch && $repoConfig?.targetBranches?.length > 0) {
+			primaryBranch = $repoConfig.targetBranches[0].name;
+		}
+		if (!primaryBranch) {
+			primaryBranch = 'main';
+		}
+
+		return cleanBranchName === primaryBranch.toLowerCase();
 	};
 
 	onMount(() => {
@@ -178,7 +189,7 @@
 			>
 			{#if commit.branch}
 				<div class="flex items-center gap-1">
-					{#if isMainBranch(commit.branch)}
+					{#if isPrimaryBranch(commit.branch)}
 						<CodeBranchOutline class="w-3 h-3 text-green-400" />
 					{:else}
 						<CodeBranchOutline class="w-3 h-3 text-blue-400" />

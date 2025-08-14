@@ -120,6 +120,12 @@ pub struct AppConfig {
     #[serde(default, rename = "targetBranch", alias = "target_branch")]
     pub target_branch: String,
 
+    #[serde(default, rename = "primaryBranch", alias = "primary_branch")]
+    pub primary_branch: Option<String>,
+
+    #[serde(default, rename = "contentBranch", alias = "content_branch")]
+    pub content_branch: Option<String>,
+
     #[serde(default, rename = "conflictStrategy", alias = "conflict_strategy")]
     pub conflict_strategy: ConflictStrategy,
 
@@ -221,6 +227,8 @@ impl AppConfig {
             repo_path: Default::default(),
             repo_url: Default::default(),
             target_branch: "main".to_string(),
+            primary_branch: None,
+            content_branch: None,
             conflict_strategy: Default::default(),
             tools_path: Default::default(),
             tools_url: Default::default(),
@@ -326,6 +334,77 @@ impl AppConfig {
         let project_path = self.get_uproject_path(repo_config);
         let uproject = UProject::load(&project_path)?;
         Ok(self.get_engine_path(&uproject))
+    }
+
+    pub fn get_primary_branch(&self, repo_config: &RepoConfig) -> String {
+        self.primary_branch.clone().unwrap_or_else(|| {
+            repo_config
+                .target_branches
+                .first()
+                .map(|branch| branch.name.clone())
+                .unwrap_or_else(|| "main".to_string())
+        })
+    }
+
+    pub fn get_content_branch(&self, repo_config: &RepoConfig) -> Option<String> {
+        self.content_branch.clone().or_else(|| {
+            repo_config
+                .target_branches
+                .get(1)
+                .map(|branch| branch.name.clone())
+        })
+    }
+
+    pub fn initialize_branch_defaults(&mut self, repo_config: &RepoConfig) -> bool {
+        let mut updated = false;
+
+        if self.primary_branch.is_none() {
+            if let Some(primary) = repo_config.target_branches.first() {
+                self.primary_branch = Some(primary.name.clone());
+                updated = true;
+            }
+        }
+
+        if self.content_branch.is_none() {
+            if let Some(content) = repo_config.target_branches.get(1) {
+                self.content_branch = Some(content.name.clone());
+                updated = true;
+            }
+        }
+
+        updated
+    }
+
+    pub fn validate_configured_branches(&self, repo_config: &RepoConfig) -> Result<()> {
+        let target_branch_names: Vec<&String> = repo_config
+            .target_branches
+            .iter()
+            .map(|branch| &branch.name)
+            .collect();
+
+        // Validate primary branch
+        if let Some(ref primary_branch) = self.primary_branch {
+            if !target_branch_names.contains(&primary_branch) {
+                bail!(
+                    "Configured primary branch '{}' does not exist in repository target branches: {:?}",
+                    primary_branch,
+                    target_branch_names
+                );
+            }
+        }
+
+        // Validate content branch
+        if let Some(ref content_branch) = self.content_branch {
+            if !target_branch_names.contains(&content_branch) {
+                bail!(
+                    "Configured content branch '{}' does not exist in repository target branches: {:?}",
+                    content_branch,
+                    target_branch_names
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 

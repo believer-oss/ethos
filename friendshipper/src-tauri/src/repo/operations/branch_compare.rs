@@ -27,10 +27,13 @@ pub async fn branch_compare_handler<T>(
 where
     T: EngineProvider,
 {
-    // Clone the target branches in a way that preserves Send trait
-    let target_branches = {
+    // Get the primary and content branches from app config
+    let (primary_branch, content_branch) = {
+        let app_config = state.app_config.read();
         let repo_config = state.repo_config.read();
-        repo_config.target_branches.clone()
+        let primary = app_config.get_primary_branch(&repo_config);
+        let content = app_config.get_content_branch(&repo_config);
+        (primary, content)
     };
 
     let branch_compare_op = BranchCompareOp {
@@ -38,7 +41,8 @@ where
         repo_path: state.app_config.read().repo_path.clone(),
         repo_status: state.repo_status.clone(),
         git_client: state.git(),
-        target_branches,
+        primary_branch,
+        content_branch,
     };
 
     match branch_compare_op.run().await {

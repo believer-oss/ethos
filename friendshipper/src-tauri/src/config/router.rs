@@ -292,12 +292,30 @@ where
     let mut config = state.app_config.read().clone();
     let repo_config = config.initialize_repo_config()?;
 
+    // Initialize branch defaults if not set
+    let branches_updated = config.initialize_branch_defaults(&repo_config);
+
+    // Validate that configured branches exist in repo target branches
+    if let Err(e) = config.validate_configured_branches(&repo_config) {
+        return Err(CoreError::Internal(anyhow!(
+            "Branch configuration error: {}. Please check your friendshipper.yaml target branches or update your branch configuration.", 
+            e
+        )));
+    }
+
     // Get rid of the PAT
     config.github_pat = None;
 
     {
         let mut lock = state.repo_config.write();
         *lock = repo_config;
+    }
+
+    // If we updated branch defaults, also update the in-memory app config
+    if branches_updated {
+        let mut app_config_lock = state.app_config.write();
+        app_config_lock.primary_branch = config.primary_branch.clone();
+        app_config_lock.content_branch = config.content_branch.clone();
     }
 
     serde_yaml::to_writer(file, &config)?;

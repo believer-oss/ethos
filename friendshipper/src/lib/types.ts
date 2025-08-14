@@ -68,6 +68,8 @@ export interface AppConfig {
 	openUprojectAfterSync: boolean;
 	conflictStrategy: ConflictStrategy;
 	targetBranch: string;
+	primaryBranch?: string;
+	contentBranch?: string;
 	githubPAT: string;
 	engineType: string;
 	enginePrebuiltPath: string;

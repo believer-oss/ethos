@@ -178,6 +178,41 @@ impl Server {
         let app_config = Arc::new(RwLock::new(config.clone()));
         let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
 
+        // Initialize branch defaults if not set and save config if updated
+        {
+            let mut app_config_write = app_config.write();
+            let repo_config_read = repo_config.read();
+            if app_config_write.initialize_branch_defaults(&repo_config_read) {
+                // Save the updated config to disk
+                if let Ok(file) = fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&config_file)
+                {
+                    let mut config_to_save = app_config_write.clone();
+                    // Remove PAT before saving
+                    config_to_save.github_pat = None;
+                    if let Err(e) = serde_yaml::to_writer(file, &config_to_save) {
+                        warn!(
+                            "Failed to save config with initialized branch defaults: {}",
+                            e
+                        );
+                    } else {
+                        info!("Initialized and saved branch defaults to config file");
+                    }
+                }
+            }
+
+            // Validate that configured branches exist in repo target branches
+            if let Err(e) = app_config_write.validate_configured_branches(&repo_config_read) {
+                error!("Branch configuration validation failed: {}", e);
+                return Err(CoreError::Internal(anyhow!(
+                    "Branch configuration error: {}. Please check your friendshipper.yaml target branches or update your app config.", 
+                    e
+                )));
+            }
+        }
+
         // start the operation worker
         startup_tx.send("Starting operation worker".to_string())?;
         let (op_tx, op_rx) = mpsc::channel(32);

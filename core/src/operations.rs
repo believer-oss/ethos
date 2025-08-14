@@ -230,7 +230,8 @@ pub struct BranchCompareOp {
     pub repo_path: String,
     pub repo_status: RepoStatusRef,
     pub git_client: git::Git,
-    pub target_branches: Vec<crate::types::config::TargetBranchConfig>,
+    pub primary_branch: String,
+    pub content_branch: Option<String>,
 }
 
 #[async_trait]
@@ -249,31 +250,14 @@ impl Task for BranchCompareOp {
 impl BranchCompareOp {
     #[instrument(name = "BranchCompareOp::run", skip(self))]
     pub async fn run(&self) -> anyhow::Result<LogResponse> {
-        // Only proceed if there are exactly 2 target branches
-        if self.target_branches.len() != 2 {
-            return Ok(vec![]);
-        }
+        // Only proceed if content branch is configured
+        let content_branch = match &self.content_branch {
+            Some(branch) => branch,
+            None => return Ok(vec![]),
+        };
 
-        // Find the branch with merge queue and the one without
-        let merge_queue_branch = self
-            .target_branches
-            .iter()
-            .find(|branch| branch.uses_merge_queue);
-        let non_merge_queue_branch = self
-            .target_branches
-            .iter()
-            .find(|branch| !branch.uses_merge_queue);
-
-        if merge_queue_branch.is_none() || non_merge_queue_branch.is_none() {
-            return Ok(vec![]);
-        }
-
-        let merge_queue_branch_name = &merge_queue_branch.unwrap().name;
-        let non_merge_queue_branch_name = &non_merge_queue_branch.unwrap().name;
-
-        // Get commits in merge_queue_branch that are not in non_merge_queue_branch
-        let commit_range =
-            format!("origin/{non_merge_queue_branch_name}..origin/{merge_queue_branch_name}");
+        // Get commits in primary_branch that are not in content_branch
+        let commit_range = format!("origin/{content_branch}..origin/{}", self.primary_branch);
 
         debug!("Getting commits in range: {}", commit_range);
 
