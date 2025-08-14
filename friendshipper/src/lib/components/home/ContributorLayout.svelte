@@ -67,7 +67,7 @@
 		(branchConfig) => branchConfig.name === $appConfig?.targetBranch
 	);
 
-	$: shouldShowBranchComparison = $repoConfig?.targetBranches.length === 2;
+	$: shouldShowBranchComparison = $appConfig?.primaryBranch && $appConfig?.contentBranch;
 
 	const handleSyncCancelled = async () => {
 		try {
@@ -397,7 +397,7 @@
 			</Card>
 		</div>
 	</div>
-	<div class="h-full flex flex-col overflow-hidden">
+	<div class="flex flex-col overflow-hidden">
 		<div class="flex items-center gap-2">
 			<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Merge Queue</p>
 			<Button
@@ -468,13 +468,13 @@
 				<p class="text-gray-400">Merge queue is not enabled for selected target branch.</p>
 			{/if}
 		</Card>
-	</div>
 
-	<!-- Branch Comparison Section -->
-	{#if shouldShowBranchComparison}
-		<div class="h-full flex flex-col overflow-hidden mt-4">
+		<!-- Branch Comparison Section - directly underneath merge queue -->
+		{#if shouldShowBranchComparison}
 			<div class="flex items-center gap-2">
-				<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Branch Comparison</p>
+				<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">
+					Commits waiting for merge to Content Branch
+				</p>
 				<Button
 					disabled={loadingBranchComparison}
 					class="!p-1.5"
@@ -544,8 +544,8 @@
 					<p class="text-gray-400">Loading branch comparison...</p>
 				{/if}
 			</Card>
-		</div>
-	{/if}
+		{/if}
+	</div>
 </div>
 
 {#key $nextPlaytest?.status}
