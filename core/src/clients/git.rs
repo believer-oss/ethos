@@ -620,6 +620,14 @@ impl Git {
         .await
     }
 
+    pub async fn cherry(&self, upstream: &str, head: &str) -> anyhow::Result<String> {
+        self.run_and_collect_output(
+            &["--no-pager", "cherry", upstream, head],
+            Opts::new_without_logs(),
+        )
+        .await
+    }
+
     pub async fn version(&self) -> anyhow::Result<String> {
         self.run_and_collect_output(&["version"], Opts::default())
             .await
