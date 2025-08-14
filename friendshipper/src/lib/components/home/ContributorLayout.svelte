@@ -307,10 +307,10 @@
 	});
 </script>
 
-<div class="flex flex-col h-full gap-2">
-	<div class="flex flex-row h-full gap-2 max-h-[60vh]">
+<div class="flex flex-col h-full gap-2 pb-20">
+	<div class="flex flex-row gap-2">
 		{#if $nextPlaytest !== null}
-			<div class="flex flex-col gap-2 w-full h-full overflow-x-auto overflow-y-hidden">
+			<div class="flex flex-col gap-2 w-full overflow-x-auto overflow-y-hidden">
 				<div class="flex mt-2 items-center gap-2">
 					<p class="text-2xl text-primary-400 dark:text-primary-400">Next Playtest</p>
 					<Button
@@ -335,7 +335,7 @@
 				<Button size="xs" href="/playtests">Playtests<LinkOutline class="ml-2 h-4 w-4" /></Button>
 			</div>
 		{/if}
-		<div class="flex flex-col gap-2 h-full max-w-[24rem] w-96">
+		<div class="flex flex-col gap-2 max-w-[24rem] w-96">
 			<div class="flex mt-2 items-center gap-2">
 				<p class="text-2xl text-primary-400 dark:text-primary-400">Repo Status</p>
 				<Button disabled={loadingRepoStatus} class="!p-1.5" primary on:click={refreshRepo}>
@@ -397,7 +397,7 @@
 			</Card>
 		</div>
 	</div>
-	<div class="flex flex-col overflow-hidden">
+	<div class="flex flex-col flex-1 overflow-hidden">
 		<div class="flex items-center gap-2">
 			<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Merge Queue</p>
 			<Button
