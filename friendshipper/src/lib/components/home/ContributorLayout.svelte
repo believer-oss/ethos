@@ -17,7 +17,14 @@
 	import { onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { get } from 'svelte/store';
-	import { generateSln, getMergeQueue, openProject, syncLatest, getRepoStatus } from '$lib/repo';
+	import {
+		generateSln,
+		getMergeQueue,
+		openProject,
+		syncLatest,
+		getRepoStatus,
+		getBranchComparison
+	} from '$lib/repo';
 	import type {
 		ArtifactEntry,
 		GameServerResult,
@@ -48,8 +55,10 @@
 	let loadingMergeQueue = false;
 	let loadingPlaytests = false;
 	let loadingRepoStatus = false;
+	let loadingBranchComparison = false;
 	let openingProject = false;
 	let mergeQueue: Nullable<MergeQueue> = null;
+	let branchComparison: Nullable<Commit[]> = null;
 	let syncing = false;
 	let progressModalText = '';
 	let progressModalCancellable = false;
@@ -57,6 +66,8 @@
 	$: targetBranchConfig = $repoConfig?.targetBranches.find(
 		(branchConfig) => branchConfig.name === $appConfig?.targetBranch
 	);
+
+	$: shouldShowBranchComparison = $repoConfig?.targetBranches.length === 2;
 
 	const handleSyncCancelled = async () => {
 		try {
@@ -102,10 +113,24 @@
 		loadingMergeQueue = false;
 	};
 
+	const refreshBranchComparison = async () => {
+		try {
+			loadingBranchComparison = true;
+			branchComparison = await getBranchComparison(50);
+		} catch (e) {
+			await emit('error', e);
+		}
+		loadingBranchComparison = false;
+	};
+
 	const refresh = async () => {
 		try {
 			// We don't need to refresh the repo because the root layout component will do that
-			await Promise.all([refreshPlaytests(), refreshMergeQueue()]);
+			const promises = [refreshPlaytests(), refreshMergeQueue()];
+			if (shouldShowBranchComparison) {
+				promises.push(refreshBranchComparison());
+			}
+			await Promise.all(promises);
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -444,6 +469,83 @@
 			{/if}
 		</Card>
 	</div>
+
+	<!-- Branch Comparison Section -->
+	{#if shouldShowBranchComparison}
+		<div class="h-full flex flex-col overflow-hidden mt-4">
+			<div class="flex items-center gap-2">
+				<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Branch Comparison</p>
+				<Button
+					disabled={loadingBranchComparison}
+					class="!p-1.5"
+					primary
+					on:click={refreshBranchComparison}
+				>
+					{#if loadingBranchComparison}
+						<Spinner size="4" />
+					{:else}
+						<RefreshOutline class="w-4 h-4" />
+					{/if}
+				</Button>
+			</div>
+			<Card
+				class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+			>
+				{#if branchComparison !== null}
+					{#if branchComparison.length === 0}
+						<p class="text-white">No differences between branches!</p>
+					{:else}
+						<Table color="custom" divClass="w-full" class="w-full h-full" striped>
+							<TableHead class="text-center border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+								<TableHeadCell class="p-2">Commit</TableHeadCell>
+								<TableHeadCell class="p-2">Message</TableHeadCell>
+								<TableHeadCell class="p-2">Author</TableHeadCell>
+								<TableHeadCell class="p-2">Timestamp</TableHeadCell>
+								<TableHeadCell class="p-2">Status</TableHeadCell>
+							</TableHead>
+							<TableBody>
+								{#each branchComparison as commit, index}
+									<TableBodyRow
+										class="text-left border-b-0 p-2 {index % 2 === 0
+											? 'bg-secondary-700 dark:bg-space-900'
+											: 'bg-secondary-800 dark:bg-space-950'}"
+									>
+										<TableBodyCell class="p-2 font-mono text-sm">
+											{commit.sha}
+										</TableBodyCell>
+										<TableBodyCell
+											class="p-2 text-primary-400 dark:text-primary-400 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-1/2 max-w-[22vw]"
+										>
+											{commit.message || 'No message'}
+										</TableBodyCell>
+										<TableBodyCell class="p-2 text-center">
+											{commit.author || 'Unknown'}
+										</TableBodyCell>
+										<TableBodyCell class="p-2 text-center">
+											{commit.timestamp ? new Date(commit.timestamp).toLocaleString() : 'Unknown'}
+										</TableBodyCell>
+										<TableBodyCell class="p-2">
+											{#if commit.status}
+												<Badge class="text-white dark:text-white w-full bg-green-500">
+													{commit.status.state}
+												</Badge>
+											{:else}
+												<Badge class="text-white dark:text-white w-full bg-gray-500">
+													No status
+												</Badge>
+											{/if}
+										</TableBodyCell>
+									</TableBodyRow>
+								{/each}
+							</TableBody>
+						</Table>
+					{/if}
+				{:else}
+					<p class="text-gray-400">Loading branch comparison...</p>
+				{/if}
+			</Card>
+		</div>
+	{/if}
 </div>
 
 {#key $nextPlaytest?.status}

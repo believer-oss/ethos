@@ -13,6 +13,7 @@ where
         .route("/clone", post(operations::clone_handler))
         .route("/diff", get(operations::diff_handler))
         .route("/log", get(operations::log_handler))
+        .route("/branch-compare", get(operations::branch_compare_handler))
         .route("/pull", post(operations::pull_handler))
         .route("/show", get(operations::show_commit_files))
         .route("/file-history", get(operations::file_history_handler))

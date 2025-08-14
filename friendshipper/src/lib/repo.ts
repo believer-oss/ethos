@@ -17,6 +17,9 @@ export const getCommits = async (
 	update?: boolean
 ): Promise<Commit[]> => invoke('get_commits', { limit, remote, update });
 
+export const getBranchComparison = async (limit?: number): Promise<Commit[]> =>
+	invoke('get_branch_comparison', { limit });
+
 // "All" here refers to the combination of local and upstream, not every commit.
 // Right now we're just pulling 500.
 export const getAllCommits = async (): Promise<Commit[]> => {

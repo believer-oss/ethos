@@ -295,6 +295,45 @@ pub async fn get_commits(
 }
 
 #[tauri::command]
+pub async fn get_branch_comparison(
+    state: tauri::State<'_, State>,
+    limit: Option<u32>,
+) -> Result<Vec<Commit>, TauriError> {
+    let mut req = state
+        .client
+        .get(format!("{}/repo/branch-compare", state.server_url));
+
+    if let Some(limit) = limit {
+        req = req.query(&[("limit", limit)]);
+    }
+
+    match req.send().await {
+        Ok(res) => {
+            let status = res.status();
+            if status.is_client_error() || status.is_server_error() {
+                let body = res.text().await?;
+                Err(TauriError {
+                    message: body,
+                    status_code: status.as_u16(),
+                })
+            } else {
+                match res.json::<Vec<Commit>>().await {
+                    Ok(res) => Ok(res),
+                    Err(err) => Err(TauriError {
+                        message: err.to_string(),
+                        status_code: 500, // Internal Server Error as a default
+                    }),
+                }
+            }
+        }
+        Err(err) => Err(TauriError {
+            message: err.to_string(),
+            status_code: 500, // Internal Server Error as a default
+        }),
+    }
+}
+
+#[tauri::command]
 pub async fn clone_repo(
     state: tauri::State<'_, State>,
     req: CloneRequest,

@@ -159,6 +159,7 @@ fn main() -> Result<(), CoreError> {
                 get_build,
                 get_builds,
                 get_commits,
+                get_branch_comparison,
                 get_dynamic_config,
                 get_app_config,
                 get_log_path,
