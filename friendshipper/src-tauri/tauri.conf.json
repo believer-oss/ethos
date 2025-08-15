@@ -47,7 +47,7 @@
 	},
 	"productName": "Friendshipper",
 	"mainBinaryName": "Friendshipper",
-	"version": "5.3.4",
+	"version": "5.3.5",
 	"identifier": "com.believer.friendshipper",
 	"plugins": {
 		"updater": {
