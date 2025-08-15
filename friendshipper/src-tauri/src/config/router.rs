@@ -297,10 +297,9 @@ where
 
     // Validate that configured branches exist in repo target branches
     if let Err(e) = config.validate_configured_branches(&repo_config) {
-        return Err(CoreError::Internal(anyhow!(
-            "Branch configuration error: {}. Please check your friendshipper.yaml target branches or update your branch configuration.", 
-            e
-        )));
+        return Err(anyhow!(ConfigValidationError(format!(
+            "App configuration error: {e}. Please check your friendshipper.yaml target branches or update your branch configuration."
+        ))).into());
     }
 
     // Get rid of the PAT

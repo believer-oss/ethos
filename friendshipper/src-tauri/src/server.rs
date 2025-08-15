@@ -80,7 +80,7 @@ impl Server {
     ) -> Result<(), CoreError> {
         let pause_background_tasks = Arc::new(AtomicBool::new(false));
 
-        let (app, address, shared_state) = self
+        let (app, address, shared_state, app_config_error) = self
             .initialize_server(
                 config,
                 config_file,
@@ -118,6 +118,12 @@ impl Server {
 
         info!("starting server at {}", address);
         startup_tx.send("Starting server".to_string())?;
+
+        // Send any app configuration error after the server has started
+        if let Some(error_msg) = app_config_error {
+            startup_tx.send(error_msg)?;
+        }
+
         let listener = tokio::net::TcpListener::bind(address).await?;
         let result = axum::serve(listener, app.into_make_service())
             .with_graceful_shutdown(async move {
@@ -172,14 +178,22 @@ impl Server {
         config_file: PathBuf,
         startup_tx: STDSender<String>,
         pause_background_tasks: Arc<AtomicBool>,
-    ) -> Result<(Router, String, AppState<UnrealEngineProvider>), CoreError> {
+    ) -> Result<
+        (
+            Router,
+            String,
+            AppState<UnrealEngineProvider>,
+            Option<String>,
+        ),
+        CoreError,
+    > {
         startup_tx.send("Initializing application config".to_string())?;
 
         let app_config = Arc::new(RwLock::new(config.clone()));
         let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
 
         // Initialize branch defaults if not set and save config if updated
-        {
+        let app_config_error = {
             let mut app_config_write = app_config.write();
             let repo_config_read = repo_config.read();
             if app_config_write.initialize_branch_defaults(&repo_config_read) {
@@ -204,14 +218,18 @@ impl Server {
             }
 
             // Validate that configured branches exist in repo target branches
+            // We'll store the error and send it after server initialization to ensure UI can display it
             if let Err(e) = app_config_write.validate_configured_branches(&repo_config_read) {
-                error!("Branch configuration validation failed: {}", e);
-                return Err(CoreError::Internal(anyhow!(
-                    "Branch configuration error: {}. Please check your friendshipper.yaml target branches or update your app config.", 
-                    e
-                )));
+                error!("App configuration validation failed: {}", e);
+                let error_msg = format!(
+                    "App configuration error: {e}. Please check your friendshipper.yaml target branches or update your app config."
+                );
+                Some(error_msg)
+            } else {
+                None
             }
-        }
+            // Don't return error here - continue with server initialization
+        };
 
         // start the operation worker
         startup_tx.send("Starting operation worker".to_string())?;
@@ -369,7 +387,7 @@ impl Server {
 
         let address = format!("127.0.0.1:{}", self.port);
 
-        Ok((app, address, shared_state))
+        Ok((app, address, shared_state, app_config_error))
     }
 
     #[instrument(
