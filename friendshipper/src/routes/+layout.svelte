@@ -820,8 +820,20 @@
 				class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
 			>
 				<div class="flex items-center gap-2">
-					<span class="text-gray-300 text-xl">{startupMessage}...</span>
-					<Spinner size="4" />
+					<span
+						class="text-xl {startupMessage.startsWith('App configuration error') ||
+						startupMessage.startsWith('Warning:')
+							? 'text-red-400'
+							: 'text-gray-300'}"
+					>
+						{startupMessage}{startupMessage.startsWith('App configuration error') ||
+						startupMessage.startsWith('Warning:')
+							? ''
+							: '...'}
+					</span>
+					{#if !startupMessage.startsWith('App configuration error') && !startupMessage.startsWith('Warning:')}
+						<Spinner size="4" />
+					{/if}
 				</div>
 				{#if gitStartupMessage}
 					<div class="rounded-md p-2 bg-secondary-800 dark:bg-space-950">

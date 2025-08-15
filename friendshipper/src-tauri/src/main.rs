@@ -397,8 +397,17 @@ fn main() -> Result<(), CoreError> {
                     while let Ok(msg) = startup_rx.recv() {
                         startup_handle.emit("startup-message", &msg).unwrap();
 
-                        if msg.eq("Starting server") {
+                        // Continue listening for error messages even after server starts
+                        if msg.eq("Starting server") && !msg.starts_with("App configuration error")
+                        {
                             break;
+                        }
+
+                        // If it's an error message, keep listening for potential recovery
+                        if msg.starts_with("App configuration error") || msg.starts_with("Warning:")
+                        {
+                            // Don't break, continue listening
+                            continue;
                         }
                     }
                 });

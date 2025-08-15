@@ -297,7 +297,7 @@ impl BranchCompareOp {
 
                 if parts.len() >= 4 {
                     let full_sha = parts[0];
-                    // Only include commits that are in our cherry filter list
+                    // Only include commits that are not cherrypicked
                     if new_commit_shas
                         .iter()
                         .any(|&cherry_sha| full_sha.starts_with(cherry_sha))
