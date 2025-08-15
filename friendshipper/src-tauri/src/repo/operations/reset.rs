@@ -141,10 +141,7 @@ where
             }
             Ok(uproject) => Some(uproject),
         };
-        if new_uproject.is_some() && old_uproject.is_some() {
-            let new_uproject = new_uproject.unwrap();
-            let old_uproject = old_uproject.unwrap();
-
+        if let (Some(new_uproject), Some(old_uproject)) = (new_uproject, old_uproject) {
             if new_uproject.engine_association != old_uproject.engine_association {
                 info!("Engine association changed, updating engine.");
                 let repo_owner = self.repo_status.read().repo_owner.clone();
