@@ -310,7 +310,7 @@
 <div class="flex flex-col h-full gap-2 pb-20">
 	<div class="flex flex-row gap-2">
 		{#if $nextPlaytest !== null}
-			<div class="flex flex-col gap-2 w-full overflow-x-auto overflow-y-hidden">
+			<div class="flex flex-col gap-2 w-full overflow-x-auto overflow-y-hidden flex-grow min-w-0">
 				<div class="flex mt-2 items-center gap-2">
 					<p class="text-2xl text-primary-400 dark:text-primary-400">Next Playtest</p>
 					<Button
@@ -327,7 +327,9 @@
 					</Button>
 				</div>
 
-				<PlaytestCard playtest={$nextPlaytest} bind:loading={loadingPlaytests} compact />
+				<div class="flex-grow min-w-0 overflow-hidden">
+					<PlaytestCard playtest={$nextPlaytest} bind:loading={loadingPlaytests} compact />
+				</div>
 			</div>
 		{:else}
 			<div class="flex gap-2 items-center">
@@ -335,7 +337,7 @@
 				<Button size="xs" href="/playtests">Playtests<LinkOutline class="ml-2 h-4 w-4" /></Button>
 			</div>
 		{/if}
-		<div class="flex flex-col gap-2 max-w-[24rem] w-96">
+		<div class="flex flex-col gap-2 max-w-[24rem] w-96 flex-shrink-0 h-fit">
 			<div class="flex mt-2 items-center gap-2">
 				<p class="text-2xl text-primary-400 dark:text-primary-400">Repo Status</p>
 				<Button disabled={loadingRepoStatus} class="!p-1.5" primary on:click={refreshRepo}>
@@ -347,9 +349,9 @@
 				</Button>
 			</div>
 			<Card
-				class="w-full h-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+				class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 			>
-				<div class="flex flex-col h-full justify-between">
+				<div class="flex flex-col gap-4">
 					<div class="flex flex-col gap-1">
 						<div class="flex gap-2 items-center">
 							<p class="w-60 text-white">Branch:</p>
@@ -377,7 +379,7 @@
 						</div>
 					</div>
 					<div class="flex flex-col gap-2">
-						<ButtonGroup size="xs" class="space-x-px mt-4 w-full">
+						<ButtonGroup size="xs" class="space-x-px w-full">
 							<Button color="primary" class="w-full" on:click={handleSyncClicked}>Sync</Button>
 							<Button color="primary" href="/source/submit" class="w-full"
 								>Submit<LinkOutline class="ml-4 w-4 h-4l" /></Button
