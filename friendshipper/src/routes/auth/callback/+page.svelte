@@ -15,6 +15,9 @@
 			$oktaAuth.tokenManager.setTokens(tokens);
 
 			const { accessToken } = tokens.accessToken;
+
+			// Store tokens in localStorage to maintain consistency
+			localStorage.setItem('oktaAccessToken', accessToken);
 			await emit('access-token-set', accessToken);
 
 			if (tokens.refreshToken) {
