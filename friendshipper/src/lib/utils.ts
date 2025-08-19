@@ -35,3 +35,12 @@ export const logSuccess = async (message: string) => {
 		// Ignore if logging command fails
 	}
 };
+
+export const logInfo = async (message: string) => {
+	// Log to backend Rust logs only (no frontend notification)
+	try {
+		await invoke('log_info', { message });
+	} catch (_) {
+		// Ignore if logging command fails
+	}
+};

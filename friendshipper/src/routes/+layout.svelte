@@ -87,7 +87,7 @@
 		getRepoConfig,
 		resetConfig
 	} from '$lib/config';
-	import { handleError, logError, logSuccess } from '$lib/utils';
+	import { handleError, logError, logInfo } from '$lib/utils';
 	import { createOktaAuth, isTokenExpired } from '$lib/okta';
 	import { browser } from '$app/environment';
 
@@ -248,7 +248,7 @@
 
 	const refreshRepo = async () => {
 		repoStatus.set(await getRepoStatus());
-		void logSuccess('Files refreshed!');
+		void logInfo('Files refreshed!');
 	};
 
 	const initializeChangeSets = async () => {
@@ -287,20 +287,20 @@
 		}
 	};
 
-	const tryOktaRefresh = async (): Promise<boolean> => {
+	const tryOktaRefresh = async (): Promise<boolean | 'user_not_logged_in'> => {
 		if (!$oktaAuth) {
 			await logError('tryOktaRefresh: No oktaAuth instance available');
 			return false;
 		}
 
 		try {
-			await logSuccess('Attempting Okta token refresh via getWithoutPrompt');
+			await logInfo('Attempting Okta token refresh via getWithoutPrompt');
 			const { tokens } = await $oktaAuth.token.getWithoutPrompt({
 				scopes: ['openid', 'email', 'profile', 'offline_access']
 			});
 
 			if (tokens && tokens.accessToken) {
-				await logSuccess('Okta getWithoutPrompt succeeded, updating tokens');
+				await logInfo('Okta getWithoutPrompt succeeded, updating tokens');
 				$oktaAuth.tokenManager.setTokens(tokens);
 
 				// Sync all token storage locations
@@ -315,9 +315,9 @@
 				await emit('access-token-set', tokens.accessToken.accessToken);
 
 				try {
-					await logSuccess('Calling backend refreshLogin');
+					await logInfo('Calling backend refreshLogin');
 					await refreshLogin(tokens.accessToken.accessToken);
-					await logSuccess('Backend refreshLogin succeeded');
+					await logInfo('Backend refreshLogin succeeded');
 				} catch (backendError) {
 					await logError('Backend refreshLogin failed', backendError);
 					throw backendError;
@@ -328,6 +328,13 @@
 			await logError('Okta getWithoutPrompt returned no tokens');
 		} catch (error) {
 			await logError('tryOktaRefresh failed', error);
+
+			// Check for specific "user is not logged in" error
+			const errorString = String(error);
+			if (errorString.includes('user is not logged in')) {
+				await logError('Detected user not logged in error - bypassing retry logic');
+				return 'user_not_logged_in';
+			}
 		}
 		return false;
 	};
@@ -368,9 +375,9 @@
 
 						await emit('access-token-set', tokens.accessToken.accessToken);
 						try {
-							await logSuccess('Calling backend refreshLogin');
+							await logInfo('Calling backend refreshLogin');
 							await refreshLogin(tokens.accessToken.accessToken);
-							await logSuccess('Backend refreshLogin succeeded');
+							await logInfo('Backend refreshLogin succeeded');
 						} catch (backendError) {
 							await logError('Backend refreshLogin failed', backendError);
 						}
@@ -398,20 +405,20 @@
 			// First try: if we have a valid refresh token, try session refresh
 			if (refreshToken && !isTokenExpired(refreshToken) && $oktaAuth) {
 				try {
-					await logSuccess('Attempting Okta session.refresh');
+					await logInfo('Attempting Okta session.refresh');
 					await $oktaAuth.session.refresh();
 					const tokens = await $oktaAuth.tokenManager.getTokens();
 
 					if (tokens.accessToken) {
-						await logSuccess('Okta session.refresh succeeded, updating tokens');
+						await logInfo('Okta session.refresh succeeded, updating tokens');
 						// Sync all token locations
 						accessToken = tokens.accessToken.accessToken;
 						localStorage.setItem('oktaAccessToken', accessToken);
 
 						try {
-							await logSuccess('Calling backend refreshLogin after session.refresh');
+							await logInfo('Calling backend refreshLogin after session.refresh');
 							await refreshLogin(tokens.accessToken.accessToken);
-							await logSuccess('Backend refreshLogin succeeded after session.refresh');
+							await logInfo('Backend refreshLogin succeeded after session.refresh');
 						} catch (backendError) {
 							await logError('Backend refreshLogin failed after session.refresh', backendError);
 							throw backendError;
@@ -422,15 +429,32 @@
 					await logError('Okta session.refresh succeeded but returned no access token');
 				} catch (sessionError) {
 					await logError('Okta session.refresh failed', sessionError);
+
+					// Check for specific "user is not logged in" error
+					const errorString = String(sessionError);
+					if (errorString.includes('user is not logged in')) {
+						await logError(
+							'User not logged in detected in session.refresh - forcing immediate re-authentication'
+						);
+						await handleOktaLogout();
+						await handleOktaLogin();
+						return true;
+					}
 					// Don't immediately give up, try alternative method
 				}
 			}
 
 			// Second try: use getWithoutPrompt
-			await logSuccess('Trying fallback token refresh method');
-			const refreshSuccess = await tryOktaRefresh();
-			if (refreshSuccess) {
+			await logInfo('Trying fallback token refresh method');
+			const refreshResult = await tryOktaRefresh();
+			if (refreshResult === true) {
 				tokenRefreshAttempts = 0; // Reset on success
+				return true;
+			}
+			if (refreshResult === 'user_not_logged_in') {
+				await logError('User not logged in detected - forcing immediate re-authentication');
+				await handleOktaLogout();
+				await handleOktaLogin();
 				return true;
 			}
 			await logError('Fallback token refresh method also failed');
@@ -514,7 +538,7 @@
 		accessToken = localStorage.getItem('oktaAccessToken');
 		refreshToken = localStorage.getItem('oktaRefreshToken');
 
-		await logSuccess(
+		await logInfo(
 			`handleOktaState: Loaded tokens - hasAccess: ${!!accessToken}, hasRefresh: ${!!refreshToken}`
 		);
 
@@ -700,6 +724,113 @@
 	};
 
 	onMount(() => {
+		// Restore tokens from localStorage on app startup
+		const restoreTokens = async () => {
+			try {
+				const storedAccessToken = localStorage.getItem('oktaAccessToken');
+				const storedRefreshToken = localStorage.getItem('oktaRefreshToken');
+
+				if (storedAccessToken && storedRefreshToken) {
+					await logInfo('[STARTUP] Restoring tokens from localStorage');
+					accessToken = storedAccessToken;
+					refreshToken = storedRefreshToken;
+
+					// Validate tokens are not expired
+					if (!isTokenExpired(accessToken)) {
+						await logInfo('[STARTUP] Access token is still valid');
+
+						// Restore to Okta tokenManager if possible
+						if ($oktaAuth) {
+							try {
+								const accessDecoded = jwtDecode(accessToken);
+								const accessLifetimeHours = (accessDecoded.exp - accessDecoded.iat) / 3600;
+								await logInfo(
+									`[STARTUP] Restored access token lifetime: ${accessLifetimeHours.toFixed(
+										2
+									)} hours (expires: ${new Date(accessDecoded.exp * 1000).toISOString()})`
+								);
+
+								// Handle refresh token based on type
+								const tokenParts = refreshToken.split('.').length;
+								await logInfo(
+									`[STARTUP] Refresh token format: length=${
+										refreshToken.length
+									}, parts=${tokenParts}, type=${tokenParts === 3 ? 'JWT' : 'opaque'}`
+								);
+
+								let refreshTokenData;
+								if (tokenParts === 3) {
+									// JWT refresh token
+									try {
+										const refreshDecoded = jwtDecode(refreshToken);
+										const refreshLifetimeHours = (refreshDecoded.exp - refreshDecoded.iat) / 3600;
+										await logInfo(
+											`[STARTUP] Restored refresh token lifetime: ${refreshLifetimeHours.toFixed(
+												2
+											)} hours (expires: ${new Date(refreshDecoded.exp * 1000).toISOString()})`
+										);
+										refreshTokenData = {
+											refreshToken: storedRefreshToken,
+											expiresAt: refreshDecoded.exp
+										};
+									} catch (refreshDecodeError) {
+										await logError(
+											`[STARTUP] Failed to decode JWT refresh token: ${String(refreshDecodeError)}`
+										);
+										refreshTokenData = { refreshToken: storedRefreshToken };
+									}
+								} else {
+									// Opaque refresh token
+									await logInfo(
+										`[STARTUP] Opaque refresh token detected - expiration managed by Okta server`
+									);
+									refreshTokenData = { refreshToken: storedRefreshToken };
+								}
+
+								// Set tokens in Okta tokenManager
+								$oktaAuth.tokenManager.setTokens({
+									accessToken: { accessToken: storedAccessToken, expiresAt: accessDecoded.exp },
+									refreshToken: refreshTokenData
+								});
+
+								await emit('access-token-set', accessToken);
+								await startOktaTokenRefreshProcess();
+							} catch (tokenError) {
+								await logError('Failed to restore tokens to Okta tokenManager', tokenError);
+							}
+						}
+					} else {
+						await logInfo('[STARTUP] Stored access token is expired, will need to refresh');
+						// Try to refresh using the refresh token
+						// For opaque tokens, we can't check expiration locally - let Okta decide
+						const tokenParts = refreshToken.split('.').length;
+						if (tokenParts === 3) {
+							// JWT refresh token - check expiration
+							if (!isTokenExpired(refreshToken)) {
+								await logInfo('[STARTUP] JWT refresh token is valid, attempting refresh');
+								await refreshOktaOrLogout();
+							} else {
+								await logInfo('[STARTUP] Both JWT tokens are expired, clearing storage');
+								localStorage.removeItem('oktaAccessToken');
+								localStorage.removeItem('oktaRefreshToken');
+								accessToken = null;
+								refreshToken = null;
+							}
+						} else {
+							// Opaque refresh token - always try refresh, let Okta reject if expired
+							await logInfo('[STARTUP] Opaque refresh token found, attempting refresh');
+							await refreshOktaOrLogout();
+						}
+					}
+				} else {
+					await logInfo('[STARTUP] No stored tokens found in localStorage');
+				}
+			} catch (error) {
+				await logError('Failed to restore tokens on startup', error);
+			}
+		};
+		void restoreTokens();
+
 		// show app window
 		const setupAppWindow = async (): Promise<void> => {
 			await appWindow.show();
