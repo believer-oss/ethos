@@ -743,32 +743,13 @@
 						if ($oktaAuth) {
 							try {
 								const accessDecoded = jwtDecode(accessToken);
-								const accessLifetimeHours = (accessDecoded.exp - accessDecoded.iat) / 3600;
-								await logInfo(
-									`[STARTUP] Restored access token lifetime: ${accessLifetimeHours.toFixed(
-										2
-									)} hours (expires: ${new Date(accessDecoded.exp * 1000).toISOString()})`
-								);
-
 								// Handle refresh token based on type
 								const tokenParts = refreshToken.split('.').length;
-								await logInfo(
-									`[STARTUP] Refresh token format: length=${
-										refreshToken.length
-									}, parts=${tokenParts}, type=${tokenParts === 3 ? 'JWT' : 'opaque'}`
-								);
-
 								let refreshTokenData;
 								if (tokenParts === 3) {
 									// JWT refresh token
 									try {
 										const refreshDecoded = jwtDecode(refreshToken);
-										const refreshLifetimeHours = (refreshDecoded.exp - refreshDecoded.iat) / 3600;
-										await logInfo(
-											`[STARTUP] Restored refresh token lifetime: ${refreshLifetimeHours.toFixed(
-												2
-											)} hours (expires: ${new Date(refreshDecoded.exp * 1000).toISOString()})`
-										);
 										refreshTokenData = {
 											refreshToken: storedRefreshToken,
 											expiresAt: refreshDecoded.exp
