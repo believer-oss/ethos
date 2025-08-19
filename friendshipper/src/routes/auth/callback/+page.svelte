@@ -16,14 +16,8 @@
 
 			const { accessToken } = tokens.accessToken;
 
-			// Store tokens in localStorage to maintain consistency
-			localStorage.setItem('oktaAccessToken', accessToken);
+			// Emit token for in-memory variable update (Okta handles storage)
 			await emit('access-token-set', accessToken);
-
-			if (tokens.refreshToken) {
-				const { refreshToken } = tokens.refreshToken;
-				localStorage.setItem('oktaRefreshToken', refreshToken);
-			}
 		} else {
 			await emit('error', 'No tokens found.');
 		}
