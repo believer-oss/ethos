@@ -165,6 +165,8 @@ fn main() -> Result<(), CoreError> {
                 get_log_path,
                 update_app_config,
                 get_logs,
+                log_error,
+                log_info,
                 get_playtests,
                 get_project_config,
                 get_pull_request,
