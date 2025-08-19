@@ -88,7 +88,7 @@
 		resetConfig
 	} from '$lib/config';
 	import { handleError, logError, logInfo } from '$lib/utils';
-	import { createOktaAuth, renewTokens, setupOktaEventListeners } from '$lib/okta';
+	import { createOktaAuth, setupOktaEventListeners, clearExpiredTokens } from '$lib/okta';
 	import { browser } from '$app/environment';
 
 	const appWindow = getCurrentWebviewWindow();
@@ -268,35 +268,6 @@
 		}
 	};
 
-	// Set up Okta's automatic token management system
-	const setupOktaTokenManagement = (onTokenExpired: () => Promise<void>) => {
-		if (!$oktaAuth) {
-			return;
-		}
-
-		// Set up event listeners for automatic token handling
-		setupOktaEventListeners(
-			$oktaAuth,
-			// On token renewed
-			(newAccessToken: string) => {
-				void (async () => {
-					await logInfo('Okta automatically renewed access token');
-					await emit('access-token-set', newAccessToken);
-					try {
-						await refreshLogin(newAccessToken);
-						hasValidTokens = true;
-					} catch (error) {
-						await logError('Backend refresh failed after automatic token renewal', error);
-					}
-				})();
-			},
-			// On token expired (fallback if auto-renewal fails)
-			() => {
-				void onTokenExpired();
-			}
-		);
-	};
-
 	const handleOktaLogin = async () => {
 		try {
 			const previousStartupMessage = startupMessage;
@@ -322,14 +293,6 @@
 					if (tokens && tokens.accessToken) {
 						$oktaAuth.tokenManager.setTokens(tokens);
 
-						// Set up automatic token management
-						setupOktaTokenManagement(async () => {
-							await logInfo('Access token expired, forcing re-authentication');
-							hasValidTokens = false;
-							await handleOktaLogout();
-							await handleOktaLogin();
-						});
-
 						await emit('access-token-set', tokens.accessToken.accessToken);
 						try {
 							await logInfo('Calling backend refreshLogin');
@@ -350,41 +313,14 @@
 		}
 	};
 
-	const handleTokenRenewal = async (): Promise<boolean> => {
-		if (!$oktaAuth) {
-			await logError('handleTokenRenewal: No oktaAuth instance available');
-			return false;
-		}
-
-		try {
-			await logInfo('Attempting token renewal using refresh token');
-			const renewed = await renewTokens($oktaAuth);
-
-			if (renewed) {
-				// Get the new token and update backend
-				const tokens = await $oktaAuth.tokenManager.getTokens();
-				if (tokens.accessToken) {
-					await emit('access-token-set', tokens.accessToken.accessToken);
-					await refreshLogin(tokens.accessToken.accessToken);
-					await logInfo('Token renewal and backend refresh successful');
-					return true;
-				}
-			}
-
-			await logInfo('Token renewal failed, refresh token may be expired');
-			return false;
-		} catch (error) {
-			await logError('Token renewal failed', error);
-			return false;
-		}
-	};
-
 	const handleOktaState = async (): Promise<void> => {
 		if (!$oktaAuth) {
 			return;
 		}
 
 		try {
+			// First, clear any expired tokens from storage
+			await clearExpiredTokens($oktaAuth);
 			const oktaTokens = await $oktaAuth.tokenManager.getTokens();
 
 			await logInfo(
@@ -397,15 +333,12 @@
 				return;
 			}
 
-			// If access token exists but is expired, try to refresh using refresh token
+			// If access token exists but is expired, force re-authentication
+			// Okta's auto-renewal should handle this, but if we get here the token is expired
 			if (oktaTokens.accessToken && $oktaAuth.tokenManager.hasExpired(oktaTokens.accessToken)) {
-				await logInfo('handleOktaState: Access token is expired, attempting refresh');
-				const renewed = await handleTokenRenewal();
-				if (!renewed) {
-					// If refresh fails, force re-authentication
-					await handleOktaLogin();
-					return;
-				}
+				await logInfo('handleOktaState: Access token is expired, forcing re-authentication');
+				await handleOktaLogin();
+				return;
 			}
 
 			// Get current tokens after potential refresh
@@ -414,14 +347,6 @@
 				currentTokens.accessToken &&
 				!$oktaAuth.tokenManager.hasExpired(currentTokens.accessToken)
 			) {
-				// Set up automatic token management
-				setupOktaTokenManagement(async () => {
-					await logInfo('Access token expired, forcing re-authentication');
-					hasValidTokens = false;
-					await handleOktaLogout();
-					await handleOktaLogin();
-				});
-
 				// Update backend and set valid state
 				await refreshLogin(currentTokens.accessToken.accessToken);
 				hasValidTokens = true;
@@ -440,6 +365,9 @@
 		try {
 			if ($oktaAuth) {
 				await logInfo('[STARTUP] Checking for existing tokens in Okta storage');
+
+				// Clear any expired tokens from storage first
+				await clearExpiredTokens($oktaAuth);
 				const tokens = await $oktaAuth.tokenManager.getTokens();
 
 				if (tokens.accessToken) {
@@ -498,29 +426,13 @@
 							await logError('Failed to decode token info at startup', _decodeError);
 						}
 
-						// Set up automatic token management and mark as valid
-						setupOktaTokenManagement(async () => {
-							await logInfo('Access token expired, forcing re-authentication');
-							hasValidTokens = false;
-							await handleOktaLogout();
-							await handleOktaLogin();
-						});
+						// Mark as valid
 						hasValidTokens = true;
 						await emit('access-token-set', tokens.accessToken.accessToken);
 					} else {
-						await logInfo('[STARTUP] Access token is expired, attempting refresh');
-						const renewed = await handleTokenRenewal();
-						if (renewed) {
-							setupOktaTokenManagement(async () => {
-								await logInfo('Access token expired, forcing re-authentication');
-								hasValidTokens = false;
-								await handleOktaLogout();
-								await handleOktaLogin();
-							});
-							hasValidTokens = true;
-						} else {
-							await logInfo('[STARTUP] Token refresh failed, will need fresh login');
-						}
+						await logInfo('[STARTUP] Access token is expired, will need fresh login');
+						// Okta auto-renewal should handle expired tokens automatically
+						// If we get here, force fresh authentication
 					}
 				} else {
 					await logInfo('[STARTUP] No existing tokens found in Okta storage');
@@ -599,6 +511,36 @@
 		if (!$oktaAuth && !$appConfig.serverless) {
 			try {
 				$oktaAuth = createOktaAuth($appConfig.oktaConfig.issuer, $appConfig.oktaConfig.clientId);
+
+				// Start the Okta service for auto-renewal to work
+				await $oktaAuth.start();
+
+				// Set up event listeners ONCE after initialization
+				setupOktaEventListeners(
+					$oktaAuth,
+					// On token renewed
+					(newAccessToken: string) => {
+						void (async () => {
+							await logInfo('Okta automatically renewed access token');
+							await emit('access-token-set', newAccessToken);
+							try {
+								await refreshLogin(newAccessToken);
+								hasValidTokens = true;
+							} catch (error) {
+								await logError('Backend refresh failed after automatic token renewal', error);
+							}
+						})();
+					},
+					// On token expired (fallback if auto-renewal fails)
+					() => {
+						void (async () => {
+							await logInfo('Access token expired, forcing re-authentication');
+							hasValidTokens = false;
+							await handleOktaLogout();
+							await handleOktaLogin();
+						})();
+					}
+				);
 
 				// Now that Okta Auth is ready, restore tokens first
 				await restoreTokensFromOkta();
