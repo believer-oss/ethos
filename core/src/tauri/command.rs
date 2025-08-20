@@ -194,6 +194,7 @@ pub async fn refresh_login(
 
 // Git
 #[tauri::command]
+
 pub async fn install_git(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     let res = state
         .client
@@ -583,5 +584,18 @@ pub async fn open_url(url: String) -> Result<(), TauriError> {
         status_code: 500, // Internal Server Error as a default
     })?;
 
+    Ok(())
+}
+
+// Debug logging commands for frontend
+#[tauri::command]
+pub async fn log_error(message: String) -> Result<(), TauriError> {
+    error!("Frontend Debug: {}", message);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn log_info(message: String) -> Result<(), TauriError> {
+    info!("Frontend Debug: {}", message);
     Ok(())
 }

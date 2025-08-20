@@ -15,12 +15,9 @@
 			$oktaAuth.tokenManager.setTokens(tokens);
 
 			const { accessToken } = tokens.accessToken;
-			await emit('access-token-set', accessToken);
 
-			if (tokens.refreshToken) {
-				const { refreshToken } = tokens.refreshToken;
-				localStorage.setItem('oktaRefreshToken', refreshToken);
-			}
+			// Emit token for in-memory variable update (Okta handles storage)
+			await emit('access-token-set', accessToken);
 		} else {
 			await emit('error', 'No tokens found.');
 		}
