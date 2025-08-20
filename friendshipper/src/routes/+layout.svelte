@@ -515,11 +515,24 @@
 				// Start the Okta service for auto-renewal to work
 				await $oktaAuth.start();
 
+				// Debounce token renewal to prevent spam (Okta recommended practice)
+				let lastRenewalTime = 0;
+				const RENEWAL_DEBOUNCE_MS = 5000; // 5 seconds
+
 				// Set up event listeners ONCE after initialization
 				setupOktaEventListeners(
 					$oktaAuth,
-					// On token renewed
+					// On token renewed (debounced to prevent multiple rapid calls)
 					(newAccessToken: string) => {
+						const now = Date.now();
+						if (now - lastRenewalTime < RENEWAL_DEBOUNCE_MS) {
+							void (async () => {
+								await logInfo('Skipping token renewal - too recent');
+							})();
+							return;
+						}
+						lastRenewalTime = now;
+
 						void (async () => {
 							await logInfo('Okta automatically renewed access token');
 							await emit('access-token-set', newAccessToken);
