@@ -547,7 +547,29 @@
 					// On token expired (fallback if auto-renewal fails)
 					() => {
 						void (async () => {
-							await logInfo('Access token expired, forcing re-authentication');
+							await logInfo(
+								'Access token expired, attempting silent renewal before re-authentication'
+							);
+
+							// Try silent renewal first (Okta recommended approach)
+							try {
+								await $oktaAuth.tokenManager.renew('accessToken');
+								const renewedTokens = await $oktaAuth.tokenManager.getTokens();
+								if (renewedTokens.accessToken) {
+									await emit('access-token-set', renewedTokens.accessToken.accessToken);
+									await refreshLogin(renewedTokens.accessToken.accessToken);
+									await logInfo('Silent token renewal successful on expiration');
+									hasValidTokens = true;
+									return; // Success, no need for full re-auth
+								}
+							} catch (renewError) {
+								await logError(
+									'Silent renewal failed on expiration, falling back to re-authentication',
+									renewError
+								);
+							}
+
+							// Silent renewal failed, proceed with full re-auth
 							hasValidTokens = false;
 							await handleOktaLogout();
 							await handleOktaLogin();
@@ -724,9 +746,12 @@
 										await refreshLogin(renewedTokens.accessToken.accessToken);
 										await logInfo('Silent token renewal successful');
 									}
-								} catch (_renewError) {
+								} catch (renewError) {
 									// Silent renewal failed, fallback to full re-auth
-									await logInfo('Silent renewal failed, falling back to re-authentication');
+									await logError(
+										'Silent renewal failed, falling back to re-authentication',
+										renewError
+									);
 									hasValidTokens = false;
 									await handleOktaLogout();
 									await handleOktaLogin();
