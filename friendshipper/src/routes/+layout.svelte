@@ -707,9 +707,48 @@
 
 		void appWindow.onFocusChanged(({ payload: focused }) => {
 			if (focused) {
-				const now = new Date().getTime();
-				if (now - lastRefresh > refreshInterval) {
-					void refresh();
+				// Silent token renewal when app regains focus (handles background renewal failures)
+				if ($oktaAuth && hasValidTokens) {
+					void (async () => {
+						try {
+							const tokens = await $oktaAuth.tokenManager.getTokens();
+							if (tokens.accessToken && $oktaAuth.tokenManager.hasExpired(tokens.accessToken)) {
+								await logInfo('App regained focus - attempting silent token renewal');
+
+								// Try silent renewal first (Okta recommended approach)
+								try {
+									await $oktaAuth.tokenManager.renew('accessToken');
+									const renewedTokens = await $oktaAuth.tokenManager.getTokens();
+									if (renewedTokens.accessToken) {
+										await emit('access-token-set', renewedTokens.accessToken.accessToken);
+										await refreshLogin(renewedTokens.accessToken.accessToken);
+										await logInfo('Silent token renewal successful');
+									}
+								} catch (_renewError) {
+									// Silent renewal failed, fallback to full re-auth
+									await logInfo('Silent renewal failed, falling back to re-authentication');
+									hasValidTokens = false;
+									await handleOktaLogout();
+									await handleOktaLogin();
+									return; // Don't refresh data if auth failed
+								}
+							}
+
+							// Now refresh data with valid tokens
+							const now = new Date().getTime();
+							if (now - lastRefresh > refreshInterval) {
+								void refresh();
+							}
+						} catch (error) {
+							await logError('Focus change token check failed', error);
+						}
+					})();
+				} else {
+					// No auth needed, just refresh normally
+					const now = new Date().getTime();
+					if (now - lastRefresh > refreshInterval) {
+						void refresh();
+					}
 				}
 			}
 		});
