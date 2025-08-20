@@ -15,7 +15,8 @@ export const createOktaAuth = (issuer: string, clientId: string) => {
 		tokenManager: {
 			autoRenew: true,
 			autoRemove: true,
-			syncStorage: true
+			syncStorage: true,
+			expireEarlySeconds: 300 // Renew token 5 minutes before expiration
 		}
 	});
 };
@@ -83,10 +84,12 @@ export const setupOktaEventListeners = (
 		}
 	});
 
-	// Listen for token removal
+	// Listen for token removal - but don't trigger automatic re-auth to prevent loops
 	oktaAuth.tokenManager.on('removed', (key: string) => {
 		if (key === 'accessToken') {
-			onTokenExpired();
+			// Log the removal but don't trigger re-authentication
+			// The 'expired' event handler will manage re-auth when needed
+			console.info(`Token removed: ${key}`);
 		}
 	});
 };
