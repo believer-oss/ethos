@@ -1,5 +1,6 @@
 import { OktaAuth } from '@okta/okta-auth-js';
 import { jwtDecode } from 'jwt-decode';
+import type { AccessToken } from '@okta/okta-auth-js';
 
 export const createOktaAuth = (issuer: string, clientId: string) => {
 	const redirectUri = `${window.location.origin}/auth/callback`;
@@ -10,7 +11,13 @@ export const createOktaAuth = (issuer: string, clientId: string) => {
 		clientId,
 		redirectUri,
 		postLogoutRedirectUri,
-		pkce: true
+		pkce: true,
+		tokenManager: {
+			autoRenew: true,
+			autoRemove: true,
+			syncStorage: true,
+			expireEarlySeconds: 300 // Renew token 5 minutes before expiration
+		}
 	});
 };
 
@@ -29,3 +36,60 @@ export function isTokenExpired(token: string | null): boolean {
 		return true;
 	}
 }
+
+export const clearExpiredTokens = async (oktaAuth: OktaAuth): Promise<void> => {
+	try {
+		const tokens = await oktaAuth.tokenManager.getTokens();
+
+		// Check and remove expired access token
+		if (tokens.accessToken && oktaAuth.tokenManager.hasExpired(tokens.accessToken)) {
+			oktaAuth.tokenManager.remove('accessToken');
+			// eslint-disable-next-line no-console
+			console.info('Removed expired access token');
+		}
+
+		// Check and remove expired ID token
+		if (tokens.idToken && oktaAuth.tokenManager.hasExpired(tokens.idToken)) {
+			oktaAuth.tokenManager.remove('idToken');
+			// eslint-disable-next-line no-console
+			console.info('Removed expired ID token');
+		}
+
+		// Note: Refresh tokens are opaque, can't check expiration client-side
+		// Okta will handle refresh token expiration on renewal attempts
+	} catch (error) {
+		// eslint-disable-next-line no-console
+		console.error('Error clearing expired tokens:', error);
+	}
+};
+
+export const setupOktaEventListeners = (
+	oktaAuth: OktaAuth,
+	onTokenRenewed: (token: string) => void,
+	onTokenExpired: () => void
+) => {
+	// Listen for automatic token renewals
+	oktaAuth.tokenManager.on('renewed', (key: string, newToken: AccessToken) => {
+		if (key === 'accessToken' && newToken.accessToken) {
+			onTokenRenewed(newToken.accessToken);
+		}
+	});
+
+	// Listen for token expiration
+	oktaAuth.tokenManager.on('expired', (key: string) => {
+		if (key === 'accessToken') {
+			// With autoRenew: true, Okta should handle renewal automatically
+			// If we get here, auto-renewal failed, so trigger re-authentication
+			onTokenExpired();
+		}
+	});
+
+	// Listen for token removal - but don't trigger automatic re-auth to prevent loops
+	oktaAuth.tokenManager.on('removed', (key: string) => {
+		if (key === 'accessToken') {
+			// Log the removal but don't trigger re-authentication
+			// The 'expired' event handler will manage re-auth when needed
+			console.info(`Token removed: ${key}`);
+		}
+	});
+};
