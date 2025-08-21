@@ -90,18 +90,44 @@ impl LogOp {
         let output = self.git_client.log(self.limit, &git_ref).await?;
         let result = output
             .split("END\n")
-            .map(|line| {
+            .filter_map(|line| {
                 let parts = line.split('|').collect::<Vec<_>>();
 
-                let timestamp = DateTime::parse_from_rfc3339(parts[3]).unwrap();
+                // Ensure we have at least 4 parts
+                if parts.len() < 4 {
+                    warn!(
+                        "Invalid git log line format (expected at least 4 parts): {}",
+                        line
+                    );
+                    return None;
+                }
 
-                Commit {
-                    sha: parts[0][..8].to_string(),
+                // Safely parse timestamp
+                let timestamp = match DateTime::parse_from_rfc3339(parts[3]) {
+                    Ok(ts) => Some(ts.with_timezone(&chrono::Local).to_string()),
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse timestamp '{}' from git log: {}",
+                            parts[3], e
+                        );
+                        None
+                    }
+                };
+
+                // Safely extract SHA (ensure it has enough characters)
+                let sha = if parts[0].len() >= 8 {
+                    parts[0][..8].to_string()
+                } else {
+                    parts[0].to_string()
+                };
+
+                Some(Commit {
+                    sha,
                     message: Some(parts[1].to_string()),
                     author: Some(parts[2].to_string()),
-                    timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
+                    timestamp,
                     status: None,
-                }
+                })
             })
             .collect::<Vec<_>>();
 

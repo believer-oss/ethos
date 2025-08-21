@@ -67,6 +67,7 @@
 	export let showProgressModal: boolean;
 	export let progressModalTitle: string;
 	export let handleCheckForUpdates: () => Promise<void>;
+	export let handleLogout: () => Promise<void>;
 
 	let checkForUpdatesInFlight: boolean = false;
 	let localAppConfig: AppConfig = {};
@@ -330,20 +331,12 @@
 		try {
 			showProgressModal = true;
 			progressModalTitle = 'Logging out...';
-
-			localStorage.removeItem('oktaRefreshToken');
-			localStorage.removeItem('oktaAccessToken');
-			localStorage.clear();
-
-			await restart();
 			showModal = false;
 
-			// wait 5 seconds before closing the modal
-			setTimeout(() => {
-				showProgressModal = false;
-			}, 5000);
+			await handleLogout();
 		} catch (e) {
 			await emit('error', e);
+			showProgressModal = false;
 		}
 	};
 

@@ -10,7 +10,7 @@ use crate::types::repo::{
 use futures::TryFutureExt;
 
 use tauri::process::current_binary;
-use tauri::Env;
+use tauri::{Env, Listener};
 use tokio::fs;
 use tracing::{error, info, Instrument};
 
@@ -96,6 +96,26 @@ pub async fn restart(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn exit_app(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let span = tracing::info_span!("exiting_app");
+
+    async move {
+        while state.shutdown_tx.send(()).await.is_ok() {
+            // keep sending until the channel is closed
+            info!("Sent shutdown signal for exit");
+
+            // wait a second
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+    }
+    .instrument(span)
+    .await;
+
+    info!("Exiting application after logout");
+    std::process::exit(0);
 }
 
 #[tauri::command]
@@ -597,5 +617,47 @@ pub async fn log_error(message: String) -> Result<(), TauriError> {
 #[tauri::command]
 pub async fn log_info(message: String) -> Result<(), TauriError> {
     info!("Frontend Debug: {}", message);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_oauth_popup(app: tauri::AppHandle, url: String) -> Result<(), TauriError> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    // Simple URL validation - check if it starts with http(s)
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(TauriError {
+            message: "Invalid URL: must start with http:// or https://".to_string(),
+            status_code: 400,
+        });
+    }
+
+    let webview_url = WebviewUrl::External(url.parse().map_err(|e| TauriError {
+        message: format!("Failed to parse URL: {}", e),
+        status_code: 400,
+    })?);
+
+    let window = WebviewWindowBuilder::new(&app, "oauth-popup", webview_url)
+        .title("Login")
+        .inner_size(500.0, 600.0)
+        .min_inner_size(400.0, 500.0)
+        .center()
+        .resizable(true)
+        .build()
+        .map_err(|e| TauriError {
+            message: format!("Failed to create popup window: {}", e),
+            status_code: 500,
+        })?;
+
+    // Listen for navigation events to detect successful callback
+    let window_clone = window.clone();
+    let _event_id = window.listen("tauri://navigate", move |event| {
+        let url_str = event.payload();
+        if url_str.contains("/auth/callback") {
+            // Close the popup when callback is detected
+            let _ = window_clone.close();
+        }
+    });
+
     Ok(())
 }

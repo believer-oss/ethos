@@ -146,6 +146,7 @@ fn main() -> Result<(), CoreError> {
                 cancel_download,
                 check_engine_ready,
                 check_login_required,
+                create_oauth_popup,
                 checkout_trunk,
                 checkout_target_branch,
                 clone_repo,
@@ -228,6 +229,7 @@ fn main() -> Result<(), CoreError> {
                 update_playtest,
                 verify_build,
                 wipe_client_data,
+                exit_app,
             ])
             .setup(move |app| {
                 let handle = app.handle();
