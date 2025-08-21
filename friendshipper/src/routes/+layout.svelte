@@ -260,8 +260,6 @@
 
 	const loadAppData = async () => {
 		try {
-			await logInfo('loadAppData: Starting to load application data');
-
 			// Initialize the current synced version from localStorage
 			currentSyncedVersion.initialize();
 
@@ -320,7 +318,6 @@
 			}
 
 			appDataLoaded = true;
-			await logInfo('loadAppData: Application data loaded successfully');
 		} catch (e) {
 			await logError('loadAppData: Failed to load application data', e);
 			await emit('error', e);
