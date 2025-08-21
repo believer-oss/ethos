@@ -68,7 +68,7 @@
 	} from '$lib/stores';
 	import { getPlaytests } from '$lib/playtests';
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
-	import { refreshLogin } from '$lib/auth';
+	import { refreshLogin, exitApp } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import {
@@ -165,6 +165,9 @@
 
 	let showLogin: boolean = true;
 	let hasValidTokens: boolean = false;
+	let authInProgress: boolean = false;
+	let callbackProcessed: boolean = false;
+	let appDataLoaded: boolean = false;
 
 	const refreshInterval = 60 * 1000;
 
@@ -255,53 +258,180 @@
 		$changeSets = await loadChangeSet();
 	};
 
+	const loadAppData = async () => {
+		try {
+			await logInfo('loadAppData: Starting to load application data');
+
+			// Initialize the current synced version from localStorage
+			currentSyncedVersion.initialize();
+
+			const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
+				getDynamicConfig(),
+				getProjectConfig(),
+				getBuilds(250)
+			]);
+
+			projectConfigs.set(projectConfigResponse);
+			dynamicConfig.set(dynamicConfigResponse);
+			builds.set(buildsResponse);
+
+			if ($builds.entries && $builds.entries.length > 0) {
+				selectedCommit.set($builds.entries[0]);
+			} else {
+				selectedCommit.set(null);
+			}
+
+			if ($appConfig.repoPath !== '') {
+				const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
+					getRepoConfig(),
+					getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False),
+					getAllCommits(),
+					initializeChangeSets()
+				]);
+
+				repoConfig.set(repoConfigResponse);
+				repoStatus.set(repoStatusResponse);
+				commits.set(commitsResponse);
+			}
+
+			loadingBuilds = true;
+
+			getWorkflows()
+				.then((response) => {
+					workflows.set(response.commits);
+					loadingBuilds = false;
+				})
+				.catch((e) => {
+					if (e instanceof Error) {
+						void emit('error', e);
+					}
+				});
+
+			if ($appConfig.engineRepoUrl !== '') {
+				getWorkflows(true)
+					.then((response) => {
+						engineWorkflows.set(response.commits);
+					})
+					.catch((e) => {
+						if (e instanceof Error) {
+							void emit('error', e);
+						}
+					});
+			}
+
+			appDataLoaded = true;
+			await logInfo('loadAppData: Application data loaded successfully');
+		} catch (e) {
+			await logError('loadAppData: Failed to load application data', e);
+			await emit('error', e);
+			appDataLoaded = false;
+		}
+	};
+
 	const handleOktaLogout = async () => {
 		try {
+			await logInfo('handleOktaLogout: Starting logout process');
+
 			// Clear Okta token manager (this clears okta-cache-storage)
 			if ($oktaAuth) {
 				$oktaAuth.tokenManager.clear();
+				// Also clear any stored transaction state that might interfere with new login
+				try {
+					await $oktaAuth.transactionManager.clear();
+				} catch (transactionClearError) {
+					// TransactionManager.clear() might not exist in all versions, ignore error
+					await logError(
+						'handleOktaLogout: TransactionManager.clear() not available or failed',
+						transactionClearError
+					);
+				}
 			}
 
+			// Reset all auth-related state
 			hasValidTokens = false;
+			authInProgress = false;
+			showLogin = true;
+
+			// Reset initialized state so app shows login page
+			initialized = false;
+
+			// Clear any browser storage that might contain Okta state
+			if (browser) {
+				try {
+					localStorage.removeItem('okta-cache-storage');
+					sessionStorage.removeItem('okta-pkce-storage');
+					sessionStorage.removeItem('okta-shared-transaction-storage');
+					await logInfo('handleOktaLogout: Cleared browser storage');
+				} catch (storageError) {
+					await logError('handleOktaLogout: Failed to clear browser storage', storageError);
+				}
+			}
+
+			await logInfo('handleOktaLogout: Logout completed, exiting application');
+
+			// Exit the application after clearing credentials
+			await exitApp();
 		} catch (err) {
 			await logError('Token logout failed', err);
 		}
 	};
 
 	const handleOktaLogin = async () => {
+		if (authInProgress) {
+			await logInfo('handleOktaLogin: Auth already in progress, skipping');
+			return;
+		}
+
 		try {
+			authInProgress = true;
+			showLogin = false; // Hide login page when starting auth
+			await logInfo('handleOktaLogin: Starting OAuth login process');
 			const previousStartupMessage = startupMessage;
 			startupMessage = 'Logging in with Okta...';
 
 			// Initiate the redirect flow
 			if (browser && $oktaAuth) {
+				await logInfo('handleOktaLogin: Browser and oktaAuth available, proceeding with redirect');
+				await logInfo(`handleOktaLogin: Current window.location: ${window.location.href}`);
+				await logInfo(`handleOktaLogin: Current window.location.origin: ${window.location.origin}`);
 				const osType = type();
+
+				// Get the correct redirect URI based on Tauri's current scheme
+				const redirectUri = `${window.location.origin}/auth/callback`;
+				await logInfo(`handleOktaLogin: Using redirect URI: ${redirectUri}`);
 
 				if (osType === 'macos') {
 					await $oktaAuth.token.getWithRedirect({
 						issuer: $appConfig.oktaConfig.issuer,
 						clientId: $appConfig.oktaConfig.clientId,
-						redirectUri: `${window.location.origin}/auth/callback`,
+						redirectUri,
 						pkce: true,
-						scopes: ['openid', 'email', 'profile', 'offline_access']
+						scopes: ['openid', 'email', 'profile', 'offline_access'],
+						prompt: 'login' // Force fresh authentication, don't use cached session
 					});
 				} else {
-					const { tokens } = await $oktaAuth.token.getWithPopup({
-						scopes: ['openid', 'email', 'profile', 'offline_access']
-					});
+					// Use getWithRedirect for Windows/Linux
+					await logInfo('handleOktaLogin: Using getWithRedirect for Windows/Linux');
 
-					if (tokens && tokens.accessToken) {
-						$oktaAuth.tokenManager.setTokens(tokens);
+					try {
+						// Check current auth state before attempting redirect
+						const currentTokens = await $oktaAuth.tokenManager.getTokens();
+						await logInfo(
+							`handleOktaLogin: Current tokens before redirect - hasAccess: ${!!currentTokens.accessToken}, hasRefresh: ${!!currentTokens.refreshToken}`
+						);
 
-						await emit('access-token-set', tokens.accessToken.accessToken);
-						try {
-							await logInfo('Calling backend refreshLogin');
-							await refreshLogin(tokens.accessToken.accessToken);
-							await logInfo('Backend refreshLogin succeeded');
-							hasValidTokens = true;
-						} catch (backendError) {
-							await logError('Backend refreshLogin failed', backendError);
-						}
+						await $oktaAuth.token.getWithRedirect({
+							issuer: $appConfig.oktaConfig.issuer,
+							clientId: $appConfig.oktaConfig.clientId,
+							redirectUri,
+							pkce: true,
+							scopes: ['openid', 'email', 'profile', 'offline_access'],
+							prompt: 'login' // Force fresh authentication, don't use cached session
+						});
+						await logInfo('handleOktaLogin: getWithRedirect call completed successfully');
+					} catch (redirectError) {
+						await logError('handleOktaLogin: getWithRedirect failed', redirectError);
+						throw redirectError;
 					}
 				}
 			}
@@ -310,6 +440,11 @@
 		} catch (err) {
 			await handleOktaLogout();
 			await logError('Okta login failed', err);
+		} finally {
+			// Reset auth in progress after a delay to allow redirect to happen
+			setTimeout(() => {
+				authInProgress = false;
+			}, 5000);
 		}
 	};
 
@@ -319,17 +454,35 @@
 		}
 
 		try {
+			await logInfo('handleOktaState: Starting OAuth state check');
+
+			// If showLogin is true, it means user explicitly logged out or hasn't logged in yet
+			// Don't automatically start auth flow
+			if (showLogin && !hasValidTokens) {
+				await logInfo('handleOktaState: User not logged in, waiting for manual login');
+				return;
+			}
+
 			// First, clear any expired tokens from storage
 			await clearExpiredTokens($oktaAuth);
 			const oktaTokens = await $oktaAuth.tokenManager.getTokens();
 
 			await logInfo(
-				`handleOktaState: Loaded tokens from Okta - hasAccess: ${!!oktaTokens.accessToken}, hasRefresh: ${!!oktaTokens.refreshToken}`
+				`handleOktaState: Loaded tokens from Okta - hasAccess: ${!!oktaTokens.accessToken}, hasRefresh: ${!!oktaTokens.refreshToken}, hasValidTokens: ${hasValidTokens}`
 			);
 
-			// If we don't have any tokens, user has to log in
+			// If we already have valid tokens, don't start a new auth flow
+			if (hasValidTokens) {
+				await logInfo('handleOktaState: Already have valid tokens, skipping auth');
+				return;
+			}
+
+			// If we don't have any tokens, user has to log in (but only if they haven't explicitly logged out)
 			if (!oktaTokens.accessToken && !oktaTokens.refreshToken) {
-				await handleOktaLogin();
+				await logInfo(
+					'handleOktaState: No tokens found, but not automatically starting login (user must click login)'
+				);
+				showLogin = true;
 				return;
 			}
 
@@ -347,11 +500,20 @@
 				currentTokens.accessToken &&
 				!$oktaAuth.tokenManager.hasExpired(currentTokens.accessToken)
 			) {
+				await logInfo('handleOktaState: Found valid tokens, authenticating with backend');
 				// Update backend and set valid state
-				await refreshLogin(currentTokens.accessToken.accessToken);
-				hasValidTokens = true;
-				await emit('access-token-set', currentTokens.accessToken.accessToken);
+				try {
+					// Don't set hasValidTokens here - let the access-token-set handler do it
+					showLogin = false;
+					await logInfo('handleOktaState: Emitting access token for backend authentication');
+					await emit('access-token-set', currentTokens.accessToken.accessToken);
+				} catch (backendError) {
+					await logError('handleOktaState: Failed to emit access token', backendError);
+					hasValidTokens = false;
+					showLogin = true;
+				}
 			} else {
+				await logInfo('handleOktaState: No valid tokens available, starting login flow');
 				await handleOktaLogin();
 			}
 		} catch (error) {
@@ -426,8 +588,9 @@
 							await logError('Failed to decode token info at startup', _decodeError);
 						}
 
-						// Mark as valid
-						hasValidTokens = true;
+						// Don't mark as valid yet - wait for backend authentication to complete
+						// hasValidTokens will be set to true in the access-token-set event handler
+						showLogin = false;
 						await emit('access-token-set', tokens.accessToken.accessToken);
 					} else {
 						await logInfo('[STARTUP] Access token is expired, will need fresh login');
@@ -486,6 +649,7 @@
 			try {
 				await refreshLogin('');
 				showLogin = false;
+				hasValidTokens = true;
 			} catch (e) {
 				await logError('Serverless login failed', e);
 			}
@@ -505,6 +669,12 @@
 						}, 1000);
 					});
 				}
+			}
+			// Load app data for serverless mode
+			if (hasValidTokens) {
+				await loadAppData();
+			} else {
+				appDataLoaded = true; // No data needed for serverless without tokens
 			}
 		}
 
@@ -536,12 +706,6 @@
 						void (async () => {
 							await logInfo('Okta automatically renewed access token');
 							await emit('access-token-set', newAccessToken);
-							try {
-								await refreshLogin(newAccessToken);
-								hasValidTokens = true;
-							} catch (error) {
-								await logError('Backend refresh failed after automatic token renewal', error);
-							}
 						})();
 					},
 					// On token expired (fallback if auto-renewal fails)
@@ -557,9 +721,7 @@
 								const renewedTokens = await $oktaAuth.tokenManager.getTokens();
 								if (renewedTokens.accessToken) {
 									await emit('access-token-set', renewedTokens.accessToken.accessToken);
-									await refreshLogin(renewedTokens.accessToken.accessToken);
 									await logInfo('Silent token renewal successful on expiration');
-									hasValidTokens = true;
 									return; // Success, no need for full re-auth
 								}
 							} catch (renewError) {
@@ -580,75 +742,55 @@
 				// Now that Okta Auth is ready, restore tokens first
 				await restoreTokensFromOkta();
 
-				await handleOktaState();
-				await initialize();
-			} catch (e) {
-				await emit('error', e);
-			}
-		}
+				// Check if this is an OAuth callback URL and process tokens
+				if (browser && window.location.pathname === '/auth/callback' && !callbackProcessed) {
+					callbackProcessed = true;
+					await logInfo(
+						`OAuth callback URL detected after oktaAuth initialization. Full URL: ${window.location.href}`
+					);
+					try {
+						// Parse tokens from the current URL
+						await logInfo('OAuth callback: Attempting to parse tokens from URL...');
+						const { tokens } = await $oktaAuth.token.parseFromUrl();
+						await logInfo(`OAuth callback: parseFromUrl completed. Has tokens: ${!!tokens}`);
 
-		if (hasValidTokens || $appConfig.serverless) {
-			try {
-				// Initialize the current synced version from localStorage
-				currentSyncedVersion.initialize();
+						if (tokens && tokens.accessToken) {
+							await logInfo('OAuth callback: Tokens found, setting in tokenManager');
+							$oktaAuth.tokenManager.setTokens(tokens);
 
-				const [dynamicConfigResponse, projectConfigResponse, buildsResponse] = await Promise.all([
-					getDynamicConfig(),
-					getProjectConfig(),
-					getBuilds(250)
-				]);
+							const { accessToken } = tokens.accessToken;
 
-				projectConfigs.set(projectConfigResponse);
-				dynamicConfig.set(dynamicConfigResponse);
-				builds.set(buildsResponse);
+							// Let the access-token-set event handler do the backend authentication
+							await logInfo('OAuth callback: Emitting access token for backend authentication');
+							await emit('access-token-set', accessToken);
 
-				if ($builds.entries && $builds.entries.length > 0) {
-					selectedCommit.set($builds.entries[0]);
+							await logInfo('OAuth callback: Token set successfully, redirecting to home');
+
+							// Navigate back to home after token processing
+							await goto('/');
+							// Don't return here - continue with initialization
+						} else {
+							await logError('OAuth callback: No tokens found in URL');
+							await emit('error', 'Authentication failed - no tokens received');
+							return;
+						}
+					} catch (error) {
+						await logError('OAuth callback: Error processing tokens', error);
+						await logError(`OAuth callback: Error details: ${error.message}`);
+						await emit('error', 'Authentication failed');
+						return;
+					}
 				} else {
-					selectedCommit.set(null);
+					await handleOktaState();
 				}
-
-				if ($appConfig.repoPath !== '') {
-					const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
-						getRepoConfig(),
-						getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False),
-						getAllCommits(),
-						initializeChangeSets()
-					]);
-
-					repoConfig.set(repoConfigResponse);
-					repoStatus.set(repoStatusResponse);
-					commits.set(commitsResponse);
-				}
-
-				loadingBuilds = true;
-
-				getWorkflows()
-					.then((response) => {
-						workflows.set(response.commits);
-						loadingBuilds = false;
-					})
-					.catch((e) => {
-						if (e instanceof Error) {
-							void emit('error', e);
-						}
-					});
+				// Don't call initialize() recursively - this causes infinite loops
 			} catch (e) {
 				await emit('error', e);
 			}
-
-			if ($appConfig.engineRepoUrl !== '') {
-				getWorkflows(true)
-					.then((response) => {
-						engineWorkflows.set(response.commits);
-					})
-					.catch((e) => {
-						if (e instanceof Error) {
-							void emit('error', e);
-						}
-					});
-			}
 		}
+
+		// Data loading will be triggered after authentication succeeds
+		// This avoids the race condition where hasValidTokens is still false during initialize()
 
 		initialized = true;
 	};
@@ -659,6 +801,46 @@
 			await appWindow.show();
 		};
 		void setupAppWindow();
+
+		// Additional check for OAuth callback in case it's missed during initialization
+		if (browser && window.location.pathname === '/auth/callback' && !callbackProcessed) {
+			void (async () => {
+				await logInfo('onMount: OAuth callback detected, waiting for oktaAuth to be ready...');
+
+				// Wait for oktaAuth to be initialized
+				let attempts = 0;
+				const maxAttempts = 50; // 5 seconds
+				while (!$oktaAuth && attempts < maxAttempts) {
+					await new Promise((resolve) => {
+						setTimeout(resolve, 100);
+					});
+					attempts += 1;
+				}
+
+				if ($oktaAuth && !callbackProcessed) {
+					callbackProcessed = true;
+					await logInfo('onMount: oktaAuth ready, processing callback...');
+					try {
+						const { tokens } = await $oktaAuth.token.parseFromUrl();
+						if (tokens && tokens.accessToken) {
+							await logInfo('onMount: Callback tokens found, processing...');
+							$oktaAuth.tokenManager.setTokens(tokens);
+							const { accessToken } = tokens.accessToken;
+							await emit('access-token-set', accessToken);
+							await goto('/');
+						} else {
+							await logError('onMount: No tokens found in callback URL');
+						}
+					} catch (error) {
+						await logError('onMount: Error processing callback', error);
+					}
+				} else if (callbackProcessed) {
+					await logInfo('onMount: Callback already processed, skipping');
+				} else {
+					await logError('onMount: oktaAuth not ready after waiting');
+				}
+			})();
+		}
 
 		const unlisten = listen('startup-message', (e) => {
 			startupMessage = e.payload as string;
@@ -743,7 +925,6 @@
 									const renewedTokens = await $oktaAuth.tokenManager.getTokens();
 									if (renewedTokens.accessToken) {
 										await emit('access-token-set', renewedTokens.accessToken.accessToken);
-										await refreshLogin(renewedTokens.accessToken.accessToken);
 										await logInfo('Silent token renewal successful');
 									}
 								} catch (renewError) {
@@ -833,9 +1014,35 @@
 		backgroundSyncInProgress.set(false);
 	});
 
-	void listen('access-token-set', (_e) => {
+	void listen('access-token-set', (e) => {
 		// Token validity is now managed by Okta's event system
 		// hasValidTokens is set directly when tokens are confirmed valid
+		// BUT we still need to refresh the backend login
+		void (async () => {
+			try {
+				const token = e.payload as string;
+				await logInfo('Received access-token-set event, calling backend refreshLogin');
+				await logInfo(`Token: ${token.substring(0, 50)}...`);
+				await refreshLogin(token);
+				hasValidTokens = true;
+				showLogin = false;
+				await logInfo(
+					'Backend refreshLogin succeeded from access-token-set event - hasValidTokens set to TRUE'
+				);
+
+				// Now that authentication is complete, load the app data
+				await loadAppData();
+			} catch (error) {
+				await logError('Backend refreshLogin failed from access-token-set event', error);
+				await logError(`Backend error details: ${JSON.stringify(error)}`);
+				hasValidTokens = false;
+				showLogin = true;
+				// Clear any stored tokens since backend auth failed
+				if ($oktaAuth) {
+					$oktaAuth.tokenManager.clear();
+				}
+			}
+		})();
 	});
 
 	void listen('success', (e) => {
@@ -895,6 +1102,7 @@
 	bind:showProgressModal
 	bind:progressModalTitle
 	{handleCheckForUpdates}
+	handleLogout={handleOktaLogout}
 />
 
 <div class="flex flex-col h-screen w-screen border border-primary-900 overflow-hidden rounded-md">
@@ -943,8 +1151,8 @@
 			</Button>
 		</div>
 	</div>
-	{#if (!initialized || !hasValidTokens) && showLogin}
-		{#if initialized}
+	{#if !hasValidTokens && !$appConfig.serverless}
+		{#if initialized && showLogin}
 			<div>
 				<div
 					class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
@@ -1236,7 +1444,16 @@
 
 			<div class="flex flex-col mx-auto w-full h-full overflow-hidden">
 				<main class="w-full h-full flex flex-col px-4 pb-2 overflow-hidden">
-					<slot class="overflow-hidden" />
+					{#if appDataLoaded}
+						<slot class="overflow-hidden" />
+					{:else}
+						<div class="flex flex-col gap-2 items-center justify-center w-full h-full">
+							<div class="flex items-center gap-2">
+								<Spinner size="6" />
+								<span class="text-xl text-gray-300">Loading application data...</span>
+							</div>
+						</div>
+					{/if}
 				</main>
 			</div>
 		</div>

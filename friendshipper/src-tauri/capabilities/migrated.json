@@ -5,6 +5,7 @@
 	"windows": ["main"],
 	"permissions": [
 		"core:default",
+		"core:webview:default",
 		"fs:allow-read-file",
 		"fs:allow-write-file",
 		"fs:allow-mkdir",
@@ -33,6 +34,10 @@
 		"core:window:allow-hide",
 		"core:window:allow-close",
 		"core:window:allow-start-dragging",
+		"core:webview:allow-create-webview",
+		"core:webview:allow-webview-position",
+		"core:webview:allow-webview-size",
+		"core:window:allow-create",
 		"shell:allow-open",
 		"dialog:allow-open",
 		"notification:default",
