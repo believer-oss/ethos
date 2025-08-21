@@ -899,8 +899,56 @@
 				if (queryString) {
 					// Navigate to the callback page with the parameters
 					await logInfo(`[DEEP LINK] Navigating to callback page: /auth/callback?${queryString}`);
-					void goto(`/auth/callback?${queryString}`);
-					await logInfo(`[DEEP LINK] Navigation initiated to callback page`);
+
+					// Process the OAuth callback directly here instead of navigating
+					await logInfo(`[DEEP LINK] Processing OAuth callback directly`);
+
+					// Extract the authorization code
+					const urlParams = new URLSearchParams(queryString);
+					const authCode = urlParams.get('code');
+
+					if (authCode && $oktaAuth && $appConfig) {
+						await logInfo(`[DEEP LINK] Found authorization code: ${authCode}`);
+
+						const codeVerifier = sessionStorage.getItem('okta-code-verifier');
+						if (codeVerifier) {
+							try {
+								// Import the exchange function
+								const { exchangeCodeForTokens } = await import('$lib/okta');
+
+								// Exchange code for tokens
+								const tokenResponse = await exchangeCodeForTokens(
+									$appConfig.oktaConfig.issuer,
+									$appConfig.oktaConfig.clientId,
+									authCode,
+									codeVerifier,
+									'friendshipper://auth/callback'
+								);
+
+								// Convert to Okta SDK format and store tokens
+								const oktaTokens = {
+									accessToken: {
+										accessToken: tokenResponse.access_token,
+										tokenType: 'Bearer',
+										expiresAt: Date.now() / 1000 + (tokenResponse.expires_in || 3600),
+										scopes: ['openid', 'email', 'profile', 'offline_access']
+									}
+								};
+
+								$oktaAuth.tokenManager.setTokens(oktaTokens);
+								await emit('access-token-set', tokenResponse.access_token);
+
+								// Clean up code verifier
+								sessionStorage.removeItem('okta-code-verifier');
+
+								await logInfo(`[DEEP LINK] OAuth callback processed successfully`);
+							} catch (error) {
+								await logError(`[DEEP LINK] Token exchange failed`, error);
+							}
+						} else {
+							await logError(`[DEEP LINK] No code verifier found`);
+						}
+					}
 				} else {
 					await logError('[DEEP LINK] No query parameters found in OAuth callback');
 				}
