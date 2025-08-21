@@ -33,8 +33,8 @@
 	import { Canvas } from '@threlte/core';
 	import { get } from 'svelte/store';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { type } from '@tauri-apps/plugin-os';
 	import { invoke } from '@tauri-apps/api/core';
+	import { open } from '@tauri-apps/plugin-shell';
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -165,6 +165,9 @@
 
 	let showLogin: boolean = true;
 	let hasValidTokens: boolean = false;
+	let oauthInProgress: boolean = false;
+	let oauthTimeoutId: ReturnType<typeof setTimeout> | null = null;
+	let oauthFinallyTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 	const refreshInterval = 60 * 1000;
 
@@ -269,52 +272,114 @@
 	};
 
 	const handleOktaLogin = async () => {
+		// Prevent multiple simultaneous OAuth attempts
+		if (oauthInProgress) {
+			// OAuth already in progress, ignoring login request
+			return;
+		}
+
+		oauthInProgress = true;
+
 		try {
 			const previousStartupMessage = startupMessage;
-			startupMessage = 'Logging in with Okta...';
+			startupMessage = 'Opening browser for login...';
 
-			// Initiate the redirect flow
-			if (browser && $oktaAuth) {
-				const osType = type();
-
-				if (osType === 'macos') {
-					await $oktaAuth.token.getWithRedirect({
-						issuer: $appConfig.oktaConfig.issuer,
-						clientId: $appConfig.oktaConfig.clientId,
-						redirectUri: `${window.location.origin}/auth/callback`,
-						pkce: true,
-						scopes: ['openid', 'email', 'profile', 'offline_access']
-					});
-				} else {
-					const { tokens } = await $oktaAuth.token.getWithPopup({
-						scopes: ['openid', 'email', 'profile', 'offline_access']
-					});
-
-					if (tokens && tokens.accessToken) {
-						$oktaAuth.tokenManager.setTokens(tokens);
-
-						await emit('access-token-set', tokens.accessToken.accessToken);
-						try {
-							await logInfo('Calling backend refreshLogin');
-							await refreshLogin(tokens.accessToken.accessToken);
-							await logInfo('Backend refreshLogin succeeded');
-							hasValidTokens = true;
-						} catch (backendError) {
-							await logError('Backend refreshLogin failed', backendError);
-						}
-					}
-				}
+			if (!$oktaAuth) {
+				await logError('OktaAuth not initialized', null);
+				return;
 			}
 
-			startupMessage = previousStartupMessage;
-		} catch (err) {
-			await handleOktaLogout();
-			await logError('Okta login failed', err);
+			// Try external browser OAuth with simplified redirect to existing callback
+			try {
+				// Generate state for security
+				const state = crypto.randomUUID();
+
+				// Use deeplink callback for direct app redirect
+				const redirectUri = `friendshipper://auth/callback`;
+
+				// Generate PKCE parameters for Authorization Code + PKCE flow
+				const generateCodeVerifier = () => {
+					const array = new Uint8Array(32);
+					crypto.getRandomValues(array);
+					return btoa(String.fromCharCode(...array))
+						.replace(/\+/g, '-')
+						.replace(/\//g, '_')
+						.replace(/=/g, '');
+				};
+
+				const generateCodeChallenge = async (verifier: string) => {
+					const data = new TextEncoder().encode(verifier);
+					const digest = await crypto.subtle.digest('SHA-256', data);
+					return btoa(String.fromCharCode(...new Uint8Array(digest)))
+						.replace(/\+/g, '-')
+						.replace(/\//g, '_')
+						.replace(/=/g, '');
+				};
+
+				const codeVerifier = generateCodeVerifier();
+				const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+				// Store PKCE verifier for the callback (in sessionStorage for security)
+				sessionStorage.setItem('oauth_code_verifier', codeVerifier);
+				sessionStorage.setItem('oauth_state', state);
+
+				// Construct OAuth URL (using Authorization Code + PKCE flow)
+				const authUrl = new URL(`${$appConfig.oktaConfig.issuer}/oauth2/v1/authorize`);
+				authUrl.searchParams.set('client_id', $appConfig.oktaConfig.clientId);
+				authUrl.searchParams.set('response_type', 'code');
+				authUrl.searchParams.set('scope', 'openid profile email');
+				authUrl.searchParams.set('redirect_uri', redirectUri);
+				authUrl.searchParams.set('state', state);
+				authUrl.searchParams.set('code_challenge', codeChallenge);
+				authUrl.searchParams.set('code_challenge_method', 'S256');
+
+				// Opening external browser for OAuth
+
+				// Open in external browser
+				await open(authUrl.toString());
+				startupMessage = 'Complete login in your browser, then return to this app';
+
+				// Set timeout to reset after user has time to complete OAuth
+				oauthTimeoutId = setTimeout(() => {
+					if (oauthInProgress) {
+						oauthInProgress = false;
+						startupMessage = previousStartupMessage;
+					}
+				}, 300000); // 5 minute timeout for user to complete
+			} catch (externalError) {
+				await logError('External browser OAuth failed, falling back to webview', externalError);
+
+				// Fallback to working webview OAuth
+				// Fallback to webview OAuth flow
+
+				try {
+					await $oktaAuth.token.getWithRedirect({
+						scopes: ['openid', 'profile', 'email']
+					});
+				} catch (webviewError) {
+					await logError('Webview OAuth also failed:', webviewError);
+				}
+			}
+		} catch (error) {
+			await logError('handleOktaLogin error:', error);
+		} finally {
+			// Reset flag after delay to allow OAuth to complete
+			oauthFinallyTimeoutId = setTimeout(() => {
+				if (oauthInProgress) {
+					oauthInProgress = false;
+				}
+			}, 10000);
 		}
 	};
 
 	const handleOktaState = async (): Promise<void> => {
 		if (!$oktaAuth) {
+			return;
+		}
+
+		// Prevent infinite loops during OAuth flow
+		if (oauthInProgress) {
+			// OAuth in progress, skipping token check
 			return;
 		}
 
@@ -327,9 +392,10 @@
 				`handleOktaState: Loaded tokens from Okta - hasAccess: ${!!oktaTokens.accessToken}, hasRefresh: ${!!oktaTokens.refreshToken}`
 			);
 
-			// If we don't have any tokens, user has to log in
+			// If we don't have any tokens, user needs to log in manually
 			if (!oktaTokens.accessToken && !oktaTokens.refreshToken) {
-				await handleOktaLogin();
+				await logInfo('handleOktaState: No tokens found, user needs to login manually');
+				// Don't automatically trigger login - let user click the button
 				return;
 			}
 
@@ -352,11 +418,10 @@
 				hasValidTokens = true;
 				await emit('access-token-set', currentTokens.accessToken.accessToken);
 			} else {
-				await handleOktaLogin();
+				await logInfo('handleOktaState: No valid tokens available, user needs to login manually');
 			}
 		} catch (error) {
 			await logError('handleOktaState: Error loading from Okta token manager', error);
-			await handleOktaLogin();
 		}
 	};
 
@@ -629,6 +694,133 @@
 			startupMessage = e.payload as string;
 		});
 
+		// Listen for deep link scheme requests (OAuth callbacks from external browser)
+		// eslint-disable-next-line @typescript-eslint/naming-convention, no-underscore-dangle, @typescript-eslint/no-misused-promises
+		const _unlistenDeepLink = listen('scheme-request-received', async (event) => {
+			const url = event.payload as string;
+			// Check if this is an OAuth callback
+			if (url.startsWith('friendshipper://auth/callback')) {
+				try {
+					// Parse the URL to extract the code and state
+					const callbackUrl = new URL(url);
+					const authCode = callbackUrl.searchParams.get('code');
+					const returnedState = callbackUrl.searchParams.get('state');
+
+					if (!authCode || !returnedState) {
+						await logError('Deep link OAuth callback: Missing code or state parameters', null);
+						return;
+					}
+
+					// Verify state parameter matches what we stored
+					const storedState = sessionStorage.getItem('oauth_state');
+					if (returnedState !== storedState) {
+						await logError('Deep link OAuth callback: State parameter mismatch', null);
+						return;
+					}
+
+					// Get stored PKCE verifier
+					const codeVerifier = sessionStorage.getItem('oauth_code_verifier');
+					if (!codeVerifier) {
+						await logError('Deep link OAuth callback: No code verifier found', null);
+						return;
+					}
+
+					// Clean up session storage
+					sessionStorage.removeItem('oauth_code_verifier');
+					sessionStorage.removeItem('oauth_state');
+
+					// Exchange authorization code for tokens
+
+					// Exchange authorization code for tokens
+					if (!$appConfig?.oktaConfig?.issuer) {
+						await logError('Deep link OAuth callback: Okta config not available', null);
+						return;
+					}
+
+					const tokenUrl = `${$appConfig.oktaConfig.issuer}/oauth2/v1/token`;
+					const tokenResponse = await fetch(tokenUrl, {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/x-www-form-urlencoded',
+							Accept: 'application/json'
+						},
+						body: new URLSearchParams({
+							grant_type: 'authorization_code',
+							client_id: $appConfig.oktaConfig.clientId,
+							code: authCode,
+							redirect_uri: 'friendshipper://auth/callback',
+							code_verifier: codeVerifier
+						})
+					});
+
+					if (!tokenResponse.ok) {
+						const errorText = await tokenResponse.text();
+						await logError(
+							`Deep link OAuth callback: Token exchange failed: ${tokenResponse.status}`,
+							errorText
+						);
+						return;
+					}
+
+					const tokenData = await tokenResponse.json();
+					// Token exchange successful
+
+					// Create tokens in Okta format
+					const tokens = {
+						accessToken: {
+							accessToken: tokenData.access_token,
+							claims: jwtDecode(tokenData.access_token),
+							expiresAt: Math.floor(Date.now() / 1000) + (tokenData.expires_in || 3600),
+							tokenType: 'Bearer',
+							scopes: ['openid', 'profile', 'email']
+						}
+					};
+
+					if (tokenData.id_token) {
+						tokens.idToken = {
+							idToken: tokenData.id_token,
+							claims: jwtDecode(tokenData.id_token),
+							expiresAt: Math.floor(Date.now() / 1000) + (tokenData.expires_in || 3600)
+						};
+					}
+
+					if (!$oktaAuth) {
+						await logError('Deep link OAuth callback: oktaAuth not available', null);
+						return;
+					}
+
+					// Store tokens in Okta token manager
+					$oktaAuth.tokenManager.setTokens(tokens);
+
+					// Notify backend
+					await refreshLogin(tokenData.access_token);
+
+					await emit('access-token-set', tokenData.access_token);
+
+					// Update UI state to reflect successful authentication
+					hasValidTokens = true;
+
+					// Clear any pending OAuth timeouts since authentication succeeded
+					if (oauthTimeoutId) {
+						clearTimeout(oauthTimeoutId);
+						oauthTimeoutId = null;
+					}
+					if (oauthFinallyTimeoutId) {
+						clearTimeout(oauthFinallyTimeoutId);
+						oauthFinallyTimeoutId = null;
+					}
+
+					// Reset OAuth progress flag
+					oauthInProgress = false;
+
+					// Login completed successfully
+				} catch (error) {
+					await logError('Deep link OAuth callback error:', error);
+					oauthInProgress = false;
+				}
+			}
+		});
+
 		const refresh = async () => {
 			if (!$appConfig.initialized || $onboardingInProgress || $showPreferences) return;
 
@@ -711,6 +903,76 @@
 				}
 			});
 
+		// Add navigation listener for OAuth callback detection (based on Tauri GitHub discussion #3020)
+		const handleOAuthNavigation = () => {
+			// Poll for URL changes since webview navigation events are limited
+			let lastUrl = window.location.href;
+			const checkUrlChange = async () => {
+				const currentUrl = window.location.href;
+				if (currentUrl !== lastUrl) {
+					await logInfo(`Navigation detected: ${currentUrl}`);
+					lastUrl = currentUrl;
+
+					// Check if we've reached the OAuth callback
+					if (
+						currentUrl.includes('/auth/callback') ||
+						currentUrl.includes('code=') ||
+						currentUrl.includes('access_token=')
+					) {
+						// OAuth callback URL detected, processing tokens
+						try {
+							// Extract tokens from current URL (handles both query params and fragments)
+							const url = new URL(currentUrl);
+							const urlParams = new URLSearchParams(url.search);
+							const fragmentParams = new URLSearchParams(url.hash.replace('#', ''));
+
+							// Combine query and fragment parameters
+							const allParams = new URLSearchParams();
+							urlParams.forEach((value, key) => {
+								allParams.set(key, value);
+							});
+							fragmentParams.forEach((value, key) => {
+								allParams.set(key, value);
+							});
+
+							// Processing OAuth callback parameters
+
+							// Use Okta's parseFromUrl with the current URL
+							const { tokens } = await $oktaAuth.token.parseFromUrl(currentUrl);
+							if (tokens && tokens.accessToken) {
+								// Tokens parsed successfully
+								$oktaAuth.tokenManager.setTokens(tokens);
+								const { accessToken } = tokens.accessToken;
+								await refreshLogin(accessToken);
+								await emit('access-token-set', accessToken);
+								hasValidTokens = true;
+								oauthInProgress = false;
+								// Navigate back to main page
+								window.location.href = '/';
+							}
+						} catch (error) {
+							await logError('Error processing OAuth navigation:', error);
+						}
+					}
+				}
+			};
+
+			// Start polling for URL changes
+			const pollInterval = setInterval(() => {
+				void checkUrlChange();
+			}, 500);
+
+			// Clean up after 2 minutes
+			setTimeout(() => {
+				clearInterval(pollInterval);
+			}, 120000);
+		};
+
+		if (browser) {
+			// Start OAuth navigation monitoring
+			handleOAuthNavigation();
+		}
+
 		return () => {
 			void unlisten.then((f) => {
 				f();
@@ -772,6 +1034,14 @@
 
 	void listen('open-preferences', () => {
 		$showPreferences = true;
+	});
+
+	void listen('logout-complete', () => {
+		void (async () => {
+			// Handle logout completion - reset auth state without restarting app
+			hasValidTokens = false;
+			await handleOktaLogout();
+		})();
 	});
 
 	void listen('scheme-request-received', (e) => {
@@ -873,12 +1143,17 @@
 					class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
 					data-tauri-drag-region
 				>
-					<button
-						class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-						on:click={handleOktaLogin}
-					>
-						Login With Okta
-					</button>
+					<div class="flex flex-col gap-2 items-center">
+						<button
+							class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+							on:click={handleOktaLogin}
+						>
+							Login With Okta
+						</button>
+						<p class="text-sm text-gray-400 max-w-md text-center">
+							Opens in your default browser. Complete login and return to this app.
+						</p>
+					</div>
 				</div>
 			</div>
 		{:else}

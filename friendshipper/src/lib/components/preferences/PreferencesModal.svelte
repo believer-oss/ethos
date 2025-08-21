@@ -46,6 +46,7 @@
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { resetLongtail, wipeClientData, getWorkflows } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
+	import { logout } from '$lib/auth';
 	import {
 		resetRepo,
 		refetchRepo,
@@ -331,17 +332,25 @@
 			showProgressModal = true;
 			progressModalTitle = 'Logging out...';
 
+			// Clear local storage tokens
 			localStorage.removeItem('oktaRefreshToken');
 			localStorage.removeItem('oktaAccessToken');
 			localStorage.clear();
 
-			await restart();
-			showModal = false;
+			// Call backend logout to clear server-side auth state
+			await logout();
 
-			// wait 5 seconds before closing the modal
-			setTimeout(() => {
-				showProgressModal = false;
-			}, 5000);
+			// Clear Okta token manager if available
+			if ($oktaAuth) {
+				$oktaAuth.tokenManager.clear();
+			}
+
+			// Reset UI state and notify parent component
+			showModal = false;
+			showProgressModal = false;
+
+			// Emit event to notify parent that logout is complete
+			await emit('logout-complete');
 		} catch (e) {
 			await emit('error', e);
 		}
