@@ -77,13 +77,7 @@
 		],
 		"macOSPrivateApi": true,
 		"security": {
-			"csp": null,
-			"dangerousDisableAssetCspModification": true,
-			"assetProtocol": {
-				"enable": true,
-				"scope": ["**"]
-			}
-		},
-		"withGlobalTauri": true
+			"csp": null
+		}
 	}
 }

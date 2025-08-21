@@ -114,7 +114,6 @@ pub async fn exit_app(state: tauri::State<'_, State>) -> Result<(), TauriError> 
     .instrument(span)
     .await;
 
-    info!("Exiting application after logout");
     std::process::exit(0);
 }
 

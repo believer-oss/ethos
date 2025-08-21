@@ -39,7 +39,6 @@
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
-	import { jwtDecode } from 'jwt-decode';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { openSystemLogsFolder, shutdownServer } from '$lib/system';
 	import { goto } from '$app/navigation';
@@ -519,86 +518,43 @@
 		}
 	};
 
+	// Consolidated OAuth callback processing
+	const processOAuthCallback = async () => {
+		if (!$oktaAuth || callbackProcessed) {
+			return;
+		}
+
+		callbackProcessed = true;
+
+		try {
+			const { tokens } = await $oktaAuth.token.parseFromUrl();
+
+			if (tokens && tokens.accessToken) {
+				$oktaAuth.tokenManager.setTokens(tokens);
+				await emit('access-token-set', tokens.accessToken.accessToken);
+				await goto('/');
+			} else {
+				await emit('error', 'Authentication failed - no tokens received');
+			}
+		} catch (error) {
+			await logError('OAuth callback processing failed', error);
+			await emit('error', 'Authentication failed');
+		}
+	};
+
 	// Restore tokens from Okta's storage (called after Okta Auth is initialized)
 	const restoreTokensFromOkta = async () => {
 		try {
 			if ($oktaAuth) {
-				await logInfo('[STARTUP] Checking for existing tokens in Okta storage');
-
 				// Clear any expired tokens from storage first
 				await clearExpiredTokens($oktaAuth);
 				const tokens = await $oktaAuth.tokenManager.getTokens();
 
-				if (tokens.accessToken) {
-					await logInfo('[STARTUP] Found existing access token in Okta storage');
-
-					// Check if access token is still valid
-					if (!$oktaAuth.tokenManager.hasExpired(tokens.accessToken)) {
-						await logInfo('[STARTUP] Access token is still valid');
-
-						// Log token info for debugging
-						try {
-							const accessDecoded = jwtDecode(tokens.accessToken.accessToken);
-							const accessLifetimeHours = (accessDecoded.exp - accessDecoded.iat) / 3600;
-							await logInfo(
-								`[STARTUP] Access token lifetime: ${accessLifetimeHours.toFixed(
-									2
-								)} hours (expires: ${new Date(accessDecoded.exp * 1000).toISOString()})`
-							);
-
-							if (tokens.refreshToken) {
-								const { refreshToken } = tokens.refreshToken;
-								const tokenParts = refreshToken.split('.').length;
-								await logInfo(
-									`[STARTUP] Refresh token type: ${tokenParts === 3 ? 'JWT' : 'opaque'}`
-								);
-
-								// Enhanced debugging for refresh token
-								if (tokenParts === 3) {
-									try {
-										const refreshDecoded = jwtDecode(refreshToken);
-										const refreshLifetimeHours = (refreshDecoded.exp - refreshDecoded.iat) / 3600;
-										const refreshExpiresAt = new Date(refreshDecoded.exp * 1000);
-										await logInfo(
-											`[STARTUP] JWT Refresh token lifetime: ${refreshLifetimeHours.toFixed(
-												2
-											)} hours (${(refreshLifetimeHours / 24).toFixed(1)} days)`
-										);
-										await logInfo(
-											`[STARTUP] JWT Refresh token expires: ${refreshExpiresAt.toISOString()}`
-										);
-										await logInfo(
-											`[STARTUP] JWT Refresh token raw exp: ${
-												refreshDecoded.exp
-											} (current: ${Math.floor(Date.now() / 1000)})`
-										);
-									} catch (_refreshDecodeError) {
-										await logInfo('[STARTUP] Could not decode JWT refresh token');
-									}
-								} else {
-									await logInfo(
-										'[STARTUP] Opaque refresh token - expiration managed server-side by Okta'
-									);
-								}
-							}
-						} catch (_decodeError) {
-							await logError('Failed to decode token info at startup', _decodeError);
-						}
-
-						// Don't mark as valid yet - wait for backend authentication to complete
-						// hasValidTokens will be set to true in the access-token-set event handler
-						showLogin = false;
-						await emit('access-token-set', tokens.accessToken.accessToken);
-					} else {
-						await logInfo('[STARTUP] Access token is expired, will need fresh login');
-						// Okta auto-renewal should handle expired tokens automatically
-						// If we get here, force fresh authentication
-					}
-				} else {
-					await logInfo('[STARTUP] No existing tokens found in Okta storage');
+				if (tokens.accessToken && !$oktaAuth.tokenManager.hasExpired(tokens.accessToken)) {
+					// Don't mark as valid yet - wait for backend authentication to complete
+					showLogin = false;
+					await emit('access-token-set', tokens.accessToken.accessToken);
 				}
-			} else {
-				await logError('[STARTUP] Okta Auth not available during token restoration');
 			}
 		} catch (_error) {
 			await logError('Failed to restore tokens on startup', _error);
@@ -740,43 +696,8 @@
 				await restoreTokensFromOkta();
 
 				// Check if this is an OAuth callback URL and process tokens
-				if (browser && window.location.pathname === '/auth/callback' && !callbackProcessed) {
-					callbackProcessed = true;
-					await logInfo(
-						`OAuth callback URL detected after oktaAuth initialization. Full URL: ${window.location.href}`
-					);
-					try {
-						// Parse tokens from the current URL
-						await logInfo('OAuth callback: Attempting to parse tokens from URL...');
-						const { tokens } = await $oktaAuth.token.parseFromUrl();
-						await logInfo(`OAuth callback: parseFromUrl completed. Has tokens: ${!!tokens}`);
-
-						if (tokens && tokens.accessToken) {
-							await logInfo('OAuth callback: Tokens found, setting in tokenManager');
-							$oktaAuth.tokenManager.setTokens(tokens);
-
-							const { accessToken } = tokens.accessToken;
-
-							// Let the access-token-set event handler do the backend authentication
-							await logInfo('OAuth callback: Emitting access token for backend authentication');
-							await emit('access-token-set', accessToken);
-
-							await logInfo('OAuth callback: Token set successfully, redirecting to home');
-
-							// Navigate back to home after token processing
-							await goto('/');
-							// Don't return here - continue with initialization
-						} else {
-							await logError('OAuth callback: No tokens found in URL');
-							await emit('error', 'Authentication failed - no tokens received');
-							return;
-						}
-					} catch (error) {
-						await logError('OAuth callback: Error processing tokens', error);
-						await logError(`OAuth callback: Error details: ${error.message}`);
-						await emit('error', 'Authentication failed');
-						return;
-					}
+				if (browser && window.location.pathname === '/auth/callback') {
+					await processOAuthCallback();
 				} else {
 					await handleOktaState();
 				}
@@ -802,8 +723,6 @@
 		// Additional check for OAuth callback in case it's missed during initialization
 		if (browser && window.location.pathname === '/auth/callback' && !callbackProcessed) {
 			void (async () => {
-				await logInfo('onMount: OAuth callback detected, waiting for oktaAuth to be ready...');
-
 				// Wait for oktaAuth to be initialized
 				let attempts = 0;
 				const maxAttempts = 50; // 5 seconds
@@ -814,27 +733,8 @@
 					attempts += 1;
 				}
 
-				if ($oktaAuth && !callbackProcessed) {
-					callbackProcessed = true;
-					await logInfo('onMount: oktaAuth ready, processing callback...');
-					try {
-						const { tokens } = await $oktaAuth.token.parseFromUrl();
-						if (tokens && tokens.accessToken) {
-							await logInfo('onMount: Callback tokens found, processing...');
-							$oktaAuth.tokenManager.setTokens(tokens);
-							const { accessToken } = tokens.accessToken;
-							await emit('access-token-set', accessToken);
-							await goto('/');
-						} else {
-							await logError('onMount: No tokens found in callback URL');
-						}
-					} catch (error) {
-						await logError('onMount: Error processing callback', error);
-					}
-				} else if (callbackProcessed) {
-					await logInfo('onMount: Callback already processed, skipping');
-				} else {
-					await logError('onMount: oktaAuth not ready after waiting');
+				if ($oktaAuth) {
+					await processOAuthCallback();
 				}
 			})();
 		}
