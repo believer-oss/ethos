@@ -33,8 +33,8 @@
 	import { Canvas } from '@threlte/core';
 	import { get } from 'svelte/store';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { type } from '@tauri-apps/plugin-os';
 	import { invoke } from '@tauri-apps/api/core';
+	import { open } from '@tauri-apps/plugin-shell';
 
 	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -88,7 +88,14 @@
 		resetConfig
 	} from '$lib/config';
 	import { handleError, logError, logInfo } from '$lib/utils';
-	import { createOktaAuth, setupOktaEventListeners, clearExpiredTokens } from '$lib/okta';
+	import {
+		createOktaAuth,
+		setupOktaEventListeners,
+		clearExpiredTokens,
+		generateCodeVerifier,
+		generateCodeChallenge,
+		buildOAuthUrl
+	} from '$lib/okta';
 	import { browser } from '$app/environment';
 
 	const appWindow = getCurrentWebviewWindow();
@@ -271,39 +278,35 @@
 	const handleOktaLogin = async () => {
 		try {
 			const previousStartupMessage = startupMessage;
-			startupMessage = 'Logging in with Okta...';
+			startupMessage = 'Opening browser for login...';
 
-			// Initiate the redirect flow
+			// Use external browser flow for all platforms to avoid popup issues
 			if (browser && $oktaAuth) {
-				const osType = type();
+				await logInfo('Initiating external browser OAuth flow');
 
-				if (osType === 'macos') {
-					await $oktaAuth.token.getWithRedirect({
-						issuer: $appConfig.oktaConfig.issuer,
-						clientId: $appConfig.oktaConfig.clientId,
-						redirectUri: `${window.location.origin}/auth/callback`,
-						pkce: true,
-						scopes: ['openid', 'email', 'profile', 'offline_access']
-					});
-				} else {
-					const { tokens } = await $oktaAuth.token.getWithPopup({
-						scopes: ['openid', 'email', 'profile', 'offline_access']
-					});
+				// Generate PKCE code verifier and challenge for security
+				const codeVerifier = generateCodeVerifier();
+				const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-					if (tokens && tokens.accessToken) {
-						$oktaAuth.tokenManager.setTokens(tokens);
+				// Store code verifier for later exchange
+				sessionStorage.setItem('okta-code-verifier', codeVerifier);
 
-						await emit('access-token-set', tokens.accessToken.accessToken);
-						try {
-							await logInfo('Calling backend refreshLogin');
-							await refreshLogin(tokens.accessToken.accessToken);
-							await logInfo('Backend refreshLogin succeeded');
-							hasValidTokens = true;
-						} catch (backendError) {
-							await logError('Backend refreshLogin failed', backendError);
-						}
-					}
-				}
+				// Build OAuth URL with PKCE for external browser
+				// Use deep link for callback to handle external browser redirect
+				const authUrl = buildOAuthUrl(
+					$appConfig.oktaConfig.issuer,
+					$appConfig.oktaConfig.clientId,
+					'friendshipper://auth/callback',
+					codeChallenge,
+					['openid', 'email', 'profile', 'offline_access']
+				);
+
+				await logInfo(`Opening OAuth URL in external browser: ${authUrl}`);
+
+				// Open OAuth URL in system browser
+				await open(authUrl);
+
+				startupMessage = 'Please complete login in your browser...';
 			}
 
 			startupMessage = previousStartupMessage;
@@ -833,9 +836,21 @@
 		backgroundSyncInProgress.set(false);
 	});
 
-	void listen('access-token-set', (_e) => {
-		// Token validity is now managed by Okta's event system
-		// hasValidTokens is set directly when tokens are confirmed valid
+	void listen('access-token-set', (e) => {
+		// Handle token set from OAuth callback
+		void (async () => {
+			const accessToken = e.payload as string;
+			await logInfo('[TOKEN SET] Received access token from OAuth callback');
+
+			try {
+				// Notify backend of new token
+				await refreshLogin(accessToken);
+				hasValidTokens = true;
+				await logInfo('[TOKEN SET] Successfully updated backend with new token');
+			} catch (error) {
+				await logError('[TOKEN SET] Failed to update backend with new token', error);
+			}
+		})();
 	});
 
 	void listen('success', (e) => {
@@ -875,6 +890,21 @@
 			setTimeout(() => {
 				void emit('build-deep-link', { group, commitSha, name });
 			}, 100);
+		} else if (payload.startsWith('auth/callback')) {
+			// Handle OAuth callback from external browser
+			void (async () => {
+				await logInfo('[DEEP LINK] OAuth callback received via deep link');
+				// Extract query parameters from the payload
+				const [, queryString] = payload.split('?');
+				if (queryString) {
+					// Navigate to the callback page with the parameters
+					await logInfo(`[DEEP LINK] Navigating to callback page: /auth/callback?${queryString}`);
+					void goto(`/auth/callback?${queryString}`);
+					await logInfo(`[DEEP LINK] Navigation initiated to callback page`);
+				} else {
+					await logError('[DEEP LINK] No query parameters found in OAuth callback');
+				}
+			})();
 		}
 	});
 

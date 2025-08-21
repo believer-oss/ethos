@@ -2,6 +2,93 @@ import { OktaAuth } from '@okta/okta-auth-js';
 import { jwtDecode } from 'jwt-decode';
 import type { AccessToken } from '@okta/okta-auth-js';
 
+// PKCE utilities for external browser OAuth flow
+export const generateCodeVerifier = (): string => {
+	const array = new Uint8Array(32);
+	crypto.getRandomValues(array);
+	return btoa(String.fromCharCode.apply(null, Array.from(array)))
+		.replace(/\+/g, '-')
+		.replace(/\//g, '_')
+		.replace(/=/g, '');
+};
+
+export const generateCodeChallenge = async (codeVerifier: string): Promise<string> => {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(codeVerifier);
+	const digest = await crypto.subtle.digest('SHA-256', data);
+	return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
+		.replace(/\+/g, '-')
+		.replace(/\//g, '_')
+		.replace(/=/g, '');
+};
+
+// Build OAuth authorization URL manually since buildAuthorizeUrl doesn't exist
+export const buildOAuthUrl = (
+	issuer: string,
+	clientId: string,
+	redirectUri: string,
+	codeChallenge: string,
+	scopes: string[] = ['openid', 'email', 'profile', 'offline_access']
+): string => {
+	const params = new URLSearchParams({
+		client_id: clientId,
+		response_type: 'code',
+		scope: scopes.join(' '),
+		redirect_uri: redirectUri,
+		code_challenge: codeChallenge,
+		code_challenge_method: 'S256',
+		state: Math.random().toString(36).substring(2, 15) // Random state for security
+	});
+
+	// Ensure the issuer ends with /oauth2 for the authorize endpoint
+	const baseUrl = issuer.endsWith('/oauth2') ? issuer : `${issuer}/oauth2`;
+	return `${baseUrl}/v1/authorize?${params.toString()}`;
+};
+
+// Exchange authorization code for tokens manually
+export const exchangeCodeForTokens = async (
+	issuer: string,
+	clientId: string,
+	authCode: string,
+	codeVerifier: string,
+	redirectUri: string
+): Promise<{ access_token: string; id_token?: string; refresh_token?: string }> => {
+	// Ensure the issuer ends with /oauth2 for the token endpoint
+	const baseUrl = issuer.endsWith('/oauth2') ? issuer : `${issuer}/oauth2`;
+	const tokenEndpoint = `${baseUrl}/v1/token`;
+
+	const body = new URLSearchParams({
+		grant_type: 'authorization_code',
+		client_id: clientId,
+		code: authCode,
+		redirect_uri: redirectUri,
+		code_verifier: codeVerifier
+	});
+
+	const response = await fetch(tokenEndpoint, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/x-www-form-urlencoded',
+			Accept: 'application/json'
+		},
+		body: body.toString()
+	});
+
+	if (!response.ok) {
+		const errorText = await response.text();
+		throw new Error(
+			`Token exchange failed: ${response.status} ${response.statusText} - ${errorText}`
+		);
+	}
+
+	const tokens = (await response.json()) as {
+		access_token: string;
+		id_token?: string;
+		refresh_token?: string;
+	};
+	return tokens;
+};
+
 export const createOktaAuth = (issuer: string, clientId: string) => {
 	const redirectUri = `${window.location.origin}/auth/callback`;
 	const postLogoutRedirectUri = window.location.origin;
@@ -89,7 +176,7 @@ export const setupOktaEventListeners = (
 		if (key === 'accessToken') {
 			// Log the removal but don't trigger re-authentication
 			// The 'expired' event handler will manage re-auth when needed
-			console.info(`Token removed: ${key}`);
+			// Token removal is expected during cleanup
 		}
 	});
 };

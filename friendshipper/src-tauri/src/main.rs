@@ -62,7 +62,11 @@ fn main() -> Result<(), CoreError> {
     {
         let arg = std::env::args().nth(1).unwrap_or_default();
         if arg.starts_with("friendshipper://") {
+            // This is a deep link invocation - try to send to existing instance
+            info!("Deep link detected: {}", arg);
             tauri_plugin_deep_link::prepare("com.believer.friendshipper");
+            // Exit after the deep link is handled - don't start a new instance
+            std::process::exit(0);
         } else {
             let _ = tauri_plugin_deep_link::set_identifier("com.believer.friendshipper");
         }
