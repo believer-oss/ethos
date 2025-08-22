@@ -162,7 +162,7 @@
 
 	$: activeUrl = $page.url.pathname;
 
-	let showLogin: boolean = true;
+	let loginScreenVisible: boolean = true;
 	let hasValidTokens: boolean = false;
 	let authInProgress: boolean = false;
 	let callbackProcessed: boolean = false;
@@ -343,14 +343,6 @@
 				}
 			}
 
-			// Reset all auth-related state
-			hasValidTokens = false;
-			authInProgress = false;
-			showLogin = true;
-
-			// Reset initialized state so app shows login page
-			initialized = false;
-
 			// Clear any browser storage that might contain Okta state
 			if (browser) {
 				try {
@@ -380,7 +372,7 @@
 
 		try {
 			authInProgress = true;
-			showLogin = false; // Hide login page when starting auth
+			loginScreenVisible = false; // Hide login page when starting auth
 			await logInfo('handleOktaLogin: Starting OAuth login process');
 			const previousStartupMessage = startupMessage;
 			startupMessage = 'Logging in with Okta...';
@@ -483,13 +475,6 @@
 		try {
 			await logInfo('handleOktaState: Starting OAuth state check');
 
-			// If showLogin is true, it means user explicitly logged out or hasn't logged in yet
-			// Don't automatically start auth flow
-			if (showLogin && !hasValidTokens) {
-				await logInfo('handleOktaState: User not logged in, waiting for manual login');
-				return;
-			}
-
 			// First, clear any expired tokens from storage
 			await clearExpiredTokens($oktaAuth);
 			const oktaTokens = await $oktaAuth.tokenManager.getTokens();
@@ -504,12 +489,12 @@
 				return;
 			}
 
-			// If we don't have any tokens, user has to log in (but only if they haven't explicitly logged out)
+			// If we don't have any tokens, user has to log in
 			if (!oktaTokens.accessToken && !oktaTokens.refreshToken) {
 				await logInfo(
 					'handleOktaState: No tokens found, but not automatically starting login (user must click login)'
 				);
-				showLogin = true;
+				loginScreenVisible = true;
 				return;
 			}
 
@@ -519,7 +504,7 @@
 
 				const refreshSuccessful = await attemptSilentRefresh('handleOktaState');
 				if (refreshSuccessful) {
-					showLogin = false;
+					loginScreenVisible = false;
 					return;
 				}
 
@@ -536,16 +521,14 @@
 				!$oktaAuth.tokenManager.hasExpired(currentTokens.accessToken)
 			) {
 				await logInfo('handleOktaState: Found valid tokens, authenticating with backend');
-				// Update backend and set valid state
 				try {
-					// Don't set hasValidTokens here - let the access-token-set handler do it
-					showLogin = false;
+					loginScreenVisible = false;
 					await logInfo('handleOktaState: Emitting access token for backend authentication');
 					await emit('access-token-set', currentTokens.accessToken.accessToken);
 				} catch (backendError) {
 					await logError('handleOktaState: Failed to emit access token', backendError);
 					hasValidTokens = false;
-					showLogin = true;
+					loginScreenVisible = true;
 				}
 			} else {
 				await logInfo('handleOktaState: No valid tokens available, starting login flow');
@@ -568,7 +551,7 @@
 		try {
 			const { tokens } = await $oktaAuth.token.parseFromUrl();
 
-			if (tokens && tokens.accessToken) {
+			if (tokens && tokens.accessToken && tokens.refreshToken) {
 				$oktaAuth.tokenManager.setTokens(tokens);
 				await emit('access-token-set', tokens.accessToken.accessToken);
 				await goto('/');
@@ -591,13 +574,13 @@
 
 				if (tokens.accessToken && !$oktaAuth.tokenManager.hasExpired(tokens.accessToken)) {
 					// Access token is still valid
-					showLogin = false;
+					loginScreenVisible = false;
 					await emit('access-token-set', tokens.accessToken.accessToken);
 				} else if (tokens.refreshToken) {
 					// Access token expired, try to refresh using refresh token
 					const refreshSuccessful = await attemptSilentRefresh('App startup');
 					if (refreshSuccessful) {
-						showLogin = false;
+						loginScreenVisible = false;
 					}
 				} else {
 					await logInfo('No tokens available on startup - will show login screen');
@@ -648,7 +631,7 @@
 		if ($appConfig.serverless) {
 			try {
 				await refreshLogin('');
-				showLogin = false;
+				loginScreenVisible = false;
 				hasValidTokens = true;
 			} catch (e) {
 				await logError('Serverless login failed', e);
@@ -948,6 +931,9 @@
 		backgroundSyncInProgress.set(false);
 	});
 
+	// Track last processed token to prevent duplicates
+	let lastProcessedToken = '';
+
 	void listen('access-token-set', (e) => {
 		// Token validity is now managed by Okta's event system
 		// hasValidTokens is set directly when tokens are confirmed valid
@@ -955,11 +941,20 @@
 		void (async () => {
 			try {
 				const token = e.payload as string;
+
+				// Skip if this is the same token we just processed
+				if (token === lastProcessedToken) {
+					await logInfo('Skipping duplicate access-token-set event - same token already processed');
+					return;
+				}
+
+				lastProcessedToken = token;
+
 				await logInfo('Received access-token-set event, calling backend refreshLogin');
 				await logInfo(`Token: ${token.substring(0, 50)}...`);
 				await refreshLogin(token);
 				hasValidTokens = true;
-				showLogin = false;
+				loginScreenVisible = false;
 				await logInfo(
 					'Backend refreshLogin succeeded from access-token-set event - hasValidTokens set to TRUE'
 				);
@@ -970,7 +965,7 @@
 				await logError('Backend refreshLogin failed from access-token-set event', error);
 				await logError(`Backend error details: ${JSON.stringify(error)}`);
 				hasValidTokens = false;
-				showLogin = true;
+				loginScreenVisible = true;
 				// Clear any stored tokens since backend auth failed
 				if ($oktaAuth) {
 					$oktaAuth.tokenManager.clear();
@@ -1086,7 +1081,7 @@
 		</div>
 	</div>
 	{#if !hasValidTokens && !$appConfig.serverless}
-		{#if initialized && showLogin}
+		{#if initialized && loginScreenVisible}
 			<div>
 				<div
 					class="flex flex-col gap-2 px-12 bg-secondary-700 dark:bg-space-900 items-center w-screen h-screen justify-center"
