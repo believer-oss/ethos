@@ -164,7 +164,6 @@
 
 	let loginScreenVisible: boolean = true;
 	let hasValidTokens: boolean = false;
-	let authInProgress: boolean = false;
 	let callbackProcessed: boolean = false;
 	let appDataLoaded: boolean = false;
 
@@ -365,13 +364,7 @@
 	};
 
 	const handleOktaLogin = async () => {
-		if (authInProgress) {
-			await logInfo('handleOktaLogin: Auth already in progress, skipping');
-			return;
-		}
-
 		try {
-			authInProgress = true;
 			loginScreenVisible = false; // Hide login page when starting auth
 			await logInfo('handleOktaLogin: Starting OAuth login process');
 			const previousStartupMessage = startupMessage;
@@ -425,11 +418,6 @@
 		} catch (err) {
 			await handleOktaLogout();
 			await logError('Okta login failed', err);
-		} finally {
-			// Reset auth in progress after a delay to allow redirect to happen
-			setTimeout(() => {
-				authInProgress = false;
-			}, 5000);
 		}
 	};
 
@@ -698,20 +686,11 @@
 								'Access token expired, attempting silent renewal before re-authentication'
 							);
 
-							// Try silent renewal first (Okta recommended approach)
-							try {
-								await $oktaAuth.tokenManager.renew('accessToken');
-								const renewedTokens = await $oktaAuth.tokenManager.getTokens();
-								if (renewedTokens.accessToken) {
-									await emit('access-token-set', renewedTokens.accessToken.accessToken);
-									await logInfo('Silent token renewal successful on expiration');
-									return; // Success, no need for full re-auth
-								}
-							} catch (renewError) {
-								await logError(
-									'Silent renewal failed on expiration, falling back to re-authentication',
-									renewError
-								);
+							// Use centralized silent refresh function
+							const refreshSuccessful = await attemptSilentRefresh('Token expiration');
+							if (refreshSuccessful) {
+								await logInfo('Silent token renewal successful on expiration');
+								return; // Success, no need for full re-auth
 							}
 
 							// Silent renewal failed, proceed with full re-auth
@@ -731,15 +710,10 @@
 				} else {
 					await handleOktaState();
 				}
-				// Don't call initialize() recursively - this causes infinite loops
 			} catch (e) {
 				await emit('error', e);
 			}
 		}
-
-		// Data loading will be triggered after authentication succeeds
-		// This avoids the race condition where hasValidTokens is still false during initialize()
-
 		initialized = true;
 	};
 
@@ -749,25 +723,6 @@
 			await appWindow.show();
 		};
 		void setupAppWindow();
-
-		// Additional check for OAuth callback in case it's missed during initialization
-		if (browser && window.location.pathname === '/auth/callback' && !callbackProcessed) {
-			void (async () => {
-				// Wait for oktaAuth to be initialized
-				let attempts = 0;
-				const maxAttempts = 50; // 5 seconds
-				while (!$oktaAuth && attempts < maxAttempts) {
-					await new Promise((resolve) => {
-						setTimeout(resolve, 100);
-					});
-					attempts += 1;
-				}
-
-				if ($oktaAuth) {
-					await processOAuthCallback();
-				}
-			})();
-		}
 
 		const unlisten = listen('startup-message', (e) => {
 			startupMessage = e.payload as string;
