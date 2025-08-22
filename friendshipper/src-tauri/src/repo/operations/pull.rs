@@ -91,6 +91,20 @@ where
             status_op.execute().await?;
         }
 
+        // Check for conflicts with incoming changes before creating snapshot
+        let current_branch = self.git_client.current_branch().await?;
+        let sync_conflicts = self
+            .git_client
+            .check_sync_vs_untracked_file_conflicts(&current_branch)
+            .await?;
+        if !sync_conflicts.is_empty() {
+            return Err(CoreError::Input(anyhow!(
+                "Sync failed: The following untracked local files conflict with incoming committed changes: {}\n\
+                Please rename or move these local files before syncing, or commit them to resolve the conflict.",
+                sync_conflicts.join(", ")
+            )));
+        }
+
         // take a snapshot if we have any modified files
         // we need to do this before we check for quicksubmit branch so that the
         // stashes resolve inside out correctly

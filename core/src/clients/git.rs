@@ -502,21 +502,33 @@ impl Git {
     ) -> anyhow::Result<()> {
         self.wait_for_lock().await;
 
-        // get list of files in commit
-        let files = self
-            .run_and_collect_output(&["stash", "show", "--name-only", commit], Opts::default())
-            .await?;
+        // Get list of files in the snapshot
+        let snapshot_files = self.get_files_in_commit(commit).await?;
 
-        // bail if there are any conflicting files in the stash
-        if files
-            .lines()
+        // Get current untracked files
+        let untracked_files = self.get_untracked_files().await?;
+
+        // Check for conflicts with currently modified files
+        if snapshot_files
+            .iter()
             .any(|f| currently_modified_files.iter().any(|cf| cf.path == *f))
             && conflict_strategy == ConflictStrategy::Error
         {
             bail!("Cannot restore snapshot due to conflicting files");
         }
 
-        // check out the files from the stash
+        // Rename untracked files to .localcopy to avoid conflicts during restoration
+        let mut renamed_files: Vec<(String, PathBuf)> = Vec::new();
+
+        for untracked_file in &untracked_files {
+            let source_path = self.repo_path.join(untracked_file);
+            if source_path.exists() {
+                let localcopy_path = self.repo_path.join(format!("{}.localcopy", untracked_file));
+                std::fs::rename(&source_path, &localcopy_path)?;
+                renamed_files.push((untracked_file.clone(), localcopy_path));
+            }
+        }
+
         let mut apply_args = vec!["cherry-pick", "-n", "-m1"];
 
         // if we're keeping ours, use the theirs strategy because this is a stash pop
@@ -531,25 +543,170 @@ impl Git {
         apply_args.push("--rerere-autoupdate");
         apply_args.push(commit);
 
-        self.run(&apply_args, Opts::default()).await?;
+        let cherry_pick_result = self.run(&apply_args, Opts::default()).await;
 
         // reset so everything is unstaged
         let mut temp_file = NamedTempFile::new()?;
-        for path in files.lines() {
+        for path in &snapshot_files {
             writeln!(temp_file, "{path}")?;
         }
         temp_file.flush()?;
 
-        self.run(
-            &[
-                "reset",
-                "--pathspec-from-file",
-                temp_file.path().to_str().unwrap(),
-            ],
-            Opts::default(),
-        )
-        .await
-        .map_err(|e| anyhow!("Failed to reset: {}", e))
+        let reset_result = self
+            .run(
+                &[
+                    "reset",
+                    "--pathspec-from-file",
+                    temp_file.path().to_str().unwrap(),
+                ],
+                Opts::default(),
+            )
+            .await;
+
+        // Restore renamed files and track conflicts
+        let mut conflicts = Vec::new();
+
+        for (original_path, localcopy_path) in renamed_files {
+            let target_path = self.repo_path.join(&original_path);
+
+            if target_path.exists() {
+                // Conflict: snapshot restored a file with same name
+                // Compare file contents to see if they're identical
+                let original_content = std::fs::read(&localcopy_path)?;
+                let restored_content = std::fs::read(&target_path)?;
+
+                if original_content != restored_content {
+                    // Files differ, preserve the local version (rename snapshot version)
+                    let snapshot_copy_name = format!("{}.snapshotcopy", original_path);
+                    let snapshot_copy_path = self.repo_path.join(&snapshot_copy_name);
+                    std::fs::rename(&target_path, &snapshot_copy_path)?;
+                    std::fs::rename(&localcopy_path, &target_path)?;
+                    conflicts.push((original_path.clone(), snapshot_copy_name));
+                } else {
+                    // Files are identical, remove the unnecessary .localcopy file
+                    std::fs::remove_file(&localcopy_path)?;
+                }
+            } else {
+                // No conflict, restore the file to its original name
+                std::fs::rename(&localcopy_path, &target_path)?;
+            }
+        }
+
+        // Always report conflicts first, regardless of Git operation success
+        if !conflicts.is_empty() {
+            let conflict_details: Vec<String> = conflicts
+                .iter()
+                .map(|(original, snapshot_copy)| {
+                    format!(
+                        "  - {} (snapshot version saved as {})",
+                        original, snapshot_copy
+                    )
+                })
+                .collect();
+
+            let conflict_message = format!(
+                "{} untracked file conflicts were found during snapshot restore:\n{}\n\nYour local untracked files have been preserved. The snapshot versions have been saved with '.snapshotcopy' extensions. Please review and resolve these conflicts manually.",
+                conflicts.len(),
+                conflict_details.join("\n")
+            );
+
+            // If Git operations failed, include conflict info with the Git error
+            if let Err(git_error) = cherry_pick_result.as_ref().or(reset_result.as_ref()) {
+                bail!(
+                    "Snapshot restore failed: {}\n\nAdditionally, {}",
+                    git_error,
+                    conflict_message
+                );
+            } else {
+                // Git operations succeeded but we have conflicts
+                bail!("Snapshot restored successfully, but {}", conflict_message);
+            }
+        }
+
+        // Check Git operation results (only after handling conflicts)
+        cherry_pick_result?;
+        reset_result?;
+
+        Ok(())
+    }
+
+    pub async fn get_untracked_files(&self) -> anyhow::Result<Vec<String>> {
+        let output = self.status(vec![]).await?;
+
+        let untracked_files: Vec<String> = output
+            .lines()
+            .filter_map(|line| {
+                // Parse porcelain format: first two chars are status, rest is filename
+                if line.len() > 2 && line.starts_with("??") {
+                    Some(line[3..].to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(untracked_files)
+    }
+
+    pub async fn get_files_in_commit(&self, commit: &str) -> anyhow::Result<Vec<String>> {
+        let output = self
+            .run_and_collect_output(
+                &["show", "--name-only", "--format=", commit],
+                Opts::new_without_logs(),
+            )
+            .await?;
+
+        let files: Vec<String> = output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect();
+
+        Ok(files)
+    }
+
+    pub fn find_tracked_conflicts(
+        snapshot_files: &[String],
+        untracked_files: &[String],
+    ) -> Vec<String> {
+        let mut conflicts = Vec::new();
+
+        for untracked_file in untracked_files {
+            if snapshot_files.contains(untracked_file) {
+                conflicts.push(untracked_file.clone());
+            }
+        }
+
+        conflicts
+    }
+
+    pub async fn get_incoming_files(&self, branch: &str) -> anyhow::Result<Vec<String>> {
+        // Fetch latest changes to ensure we have up-to-date refs
+        self.fetch(ShouldPrune::No, Opts::new_without_logs())
+            .await?;
+
+        // Get files that would be incoming in a pull
+        let remote_branch = format!("origin/{}", branch);
+        let range = format!("HEAD..{}", remote_branch);
+
+        let files = self.diff_filenames(&range).await?;
+        Ok(files)
+    }
+
+    pub async fn check_sync_vs_untracked_file_conflicts(
+        &self,
+        branch: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        // Get current untracked files
+        let untracked_files = self.get_untracked_files().await?;
+
+        // Get files that would be incoming in a pull/sync
+        let incoming_files = self.get_incoming_files(branch).await?;
+
+        // Find conflicts between untracked local files and incoming tracked files
+        let conflicts = Self::find_tracked_conflicts(&incoming_files, &untracked_files);
+
+        Ok(conflicts)
     }
 
     pub async fn delete_branch(&self, branch: &str, branch_type: BranchType) -> anyhow::Result<()> {
