@@ -684,6 +684,16 @@ where
 
             // unlock all files submitted
             lock_op.execute().await?;
+
+            // check out the target branch
+            self.git_client.checkout(&target_branch).await?;
+
+            // clean up the local quicksubmit branch since we've switched away from it
+            if needs_new_pr && is_quicksubmit_branch(&f11r_branch) {
+                self.git_client
+                    .delete_branch(&f11r_branch, git::BranchType::Local)
+                    .await?;
+            }
         }
 
         Ok(())
