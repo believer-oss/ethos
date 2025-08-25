@@ -378,7 +378,7 @@ impl Server {
         }
 
         let span = tracing::info_span!("create_router").entered();
-        let app = crate::router(&shared_state.log_path)?
+        let app = crate::router(&shared_state.log_path, self.port)?
             .with_state(shared_state.clone())
             .layer(ethos_core::utils::tracing::new_tracing_layer(
                 APP_NAME.to_lowercase(),
