@@ -55,7 +55,35 @@ fn force_window_to_front(window: WebviewWindow) {
     }
 }
 
-const PORT: u16 = 8484;
+const PREFERRED_PORT: u16 = 8484;
+
+/// Find an available port starting with the preferred port and incrementing if needed
+fn find_available_port() -> Result<u16, CoreError> {
+    use std::net::TcpListener;
+
+    // Try the preferred port first
+    if TcpListener::bind(("127.0.0.1", PREFERRED_PORT)).is_ok() {
+        return Ok(PREFERRED_PORT);
+    }
+
+    // If preferred port is taken, try the next 10 ports
+    for port in (PREFERRED_PORT + 1)..=(PREFERRED_PORT + 10) {
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return Ok(port);
+        }
+    }
+
+    // If all specific ports are taken, let the OS choose
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| CoreError::Internal(anyhow::anyhow!("Failed to bind to any port: {}", e)))?;
+
+    let port = listener
+        .local_addr()
+        .map_err(|e| CoreError::Internal(anyhow::anyhow!("Failed to get local address: {}", e)))?
+        .port();
+
+    Ok(port)
+}
 
 fn main() -> Result<(), CoreError> {
     #[cfg(not(target_os = "macos"))]
@@ -90,7 +118,16 @@ fn main() -> Result<(), CoreError> {
             }
         };
 
-        match utils::process::check_for_process(APP_NAME, PORT) {
+        // Find an available port
+        let port = match find_available_port() {
+            Ok(port) => port,
+            Err(e) => {
+                error!("Failed to find available port: {:?}", e);
+                std::process::exit(1);
+            }
+        };
+
+        match utils::process::check_for_process(APP_NAME, port) {
             Ok(_) => {}
             Err(e) => {
                 error!("Failed to check for existing process: {:?}", e);
@@ -98,7 +135,7 @@ fn main() -> Result<(), CoreError> {
             }
         }
 
-        match utils::process::wait_for_port(PORT) {
+        match utils::process::wait_for_port(port) {
             Ok(_) => {}
             Err(e) => {
                 error!("Failed to wait for port: {:?}", e);
@@ -106,7 +143,7 @@ fn main() -> Result<(), CoreError> {
             }
         }
 
-        let server_url = format!("http://localhost:{PORT}");
+        let server_url = format!("http://localhost:{port}");
         info!(
             version = VERSION,
             address = &server_url,
@@ -427,7 +464,7 @@ fn main() -> Result<(), CoreError> {
                 let server_log_path = log_path.clone();
                 tauri::async_runtime::spawn(async move {
                     let server = friendshipper::server::Server::new(
-                        PORT,
+                        port,
                         longtail_tx.clone(),
                         notification_tx.clone(),
                         frontend_op_tx,
