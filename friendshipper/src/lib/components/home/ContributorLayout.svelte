@@ -15,7 +15,7 @@
 	import { LinkOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { type Nullable, ProgressModal } from '@ethos/core';
 	import { onMount } from 'svelte';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen } from '@tauri-apps/api/event';
 	import { get } from 'svelte/store';
 	import {
 		generateSln,
@@ -301,8 +301,16 @@
 			void refreshMergeQueue();
 		}, 10000);
 
+		// Listen for git-refresh events to trigger repo status refresh with animation
+		const unlistenGitRefresh = listen('git-refresh', () => {
+			void refreshRepo();
+		});
+
 		return () => {
 			clearInterval(interval);
+			void unlistenGitRefresh.then((f) => {
+				f();
+			});
 		};
 	});
 </script>
