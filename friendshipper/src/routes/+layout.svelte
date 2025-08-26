@@ -932,6 +932,11 @@
 	void listen('success', (e) => {
 		successMessage = e.payload as string;
 		hasSuccess = true;
+
+		// If we're on the collaborator layout page then refresh repo status
+		if (activeUrl === '/' && $appConfig.repoUrl !== '') {
+			void emit('git-refresh');
+		}
 	});
 
 	void listen('git-refresh', () => {
