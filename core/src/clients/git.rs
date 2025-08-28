@@ -516,10 +516,12 @@ impl Git {
 
         if !conflicting_files.is_empty() && prefer_snapshot_versions {
             let file_list = conflicting_files.join("\n  - ");
-            bail!(
+            let error_msg = format!(
                 "Cannot restore snapshot due to conflicting modified files:\n  - {}\n\nPlease commit, revert, or stash these files before restoring the snapshot.",
                 file_list
             );
+            error!("Snapshot restore failed: {}", error_msg);
+            bail!(error_msg);
         }
 
         // Rename untracked and modified files to .localcopy to avoid conflicts during restoration
@@ -636,23 +638,30 @@ impl Git {
 
             // If Git operations failed, include conflict info with the Git error
             if let Err(git_error) = cherry_pick_result.as_ref().or(reset_result.as_ref()) {
-                bail!(
+                let error_msg = format!(
                     "Snapshot restore failed: {}\n\nAdditionally, {}",
-                    git_error,
-                    conflict_message
+                    git_error, conflict_message
                 );
+                error!("Snapshot restore failed with conflicts: {}", error_msg);
+                bail!(error_msg);
             } else {
                 // Git operations succeeded but we have conflicts
-                bail!("Snapshot restored successfully, but {}", conflict_message);
+                let error_msg = format!("Snapshot restored successfully, but {}", conflict_message);
+                warn!("Snapshot restore completed with conflicts: {}", error_msg);
+                bail!(error_msg);
             }
         }
 
         // Check Git operation results (only after handling conflicts)
         if let Err(git_error) = cherry_pick_result {
-            bail!("Snapshot restore failed on cherrypick : {}\n\n", git_error);
+            let error_msg = format!("Snapshot restore failed on cherrypick : {}\n\n", git_error);
+            error!("Cherry-pick failed during snapshot restore: {}", error_msg);
+            bail!(error_msg);
         }
         if let Err(git_error) = reset_result {
-            bail!("Snapshot restore failed on reset : {}\n\n", git_error);
+            let error_msg = format!("Snapshot restore failed on reset : {}\n\n", git_error);
+            error!("Reset failed during snapshot restore: {}", error_msg);
+            bail!(error_msg);
         }
         Ok(())
     }

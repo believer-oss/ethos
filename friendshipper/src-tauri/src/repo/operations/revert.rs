@@ -45,9 +45,14 @@ where
         }
 
         if self.take_snapshot {
+            // Include all files being reverted (both modified and untracked)
             let _ = self
                 .git_client
-                .save_snapshot_all("pre-revert", git::SaveSnapshotIndexOption::DiscardIndex)
+                .save_snapshot(
+                    "pre-revert",
+                    self.files.clone(),
+                    git::SaveSnapshotIndexOption::DiscardIndex,
+                )
                 .await?;
         }
 
@@ -127,6 +132,19 @@ where
 
     info!("Added: {:?}, Modified: {:?}", added, modified);
 
+    // Create prerevert snapshot including all files (both modified and untracked) before any operations
+    if request.take_snapshot && (!added.is_empty() || !modified.is_empty()) {
+        let all_files: Vec<String> = request.files.clone();
+        let _ = state
+            .git()
+            .save_snapshot(
+                "pre-revert",
+                all_files,
+                git::SaveSnapshotIndexOption::DiscardIndex,
+            )
+            .await?;
+    }
+
     if !added.is_empty() {
         for file in &added {
             let path = repo_path.clone() + "/" + &file.path;
@@ -144,7 +162,7 @@ where
             } else {
                 Some(state.engine.clone())
             },
-            take_snapshot: request.take_snapshot,
+            take_snapshot: false, // Snapshot already taken above
         };
 
         sequence.push(Box::new(op));
