@@ -517,15 +517,36 @@ impl Git {
             bail!("Cannot restore snapshot due to conflicting files");
         }
 
-        // Rename untracked files to .localcopy to avoid conflicts during restoration
+        // Rename untracked and modified files to .localcopy to avoid conflicts during restoration
         let mut renamed_files: Vec<(String, PathBuf)> = Vec::new();
 
+        // Handle untracked files
         for untracked_file in &untracked_files {
             let source_path = self.repo_path.join(untracked_file);
             if source_path.exists() {
                 let localcopy_path = self.repo_path.join(format!("{}.localcopy", untracked_file));
                 std::fs::rename(&source_path, &localcopy_path)?;
                 renamed_files.push((untracked_file.clone(), localcopy_path));
+            }
+        }
+
+        // Handle all modified files to avoid cherry-pick conflicts
+        for modified_file in &currently_modified_files {
+            let source_path = self.repo_path.join(&modified_file.path);
+            if source_path.exists() {
+                let localcopy_path = self
+                    .repo_path
+                    .join(format!("{}.localcopy", modified_file.path));
+                std::fs::rename(&source_path, &localcopy_path)?;
+                renamed_files.push((modified_file.path.clone(), localcopy_path));
+
+                // Reset the file in Git to remove it from the index
+                self.run(
+                    &["reset", "HEAD", "--", &modified_file.path],
+                    Opts::default(),
+                )
+                .await
+                .ok();
             }
         }
 
@@ -624,9 +645,12 @@ impl Git {
         }
 
         // Check Git operation results (only after handling conflicts)
-        cherry_pick_result?;
-        reset_result?;
-
+        if let Err(git_error) = cherry_pick_result {
+            bail!("Snapshot restore failed on cherrypick : {}\n\n", git_error);
+        }
+        if let Err(git_error) = reset_result {
+            bail!("Snapshot restore failed on reset : {}\n\n", git_error);
+        }
         Ok(())
     }
 

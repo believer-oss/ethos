@@ -109,8 +109,11 @@ where
         // we need to do this before we check for quicksubmit branch so that the
         // stashes resolve inside out correctly
         let mut snapshot = None;
+        let mut snapshot_modified_files = vec![];
         let repo_status = self.repo_status.read().clone();
         if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
+            // Capture the modified files at snapshot time for restore_snapshot
+            snapshot_modified_files = repo_status.modified_files.0.clone();
             snapshot = Some(
                 self.git_client
                     .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::DiscardIndex)
@@ -240,7 +243,7 @@ where
             let conflict_strategy = self.app_config.read().conflict_strategy.clone();
             errors.push(
                 self.git_client
-                    .restore_snapshot(&snapshot.commit, vec![], conflict_strategy)
+                    .restore_snapshot(&snapshot.commit, snapshot_modified_files, conflict_strategy)
                     .await
                     .map_err(|e| e.into())
                     .err(),
