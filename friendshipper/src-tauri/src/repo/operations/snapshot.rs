@@ -71,7 +71,7 @@ where
     let modified_files = state.repo_status.read().clone().modified_files;
     state
         .git()
-        .restore_snapshot(&req.commit, modified_files.0)
+        .restore_snapshot(&req.commit, modified_files.0, true) // UI restore: prefer snapshot versions
         .await?;
 
     Ok(())

@@ -240,7 +240,7 @@ where
         if let Some(snapshot) = snapshot {
             errors.push(
                 self.git_client
-                    .restore_snapshot(&snapshot.commit, snapshot_modified_files)
+                    .restore_snapshot(&snapshot.commit, snapshot_modified_files, false)
                     .await
                     .map_err(|e| e.into())
                     .err(),

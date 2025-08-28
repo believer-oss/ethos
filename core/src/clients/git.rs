@@ -497,21 +497,29 @@ impl Git {
         &self,
         commit: &str,
         currently_modified_files: Vec<File>,
+        prefer_snapshot_versions: bool,
     ) -> anyhow::Result<()> {
         self.wait_for_lock().await;
 
         // Get list of files in the snapshot
-        let snapshot_files = self.get_files_in_commit(commit).await?;
+        let snapshot_files = self.get_files_in_snapshot(commit).await?;
 
         // Get current untracked files
         let untracked_files = self.get_untracked_files().await?;
 
         // Check for conflicts with currently modified files
-        if snapshot_files
+        let conflicting_files: Vec<String> = snapshot_files
             .iter()
-            .any(|f| currently_modified_files.iter().any(|cf| cf.path == *f))
-        {
-            bail!("Cannot restore snapshot due to conflicting files");
+            .filter(|f| currently_modified_files.iter().any(|cf| cf.path == **f))
+            .cloned()
+            .collect();
+
+        if !conflicting_files.is_empty() && prefer_snapshot_versions {
+            let file_list = conflicting_files.join("\n  - ");
+            bail!(
+                "Cannot restore snapshot due to conflicting modified files:\n  - {}\n\nPlease commit, revert, or stash these files before restoring the snapshot.",
+                file_list
+            );
         }
 
         // Rename untracked and modified files to .localcopy to avoid conflicts during restoration
@@ -548,6 +556,13 @@ impl Git {
         }
 
         let mut apply_args = vec!["cherry-pick", "-n", "-m1"];
+
+        // When prefer_snapshot_versions is true, use theirs strategy to keep snapshot versions
+        // When false, use ours strategy to prefer current working tree versions
+        if prefer_snapshot_versions {
+            apply_args.push("-X");
+            apply_args.push("theirs");
+        }
 
         apply_args.push("--rerere-autoupdate");
         apply_args.push(commit);
@@ -660,10 +675,20 @@ impl Git {
         Ok(untracked_files)
     }
 
-    pub async fn get_files_in_commit(&self, commit: &str) -> anyhow::Result<Vec<String>> {
+    pub async fn get_files_in_snapshot(
+        &self,
+        snapshot_commit: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        // Snapshots are stash commits, so we need to diff against the first parent
+        // to see what files were changed when the snapshot was created
         let output = self
             .run_and_collect_output(
-                &["show", "--name-only", "--format=", commit],
+                &[
+                    "diff",
+                    "--name-only",
+                    &format!("{}^1", snapshot_commit),
+                    snapshot_commit,
+                ],
                 Opts::new_without_logs(),
             )
             .await?;
