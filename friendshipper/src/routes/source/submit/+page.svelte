@@ -43,7 +43,6 @@
 	import { get } from 'svelte/store';
 	import { Menu, MenuItem } from '@tauri-apps/api/menu';
 	import {
-		ConflictStrategy,
 		type GitHubPullRequest,
 		type Nullable,
 		type PushRequest,
@@ -117,9 +116,7 @@
 	let loadingSnapshots = false;
 	let snapshots: Snapshot[] = [];
 
-	$: conflictsDetected =
-		($repoStatus?.conflicts.length ?? 0) > 0 &&
-		$appConfig.conflictStrategy === ConflictStrategy.Error;
+	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
 	$: canSync = !quickSubmitting && !syncing;
 
 	const onModifiedFileRightClick = async (e: MouseEvent, file: ModifiedFile) => {

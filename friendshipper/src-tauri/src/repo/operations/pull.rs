@@ -14,7 +14,7 @@ use ethos_core::clients::github::GraphQLClient;
 use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
-use ethos_core::types::config::{AppConfigRef, ConflictStrategy, RepoConfig, UProject};
+use ethos_core::types::config::{AppConfigRef, RepoConfig, UProject};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::PullResponse;
 use ethos_core::worker::{Task, TaskSequence};
@@ -180,9 +180,7 @@ where
             // and essentially disappear.
 
             let repo_status = self.repo_status.read();
-            if !repo_status.conflicts.is_empty()
-                && app_config.conflict_strategy == ConflictStrategy::Error
-            {
+            if !repo_status.conflicts.is_empty() {
                 return Err(CoreError::Input(anyhow!(
                     "Conflicts detected, cannot pull. See Diagnostics."
                 )));
@@ -240,10 +238,9 @@ where
 
         // Attempt to restore any snapshots that were made above.
         if let Some(snapshot) = snapshot {
-            let conflict_strategy = self.app_config.read().conflict_strategy.clone();
             errors.push(
                 self.git_client
-                    .restore_snapshot(&snapshot.commit, snapshot_modified_files, conflict_strategy)
+                    .restore_snapshot(&snapshot.commit, snapshot_modified_files)
                     .await
                     .map_err(|e| e.into())
                     .err(),
