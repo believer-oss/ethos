@@ -319,11 +319,9 @@ where
                     let branch = self.repo_status.read().branch.clone();
                     self.git_client.hard_reset(&branch).await?;
 
-                    let conflict_strategy = self.app_config.read().conflict_strategy.clone();
-
                     match self
                         .git_client
-                        .restore_snapshot(&snapshot.commit, vec![], conflict_strategy)
+                        .restore_snapshot(&snapshot.commit, vec![])
                         .await
                     {
                         Ok(_) => {}
@@ -684,16 +682,6 @@ where
 
             // unlock all files submitted
             lock_op.execute().await?;
-
-            // check out the target branch
-            self.git_client.checkout(&target_branch).await?;
-
-            // clean up the local quicksubmit branch since we've switched away from it
-            if needs_new_pr && is_quicksubmit_branch(&f11r_branch) {
-                self.git_client
-                    .delete_branch(&f11r_branch, git::BranchType::Local)
-                    .await?;
-            }
         }
 
         Ok(())

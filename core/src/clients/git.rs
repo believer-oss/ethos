@@ -19,7 +19,6 @@ use tokio::sync::Mutex;
 use tracing::warn;
 use tracing::{debug, error, info, instrument};
 
-use crate::types::config::ConflictStrategy;
 use crate::types::errors::CoreError;
 use crate::types::locks::VerifyLocksResponse;
 use crate::types::repo::File;
@@ -498,7 +497,6 @@ impl Git {
         &self,
         commit: &str,
         currently_modified_files: Vec<File>,
-        conflict_strategy: ConflictStrategy,
     ) -> anyhow::Result<()> {
         self.wait_for_lock().await;
 
@@ -512,7 +510,6 @@ impl Git {
         if snapshot_files
             .iter()
             .any(|f| currently_modified_files.iter().any(|cf| cf.path == *f))
-            && conflict_strategy == ConflictStrategy::Error
         {
             bail!("Cannot restore snapshot due to conflicting files");
         }
@@ -551,15 +548,6 @@ impl Git {
         }
 
         let mut apply_args = vec!["cherry-pick", "-n", "-m1"];
-
-        // if we're keeping ours, use the theirs strategy because this is a stash pop
-        if conflict_strategy == ConflictStrategy::KeepOurs {
-            apply_args.push("-X");
-            apply_args.push("theirs");
-        } else if conflict_strategy == ConflictStrategy::KeepTheirs {
-            apply_args.push("-X");
-            apply_args.push("ours");
-        }
 
         apply_args.push("--rerere-autoupdate");
         apply_args.push(commit);

@@ -688,24 +688,6 @@
 								{/if}
 							</div>
 						{/if}
-						<div class="flex flex-col gap-2">
-							<Label class="text-white">Conflict Strategy</Label>
-							<Select
-								class="text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-								bind:value={localAppConfig.conflictStrategy}
-							>
-								<option value="Error">Error</option>
-								<option value="KeepOurs">Keep Ours</option>
-								<option value="KeepTheirs">Keep Theirs</option>
-							</Select>
-							<Tooltip class="text-sm" placement="bottom">
-								How to handle merge conflicts during sync. <code>Error</code> will block you from
-								syncing.
-								<code>KeepOurs</code> will keep your local changes and overwrite incoming upstream
-								changes. <code>KeepTheirs</code> will keep the remote changes and overwrite your local
-								changes.
-							</Tooltip>
-						</div>
 					{/if}
 
 					<div class="flex gap-4 pt-1">
