@@ -14,12 +14,14 @@
 		lines = [line, ...lines];
 	});
 
-	$: filteredLogs = lines.filter((line) => {
-		if (searchTerm === '') {
-			return true;
-		}
-		return line.toLowerCase().includes(searchTerm.toLowerCase());
-	});
+	$: filteredLogs = lines
+		.flatMap((line) => line.split('\n'))
+		.filter((line) => {
+			if (searchTerm === '') {
+				return true;
+			}
+			return line.toLowerCase().includes(searchTerm.toLowerCase());
+		});
 
 	const onOpen = async () => {
 		lines = [];
