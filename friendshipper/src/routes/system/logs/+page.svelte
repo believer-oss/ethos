@@ -62,6 +62,26 @@
 		}
 	};
 
+	const formatLogFields = (fields: Record<string, string | number>): string => {
+		const entries = Object.entries(fields);
+
+		return entries
+			.map(([key, value]) => {
+				const cleanKey = key.trim();
+				if (typeof value === 'string') {
+					// Replace literal \n with actual newlines, trim leading whitespace from each line
+					const processed = value
+						.replace(/\\n/g, '\n')
+						.split('\n')
+						.map((line) => line.trimStart())
+						.join('\n');
+					return `${cleanKey}: ${processed}`;
+				}
+				return `${cleanKey}: ${value}`;
+			})
+			.join('\n\n');
+	};
+
 	onMount(() => {
 		void refreshLogs();
 
@@ -110,8 +130,12 @@
 			bind:inputValue={searchTerm}
 		>
 			<TableBody>
-				{#each filteredItems as log}
-					<TableBodyRow class="text-left border-b-0 p-2 bg-secondary-700 dark:bg-space-900">
+				{#each filteredItems as log, index}
+					<TableBodyRow
+						class="text-left border-b-0 p-2 {index % 2 === 0
+							? 'bg-secondary-700 dark:bg-space-900'
+							: 'bg-secondary-600 dark:bg-space-800'}"
+					>
 						<TableBodyCell class="p-2 py-1">
 							<p class="text-sm text-gray-300 dark:text-gray-300">
 								{new Date(log.timestamp).toLocaleString()}
@@ -125,9 +149,10 @@
 							</p>
 						</TableBodyCell>
 						<TableBodyCell class="text-left border-b-0 p-2 py-1">
-							<p class="text-sm text-primary-400 dark:text-primary-400 whitespace-normal">
-								{JSON.stringify(log.fields, null, 1)}
-							</p>
+							<pre
+								class="text-sm text-primary-400 dark:text-primary-400 whitespace-pre-wrap">{formatLogFields(
+									log.fields
+								)}</pre>
 						</TableBodyCell>
 					</TableBodyRow>
 				{/each}
