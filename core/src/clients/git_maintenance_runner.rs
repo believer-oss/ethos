@@ -77,7 +77,7 @@ impl GitMaintenanceRunner {
         let pause = self.pause.clone();
         let maintenance_task = tokio::task::spawn(async move {
             loop {
-                if pause.clone().load(std::sync::atomic::Ordering::Relaxed) {
+                if !pause.clone().load(std::sync::atomic::Ordering::Relaxed) {
                     match git.run_maintenance().await {
                         Ok(_) => {
                             info!("Maintenance complete");
