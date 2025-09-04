@@ -93,9 +93,15 @@ where
 
         // Check for conflicts with incoming changes before creating snapshot
         let current_branch = self.git_client.current_branch().await?;
+        let branch_for_conflict_check = if is_quicksubmit_branch(&current_branch) {
+            // For f11r branches, check conflicts against the target branch since that's what we'll actually pull from
+            self.app_config.read().target_branch.clone()
+        } else {
+            current_branch.clone()
+        };
         let sync_conflicts = self
             .git_client
-            .check_sync_vs_untracked_file_conflicts(&current_branch)
+            .check_sync_vs_untracked_file_conflicts(&branch_for_conflict_check)
             .await?;
         if !sync_conflicts.is_empty() {
             return Err(CoreError::Input(anyhow!(

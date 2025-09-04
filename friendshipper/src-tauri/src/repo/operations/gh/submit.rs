@@ -495,9 +495,6 @@ where
             };
 
             commit_op.execute().await?;
-
-            // push up the branch - this way the commit's files are saved to the remote
-            self.git_client.push(&f11r_branch).await?;
         }
 
         let worktree_path: PathBuf = 'path: {
