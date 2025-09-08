@@ -22,7 +22,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument};
 
 use crate::clients::argo::ArgoClient;
-use crate::types::argo::workflow::Workflow;
+use crate::types::argo::workflow::{
+    CreatePromoteBuildWorkflowRequest, Workflow, WorkflowArguments, WorkflowParameter,
+    WorkflowTemplateRef,
+};
 use crate::types::errors::CoreError;
 use crate::types::gameserver::{GameServer, GameServerResults, GameServerSpec};
 use crate::types::playtests::{
@@ -789,6 +792,69 @@ impl KubeClient {
 
         let argo_client = self.argo_client.read().await;
         argo_client.stop_workflow(workflow).await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn create_promote_build_workflow(
+        &self,
+        request: CreatePromoteBuildWorkflowRequest,
+    ) -> Result<Workflow, CoreError> {
+        // Security validation: Only allow promote build workflows
+        const ALLOWED_TEMPLATE_NAME: &str = "promote-fellowship-build";
+        const ALLOWED_NAMESPACE: &str = "argo-unreal-ci";
+
+        // Only the commit field is required
+
+        // Validate commit is a 40-character SHA
+        if request.commit.len() != 40 {
+            return Err(CoreError::Input(anyhow!(
+                "Commit must be a 40-character SHA"
+            )));
+        }
+
+        // Validate commit contains only hexadecimal characters
+        if !request.commit.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(CoreError::Input(anyhow!(
+                "Commit must contain only hexadecimal characters"
+            )));
+        }
+
+        let client = Client::try_from(self.kubeconfig().await?)?;
+        let api: Api<Workflow> = Api::namespaced(client, ALLOWED_NAMESPACE);
+
+        let pp = PostParams::default();
+
+        let workflow = Workflow {
+            metadata: kube::api::ObjectMeta {
+                generate_name: Some("promote-fellowship-build-".to_string()),
+                namespace: Some(ALLOWED_NAMESPACE.to_string()),
+                ..Default::default()
+            },
+            spec: crate::types::argo::workflow::WorkflowSpec {
+                entrypoint: Some("main".to_string()),
+                arguments: Some(WorkflowArguments {
+                    parameters: Some(vec![
+                        WorkflowParameter {
+                            name: "game_config".to_string(),
+                            value: "development".to_string(),
+                        },
+                        WorkflowParameter {
+                            name: "commit".to_string(),
+                            value: request.commit,
+                        },
+                    ]),
+                }),
+                workflow_template_ref: Some(WorkflowTemplateRef {
+                    name: ALLOWED_TEMPLATE_NAME.to_string(),
+                }),
+            },
+            status: None,
+        };
+
+        match api.create(&pp, &workflow).await {
+            Ok(res) => Ok(res),
+            Err(e) => Err(self.handle_kube_error(e).await),
+        }
     }
 
     #[instrument(skip(self))]

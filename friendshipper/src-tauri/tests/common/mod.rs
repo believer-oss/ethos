@@ -400,8 +400,15 @@ pub async fn setup(
     let (frontend_op_tx, _) = std::sync::mpsc::channel();
 
     info!("Creating AWS client");
-    let aws_client =
-        AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket()).await;
+    let aws_client = AWSClient::from_static_creds(
+        ACCESS_KEY,
+        SECRET_KEY,
+        None,
+        None,
+        get_test_bucket(),
+        get_test_bucket(),
+    )
+    .await;
 
     info!("Created AWS client. Creating notification channel.");
     let (notification_tx, notification_rx) = std::sync::mpsc::channel();

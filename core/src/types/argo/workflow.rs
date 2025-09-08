@@ -11,7 +11,40 @@ use std::collections::HashMap;
     namespaced
 )]
 #[kube(status = "WorkflowStatus")]
-pub struct WorkflowSpec {}
+pub struct WorkflowSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<WorkflowArguments>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "workflowTemplateRef"
+    )]
+    pub workflow_template_ref: Option<WorkflowTemplateRef>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowArguments {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Vec<WorkflowParameter>>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct WorkflowParameter {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct WorkflowTemplateRef {
+    pub name: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct CreatePromoteBuildWorkflowRequest {
+    pub commit: String,
+}
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]

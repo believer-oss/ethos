@@ -24,7 +24,9 @@ use ethos_core::clients::argo::{
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::kube::ensure_kube_client;
 use ethos_core::clients::obs;
-use ethos_core::types::argo::workflow::{Workflow, WorkflowStatus};
+use ethos_core::types::argo::workflow::{
+    CreatePromoteBuildWorkflowRequest, Workflow, WorkflowStatus,
+};
 use ethos_core::types::builds::{LaunchMode, SyncClientRequest};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::GameServerResults;
@@ -49,6 +51,10 @@ where
         .route("/workflows/logs", get(get_logs_for_workflow_node))
         .route("/workflows/junit", get(get_workflow_junit_artifact))
         .route("/workflows/stop", post(stop_workflow))
+        .route(
+            "/workflows/promote-build",
+            post(create_promote_build_workflow),
+        )
 }
 
 #[derive(Default, Deserialize)]
@@ -611,4 +617,28 @@ where
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
     let wf = kube_client.stop_workflow(&params.workflow).await?;
     Ok(wf)
+}
+
+#[instrument(skip(state))]
+pub async fn create_promote_build_workflow<T>(
+    State(state): State<AppState<T>>,
+    Json(payload): Json<CreatePromoteBuildWorkflowRequest>,
+) -> Result<Json<Workflow>, CoreError>
+where
+    T: EngineProvider,
+{
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+
+    info!(
+        "Creating promote build workflow for commit: {}",
+        payload.commit
+    );
+
+    let workflow = kube_client.create_promote_build_workflow(payload).await?;
+
+    info!(
+        "Successfully created promote build workflow: {:?}",
+        workflow.metadata.name
+    );
+    Ok(Json(workflow))
 }

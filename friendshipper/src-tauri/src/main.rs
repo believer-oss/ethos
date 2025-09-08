@@ -245,6 +245,7 @@ fn main() -> Result<(), CoreError> {
                 save_changeset,
                 load_changeset,
                 stop_workflow,
+                create_promote_build_workflow,
                 sync_engine_commit_with_uproject,
                 sync_uproject_commit_with_engine,
                 reset_repo,

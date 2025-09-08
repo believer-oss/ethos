@@ -557,6 +557,7 @@ impl UProject {
 #[serde(rename_all = "camelCase")]
 pub struct FriendshipperConfig {
     pub artifact_bucket_name: String,
+    pub promoted_artifact_bucket_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

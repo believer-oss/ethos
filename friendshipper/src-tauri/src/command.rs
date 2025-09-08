@@ -447,6 +447,28 @@ pub async fn stop_workflow(
     Ok(res.text().await?)
 }
 
+#[tauri::command]
+pub async fn create_promote_build_workflow(
+    state: tauri::State<'_, State>,
+    request: ethos_core::types::argo::workflow::CreatePromoteBuildWorkflowRequest,
+) -> Result<ethos_core::types::argo::workflow::Workflow, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/builds/workflows/promote-build",
+            state.server_url
+        ))
+        .json(&request)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
 // Repo
 #[tauri::command]
 pub async fn get_repo_status(

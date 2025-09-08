@@ -145,9 +145,15 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_s3_provider() {
-        let aws_client =
-            AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket())
-                .await;
+        let aws_client = AWSClient::from_static_creds(
+            ACCESS_KEY,
+            SECRET_KEY,
+            None,
+            None,
+            get_test_bucket(),
+            get_test_bucket(),
+        )
+        .await;
         let bucket = get_test_bucket();
         let s3 = S3ArtifactProvider::new(&aws_client, &bucket);
         let schema = "v0".parse().unwrap();
@@ -168,9 +174,15 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_artifact_type_not_exists() {
-        let aws_client =
-            AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket())
-                .await;
+        let aws_client = AWSClient::from_static_creds(
+            ACCESS_KEY,
+            SECRET_KEY,
+            None,
+            None,
+            get_test_bucket(),
+            get_test_bucket(),
+        )
+        .await;
         let bucket = get_test_bucket();
         let s3 = S3ArtifactProvider::new(&aws_client, &bucket);
         let schema = "v1".parse().unwrap();
@@ -191,9 +203,15 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_get_artifact_by_prefix() {
-        let aws_client =
-            AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket())
-                .await;
+        let aws_client = AWSClient::from_static_creds(
+            ACCESS_KEY,
+            SECRET_KEY,
+            None,
+            None,
+            get_test_bucket(),
+            get_test_bucket(),
+        )
+        .await;
         let bucket = get_test_bucket();
         let s3 = S3ArtifactProvider::new(&aws_client, &bucket);
         let prefix = "v1/cache/linux/linux-build.json"; // this is just a known prefix
@@ -206,9 +224,15 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_get_artifact_by_prefix_multiple() {
-        let aws_client =
-            AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket())
-                .await;
+        let aws_client = AWSClient::from_static_creds(
+            ACCESS_KEY,
+            SECRET_KEY,
+            None,
+            None,
+            get_test_bucket(),
+            get_test_bucket(),
+        )
+        .await;
         let bucket = get_test_bucket();
         let s3 = S3ArtifactProvider::new(&aws_client, &bucket);
         let prefix = "v1/cache/linux/linux"; // this is just a known prefix
@@ -221,9 +245,15 @@ mod tests {
     #[ignore]
     #[tokio::test]
     async fn test_get_artifact_by_prefix_not_exists() {
-        let aws_client =
-            AWSClient::from_static_creds(ACCESS_KEY, SECRET_KEY, None, None, get_test_bucket())
-                .await;
+        let aws_client = AWSClient::from_static_creds(
+            ACCESS_KEY,
+            SECRET_KEY,
+            None,
+            None,
+            get_test_bucket(),
+            get_test_bucket(),
+        )
+        .await;
         let bucket = get_test_bucket();
         let s3 = S3ArtifactProvider::new(&aws_client, &bucket);
         let prefix = "believerco-gameprototypemp/Engine/Development/Win64";
