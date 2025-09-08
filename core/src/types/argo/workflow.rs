@@ -11,7 +11,58 @@ use std::collections::HashMap;
     namespaced
 )]
 #[kube(status = "WorkflowStatus")]
-pub struct WorkflowSpec {}
+pub struct WorkflowSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<WorkflowArguments>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "workflowTemplateRef"
+    )]
+    pub workflow_template_ref: Option<WorkflowTemplateRef>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowArguments {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Vec<WorkflowParameter>>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct WorkflowParameter {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct WorkflowTemplateRef {
+    pub name: String,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
+pub struct CreatePromoteBuildWorkflowRequest {
+    #[serde(default = "default_game_repo")]
+    pub game_repo: String,
+    #[serde(default = "default_game_config")]
+    pub game_config: String,
+    #[serde(default = "default_metadata_path")]
+    pub metadata_path: String,
+    pub commit: String,
+}
+
+fn default_game_repo() -> String {
+    "fellowship".to_string()
+}
+
+fn default_game_config() -> String {
+    "development".to_string()
+}
+
+fn default_metadata_path() -> String {
+    "latest-2.0".to_string()
+}
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]

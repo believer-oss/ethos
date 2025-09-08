@@ -4,7 +4,8 @@ import type {
 	ArtifactListResponse,
 	SyncClientRequest,
 	JunitOutput,
-	ArtifactEntry
+	ArtifactEntry,
+	Workflow
 } from '$lib/types';
 
 export const getBuild = async (commit: string, project?: string): Promise<ArtifactEntry> =>
@@ -35,3 +36,14 @@ export const getWorkflowNodeLogs = async (uid: string, nodeId: string): Promise<
 
 export const stopWorkflow = async (workflow: string): Promise<string> =>
 	invoke('stop_workflow', { workflow });
+
+export interface CreatePromoteBuildWorkflowRequest {
+	gameRepo?: string; // defaults to "fellowship"
+	gameConfig?: string; // defaults to "development"
+	metadataPath?: string; // defaults to "latest-2.0"
+	commit: string; // required
+}
+
+export const createPromoteBuildWorkflow = async (
+	request: CreatePromoteBuildWorkflowRequest
+): Promise<Workflow> => invoke('create_promote_build_workflow', { request });
