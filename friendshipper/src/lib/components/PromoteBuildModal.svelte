@@ -12,6 +12,8 @@
 	let loading: boolean = false;
 	let error: string = '';
 	let showConfirmation: boolean = false;
+	let showSuccess: boolean = false;
+	let successWorkflowName: string = '';
 
 	const handleInitialSubmit = () => {
 		if (!gameRepo || !gameConfig || !metadataPath || !commit) {
@@ -38,12 +40,9 @@
 			const workflow = await createPromoteBuildWorkflow(request);
 			await emit('info', `Successfully created promote build workflow: ${workflow.metadata.name}`);
 
-			// Reset form and close modal
-			gameRepo = '';
-			gameConfig = '';
-			metadataPath = '';
-			commit = '';
-			showModal = false;
+			// Show success modal
+			successWorkflowName = workflow.metadata.name;
+			showSuccess = true;
 		} catch (e) {
 			error = `Failed to create promote build workflow: ${
 				e instanceof Error ? e.message : String(e)
@@ -65,6 +64,20 @@
 		metadataPath = '';
 		error = '';
 		showConfirmation = false;
+		showSuccess = false;
+		showModal = false;
+	};
+
+	const handleSuccessClose = () => {
+		// Reset form and close modal
+		gameRepo = '';
+		gameConfig = '';
+		metadataPath = '';
+		commit = '';
+		error = '';
+		showConfirmation = false;
+		showSuccess = false;
+		successWorkflowName = '';
 		showModal = false;
 	};
 </script>
@@ -84,51 +97,53 @@
 			<p class="text-xl text-primary-400">Promote Build</p>
 		</div>
 
-		<div>
-			<Label for="commit" class="text-primary-400 mb-2">Commit SHA</Label>
-			<Input
-				id="commit"
-				bind:value={commit}
-				placeholder="40-character commit SHA"
-				class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500 font-mono"
-				disabled={loading}
-			/>
-		</div>
-
-		<div class="flex flex-col gap-3">
+		{#if !showSuccess}
 			<div>
-				<Label for="gameRepo" class="text-primary-400 mb-2">Game Repository</Label>
+				<Label for="commit" class="text-primary-400 mb-2">Commit SHA</Label>
 				<Input
-					id="gameRepo"
-					bind:value={gameRepo}
-					placeholder="e.g., fellowship"
-					class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
+					id="commit"
+					bind:value={commit}
+					placeholder="40-character commit SHA"
+					class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500 font-mono"
 					disabled={loading}
 				/>
 			</div>
 
-			<div>
-				<Label for="gameConfig" class="text-primary-400 mb-2">Game Configuration</Label>
-				<Input
-					id="gameConfig"
-					bind:value={gameConfig}
-					placeholder="e.g., development"
-					class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
-					disabled={loading}
-				/>
-			</div>
+			<div class="flex flex-col gap-3">
+				<div>
+					<Label for="gameRepo" class="text-primary-400 mb-2">Game Repository</Label>
+					<Input
+						id="gameRepo"
+						bind:value={gameRepo}
+						placeholder="e.g., fellowship"
+						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
+						disabled={loading}
+					/>
+				</div>
 
-			<div>
-				<Label for="metadataPath" class="text-primary-400 mb-2">Metadata Path</Label>
-				<Input
-					id="metadataPath"
-					bind:value={metadataPath}
-					placeholder="e.g., latest-2.0"
-					class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
-					disabled={loading}
-				/>
+				<div>
+					<Label for="gameConfig" class="text-primary-400 mb-2">Game Configuration</Label>
+					<Input
+						id="gameConfig"
+						bind:value={gameConfig}
+						placeholder="e.g., development"
+						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
+						disabled={loading}
+					/>
+				</div>
+
+				<div>
+					<Label for="metadataPath" class="text-primary-400 mb-2">Metadata Path</Label>
+					<Input
+						id="metadataPath"
+						bind:value={metadataPath}
+						placeholder="e.g., latest-2.0"
+						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
+						disabled={loading}
+					/>
+				</div>
 			</div>
-		</div>
+		{/if}
 
 		{#if error}
 			<div class="text-red-400 text-sm bg-red-900/20 p-2 rounded">
@@ -136,7 +151,52 @@
 			</div>
 		{/if}
 
-		{#if !showConfirmation}
+		{#if showSuccess}
+			<!-- Success Dialog -->
+			<div class="bg-green-900/20 border border-green-700 p-4 rounded">
+				<div class="flex items-start gap-3">
+					<div class="text-green-400">
+						<svg class="w-6 h-6 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+							<path
+								fill-rule="evenodd"
+								d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class="flex-1">
+						<h3 class="text-lg font-medium text-green-400 mb-2">
+							Promotion Workflow Created Successfully!
+						</h3>
+						<div class="text-sm text-gray-300 space-y-2">
+							<p>
+								The promotion workflow <strong class="text-white">{successWorkflowName}</strong> has
+								been created and should start soon.
+							</p>
+							<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
+								<div><strong>SHA to be promoted:</strong> {commit}</div>
+								<div><strong>Game Repository:</strong> {gameRepo}</div>
+								<div><strong>Configuration:</strong> {gameConfig}</div>
+								<div><strong>Metadata Path:</strong> {metadataPath}</div>
+							</div>
+							<p class="text-green-300">
+								<strong>What happens next:</strong> Once the workflow completes successfully, launcher
+								users will receive this build when they next launch the game.
+							</p>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="flex justify-center pt-2">
+				<Button
+					class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600"
+					on:click={handleSuccessClose}
+				>
+					Close
+				</Button>
+			</div>
+		{:else if !showConfirmation}
 			<div class="flex flex-row-reverse gap-2 pt-2">
 				<Button
 					class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600"
