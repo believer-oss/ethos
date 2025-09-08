@@ -5,6 +5,7 @@
 	import { getWorkflows } from '$lib/builds';
 	import type { Nullable, Workflow } from '$lib/types';
 	import WorkflowLogsModal from '$lib/components/workflows/WorkflowLogsModal.svelte';
+	import PromoteBuildModal from '$lib/components/PromoteBuildModal.svelte';
 	import { appConfig, engineWorkflows, workflows } from '$lib/stores';
 	import WorkflowTable from '$lib/components/workflows/WorkflowTable.svelte';
 
@@ -13,6 +14,9 @@
 
 	let showWorkflowLogsModal: boolean = false;
 	let selectedWorkflow: Nullable<Workflow> = null;
+
+	let showPromoteBuildModal: boolean = false;
+	let promoteBuildCommit: string = '';
 
 	const refreshWorkflows = async () => {
 		loading = true;
@@ -59,6 +63,8 @@
 				bind:showWorkflowLogsModal
 				bind:selectedWorkflow
 				bind:selectedCommit
+				bind:showPromoteBuildModal
+				bind:promoteBuildCommit
 			/>
 		</TabItem>
 		<TabItem
@@ -87,3 +93,5 @@
 {#if selectedWorkflow}
 	<WorkflowLogsModal workflow={selectedWorkflow} bind:showModal={showWorkflowLogsModal} />
 {/if}
+
+<PromoteBuildModal bind:showModal={showPromoteBuildModal} commit={promoteBuildCommit} />

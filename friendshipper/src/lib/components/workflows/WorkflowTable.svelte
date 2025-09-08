@@ -6,7 +6,8 @@
 		ChevronUpOutline,
 		CloseOutline,
 		CodeOutline,
-		CodeBranchOutline
+		CodeBranchOutline,
+		ArrowUpOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
@@ -17,6 +18,8 @@
 	export let showWorkflowLogsModal = false;
 	export let selectedWorkflow: Nullable<Workflow>;
 	export let commits: CommitWorkflowInfo[];
+	export let showPromoteBuildModal: boolean = false;
+	export let promoteBuildCommit: string = '';
 
 	const setSelectedCommit = (commit: string) => {
 		selectedCommit = commit;
@@ -312,5 +315,25 @@
 				</Card>
 			{/each}
 		</div>
+		{#if getCommitPhase(commit) === 'Succeeded' && $$props.showPromoteBuildModal !== undefined}
+			<div class="flex justify-end pt-2">
+				<Button
+					size="sm"
+					class="bg-orange-600 dark:bg-orange-600 hover:bg-orange-700 dark:hover:bg-orange-700 text-white"
+					on:click={() => {
+						promoteBuildCommit = commit.commit;
+						showPromoteBuildModal = true;
+					}}
+				>
+					<ArrowUpOutline class="w-4 h-4 me-2" />
+					Promote Build
+				</Button>
+				<Tooltip
+					class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+					placement="bottom"
+					>Create a promote build workflow for this successful build
+				</Tooltip>
+			</div>
+		{/if}
 	{/if}
 {/each}
