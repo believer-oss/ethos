@@ -43,25 +43,10 @@ pub struct WorkflowTemplateRef {
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 pub struct CreatePromoteBuildWorkflowRequest {
-    #[serde(default = "default_game_repo")]
     pub game_repo: String,
-    #[serde(default = "default_game_config")]
     pub game_config: String,
-    #[serde(default = "default_metadata_path")]
     pub metadata_path: String,
     pub commit: String,
-}
-
-fn default_game_repo() -> String {
-    "fellowship".to_string()
-}
-
-fn default_game_config() -> String {
-    "development".to_string()
-}
-
-fn default_metadata_path() -> String {
-    "latest-2.0".to_string()
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]

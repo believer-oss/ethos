@@ -797,21 +797,27 @@ impl KubeClient {
     #[instrument(skip(self))]
     pub async fn create_promote_build_workflow(
         &self,
-        mut request: CreatePromoteBuildWorkflowRequest,
+        request: CreatePromoteBuildWorkflowRequest,
     ) -> Result<Workflow, CoreError> {
         // Security validation: Only allow promote build workflows
         const ALLOWED_TEMPLATE_NAME: &str = "promote-fellowship-build";
         const ALLOWED_NAMESPACE: &str = "argo-unreal-ci";
 
-        // Apply defaults if parameters are empty
+        // Validate all required parameters are provided
         if request.game_repo.is_empty() {
-            request.game_repo = "fellowship".to_string();
+            return Err(CoreError::Input(anyhow!(
+                "game_repo is required and cannot be empty"
+            )));
         }
         if request.game_config.is_empty() {
-            request.game_config = "development".to_string();
+            return Err(CoreError::Input(anyhow!(
+                "game_config is required and cannot be empty"
+            )));
         }
         if request.metadata_path.is_empty() {
-            request.metadata_path = "latest-2.0".to_string();
+            return Err(CoreError::Input(anyhow!(
+                "metadata_path is required and cannot be empty"
+            )));
         }
 
         // Validate commit is a 40-character SHA

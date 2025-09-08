@@ -38,9 +38,9 @@ export const stopWorkflow = async (workflow: string): Promise<string> =>
 	invoke('stop_workflow', { workflow });
 
 export interface CreatePromoteBuildWorkflowRequest {
-	gameRepo?: string; // defaults to "fellowship"
-	gameConfig?: string; // defaults to "development"
-	metadataPath?: string; // defaults to "latest-2.0"
+	gameRepo: string; // required
+	gameConfig: string; // required
+	metadataPath: string; // required
 	commit: string; // required
 }
 
