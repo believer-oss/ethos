@@ -11,15 +11,21 @@
 	let metadataPath: string = '';
 	let loading: boolean = false;
 	let error: string = '';
+	let showConfirmation: boolean = false;
 
-	const handleSubmit = async () => {
+	const handleInitialSubmit = () => {
 		if (!gameRepo || !gameConfig || !metadataPath || !commit) {
 			error = 'All fields are required';
 			return;
 		}
 
-		loading = true;
 		error = '';
+		showConfirmation = true;
+	};
+
+	const handleConfirmedSubmit = async () => {
+		loading = true;
+		showConfirmation = false;
 
 		try {
 			const request: CreatePromoteBuildWorkflowRequest = {
@@ -48,12 +54,17 @@
 		}
 	};
 
+	const handleCancelConfirmation = () => {
+		showConfirmation = false;
+	};
+
 	const handleCancel = () => {
 		// Reset form
 		gameRepo = '';
 		gameConfig = '';
 		metadataPath = '';
 		error = '';
+		showConfirmation = false;
 		showModal = false;
 	};
 </script>
@@ -125,26 +136,86 @@
 			</div>
 		{/if}
 
-		<div class="flex flex-row-reverse gap-2 pt-2">
-			<Button
-				class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600"
-				disabled={loading}
-				on:click={handleSubmit}
-			>
-				{#if loading}
-					<Spinner size="4" class="me-2" />
-					Creating...
-				{:else}
-					Promote Build
-				{/if}
-			</Button>
-			<Button
-				class="bg-gray-700 dark:bg-gray-700 hover:bg-gray-600 dark:hover:bg-gray-600"
-				disabled={loading}
-				on:click={handleCancel}
-			>
-				Cancel
-			</Button>
-		</div>
+		{#if !showConfirmation}
+			<div class="flex flex-row-reverse gap-2 pt-2">
+				<Button
+					class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600"
+					disabled={loading}
+					on:click={handleInitialSubmit}
+				>
+					{#if loading}
+						<Spinner size="4" class="me-2" />
+						Creating...
+					{:else}
+						Promote Build
+					{/if}
+				</Button>
+				<Button
+					class="bg-gray-700 dark:bg-gray-700 hover:bg-gray-600 dark:hover:bg-gray-600"
+					disabled={loading}
+					on:click={handleCancel}
+				>
+					Cancel
+				</Button>
+			</div>
+		{:else}
+			<!-- Confirmation Dialog -->
+			<div class="bg-yellow-900/20 border border-yellow-700 p-4 rounded">
+				<div class="flex items-start gap-3">
+					<div class="text-yellow-400">
+						<svg class="w-6 h-6 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+							<path
+								fill-rule="evenodd"
+								d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+					</div>
+					<div class="flex-1">
+						<h3 class="text-lg font-medium text-yellow-400 mb-2">
+							Are you sure you want to promote this build?
+						</h3>
+						<div class="text-sm text-gray-300 space-y-2">
+							<p>
+								<strong>Warning:</strong> This action will deploy a new build that launcher users will
+								download and use.
+							</p>
+							<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
+								<div><strong>Game Repo:</strong> {gameRepo}</div>
+								<div><strong>Game Config:</strong> {gameConfig}</div>
+								<div><strong>Metadata Path:</strong> {metadataPath}</div>
+								<div><strong>Commit:</strong> {commit.substring(0, 8)}...</div>
+							</div>
+							<p class="text-yellow-300">
+								<strong>Impact:</strong> All users with the launcher will be prompted to download this
+								build when they next launch the game.
+							</p>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="flex flex-row-reverse gap-2 pt-2">
+				<Button
+					class="bg-red-700 dark:bg-red-700 hover:bg-red-600 dark:hover:bg-red-600"
+					disabled={loading}
+					on:click={handleConfirmedSubmit}
+				>
+					{#if loading}
+						<Spinner size="4" class="me-2" />
+						Creating...
+					{:else}
+						Yes, Promote Build
+					{/if}
+				</Button>
+				<Button
+					class="bg-gray-700 dark:bg-gray-700 hover:bg-gray-600 dark:hover:bg-gray-600"
+					disabled={loading}
+					on:click={handleCancelConfirmation}
+				>
+					Go Back
+				</Button>
+			</div>
+		{/if}
 	</div>
 </Modal>
