@@ -46,6 +46,11 @@ pub static AWS_ARTIFACT_BUCKET_NAME: &str = match option_env!("AWS_ARTIFACT_BUCK
     Some(aws_artifact_bucket_name) => aws_artifact_bucket_name,
     None => "",
 };
+pub static PROMOTED_ARTIFACT_BUCKET_NAME: &str = match option_env!("PROMOTED_ARTIFACT_BUCKET_NAME")
+{
+    Some(promoted_artifact_bucket_name) => promoted_artifact_bucket_name,
+    None => "",
+};
 
 #[cfg(target_os = "windows")]
 pub const BIN_SUFFIX: &str = ".exe";

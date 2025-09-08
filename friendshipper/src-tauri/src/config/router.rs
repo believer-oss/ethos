@@ -146,6 +146,12 @@ where
                         credentials.session_token.as_deref(),
                         credentials.expiration,
                         friendshipper_config.artifact_bucket_name.clone(),
+                        friendshipper_config
+                            .promoted_artifact_bucket_name
+                            .clone()
+                            .unwrap_or_else(|| {
+                                ethos_core::PROMOTED_ARTIFACT_BUCKET_NAME.to_string()
+                            }),
                     )
                     .await,
                     payload.playtest_region.clone(),

@@ -629,7 +629,6 @@ where
 {
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
-    // Server-side validation: additional security checks
     info!(
         "Creating promote build workflow for commit: {}",
         payload.commit

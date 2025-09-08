@@ -34,6 +34,7 @@ pub struct AWSAuthContext {
 #[derive(Debug, Clone)]
 pub struct AWSClient {
     pub artifact_bucket_name: String,
+    pub promoted_artifact_bucket_name: String,
 
     auth_context: Arc<RwLock<AWSAuthContext>>,
 }
@@ -59,6 +60,7 @@ impl AWSClient {
         session_token: Option<&str>,
         expires_at: Option<DateTime<Utc>>,
         bucket_name: String,
+        input_promoted_artifact_bucket_name: String,
     ) -> Self {
         let session_token = session_token.map(|t| t.to_string());
         let creds = Credentials::from_keys(access_key, secret_key, session_token);
@@ -76,6 +78,7 @@ impl AWSClient {
                 expires_at,
             })),
             artifact_bucket_name: bucket_name,
+            promoted_artifact_bucket_name: input_promoted_artifact_bucket_name,
         }
     }
 
@@ -117,7 +120,9 @@ impl AWSClient {
     pub fn get_artifact_bucket(&self) -> String {
         self.artifact_bucket_name.clone()
     }
-
+    pub fn get_promoted_artifacts_bucket(&self) -> String {
+        self.promoted_artifact_bucket_name.clone()
+    }
     pub async fn get_dynamic_config(&self) -> Result<DynamicConfig, CoreError> {
         let client = S3Client::new(&self.get_sdk_config().await);
         let resp = match client

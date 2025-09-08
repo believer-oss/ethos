@@ -2,7 +2,10 @@ use anyhow::Result;
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use ethos_core::{AWSClient, AWS_ACCESS_KEY_ID, AWS_ARTIFACT_BUCKET_NAME, AWS_SECRET_ACCESS_KEY};
+use ethos_core::{
+    AWSClient, AWS_ACCESS_KEY_ID, AWS_ARTIFACT_BUCKET_NAME, AWS_SECRET_ACCESS_KEY,
+    PROMOTED_ARTIFACT_BUCKET_NAME,
+};
 use serde::Deserialize;
 use tracing::error;
 
@@ -53,6 +56,7 @@ where
         let access_key_id = AWS_ACCESS_KEY_ID;
         let secret_access_key = AWS_SECRET_ACCESS_KEY;
         let artifact_bucket_name = AWS_ARTIFACT_BUCKET_NAME;
+        let promoted_artifact_bucket_name = PROMOTED_ARTIFACT_BUCKET_NAME;
 
         AWSClient::from_static_creds(
             access_key_id,
@@ -60,6 +64,7 @@ where
             None,
             None,
             artifact_bucket_name.to_string(),
+            promoted_artifact_bucket_name.to_string(),
         )
         .await
     } else {
@@ -75,6 +80,10 @@ where
             credentials.session_token.as_deref(),
             credentials.expiration,
             friendshipper_config.artifact_bucket_name.clone(),
+            friendshipper_config
+                .promoted_artifact_bucket_name
+                .clone()
+                .unwrap_or_else(|| PROMOTED_ARTIFACT_BUCKET_NAME.to_string()),
         )
         .await
     };

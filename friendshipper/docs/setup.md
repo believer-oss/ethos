@@ -61,6 +61,7 @@ A minimal IAM policy for Friendshipper to work is below. Note that there are var
 			"Effect": "Allow",
 			"Action": ["s3:GetObject", "s3:GetObjectAcl"],
 			"Resource": ["arn:aws:s3:::BUCKET_NAME/friendshipper/*", "arn:aws:s3:::BUCKET_NAME/v1/*"]
+            "Resource": ["arn:aws:s3:::PROMOTED_ARTIFACT_BUCKET_NAME/metadata/*"]
 		}
 	]
 }
