@@ -239,101 +239,106 @@
 		</Button>
 	</div>
 	{#if selectedCommit === commit.commit}
-		<div class="grid grid-cols-3 gap-2 transition">
-			{#each commit.workflows as workflow}
-				<Card
-					class="`col-span-1 row-span-1 sm:p-2 bg-secondary-700 dark:bg-space-900 flex flex-col justify-between border-gray-300 dark:border-gray-300"
-				>
-					<div class="flex justify-between items-center gap-2 pb-2">
-						<span class="text-primary-400">{getWorkflowName(workflow)}</span>
-						<Tooltip
-							class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
-							placement="bottom"
-							>{getWorkflowTooltip(workflow)}
-						</Tooltip>
-						<div class="flex gap-1 pb-2">
-							{#if workflow.status.phase === 'Running' || workflow.status.phase === 'Pending'}
+		<div
+			class="border border-gray-600 dark:border-gray-500 rounded-lg mt-2 bg-secondary-800 dark:bg-space-950"
+		>
+			<div class="grid grid-cols-3 gap-2 transition">
+				{#each commit.workflows as workflow}
+					<Card
+						class="`col-span-1 row-span-1 sm:p-2 bg-secondary-700 dark:bg-space-900 flex flex-col justify-between border-gray-300 dark:border-gray-300"
+					>
+						<div class="flex justify-between items-center gap-2 pb-2">
+							<span class="text-primary-400">{getWorkflowName(workflow)}</span>
+							<Tooltip
+								class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+								placement="bottom"
+								>{getWorkflowTooltip(workflow)}
+							</Tooltip>
+							<div class="flex gap-1 pb-2">
+								{#if workflow.status.phase === 'Running' || workflow.status.phase === 'Pending'}
+									<Button
+										size="xs"
+										class="py-1 px-2 text-xs bg-red-800 dark:bg-red-800 hover:bg-red-600 dark:hover:bg-red-600"
+										on:click={async () => {
+											await stop(workflow.metadata.name);
+										}}
+									>
+										<CloseOutline class="w-4 h-4" />
+									</Button>
+									<Tooltip
+										class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+										placement="bottom"
+										>Stop build
+									</Tooltip>
+								{/if}
 								<Button
 									size="xs"
-									class="py-1 px-2 text-xs bg-red-800 dark:bg-red-800 hover:bg-red-600 dark:hover:bg-red-600"
-									on:click={async () => {
-										await stop(workflow.metadata.name);
+									class="py-1 px-2 text-xs"
+									on:click={() => {
+										showWorkflowLogsModal = true;
+										selectedWorkflow = workflow;
 									}}
 								>
-									<CloseOutline class="w-4 h-4" />
+									<CodeOutline class="w-4 h-4" />
 								</Button>
 								<Tooltip
 									class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
 									placement="bottom"
-									>Stop build
+									>Show logs
 								</Tooltip>
-							{/if}
-							<Button
-								size="xs"
-								class="py-1 px-2 text-xs"
-								on:click={() => {
-									showWorkflowLogsModal = true;
-									selectedWorkflow = workflow;
-								}}
-							>
-								<CodeOutline class="w-4 h-4" />
-							</Button>
-							<Tooltip
-								class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
-								placement="bottom"
-								>Show logs
-							</Tooltip>
+							</div>
 						</div>
-					</div>
-					<hr />
-					{#if workflow.status.startedAt}
+						<hr />
+						{#if workflow.status.startedAt}
+							<div class="flex items-center justify-between">
+								<span class="text-sm text-primary-400 w-18">started at:</span>
+								<span class="text-sm w-40 text-white">{workflow.status.startedAt}</span>
+							</div>
+						{/if}
+						{#if workflow.status.finishedAt}
+							<div class="flex items-center justify-between">
+								<span class="text-sm text-primary-400 w-18">finished at:</span>
+								<span class="text-sm w-40 text-white">{workflow.status.finishedAt}</span>
+							</div>
+						{/if}
 						<div class="flex items-center justify-between">
-							<span class="text-sm text-primary-400 w-18">started at:</span>
-							<span class="text-sm w-40 text-white">{workflow.status.startedAt}</span>
+							<span class="text-sm text-primary-400 w-18">steps:</span>
+							<div class="flex flex-wrap items-center gap-0.5 w-40">
+								<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+								{#each { length: getWorkflowPhaseCount(workflow) } as _, i}
+									<Indicator
+										color={getWorkflowProgressColor(workflow, i)}
+										class={i === getWorkflowProgress(workflow) &&
+										workflow.status.phase === 'Running'
+											? 'animate-pulse'
+											: ''}
+									/>
+								{/each}
+							</div>
 						</div>
-					{/if}
-					{#if workflow.status.finishedAt}
-						<div class="flex items-center justify-between">
-							<span class="text-sm text-primary-400 w-18">finished at:</span>
-							<span class="text-sm w-40 text-white">{workflow.status.finishedAt}</span>
-						</div>
-					{/if}
-					<div class="flex items-center justify-between">
-						<span class="text-sm text-primary-400 w-18">steps:</span>
-						<div class="flex flex-wrap items-center gap-0.5 w-40">
-							<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
-							{#each { length: getWorkflowPhaseCount(workflow) } as _, i}
-								<Indicator
-									color={getWorkflowProgressColor(workflow, i)}
-									class={i === getWorkflowProgress(workflow) && workflow.status.phase === 'Running'
-										? 'animate-pulse'
-										: ''}
-								/>
-							{/each}
-						</div>
-					</div>
-				</Card>
-			{/each}
-		</div>
-		{#if getCommitPhase(commit) === 'Succeeded' && $$props.showPromoteBuildModal !== undefined}
-			<div class="flex justify-end pt-2">
-				<Button
-					size="sm"
-					class="bg-orange-600 dark:bg-orange-600 hover:bg-orange-700 dark:hover:bg-orange-700 text-white"
-					on:click={() => {
-						promoteBuildCommit = commit.commit;
-						showPromoteBuildModal = true;
-					}}
-				>
-					<ArrowUpOutline class="w-4 h-4 me-2" />
-					Promote Build
-				</Button>
-				<Tooltip
-					class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
-					placement="bottom"
-					>Create a promote build workflow for this successful build
-				</Tooltip>
+					</Card>
+				{/each}
 			</div>
-		{/if}
+			{#if getCommitPhase(commit) === 'Succeeded' && $$props.showPromoteBuildModal !== undefined}
+				<div class="flex justify-center pt-2">
+					<Button
+						size="sm"
+						class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600 text-white"
+						on:click={() => {
+							promoteBuildCommit = commit.commit;
+							showPromoteBuildModal = true;
+						}}
+					>
+						<ArrowUpOutline class="w-4 h-4 me-2" />
+						Promote Build
+					</Button>
+					<Tooltip
+						class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+						placement="bottom"
+						>Create a promote build workflow for this successful build
+					</Tooltip>
+				</div>
+			{/if}
+		</div>
 	{/if}
 {/each}

@@ -6,9 +6,6 @@
 	export let showModal: boolean = false;
 	export let commit: string = '';
 
-	let gameRepo: string = '';
-	let gameConfig: string = '';
-	let metadataPath: string = '';
 	let loading: boolean = false;
 	let error: string = '';
 	let showConfirmation: boolean = false;
@@ -16,8 +13,8 @@
 	let successWorkflowName: string = '';
 
 	const handleInitialSubmit = () => {
-		if (!gameRepo || !gameConfig || !metadataPath || !commit) {
-			error = 'All fields are required';
+		if (!commit) {
+			error = 'Commit SHA is required';
 			return;
 		}
 
@@ -31,9 +28,6 @@
 
 		try {
 			const request: CreatePromoteBuildWorkflowRequest = {
-				game_repo: gameRepo,
-				game_config: gameConfig,
-				metadata_path: metadataPath,
 				commit
 			};
 
@@ -59,9 +53,6 @@
 
 	const handleCancel = () => {
 		// Reset form
-		gameRepo = '';
-		gameConfig = '';
-		metadataPath = '';
 		error = '';
 		showConfirmation = false;
 		showSuccess = false;
@@ -70,9 +61,6 @@
 
 	const handleSuccessClose = () => {
 		// Reset form and close modal
-		gameRepo = '';
-		gameConfig = '';
-		metadataPath = '';
 		commit = '';
 		error = '';
 		showConfirmation = false;
@@ -108,41 +96,6 @@
 					disabled={loading}
 				/>
 			</div>
-
-			<div class="flex flex-col gap-3">
-				<div>
-					<Label for="gameRepo" class="text-primary-400 mb-2">Game Repository</Label>
-					<Input
-						id="gameRepo"
-						bind:value={gameRepo}
-						placeholder="e.g., fellowship"
-						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
-						disabled={loading}
-					/>
-				</div>
-
-				<div>
-					<Label for="gameConfig" class="text-primary-400 mb-2">Game Configuration</Label>
-					<Input
-						id="gameConfig"
-						bind:value={gameConfig}
-						placeholder="e.g., development"
-						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
-						disabled={loading}
-					/>
-				</div>
-
-				<div>
-					<Label for="metadataPath" class="text-primary-400 mb-2">Metadata Path</Label>
-					<Input
-						id="metadataPath"
-						bind:value={metadataPath}
-						placeholder="e.g., latest-2.0"
-						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
-						disabled={loading}
-					/>
-				</div>
-			</div>
 		{/if}
 
 		{#if error}
@@ -175,9 +128,6 @@
 							</p>
 							<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
 								<div><strong>SHA to be promoted:</strong> {commit}</div>
-								<div><strong>Game Repository:</strong> {gameRepo}</div>
-								<div><strong>Configuration:</strong> {gameConfig}</div>
-								<div><strong>Metadata Path:</strong> {metadataPath}</div>
 							</div>
 							<p class="text-green-300">
 								<strong>What happens next:</strong> Once the workflow completes successfully, launcher
@@ -240,12 +190,6 @@
 								<strong>Warning:</strong> This action will deploy a new build that launcher users will
 								download and use.
 							</p>
-							<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
-								<div><strong>Game Repo:</strong> {gameRepo}</div>
-								<div><strong>Game Config:</strong> {gameConfig}</div>
-								<div><strong>Metadata Path:</strong> {metadataPath}</div>
-								<div><strong>Commit:</strong> {commit.substring(0, 8)}...</div>
-							</div>
 							<p class="text-yellow-300">
 								<strong>Impact:</strong> All users with the launcher will be prompted to download this
 								build when they next launch the game.
@@ -257,7 +201,7 @@
 
 			<div class="flex flex-row-reverse gap-2 pt-2">
 				<Button
-					class="bg-red-700 dark:bg-red-700 hover:bg-red-600 dark:hover:bg-red-600"
+					class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600"
 					disabled={loading}
 					on:click={handleConfirmedSubmit}
 				>

@@ -803,22 +803,7 @@ impl KubeClient {
         const ALLOWED_TEMPLATE_NAME: &str = "promote-fellowship-build";
         const ALLOWED_NAMESPACE: &str = "argo-unreal-ci";
 
-        // Validate all required parameters are provided
-        if request.game_repo.is_empty() {
-            return Err(CoreError::Input(anyhow!(
-                "game_repo is required and cannot be empty"
-            )));
-        }
-        if request.game_config.is_empty() {
-            return Err(CoreError::Input(anyhow!(
-                "game_config is required and cannot be empty"
-            )));
-        }
-        if request.metadata_path.is_empty() {
-            return Err(CoreError::Input(anyhow!(
-                "metadata_path is required and cannot be empty"
-            )));
-        }
+        // Only the commit field is required
 
         // Validate commit is a 40-character SHA
         if request.commit.len() != 40 {
@@ -850,16 +835,8 @@ impl KubeClient {
                 arguments: Some(WorkflowArguments {
                     parameters: Some(vec![
                         WorkflowParameter {
-                            name: "game_repo".to_string(),
-                            value: request.game_repo,
-                        },
-                        WorkflowParameter {
                             name: "game_config".to_string(),
-                            value: request.game_config,
-                        },
-                        WorkflowParameter {
-                            name: "metadata_path".to_string(),
-                            value: request.metadata_path,
+                            value: "development".to_string(),
                         },
                         WorkflowParameter {
                             name: "commit".to_string(),

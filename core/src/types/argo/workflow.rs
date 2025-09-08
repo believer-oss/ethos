@@ -43,9 +43,6 @@ pub struct WorkflowTemplateRef {
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 pub struct CreatePromoteBuildWorkflowRequest {
-    pub game_repo: String,
-    pub game_config: String,
-    pub metadata_path: String,
     pub commit: String,
 }
 
