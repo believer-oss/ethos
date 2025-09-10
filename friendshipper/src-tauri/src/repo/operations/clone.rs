@@ -80,13 +80,7 @@ where
     state
         .git()
         .run(
-            &[
-                "clone",
-                "--filter=tree:0",
-                "--progress",
-                &request.url,
-                repo_path_str,
-            ],
+            &["clone", "--progress", &request.url, repo_path_str],
             Default::default(),
         )
         .await?;

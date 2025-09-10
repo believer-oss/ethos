@@ -345,6 +345,28 @@ impl Server {
                 git.set_config("http.postBuffer", "524288000").await?;
                 git.configure_untracked_cache().await?;
 
+                // Check for and fix partial clone filters that may prevent full history access
+                startup_tx.send("Checking repository configuration".to_string())?;
+                if let Ok(has_filter) = git.has_partial_clone_filter().await {
+                    if has_filter {
+                        info!("Detected partial clone filter, converting to full repository");
+                        startup_tx.send("Converting partial clone to full repository (this may take a few minutes)".to_string())?;
+
+                        match git.remove_partial_clone_filter_and_refetch().await {
+                            Ok(_) => {
+                                info!("Successfully converted partial clone to full repository");
+                                shared_state.send_notification(
+                                    "Repository converted to full clone with complete history",
+                                );
+                            }
+                            Err(e) => {
+                                warn!("Failed to convert partial clone to full repository: {}", e);
+                                shared_state.send_notification("Warning: Failed to convert repository to full clone. Some history operations may be limited.");
+                            }
+                        }
+                    }
+                }
+
                 startup_tx.send("Performing git repo maintenance".to_string())?;
                 git.expire_reflog().await?;
 
