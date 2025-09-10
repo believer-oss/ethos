@@ -1123,6 +1123,46 @@ impl Git {
         Ok(username)
     }
 
+    pub async fn has_partial_clone_filter(&self) -> anyhow::Result<bool> {
+        let result = self
+            .run_and_collect_output(
+                &["config", "--get", "remote.origin.partialclonefilter"],
+                Opts::new_without_logs(),
+            )
+            .await;
+
+        match result {
+            Ok(filter) => {
+                let has_filter = !filter.trim().is_empty();
+                if has_filter {
+                    info!("Found partial clone filter: {}", filter.trim());
+                }
+                Ok(has_filter)
+            }
+            Err(_) => {
+                // Config key doesn't exist, so no partial clone filter
+                Ok(false)
+            }
+        }
+    }
+
+    pub async fn remove_partial_clone_filter_and_refetch(&self) -> anyhow::Result<()> {
+        info!("Removing partial clone filter and refetching repository");
+
+        // Remove the partial clone filter
+        self.run(
+            &["config", "--unset", "remote.origin.partialclonefilter"],
+            Opts::default(),
+        )
+        .await?;
+
+        // Refetch all objects
+        self.refetch().await?;
+
+        info!("Successfully removed partial clone filter and refetched repository");
+        Ok(())
+    }
+
     pub async fn run_and_collect_output(
         &self,
         args: &[&str],
