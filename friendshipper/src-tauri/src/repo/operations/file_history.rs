@@ -1,7 +1,6 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use ethos_core::types::repo::{FileHistoryResponse, FileHistoryRevision};
-use futures::future::join_all;
 use serde::Deserialize;
 use tracing::instrument;
 
@@ -63,17 +62,35 @@ where
     let description = parts[3].to_string();
 
     // Parse file line
-    // We should have "{action} {filename}"
-    // eg. "modified GameSystem.cpp"
-    let file_parts: Vec<&str> = file_line.split_whitespace().collect();
-    if file_parts.len() != 2 {
+    // We should have "{action}\t{filename}" or "{action}{similarity}\t{old_name}\t{new_name}" for renames
+    // eg. "M\tGameSystem.cpp" or "R100\told_name.cpp\tnew_name.cpp"
+    let file_parts: Vec<&str> = file_line.split('\t').collect();
+    if file_parts.len() < 2 {
         return Err(CoreError::Input(anyhow::anyhow!(
             "file parts format is incorrect"
         )));
     }
 
-    let action = translate_action(file_parts[0]);
-    let filename = file_parts[1].to_string();
+    let action_part = file_parts[0];
+    let action = if action_part.starts_with('R') || action_part.starts_with('C') {
+        // Handle rename/copy operations
+        if action_part.starts_with('R') {
+            "rename".to_string()
+        } else {
+            "copy".to_string()
+        }
+    } else {
+        translate_action(action_part)
+    };
+
+    // For renames/copies, use the new filename (last part), otherwise use the filename
+    let filename = if file_parts.len() >= 3
+        && (action_part.starts_with('R') || action_part.starts_with('C'))
+    {
+        file_parts[2].to_string() // new name for rename/copy
+    } else {
+        file_parts[1].to_string() // regular filename
+    };
 
     // set commit_id_number to hex of short commit id
     let commit_id_number = u32::from_str_radix(&short_commit_id, 16).unwrap_or_default();
@@ -150,18 +167,24 @@ where
         .await?;
 
     let lines: Vec<&str> = output.split('\n').collect();
-    let chunks: Vec<&[&str]> = lines.chunks(2).collect();
-    let mut revision_futures = Vec::new();
     let mut revisions = Vec::new();
+    let mut current_commit_line: Option<&str> = None;
 
-    for chunk in chunks {
-        revision_futures.push(get_revision(&state, chunk, false));
-    }
-
-    let results = join_all(revision_futures).await;
-
-    for result in results.into_iter().flatten() {
-        revisions.push(result);
+    for line in lines {
+        if line.contains('|') {
+            // This is a commit line (contains pipe separators from format string)
+            current_commit_line = Some(line);
+        } else if !line.trim().is_empty() && current_commit_line.is_some() {
+            // This is a file line, and we have a current commit
+            let chunk = vec![current_commit_line.unwrap(), line];
+            match get_revision(&state, &chunk, false).await {
+                Ok(revision) => revisions.push(revision),
+                Err(e) => {
+                    // Log the error but continue processing other revisions
+                    tracing::warn!("Failed to parse revision for line '{}': {}", line, e);
+                }
+            }
+        }
     }
     // for each, set revision number to length - index
     let len = revisions.len();
@@ -180,12 +203,12 @@ fn translate_action(action: &str) -> String {
         "M" => "modified".to_string(),
         "A" => "add".to_string(),
         "D" => "delete".to_string(),
-        "R" => "branch".to_string(),
-        "C" => "branch".to_string(),
         "T" => "type changed".to_string(),
         "U" => "unmerged".to_string(),
         "X" => "unknown".to_string(),
         "B" => "broken pairing".to_string(),
+        _ if action.starts_with('R') => "rename".to_string(),
+        _ if action.starts_with('C') => "copy".to_string(),
         _ => "unknown".to_string(),
     }
 }
