@@ -62,9 +62,7 @@ where
                     Err(e) => {
                         warn!(
                             "Error getting commit statuses for {}/{}: {}",
-                            owner,
-                            repo,
-                            e.to_string()
+                            owner, repo, e
                         );
                         None
                     }
@@ -90,7 +88,7 @@ where
         }
         Err(e) => Err(CoreError::Internal(anyhow!(
             "Error executing branch comparison: {}",
-            e.to_string()
+            e
         ))),
     }
 }
