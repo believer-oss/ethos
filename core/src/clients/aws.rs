@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -15,6 +16,7 @@ use aws_types::SdkConfig;
 use base64::prelude::{Engine as _, BASE64_STANDARD, BASE64_URL_SAFE_NO_PAD};
 use bytes::Buf;
 use chrono::{DateTime, Utc};
+use directories_next::BaseDirs;
 use http::Request;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -145,7 +147,37 @@ impl AWSClient {
 
         let bytes = resp.body.collect().await?.into_bytes();
         let body = std::str::from_utf8(&bytes)?;
-        let config: DynamicConfig = serde_json::from_str(body).unwrap();
+        let config: serde_json::Value = serde_json::from_str(body)?;
+        let app_name = "Friendshipper";
+
+        let config_override: Option<Result<DynamicConfig, anyhow::Error>> = BaseDirs::new()
+            .and_then(|b| {
+                let override_file = b.config_dir().join(app_name).join("dynamic-config.json");
+                debug!(
+                    "Checking if we should load dynamic config from {:?}",
+                    override_file
+                );
+                override_file.exists().then(|| {
+                    debug!("Loading dynamic config from {:?}", override_file);
+                    let override_str = fs::read_to_string(override_file)?;
+                    let override_val: serde_json::Value = serde_json::from_str(&override_str)?;
+                    let mut override_config = config.clone();
+                    override_config
+                        .as_object_mut()
+                        .unwrap()
+                        .extend(override_val.as_object().unwrap().to_owned());
+                    Ok(serde_json::from_value(override_config)?)
+                })
+            });
+
+        let config = match config_override {
+            Some(Ok(config)) => config,
+            Some(Err(e)) => {
+                debug!("Failed to load dynamic config: {:?}", e);
+                serde_json::from_value(config)?
+            }
+            None => serde_json::from_value(config)?,
+        };
 
         Ok(config)
     }
