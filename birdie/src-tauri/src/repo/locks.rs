@@ -314,7 +314,7 @@ async fn internal_lock_handler(
         Ok(response) => Ok(Json(response)),
         Err(e) => Err(CoreError::Internal(anyhow!(
             "Error executing lock op: {}",
-            e.to_string()
+            e
         ))),
     }
 }
@@ -324,9 +324,6 @@ pub async fn verify_locks_handler(
 ) -> Result<Json<VerifyLocksResponse>, CoreError> {
     match state.git().verify_locks().await {
         Ok(output) => Ok(Json(output)),
-        Err(e) => Err(CoreError::Internal(anyhow!(
-            "Error fetching locks: {}",
-            e.to_string()
-        ))),
+        Err(e) => Err(CoreError::Internal(anyhow!("Error fetching locks: {}", e))),
     }
 }

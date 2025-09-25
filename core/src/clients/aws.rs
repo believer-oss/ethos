@@ -213,7 +213,7 @@ impl AWSClient {
             .map_err(|e| {
                 CoreError::Internal(anyhow!(
                     "Failed to get object from S3: {}",
-                    e.into_service_error().to_string()
+                    e.into_service_error()
                 ))
             })?;
 
@@ -259,7 +259,7 @@ impl AWSClient {
             .map_err(|e| {
                 CoreError::Internal(anyhow!(
                     "Failed to upload object to S3: {}",
-                    e.into_service_error().to_string()
+                    e.into_service_error()
                 ))
             })?;
 
