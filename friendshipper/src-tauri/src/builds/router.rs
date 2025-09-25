@@ -48,6 +48,7 @@ where
         .route("/longtail/reset", post(reset_longtail))
         .route("/server/verify", get(verify_server_image))
         .route("/workflows", get(get_workflows))
+        .route("/workflows/nodes", get(get_workflow_nodes))
         .route("/workflows/logs", get(get_logs_for_workflow_node))
         .route("/workflows/junit", get(get_workflow_junit_artifact))
         .route("/workflows/stop", post(stop_workflow))
@@ -557,6 +558,24 @@ where
     commits.reverse();
 
     Ok(Json(GetWorkflowsResponse { commits }))
+}
+
+pub async fn get_workflow_nodes<T>(
+    State(state): State<AppState<T>>,
+    params: Query<GetWorkflowNodesParams>,
+) -> Result<Json<Workflow>, CoreError>
+where
+    T: EngineProvider,
+{
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let workflow = kube_client.get_workflow_with_nodes(&params.name).await?;
+    Ok(Json(workflow))
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetWorkflowNodesParams {
+    pub name: String,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]

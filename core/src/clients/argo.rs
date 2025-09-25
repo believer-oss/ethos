@@ -8,7 +8,7 @@ use crate::types::errors::CoreError;
 use crate::utils::junit::JunitOutput;
 
 // Save some data by filtering fields
-const ARGO_WORKFLOW_DEFAULT_FIELDS: &str = "items.metadata.name,items.metadata.annotations,items.metadata.labels,items.metadata.creationTimestamp,items.metadata.uid,items.status.phase,items.status.finishedAt,items.status.estimatedDuration,items.status.progress,items.status";
+const ARGO_WORKFLOW_DEFAULT_FIELDS: &str = "items.metadata.name,items.metadata.annotations,items.metadata.labels,items.metadata.creationTimestamp,items.metadata.uid,items.status.phase,items.status.finishedAt,items.status.estimatedDuration,items.status.progress,items.status.startedAt";
 pub const ARGO_WORKFLOW_REPO_LABEL_KEY: &str = "believer.dev/repo";
 pub const ARGO_WORKFLOW_REF_LABEL_KEY: &str = "believer.dev/ref";
 pub const ARGO_WORKFLOW_COMMIT_LABEL_KEY: &str = "believer.dev/commit";
@@ -164,5 +164,23 @@ impl ArgoClient {
             .await?;
 
         Ok(response.text().await?)
+    }
+
+    pub async fn get_workflow_with_nodes(&self, name: &str) -> Result<Workflow, CoreError> {
+        let url = format!("{}/api/v1/workflows/{}/{}", self.host, self.namespace, name);
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth))
+            .send()
+            .await?;
+
+        if response.status().is_client_error() {
+            let body = response.text().await?;
+            return Err(CoreError::Internal(anyhow!(body)));
+        }
+
+        let workflow: Workflow = response.json().await?;
+        Ok(workflow)
     }
 }
