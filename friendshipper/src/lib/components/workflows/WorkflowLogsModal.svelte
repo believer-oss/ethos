@@ -32,7 +32,7 @@
 		.reverse();
 
 	/* eslint-disable @typescript-eslint/no-unused-vars */
-	$: filteredNodes = Object.entries(workflow.status?.nodes)
+	$: filteredNodes = Object.entries(workflow.status?.nodes || {})
 		.filter(([k, v]) => v.outputs && v.outputs.artifacts && v.outputs.artifacts.length > 0)
 		.map(([k, v]) => v as WorkflowNode);
 
@@ -131,7 +131,7 @@
 
 	const copyLinkToClipboard = async () => {
 		try {
-			const sha = workflow.metadata.labels['believer.dev/commit'];
+			const sha = workflow.metadata.labels?.['believer.dev/commit'];
 			const link: string = `friendshipper://builds/game/${sha}/${workflow.metadata.name}`;
 			await navigator.clipboard.writeText(link);
 		} catch (e) {
