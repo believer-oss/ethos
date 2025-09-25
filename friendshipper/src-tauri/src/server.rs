@@ -191,6 +191,8 @@ impl Server {
 
         let app_config = Arc::new(RwLock::new(config.clone()));
         let repo_config = Arc::new(RwLock::new(app_config.read().initialize_repo_config()?));
+        let dynamic_config = Arc::new(RwLock::new(DynamicConfig::default()));
+        let storage: Option<ArtifactStorage> = None;
 
         // Initialize branch defaults if not set and save config if updated
         let app_config_error = {
@@ -239,38 +241,11 @@ impl Server {
             worker.run().await;
         });
 
-        startup_tx.send("Checking for local dynamic config overrides".to_string())?;
-        let storage: Option<ArtifactStorage> = None;
-        let dynamic_config_override: Option<Result<DynamicConfig, anyhow::Error>> = BaseDirs::new()
-            .and_then(|b| {
-                let override_file = b.config_dir().join(APP_NAME).join("dynamic-config.json");
-                debug!(
-                    "Checking if we should load dynamic config from {:?}",
-                    override_file
-                );
-                override_file.exists().then(|| {
-                    debug!("Loading dynamic config from {:?}", override_file);
-                    let data = fs::read_to_string(override_file)?;
-                    Ok(serde_json::from_str(&data)?)
-                })
-            });
-
-        let dynamic_config = match dynamic_config_override {
-            Some(Ok(config)) => config,
-            Some(Err(e)) => {
-                debug!("Failed to load dynamic config: {:?}", e);
-                startup_tx.send("Fetching dynamic config".to_string())?;
-
-                DynamicConfig::default()
-            }
-            None => DynamicConfig::default(),
-        };
-
         startup_tx.send("Initializing application state".to_string())?;
         let shared_state: AppState<UnrealEngineProvider> = AppState::new(
             app_config.clone(),
             repo_config.clone(),
-            Arc::new(RwLock::new(dynamic_config.clone())),
+            dynamic_config,
             config_file,
             storage,
             self.longtail_tx.clone(),
