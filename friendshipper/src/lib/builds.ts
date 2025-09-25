@@ -26,6 +26,9 @@ export const resetLongtail = async (): Promise<void> => invoke('reset_longtail')
 export const getWorkflows = async (engine: boolean = false): Promise<GetWorkflowsResponse> =>
 	invoke('get_workflows', { engine });
 
+export const getWorkflowNodes = async (name: string): Promise<Workflow> =>
+	invoke('get_workflow_nodes', { name });
+
 export const getWorkflowJunitArtifact = async (
 	uid: string,
 	nodeId: string

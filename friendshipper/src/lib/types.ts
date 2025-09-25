@@ -403,7 +403,7 @@ export interface WorkflowStatus {
 	finishedAt: Nullable<string>;
 	estimatedDuration: Nullable<number>;
 	progress: Nullable<string>;
-	nodes: Map<string, WorkflowNode>;
+	nodes?: Map<string, WorkflowNode>;
 }
 
 export interface Workflow {

@@ -761,6 +761,14 @@ impl KubeClient {
     }
 
     #[instrument(skip(self))]
+    pub async fn get_workflow_with_nodes(&self, name: &str) -> Result<Workflow, CoreError> {
+        self.kubeconfig().await?;
+
+        let argo_client = self.argo_client.read().await;
+        argo_client.get_workflow_with_nodes(name).await
+    }
+
+    #[instrument(skip(self))]
     pub async fn get_logs_for_workflow_node(
         &self,
         uid: &str,

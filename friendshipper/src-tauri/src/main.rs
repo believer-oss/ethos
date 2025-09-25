@@ -216,6 +216,7 @@ fn main() -> Result<(), CoreError> {
                 get_servers,
                 get_system_status,
                 get_workflows,
+                get_workflow_nodes,
                 get_workflow_junit_artifact,
                 get_workflow_node_logs,
                 install_git,
