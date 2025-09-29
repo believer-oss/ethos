@@ -43,6 +43,7 @@ pub struct Server {
     log_path: PathBuf,
     git_tx: STDSender<String>,
     gameserver_log_tx: STDSender<String>,
+    workflow_log_tx: STDSender<String>,
     otel_reload_handle: OtelReloadHandle,
 }
 
@@ -56,6 +57,7 @@ impl Server {
         log_path: PathBuf,
         git_tx: STDSender<String>,
         gameserver_log_tx: STDSender<String>,
+        workflow_log_tx: STDSender<String>,
         otel_reload_handle: OtelReloadHandle,
     ) -> Self {
         Server {
@@ -66,6 +68,7 @@ impl Server {
             log_path,
             git_tx,
             gameserver_log_tx,
+            workflow_log_tx,
             otel_reload_handle,
         }
     }
@@ -258,6 +261,7 @@ impl Server {
             Some(self.otel_reload_handle.clone()),
             self.git_tx.clone(),
             self.gameserver_log_tx.clone(),
+            self.workflow_log_tx.clone(),
         )
         .await?;
 

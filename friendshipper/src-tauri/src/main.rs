@@ -16,7 +16,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WebviewWindow};
 use tauri_plugin_notification::NotificationExt;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use ethos_core::tauri::State;
 use ethos_core::{clients, msg::LongtailMsg, utils, utils::logging};
@@ -260,6 +260,8 @@ fn main() -> Result<(), CoreError> {
                 shutdown_server,
                 start_gameserver_log_tail,
                 stop_gameserver_log_tail,
+                start_workflow_log_tail,
+                stop_workflow_log_tail,
                 sync_client,
                 sync_latest,
                 open_project,
@@ -382,6 +384,22 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
+                let (workflow_log_tx, workflow_log_rx) = std::sync::mpsc::channel::<String>();
+                let workflow_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = workflow_log_rx.recv() {
+                        debug!(
+                            "Emitting workflow-log event - message length: {}",
+                            msg.len()
+                        );
+                        if !msg.is_empty() && msg.len() < 200 {
+                            debug!("Event content: {:?}", msg);
+                        }
+                        workflow_handle.emit("workflow-log", &msg).unwrap();
+                        debug!("Successfully emitted workflow-log event");
+                    }
+                });
+
                 let (git_tx, git_rx) = std::sync::mpsc::channel::<String>();
                 let git_app_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -473,6 +491,7 @@ fn main() -> Result<(), CoreError> {
                         server_log_path,
                         git_tx.clone(),
                         gameserver_log_tx.clone(),
+                        workflow_log_tx.clone(),
                         otel_reload_handle,
                     );
 

@@ -7100,10 +7100,12 @@ dependencies = [
  "system-configuration 0.5.1",
  "tokio",
  "tokio-native-tls",
+ "tokio-util",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "winreg 0.50.0",
 ]

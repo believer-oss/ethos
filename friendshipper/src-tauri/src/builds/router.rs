@@ -13,11 +13,11 @@ use ethos_core::utils::junit::JunitOutput;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
-use tracing::{error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
 use ethos_core::clients::argo::{
-    ARGO_WORKFLOW_COMMIT_LABEL_KEY, ARGO_WORKFLOW_COMPARE_ANNOTATION_KEY,
+    LogChunk, ARGO_WORKFLOW_COMMIT_LABEL_KEY, ARGO_WORKFLOW_COMPARE_ANNOTATION_KEY,
     ARGO_WORKFLOW_MESSAGE_ANNOTATION_KEY, ARGO_WORKFLOW_PUSHER_LABEL_KEY,
     ARGO_WORKFLOW_REF_LABEL_KEY,
 };
@@ -50,6 +50,11 @@ where
         .route("/workflows", get(get_workflows))
         .route("/workflows/nodes", get(get_workflow_nodes))
         .route("/workflows/logs", get(get_logs_for_workflow_node))
+        .route(
+            "/workflows/:workflow_name/:node_id/logs/tail",
+            post(start_workflow_log_tail),
+        )
+        .route("/workflows/logs/stop", post(stop_workflow_log_tail))
         .route("/workflows/junit", get(get_workflow_junit_artifact))
         .route("/workflows/stop", post(stop_workflow))
         .route(
@@ -581,7 +586,7 @@ pub struct GetWorkflowNodesParams {
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetWorkflowNodeLogsParams {
-    pub uid: String,
+    pub workflow_name: String,
     pub node_id: String,
 }
 
@@ -593,8 +598,9 @@ where
     T: EngineProvider,
 {
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+
     let logs = kube_client
-        .get_logs_for_workflow_node(&params.uid, &params.node_id)
+        .get_logs_for_workflow_node(&params.workflow_name, &params.node_id, None::<fn(LogChunk)>)
         .await?;
     Ok(logs)
 }
@@ -660,4 +666,99 @@ where
         workflow.metadata.name
     );
     Ok(Json(workflow))
+}
+
+pub async fn start_workflow_log_tail<T>(
+    State(state): State<AppState<T>>,
+    axum::extract::Path((workflow_name, node_id)): axum::extract::Path<(String, String)>,
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let workflow_log_tx = state.workflow_log_tx.clone();
+
+    info!(
+        "Starting workflow log tail for workflow: {}, node: {}",
+        workflow_name, node_id
+    );
+
+    // Create cancellation channel
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Store the cancel sender for the stop function to use
+    {
+        let mut workflow_log_cancel = state.workflow_log_cancel_tx.write().await;
+        *workflow_log_cancel = Some(cancel_tx);
+    }
+
+    // Start streaming in background task
+    let kube_client_clone = kube_client.clone();
+    let workflow_name_clone = workflow_name.clone();
+    let node_id_clone = node_id.clone();
+
+    tokio::spawn(async move {
+        let channel_fn = {
+            let workflow_log_tx = workflow_log_tx.clone();
+            move |chunk: ethos_core::clients::argo::LogChunk| {
+                debug!(
+                    "Received log chunk - data length: {}, finished: {}, error: {:?}",
+                    chunk.data.len(),
+                    chunk.finished,
+                    chunk.error
+                );
+                let is_empty = chunk.data.is_empty();
+                if !is_empty {
+                    debug!(
+                        "Log chunk content preview: {:?}",
+                        &chunk.data.chars().take(100).collect::<String>()
+                    );
+                }
+
+                if let Err(e) = workflow_log_tx.send(chunk.data) {
+                    error!("Failed to send log chunk to workflow log channel: {}", e);
+                } else if !is_empty {
+                    debug!("Successfully sent log chunk to channel");
+                }
+            }
+        };
+
+        tokio::select! {
+            result = kube_client_clone.get_logs_for_workflow_node(&workflow_name_clone, &node_id_clone, Some(channel_fn)) => {
+                match result {
+                    Ok(_) => {
+                        info!("Workflow log streaming completed for {}/{}", workflow_name_clone, node_id_clone);
+                    }
+                    Err(e) => {
+                        error!("Workflow log streaming failed for {}/{}: {:?}", workflow_name_clone, node_id_clone, e);
+                    }
+                }
+            }
+            _ = cancel_rx => {
+                info!("Workflow log streaming cancelled for {}/{}", workflow_name_clone, node_id_clone);
+            }
+        }
+    });
+
+    Ok(())
+}
+
+pub async fn stop_workflow_log_tail<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    info!("Stopping workflow log tail");
+
+    // Take the cancel sender and trigger cancellation
+    if let Some(cancel_tx) = state.workflow_log_cancel_tx.write().await.take() {
+        if let Err(e) = cancel_tx.send(()) {
+            warn!("Failed to send cancellation signal: {:?}", e);
+        } else {
+            info!("Successfully sent cancellation signal to workflow log streaming");
+        }
+    } else {
+        info!("No active workflow log streaming to cancel");
+    }
+
+    Ok(())
 }

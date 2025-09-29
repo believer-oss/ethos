@@ -427,6 +427,7 @@ pub async fn setup(
     let (longtail_tx, longtail_rx) = std::sync::mpsc::channel();
     let (git_tx, git_rx) = std::sync::mpsc::channel();
     let (gs_tx, _gs_rx) = std::sync::mpsc::channel();
+    let (workflow_tx, _workflow_rx) = std::sync::mpsc::channel();
 
     // start a notification logger
     info!("Starting notification logger");
@@ -488,6 +489,7 @@ pub async fn setup(
         None,
         git_tx,
         gs_tx,
+        workflow_tx,
     )
     .await?;
 

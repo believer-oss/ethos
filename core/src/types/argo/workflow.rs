@@ -62,7 +62,10 @@ pub struct WorkflowStatus {
 pub struct WorkflowNodeStatus {
     pub id: String,
     pub display_name: String,
+    #[serde(rename = "type")]
+    pub node_type: Option<String>,
     pub phase: String,
+    pub started_at: Option<String>,
     pub outputs: Option<Outputs>,
 }
 
