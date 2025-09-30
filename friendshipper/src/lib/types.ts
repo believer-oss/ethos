@@ -377,6 +377,12 @@ export enum CheckStatus {
 }
 
 // workflow types
+export interface LogChunk {
+	data: string;
+	finished: boolean;
+	error: Nullable<string>;
+}
+
 export interface WorkflowOutputs {
 	artifacts: Nullable<WorkflowArtifact[]>;
 }

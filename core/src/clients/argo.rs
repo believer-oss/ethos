@@ -45,7 +45,10 @@ pub struct ArgoClient {
 
 impl ArgoClient {
     pub fn new(host: String, auth: String, namespace: String) -> Self {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout for streaming
+            .build()
+            .expect("Failed to build reqwest client");
         Self {
             host,
             client,
@@ -509,11 +512,25 @@ impl ArgoClient {
                 }
                 Err(e) => {
                     debug!("Stream error: {}", e);
-                    channel(LogChunk {
-                        data: String::new(),
-                        finished: true,
-                        error: Some(e.to_string()),
-                    });
+
+                    // Check if this is a connection closed error (normal when pod completes)
+                    let is_connection_closed = e.is_body() || e.is_connect();
+
+                    if is_connection_closed {
+                        debug!("Stream closed (pod likely completed)");
+                        channel(LogChunk {
+                            data: String::new(),
+                            finished: true,
+                            error: None,
+                        });
+                    } else {
+                        warn!("Unexpected stream error: {}", e);
+                        channel(LogChunk {
+                            data: String::new(),
+                            finished: true,
+                            error: Some(e.to_string()),
+                        });
+                    }
                     return Ok(());
                 }
             }

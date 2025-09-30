@@ -2,7 +2,7 @@
 	import { Button, Hr, Input, Modal, Spinner, Tooltip } from 'flowbite-svelte';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { FileCopySolid, LinkOutline } from 'flowbite-svelte-icons';
-	import type { JunitOutput, Nullable, Workflow, WorkflowNode } from '$lib/types';
+	import type { JunitOutput, LogChunk, Nullable, Workflow, WorkflowNode } from '$lib/types';
 	import {
 		getWorkflowJunitArtifact,
 		getWorkflowNodeLogs,
@@ -42,7 +42,7 @@
 
 	/* eslint-disable @typescript-eslint/no-unused-vars */
 	$: filteredNodes = Object.entries(workflow.status?.nodes || {})
-		.map(([_k, v]) => v as WorkflowNode)
+		.map(([_k, v]) => v)
 		.filter((node) => {
 			// Show nodes with main-logs artifacts. This filters out steps that only output variables.
 			if (
@@ -101,10 +101,20 @@
 		}
 
 		workflowLogUnlisten = await listen('workflow-log', (event) => {
-			const line = event.payload as string;
-			if (line.trim()) {
-				lines = [line, ...lines];
+			const chunk: LogChunk = JSON.parse(event.payload as string);
+
+			// Add log data if present
+			if (chunk.data.trim()) {
+				lines = [chunk.data, ...lines];
 				rawLogs = lines.join('\n');
+			}
+
+			// Handle stream completion or errors
+			if (chunk.finished || chunk.error) {
+				isStreaming = false;
+				if (chunk.error) {
+					void emit('error', chunk.error);
+				}
 			}
 		});
 	};
@@ -202,6 +212,13 @@
 		}
 	};
 
+	const stopNodeRefresh = () => {
+		if (refreshInterval !== null) {
+			clearInterval(refreshInterval);
+			refreshInterval = null;
+		}
+	};
+
 	const refreshWorkflowNodes = async () => {
 		try {
 			const updated = await getWorkflowNodes(workflow.metadata.name);
@@ -226,13 +243,6 @@
 		refreshInterval = window.setInterval(() => {
 			void refreshWorkflowNodes();
 		}, 3000);
-	};
-
-	const stopNodeRefresh = () => {
-		if (refreshInterval !== null) {
-			clearInterval(refreshInterval);
-			refreshInterval = null;
-		}
 	};
 
 	const onClose = async () => {

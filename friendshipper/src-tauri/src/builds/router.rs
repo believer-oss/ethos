@@ -715,7 +715,9 @@ where
                     );
                 }
 
-                if let Err(e) = workflow_log_tx.send(chunk.data) {
+                // Send the entire LogChunk with finished/error status
+                let chunk_json = serde_json::to_string(&chunk).unwrap_or_default();
+                if let Err(e) = workflow_log_tx.send(chunk_json) {
                     error!("Failed to send log chunk to workflow log channel: {}", e);
                 } else if !is_empty {
                     debug!("Successfully sent log chunk to channel");
