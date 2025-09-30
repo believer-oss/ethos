@@ -120,7 +120,7 @@ impl ArgoClient {
         Ok(workflows.items)
     }
 
-    #[instrument(skip(self, callback))]
+    #[instrument(skip(self, workflow, callback))]
     pub async fn get_logs_for_workflow_node<F>(
         &self,
         workflow: &Workflow,
@@ -143,16 +143,26 @@ impl ArgoClient {
 
         let log_source = self.determine_log_source(workflow, node_id);
 
+        // Compute pod name for active pod logs
+        let pod_name = self.get_pod_name(workflow, node_id);
+
         match log_source {
             LogSource::ActivePod => {
+                let pod_name = pod_name.ok_or_else(|| {
+                    CoreError::Internal(anyhow!("Failed to compute pod name for node {}", node_id))
+                })?;
+
                 if let Some(cb) = callback {
                     // Use streaming for active pods
-                    self.get_active_workflow_logs_streaming(workflow_name, node_id, cb)
+                    self.get_active_workflow_logs_streaming(workflow_name, &pod_name, cb)
                         .await?;
                     Ok(String::new())
                 } else {
                     // Try active pod logs first, fall back to artifacts, then archived
-                    match self.get_active_workflow_logs(workflow_name, node_id).await {
+                    match self
+                        .get_active_workflow_logs(workflow_name, &pod_name)
+                        .await
+                    {
                         Ok(logs) => Ok(logs),
                         Err(_) => {
                             match self
@@ -256,6 +266,80 @@ impl ArgoClient {
         LogSource::ArchivedWorkflow
     }
 
+    // Generate pod name using v2 format
+    fn get_pod_name(&self, workflow: &Workflow, node_id: &str) -> Option<String> {
+        use crate::types::argo::workflow::WorkflowNodeStatus;
+
+        let workflow_name = workflow.metadata.name.as_ref()?;
+        let nodes = workflow.status.as_ref()?.nodes.as_ref()?;
+        let node: &WorkflowNodeStatus = nodes.get(node_id)?;
+
+        // Convert containerSet node name to pod node name by removing ".<containerName>" postfix
+        let pod_node_name = if node.node_type.as_deref() == Some("Container") {
+            node.name
+                .rsplit_once('.')
+                .map(|(prefix, _)| prefix)
+                .unwrap_or(&node.name)
+        } else {
+            &node.name
+        };
+
+        // If workflow name equals node name, use workflow name
+        if workflow_name == pod_node_name {
+            return Some(workflow_name.clone());
+        }
+
+        // Get template name from node (check TemplateRef first, like upstream)
+        let template_name = node
+            .template_ref
+            .as_ref()
+            .and_then(|tr| tr.template.as_ref())
+            .or(node.template_name.as_ref())
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        debug!(
+            "Pod name computation: workflow={}, node_name={}, pod_node_name={}, template_name={}",
+            workflow_name, node.name, pod_node_name, template_name
+        );
+
+        // Build prefix
+        let mut prefix = workflow_name.clone();
+        if !template_name.is_empty() {
+            prefix = format!("{}-{}", prefix, template_name);
+        }
+
+        // Ensure prefix length (max 243 chars for k8s naming)
+        const MAX_PREFIX_LENGTH: usize = 243;
+        if prefix.len() > MAX_PREFIX_LENGTH - 1 {
+            prefix.truncate(MAX_PREFIX_LENGTH - 1);
+        }
+
+        // Create FNV-1a 32-bit hash of pod node name (matching Go's fnv.New32a())
+        let hash = self.fnv_hash_32a(pod_node_name);
+
+        let pod_name = format!("{}-{}", prefix, hash);
+        debug!("Computed pod name: {}", pod_name);
+
+        Some(pod_name)
+    }
+
+    // FNV-1a 32-bit hash implementation (matching Go's hash/fnv.New32a())
+    // There is a 64-bit implementation in the 'fnv' crate, but it does not include a non-usize
+    // option.
+    fn fnv_hash_32a(&self, input: &str) -> u32 {
+        // https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function#FNV_hash_parameters
+        const FNV_OFFSET_BASIS: u32 = 2166136261;
+        const FNV_PRIME: u32 = 16777619;
+
+        let mut hash = FNV_OFFSET_BASIS;
+        for byte in input.as_bytes() {
+            hash ^= *byte as u32;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        hash
+    }
+
     #[instrument(skip(self))]
     pub async fn get_artifact_logs(
         &self,
@@ -315,7 +399,7 @@ impl ArgoClient {
     pub async fn get_active_workflow_logs(
         &self,
         workflow_name: &str,
-        node_id: &str,
+        pod_name: &str,
     ) -> Result<String, CoreError> {
         let url = format!(
             "{}/api/v1/workflows/{}/{}/log",
@@ -326,7 +410,7 @@ impl ArgoClient {
             .client
             .get(&url)
             .timeout(std::time::Duration::from_secs(10))
-            .query(&[("podName", node_id), ("logOptions.container", "main")])
+            .query(&[("podName", pod_name), ("logOptions.container", "main")])
             .header("Authorization", format!("Bearer {}", self.auth))
             .send()
             .await?;
@@ -345,7 +429,7 @@ impl ArgoClient {
     pub async fn get_active_workflow_logs_streaming(
         &self,
         workflow_name: &str,
-        node_id: &str,
+        pod_name: &str,
         channel: impl Fn(LogChunk) + Clone + Send,
     ) -> Result<(), CoreError> {
         let url = format!(
@@ -354,7 +438,7 @@ impl ArgoClient {
         );
         info!(
             "Starting workflow log streaming for {}/{}",
-            workflow_name, node_id
+            workflow_name, pod_name
         );
 
         debug!("Making HTTP request to: {}", url);
@@ -362,6 +446,7 @@ impl ArgoClient {
             .client
             .get(&url)
             .query(&[
+                ("podName", pod_name),
                 ("logOptions.container", "main"),
                 ("grep", ""),
                 ("logOptions.follow", "true"),
