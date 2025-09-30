@@ -427,6 +427,27 @@ pub async fn get_workflow_junit_artifact(
 }
 
 #[tauri::command]
+pub async fn get_workflow_nodes(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<ethos_core::types::argo::workflow::Workflow, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/builds/workflows/nodes?name={}",
+            state.server_url, name
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
 pub async fn stop_workflow(
     state: tauri::State<'_, State>,
     workflow: String,

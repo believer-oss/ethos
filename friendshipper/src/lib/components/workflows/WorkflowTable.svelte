@@ -11,7 +11,7 @@
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
-	import { stopWorkflow } from '$lib/builds';
+	import { stopWorkflow, getWorkflowNodes } from '$lib/builds';
 	import { appConfig, repoConfig } from '$lib/stores';
 
 	export let selectedCommit = '';
@@ -159,24 +159,35 @@
 
 	onMount(() => {
 		void listen('build-deep-link', (e) => {
-			const workflowInfo = e.payload;
+			void (async () => {
+				const workflowInfo = e.payload;
 
-			const foundCommitWorkflow = commits.find((commit) =>
-				commit.commit.startsWith(workflowInfo.commitSha)
-			);
-
-			if (foundCommitWorkflow !== undefined) {
-				const foundWorkflow = foundCommitWorkflow.workflows.find(
-					(workflow) =>
-						workflow.kind === 'Workflow' && workflow.metadata.name.startsWith(workflowInfo.name)
+				const foundCommitWorkflow = commits.find((commit) =>
+					commit.commit.startsWith(workflowInfo.commitSha)
 				);
 
-				if (foundWorkflow !== undefined) {
-					setSelectedCommit(foundCommitWorkflow.commit);
-					selectedWorkflow = foundWorkflow;
-					showWorkflowLogsModal = true;
+				if (foundCommitWorkflow !== undefined) {
+					const foundWorkflow = foundCommitWorkflow.workflows.find(
+						(workflow) =>
+							workflow.kind === 'Workflow' && workflow.metadata.name.startsWith(workflowInfo.name)
+					);
+
+					if (foundWorkflow !== undefined) {
+						setSelectedCommit(foundCommitWorkflow.commit);
+						selectedWorkflow = foundWorkflow;
+						// Fetch nodes if not already present
+						if (!selectedWorkflow.status.nodes) {
+							try {
+								const workflowWithNodes = await getWorkflowNodes(selectedWorkflow.metadata.name);
+								selectedWorkflow.status.nodes = workflowWithNodes.status.nodes;
+							} catch (error) {
+								await emit('error', `Failed to fetch workflow nodes: ${String(error)}`);
+							}
+						}
+						showWorkflowLogsModal = true;
+					}
 				}
-			}
+			})();
 		});
 	});
 </script>
@@ -275,8 +286,21 @@
 									size="xs"
 									class="py-1 px-2 text-xs"
 									on:click={() => {
-										showWorkflowLogsModal = true;
-										selectedWorkflow = workflow;
+										void (async () => {
+											selectedWorkflow = workflow;
+											// Fetch nodes if not already present
+											if (!selectedWorkflow.status.nodes) {
+												try {
+													const workflowWithNodes = await getWorkflowNodes(
+														selectedWorkflow.metadata.name
+													);
+													selectedWorkflow.status.nodes = workflowWithNodes.status.nodes;
+												} catch (error) {
+													await emit('error', `Failed to fetch workflow nodes: ${String(error)}`);
+												}
+											}
+											showWorkflowLogsModal = true;
+										})();
 									}}
 								>
 									<CodeOutline class="w-4 h-4" />
