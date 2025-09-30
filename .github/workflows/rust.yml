@@ -135,7 +135,8 @@ jobs:
         uses: actions/checkout@v3
 
       - name: set up rust toolchain
-        uses: believer-oss/setup-rust-toolchain@ff4c7a2d9523e22eab355f13c7732a4ea3e7a9b1
+        uses: believer-oss/setup-rust-toolchain@87cb4b395294936a824ba840af04318e5e6eb8f6
+
       - name: set up Node
         uses: actions/setup-node@v4
         with:
