@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument};
 
-use crate::clients::argo::ArgoClient;
+use crate::clients::argo::{ArgoClient, LogChunk};
 use crate::types::argo::workflow::{
     CreatePromoteBuildWorkflowRequest, Workflow, WorkflowArguments, WorkflowParameter,
     WorkflowTemplateRef,
@@ -768,16 +768,26 @@ impl KubeClient {
         argo_client.get_workflow_with_nodes(name).await
     }
 
-    #[instrument(skip(self))]
-    pub async fn get_logs_for_workflow_node(
+    #[instrument(skip(self, callback))]
+    pub async fn get_logs_for_workflow_node<F>(
         &self,
-        uid: &str,
+        workflow_name: &str,
         node_id: &str,
-    ) -> Result<String, CoreError> {
+        callback: Option<F>,
+    ) -> Result<String, CoreError>
+    where
+        F: Fn(LogChunk) + Clone + Send,
+    {
         self.kubeconfig().await?;
 
         let argo_client = self.argo_client.read().await;
-        argo_client.get_logs_for_workflow_node(uid, node_id).await
+
+        // Get the complete workflow with nodes
+        let workflow = argo_client.get_workflow_with_nodes(workflow_name).await?;
+
+        argo_client
+            .get_logs_for_workflow_node(&workflow, node_id, callback)
+            .await
     }
 
     #[instrument(skip(self))]

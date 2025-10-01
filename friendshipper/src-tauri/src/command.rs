@@ -385,14 +385,14 @@ pub async fn get_workflows(
 #[tauri::command]
 pub async fn get_workflow_node_logs(
     state: tauri::State<'_, State>,
-    uid: String,
+    workflow_name: String,
     node_id: String,
 ) -> Result<String, TauriError> {
     let res = state
         .client
         .get(format!(
-            "{}/builds/workflows/logs?uid={}&nodeId={}",
-            state.server_url, uid, node_id
+            "{}/builds/workflows/logs?workflowName={}&nodeId={}",
+            state.server_url, workflow_name, node_id
         ))
         .send()
         .await?;
@@ -864,6 +864,33 @@ pub async fn stop_gameserver_log_tail(state: tauri::State<'_, State>) -> Result<
     state
         .client
         .post(format!("{}/servers/logs/stop", state.server_url))
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_workflow_log_tail(
+    state: tauri::State<'_, State>,
+    workflow_name: String,
+    node_id: String,
+) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!(
+            "{}/builds/workflows/{}/{}/logs/tail",
+            state.server_url, workflow_name, node_id
+        ))
+        .send()
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_workflow_log_tail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    state
+        .client
+        .post(format!("{}/builds/workflows/logs/stop", state.server_url))
         .send()
         .await?;
     Ok(())

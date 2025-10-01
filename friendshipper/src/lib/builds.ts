@@ -34,8 +34,8 @@ export const getWorkflowJunitArtifact = async (
 	nodeId: string
 ): Promise<JunitOutput | null> => invoke('get_workflow_junit_artifact', { uid, nodeId });
 
-export const getWorkflowNodeLogs = async (uid: string, nodeId: string): Promise<string> =>
-	invoke('get_workflow_node_logs', { uid, nodeId });
+export const getWorkflowNodeLogs = async (workflowName: string, nodeId: string): Promise<string> =>
+	invoke('get_workflow_node_logs', { workflowName, nodeId });
 
 export const stopWorkflow = async (workflow: string): Promise<string> =>
 	invoke('stop_workflow', { workflow });
@@ -47,3 +47,8 @@ export interface CreatePromoteBuildWorkflowRequest {
 export const createPromoteBuildWorkflow = async (
 	request: CreatePromoteBuildWorkflowRequest
 ): Promise<Workflow> => invoke('create_promote_build_workflow', { request });
+
+export const startWorkflowLogTail = async (workflowName: string, nodeId: string): Promise<void> =>
+	invoke('start_workflow_log_tail', { workflowName, nodeId });
+
+export const stopWorkflowLogTail = async (): Promise<void> => invoke('stop_workflow_log_tail');

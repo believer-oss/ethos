@@ -56,11 +56,13 @@ pub struct AppState<T> {
     pub otel_reload_handle: Option<OtelReloadHandle>,
 
     pub gameserver_log_tx: STDSender<String>,
+    pub workflow_log_tx: STDSender<String>,
     pub git_tx: STDSender<String>,
 
     pub engine: T,
 
     pub cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
+    pub workflow_log_cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
 }
 
 impl<T> AppState<T>
@@ -85,6 +87,7 @@ where
         otel_reload_handle: Option<OtelReloadHandle>,
         git_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
+        workflow_log_tx: STDSender<String>,
     ) -> Result<Self> {
         let mut longtail = Longtail::new(crate::APP_NAME);
 
@@ -186,8 +189,10 @@ where
             otel_reload_handle,
             git_tx,
             gameserver_log_tx: server_log_tx,
+            workflow_log_tx,
             engine,
             cancel_tx: Arc::new(TokioRwLock::new(None)),
+            workflow_log_cancel_tx: Arc::new(TokioRwLock::new(None)),
         })
     }
 

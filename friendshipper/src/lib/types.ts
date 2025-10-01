@@ -377,6 +377,12 @@ export enum CheckStatus {
 }
 
 // workflow types
+export interface LogChunk {
+	data: string;
+	finished: boolean;
+	error: Nullable<string>;
+}
+
 export interface WorkflowOutputs {
 	artifacts: Nullable<WorkflowArtifact[]>;
 }
@@ -393,7 +399,9 @@ export interface S3Artifact {
 export interface WorkflowNode {
 	id: string;
 	displayName: string;
+	type?: string;
 	phase: string;
+	startedAt?: string;
 	outputs: Nullable<WorkflowOutputs>;
 }
 
@@ -403,7 +411,7 @@ export interface WorkflowStatus {
 	finishedAt: Nullable<string>;
 	estimatedDuration: Nullable<number>;
 	progress: Nullable<string>;
-	nodes?: Map<string, WorkflowNode>;
+	nodes?: Record<string, WorkflowNode>;
 }
 
 export interface Workflow {

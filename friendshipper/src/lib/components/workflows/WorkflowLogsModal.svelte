@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { Button, Hr, Input, Modal, Spinner, Tooltip } from 'flowbite-svelte';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen } from '@tauri-apps/api/event';
 	import { FileCopySolid, LinkOutline } from 'flowbite-svelte-icons';
-	import type { JunitOutput, Nullable, Workflow, WorkflowNode } from '$lib/types';
-	import { getWorkflowJunitArtifact, getWorkflowNodeLogs } from '$lib/builds';
+	import type { JunitOutput, LogChunk, Nullable, Workflow, WorkflowNode } from '$lib/types';
+	import {
+		getWorkflowJunitArtifact,
+		getWorkflowNodeLogs,
+		getWorkflowNodes,
+		startWorkflowLogTail,
+		stopWorkflowLogTail
+	} from '$lib/builds';
 	import JunitDisplay from './junit/JunitDisplay.svelte';
 
 	export let showModal: boolean;
@@ -14,6 +20,9 @@
 	let junitOutput: Nullable<JunitOutput> = null;
 	let searchTerm: string = '';
 	let selectedNode: string = '';
+	let isStreaming: boolean = false;
+	let workflowLogUnlisten: (() => void) | null = null;
+	let refreshInterval: number | null = null;
 
 	enum DisplayType {
 		Logs,
@@ -33,17 +42,52 @@
 
 	/* eslint-disable @typescript-eslint/no-unused-vars */
 	$: filteredNodes = Object.entries(workflow.status?.nodes || {})
-		.filter(([k, v]) => v.outputs && v.outputs.artifacts && v.outputs.artifacts.length > 0)
-		.map(([k, v]) => v as WorkflowNode);
+		.map(([_k, v]) => v)
+		.filter((node) => {
+			// Show nodes with main-logs artifacts. This filters out steps that only output variables.
+			if (
+				node.outputs?.artifacts &&
+				node.outputs.artifacts.some(
+					(artifact) => artifact.name === 'main-logs' || artifact.name.endsWith('main-logs')
+				)
+			) {
+				return true;
+			}
 
-	const getNodesWithLogs = (w: Workflow) =>
-		Object.entries(w.status?.nodes)
-			.filter(([k, v]) => v.outputs && v.outputs.artifacts && v.outputs.artifacts.length > 0)
-			.map(([k, v]) => v as WorkflowNode);
+			// Show running nodes with type "Pod" (for live logs)
+			if (node.phase === 'Running' && node.type === 'Pod') {
+				return true;
+			}
+
+			return false;
+		})
+		.sort((a, b) => {
+			// Sort by startedAt first, then by displayName
+			if (a.startedAt && b.startedAt) {
+				const timeCompare = a.startedAt.localeCompare(b.startedAt);
+				if (timeCompare !== 0) return timeCompare;
+			}
+			if (a.startedAt && !b.startedAt) return -1;
+			if (!a.startedAt && b.startedAt) return 1;
+			return a.displayName.localeCompare(b.displayName);
+		});
+
+	const getNodesWithLogs = (w: Workflow): WorkflowNode[] =>
+		Object.entries(w.status?.nodes || {})
+			.filter(
+				([_k, v]: [string, WorkflowNode]) =>
+					v.outputs &&
+					v.outputs.artifacts &&
+					v.outputs.artifacts.some(
+						(artifact) => artifact.name === 'main-logs' || artifact.name.endsWith('main-logs')
+					)
+			)
+			.map(([_k, v]: [string, WorkflowNode]) => v);
 	/* eslint-enable @typescript-eslint/no-unused-vars */
 
-	const getLogs = async (uid: string, nodeId: string) => {
-		const logs = await getWorkflowNodeLogs(uid, nodeId);
+	const getLogs = async (nodeId: string) => {
+		// Use smart log retrieval with workflow name
+		const logs = await getWorkflowNodeLogs(workflow.metadata.name, nodeId);
 
 		if (logs) {
 			rawLogs = logs;
@@ -51,9 +95,51 @@
 		}
 	};
 
+	const setupWorkflowLogListener = async () => {
+		if (workflowLogUnlisten) {
+			workflowLogUnlisten();
+		}
+
+		workflowLogUnlisten = await listen('workflow-log', (event) => {
+			const chunk: LogChunk = JSON.parse(event.payload as string);
+
+			// Add log data if present
+			if (chunk.data.trim()) {
+				lines = [chunk.data, ...lines];
+				rawLogs = lines.join('\n');
+			}
+
+			// Handle stream completion or errors
+			if (chunk.finished || chunk.error) {
+				isStreaming = false;
+				if (chunk.error) {
+					void emit('error', chunk.error);
+				}
+			}
+		});
+	};
+
+	const stopLogStreaming = async () => {
+		if (isStreaming) {
+			try {
+				await stopWorkflowLogTail();
+				isStreaming = false;
+			} catch (e) {
+				await emit('error', e);
+			}
+		}
+	};
+
 	const refreshLogs = async (node: WorkflowNode) => {
 		loading = true;
 		selectedNode = node.id;
+
+		// Stop any existing streaming
+		await stopLogStreaming();
+
+		// Clear existing logs
+		lines = [];
+		rawLogs = '';
 
 		// if the node has an artifact called junit-xml, get it
 		const junitArtifact = node.outputs?.artifacts?.find((artifact) =>
@@ -75,10 +161,33 @@
 			displayType = DisplayType.Logs;
 		}
 
-		try {
-			await getLogs(workflow.metadata.uid, selectedNode);
-		} catch (e) {
-			await emit('error', e);
+		// Check if this is a running pod that should be streamed
+		const isRunningPod = node.phase === 'Running' && node.type === 'Pod';
+
+		if (isRunningPod && workflow.metadata.name) {
+			try {
+				// Set up event listener for streaming logs
+				await setupWorkflowLogListener();
+
+				// Start streaming
+				await startWorkflowLogTail(workflow.metadata.name, selectedNode);
+				isStreaming = true;
+			} catch (e) {
+				await emit('error', e);
+				// Fall back to static logs if streaming fails
+				try {
+					await getLogs(selectedNode);
+				} catch (fallbackError) {
+					await emit('error', fallbackError);
+				}
+			}
+		} else {
+			// Get static logs for non-running pods
+			try {
+				await getLogs(selectedNode);
+			} catch (e) {
+				await emit('error', e);
+			}
 		}
 
 		loading = false;
@@ -103,13 +212,60 @@
 		}
 	};
 
-	const onClose = () => {
+	const stopNodeRefresh = () => {
+		if (refreshInterval !== null) {
+			clearInterval(refreshInterval);
+			refreshInterval = null;
+		}
+	};
+
+	const refreshWorkflowNodes = async () => {
+		try {
+			const updated = await getWorkflowNodes(workflow.metadata.name);
+			workflow = updated;
+
+			// Stop refreshing if workflow is no longer running
+			if (updated.status?.phase !== 'Running') {
+				stopNodeRefresh();
+			}
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const startNodeRefresh = () => {
+		// Only refresh if workflow is running
+		if (workflow.status?.phase !== 'Running') {
+			return;
+		}
+
+		// Refresh nodes every 3 seconds
+		refreshInterval = window.setInterval(() => {
+			void refreshWorkflowNodes();
+		}, 3000);
+	};
+
+	const onClose = async () => {
+		// Stop node refresh polling
+		stopNodeRefresh();
+
+		// Stop streaming and clean up listeners
+		await stopLogStreaming();
+		if (workflowLogUnlisten) {
+			workflowLogUnlisten();
+			workflowLogUnlisten = null;
+		}
+
 		selectedNode = '';
 		junitOutput = null;
 		lines = [];
+		rawLogs = '';
 	};
 
 	const onOpen = async () => {
+		// Start periodic node refresh
+		startNodeRefresh();
+
 		const nodes = getNodesWithLogs(workflow);
 
 		const importantNode = nodes.find(
@@ -156,6 +312,9 @@
 	<div class="flex flex-col space-y-2 overflow-y-hidden h-full justify-between">
 		<div class="flex flex-row gap-4 items-center pb-2">
 			<h2 class="text-lg font-semibold text-primary-400 pb-0">Logs for {workflow.metadata.name}</h2>
+			{#if isStreaming}
+				<span class="text-sm text-green-400 animate-pulse">🔴 Live streaming</span>
+			{/if}
 			<Input
 				type="text"
 				size="sm"
@@ -184,17 +343,27 @@
 				>Copy link to this build log to clipboard
 			</Tooltip>
 		</div>
-		<div class="flex gap-2">
+		<div class="flex gap-2 flex-wrap">
 			{#each filteredNodes as node}
-				<Button
-					disabled={loading || selectedNode === node.id}
-					class="text-xs px-2 py-1 rounded-md text-white hover:bg-gray-500 dark:hover:bg-gray-500 disabled:opacity-100 {getNodeColor(
-						node
-					)} {selectedNode === node.id && 'border border-white'}"
-					on:click={() => refreshLogs(node)}
-				>
-					{node.displayName}
-				</Button>
+				<div class="relative">
+					{#if node.phase === 'Running' && node.type === 'Pod'}
+						<div class="breathing-indicator" />
+					{/if}
+					<Button
+						disabled={loading || selectedNode === node.id}
+						class="text-xs px-2 py-1 rounded-md text-white hover:bg-gray-500 dark:hover:bg-gray-500 disabled:opacity-100 {getNodeColor(
+							node
+						)} {selectedNode === node.id && 'border border-white'}"
+						on:click={() => refreshLogs(node)}
+					>
+						{node.displayName}
+						{#if node.outputs?.artifacts && node.outputs.artifacts.length > 0}
+							<span class="artifact-indicator">📋</span>
+						{:else if node.phase === 'Running' && node.type === 'Pod'}
+							<span class="running-indicator">⚡</span>
+						{/if}
+					</Button>
+				</div>
 			{/each}
 		</div>
 		<Hr />
@@ -235,3 +404,50 @@
 		{/if}
 	</div>
 </Modal>
+
+<style>
+	.breathing-indicator {
+		position: absolute;
+		top: -2px;
+		right: -2px;
+		width: 8px;
+		height: 8px;
+		background: #10b981;
+		border-radius: 50%;
+		animation: breathe 2s ease-in-out infinite;
+		z-index: 10;
+	}
+
+	@keyframes breathe {
+		0%,
+		100% {
+			opacity: 0.4;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 1;
+			transform: scale(1.3);
+		}
+	}
+
+	.artifact-indicator {
+		margin-left: 4px;
+		font-size: 10px;
+	}
+
+	.running-indicator {
+		margin-left: 4px;
+		font-size: 10px;
+		animation: pulse 1.5s ease-in-out infinite;
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.5;
+		}
+	}
+</style>
