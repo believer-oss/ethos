@@ -198,7 +198,7 @@ impl Longtail {
         let bytes = copy(&mut reader, &mut hasher)?;
         let hash = hasher.finalize();
 
-        if hash.as_slice() != <[u8; 32]>::from_hex(crate::LONGTAIL_SHA256).unwrap() {
+        if *hash != <[u8; 32]>::from_hex(crate::LONGTAIL_SHA256).unwrap() {
             send_msg(
                 &tx,
                 LongtailMsg::ErrEvt(format!("Failed to validate hash! {bytes}/{hash:x}")),
