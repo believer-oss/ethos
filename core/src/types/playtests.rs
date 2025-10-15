@@ -84,6 +84,10 @@ pub struct PlaytestSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub game_server_cmd_args: Option<Vec<String>>,
 
+    #[serde(rename = "disableGameServers")]
+    #[serde(default)]
+    pub disable_game_servers: bool,
+
     pub groups: Vec<Group>,
 }
 

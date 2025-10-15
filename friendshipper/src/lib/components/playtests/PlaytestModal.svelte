@@ -204,7 +204,8 @@
 				groups: playtest.spec.groups,
 				feedbackURL: data.feedbackURL,
 				includeReadinessProbe: playtest?.spec.includeReadinessProbe ?? false,
-				gameServerCmdArgs
+				gameServerCmdArgs,
+				disableGameServers: playtest?.spec.disableGameServers ?? false
 			};
 
 			try {
@@ -221,6 +222,7 @@
 		} else if (mode === ModalState.Creating) {
 			const doNotPrune = !('autoCleanup' in data);
 			const includeReadinessProbe = 'includeReadinessProbe' in data;
+			const disableGameServers = 'disableGameServers' in data;
 			const spec: PlaytestSpec = {
 				displayName: data.name,
 				version: data.version,
@@ -231,7 +233,8 @@
 				groups: [],
 				feedbackURL: data.feedbackURL,
 				includeReadinessProbe,
-				gameServerCmdArgs
+				gameServerCmdArgs,
+				disableGameServers
 			};
 
 			const name = data.name.toLowerCase().replace(/[_\s/]/g, '-');
@@ -550,6 +553,20 @@
 				<Tooltip>
 					If toggled, the playtest will wait for the server to be ready before starting. Version of
 					the deployed gameserver must support an HTTP readiness check.
+				</Tooltip>
+			</Label>
+		</div>
+		<div class="flex flex-row gap-2">
+			<Label class="flex flex-row text-xs text-white">
+				<Checkbox
+					name="disableGameServers"
+					disabled={mode === ModalState.Editing}
+					checked={(playtest && playtest.spec.disableGameServers) ?? true}
+				/>
+				<span>Disable Game Servers</span>
+				<Tooltip>
+					If toggled, no game servers will be created. Only sync and launch client functionality
+					will be available (similar to launch without server mode).
 				</Tooltip>
 			</Label>
 		</div>
