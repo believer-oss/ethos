@@ -1,5 +1,5 @@
 use axum::Router;
-use clap::{command, Parser};
+use clap::Parser;
 use ethos_core::types::config::{FriendshipperConfig, OktaConfig};
 use friendshipper_server::{ServerConfig, APP_NAME, VERSION};
 #[allow(unused_imports)]

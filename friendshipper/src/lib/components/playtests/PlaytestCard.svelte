@@ -344,14 +344,16 @@
 						<EditOutline class="w-3 h-3" />
 					</Button>
 				{/if}
-				<Button
-					color="primary"
-					size="xs"
-					class="text-xs py-1 pl-1 text-center"
-					on:click={() => handleRandomAssign(playtest, $appConfig.userDisplayName)}
-				>
-					🎲 Join random group
-				</Button>
+				{#if !playtest.spec.disableGameServers}
+					<Button
+						color="primary"
+						size="xs"
+						class="text-xs py-1 pl-1 text-center"
+						on:click={() => handleRandomAssign(playtest, $appConfig.userDisplayName)}
+					>
+						🎲 Join random group
+					</Button>
+				{/if}
 				{#key playtest}
 					{#if $currentSyncedVersion === playtest.spec.version}
 						<Button
@@ -361,7 +363,7 @@
 							color="primary"
 							on:click={handleLaunchClientWithoutServer}
 						>
-							Launch Without Server
+							{playtest.spec.disableGameServers ? 'Launch' : 'Launch Without Server'}
 						</Button>
 					{/if}
 					{#if shouldShowLaunchButton()}
@@ -424,20 +426,26 @@
 					><code>{playtest.spec.version.substring(0, 8)}</code></span
 				>
 			</span>
-			<span class="text-center font-bold text-sm"
-				>map: <span class="text-primary-400 font-normal">{playtest.spec.map.split('/').pop()}</span>
-			</span>
+			{#if !playtest.spec.disableGameServers}
+				<span class="text-center font-bold text-sm"
+					>map: <span class="text-primary-400 font-normal"
+						>{playtest.spec.map.split('/').pop()}</span
+					>
+				</span>
+			{/if}
 			{#if owner !== ''}
 				<span class="text-center font-bold text-sm"
 					>owner: <span class="text-primary-400 font-normal">{owner}</span>
 				</span>
 			{/if}
 			{#if !compact}
-				<span class="text-center font-bold text-sm"
-					>group size: <span class="text-primary-400 font-normal"
-						>{playtest.spec.playersPerGroup}</span
-					>
-				</span>
+				{#if !playtest.spec.disableGameServers}
+					<span class="text-center font-bold text-sm"
+						>group size: <span class="text-primary-400 font-normal"
+							>{playtest.spec.playersPerGroup}</span
+						>
+					</span>
+				{/if}
 				{#if playtest.metadata.creationTimestamp}
 					<span class="text-center font-bold text-sm"
 						>created: <span class="text-primary-400 font-normal"
@@ -473,90 +481,92 @@
 			</div>
 		{/if}
 	</div>
-	<div
-		class="grid gap-4 overflow-y-auto mb-12 pr-2 w-full h-full xl:grid-cols-4"
-		class:grid-cols-2={compact}
-		class:grid-cols-4={!compact}
-		class:mb-12={compact}
-	>
-		{#if playtest.status != null}
-			{#each getSortedGroups(playtest) as group, index}
-				<Card class={getGroupClass(group)}>
-					<div>
-						<div class="flex items-center justify-between gap-2">
-							<p class="text-base text-primary-400 font-semibold m-2 my-0">{group.name}</p>
-							<span class="text-sm">server {group.ready ? '🟢' : '🔴'}</span>
-						</div>
-						<Hr classHr="my-2 bg-gray-300 dark:bg-gray-300" />
-						<div class="grid grid-cols-2 gap-1 mb-2">
-							{#if group.users != null}
-								{#each group.users as user}
-									<div class={getUserClass(user)}>{user}</div>
+	{#if !playtest.spec.disableGameServers}
+		<div
+			class="grid gap-4 overflow-y-auto mb-12 pr-2 w-full h-full xl:grid-cols-4"
+			class:grid-cols-2={compact}
+			class:grid-cols-4={!compact}
+			class:mb-12={compact}
+		>
+			{#if playtest.status != null}
+				{#each getSortedGroups(playtest) as group, index}
+					<Card class={getGroupClass(group)}>
+						<div>
+							<div class="flex items-center justify-between gap-2">
+								<p class="text-base text-primary-400 font-semibold m-2 my-0">{group.name}</p>
+								<span class="text-sm">server {group.ready ? '🟢' : '🔴'}</span>
+							</div>
+							<Hr classHr="my-2 bg-gray-300 dark:bg-gray-300" />
+							<div class="grid grid-cols-2 gap-1 mb-2">
+								{#if group.users != null}
+									{#each group.users as user}
+										<div class={getUserClass(user)}>{user}</div>
+									{:else}
+										<div class={getUserClass('')}>No users</div>
+									{/each}
 								{:else}
 									<div class={getUserClass('')}>No users</div>
-								{/each}
-							{:else}
-								<div class={getUserClass('')}>No users</div>
-							{/if}
+								{/if}
+							</div>
 						</div>
-					</div>
-					<ButtonGroup>
-						{#if groupContainsUser(group)}
-							<Button
-								outline
-								class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
-								on:click={() => handleUnassign(playtest, $appConfig.userDisplayName)}
-							>
-								<UserRemoveOutline class="text-white w-5 h-5" />
-							</Button>
-						{:else}
-							<Button
-								outline
-								disabled={group.users && group.users.length >= playtest.spec.playersPerGroup}
-								class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
-								on:click={() => handleAssign(playtest, group, $appConfig.userDisplayName)}
-							>
-								<UserAddOutline class="text-white w-5 h-5" />
-							</Button>
-							{#if group.users && group.users.length >= playtest.spec.playersPerGroup}
-								<Tooltip
-									class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-900"
-									placement="top"
-									>Group is full
-								</Tooltip>
+						<ButtonGroup>
+							{#if groupContainsUser(group)}
+								<Button
+									outline
+									class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
+									on:click={() => handleUnassign(playtest, $appConfig.userDisplayName)}
+								>
+									<UserRemoveOutline class="text-white w-5 h-5" />
+								</Button>
+							{:else}
+								<Button
+									outline
+									disabled={group.users && group.users.length >= playtest.spec.playersPerGroup}
+									class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
+									on:click={() => handleAssign(playtest, group, $appConfig.userDisplayName)}
+								>
+									<UserAddOutline class="text-white w-5 h-5" />
+								</Button>
+								{#if group.users && group.users.length >= playtest.spec.playersPerGroup}
+									<Tooltip
+										class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-900"
+										placement="top"
+										>Group is full
+									</Tooltip>
+								{/if}
 							{/if}
-						{/if}
-						<Button
-							disabled={$dynamicConfig.playtestDiscordChannels != null &&
-								$dynamicConfig.playtestDiscordChannels.length <= index}
-							outline
-							class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
-							on:click={() => openUrl($dynamicConfig.playtestDiscordChannels[index].url)}
-						>
-							<DiscordSolid class="text-white w-5 h-5" />
-						</Button>
-						{#if $dynamicConfig.playtestDiscordChannels != null && $dynamicConfig.playtestDiscordChannels.length > index}
-							<Tooltip
-								class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-								placement="top">{$dynamicConfig.playtestDiscordChannels[index].name}</Tooltip
+							<Button
+								disabled={$dynamicConfig.playtestDiscordChannels != null &&
+									$dynamicConfig.playtestDiscordChannels.length <= index}
+								outline
+								class="!p-2 w-full border-gray-300 dark:border-gray-300 hover:bg-primary-600 dark:hover:bg-primary-600"
+								on:click={() => openUrl($dynamicConfig.playtestDiscordChannels[index].url)}
 							>
-						{/if}
-					</ButtonGroup>
-				</Card>
-			{:else}
-				<Card
-					class="w-full h-full p-0 sm:p-0 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
-				>
-					<div class="flex gap-2 items-center">
-						<p class="text-white">You haven't joined this playtest.</p>
-						<Button size="xs" href="/playtests"
-							>Playtests<LinkOutline class="ml-2 h-4 w-4" /></Button
-						>
-					</div>
-				</Card>
-			{/each}
-		{/if}
-	</div>
+								<DiscordSolid class="text-white w-5 h-5" />
+							</Button>
+							{#if $dynamicConfig.playtestDiscordChannels != null && $dynamicConfig.playtestDiscordChannels.length > index}
+								<Tooltip
+									class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+									placement="top">{$dynamicConfig.playtestDiscordChannels[index].name}</Tooltip
+								>
+							{/if}
+						</ButtonGroup>
+					</Card>
+				{:else}
+					<Card
+						class="w-full h-full p-0 sm:p-0 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+					>
+						<div class="flex gap-2 items-center">
+							<p class="text-white">You haven't joined this playtest.</p>
+							<Button size="xs" href="/playtests"
+								>Playtests<LinkOutline class="ml-2 h-4 w-4" /></Button
+							>
+						</div>
+					</Card>
+				{/each}
+			{/if}
+		</div>
+	{/if}
 </Card>
 <Tooltip
 	triggeredBy={`#countdown-${getPlaytestQuerySelector(playtest)}`}

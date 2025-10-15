@@ -187,6 +187,7 @@ export interface PlaytestSpec {
 	groups?: Nullable<Group[]>;
 	includeReadinessProbe: boolean;
 	gameServerCmdArgs: Nullable<string[]>;
+	disableGameServers?: boolean;
 }
 
 export interface GroupStatus extends Group {
