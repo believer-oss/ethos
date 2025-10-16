@@ -8,6 +8,7 @@
 	import type { Playtest } from '$lib/types';
 	import { getPlaytests, ModalState } from '$lib/playtests';
 	import PlaytestCard from '$lib/components/playtests/PlaytestCard.svelte';
+	import ServerlessPlaytestsCard from '$lib/components/playtests/ServerlessPlaytestsCard.svelte';
 	import PlaytestModal from '$lib/components/playtests/PlaytestModal.svelte';
 	import { handleError } from '$lib/utils';
 	import { getBuilds } from '$lib/builds';
@@ -62,6 +63,10 @@
 		}
 	};
 
+	// Separate playtests into serverless and server-based
+	$: serverlessPlaytests = $playtests.filter((p) => p.spec.disableGameServers === true);
+	$: serverBasedPlaytests = $playtests.filter((p) => !p.spec.disableGameServers);
+
 	onMount(() => {
 		void updatePlaytests();
 
@@ -108,7 +113,10 @@
 	{/if}
 </div>
 <div class="flex flex-col gap-2 mb-2 overflow-auto">
-	{#each $playtests as playtest}
+	{#if serverlessPlaytests.length > 0}
+		<ServerlessPlaytestsCard playtests={serverlessPlaytests} bind:loading {handleEditPlaytest} />
+	{/if}
+	{#each serverBasedPlaytests as playtest}
 		<PlaytestCard
 			{playtest}
 			handleEditPlaytest={async () => {
