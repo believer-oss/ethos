@@ -348,6 +348,7 @@ impl Server {
 
                 startup_tx.send("Performing git repo maintenance".to_string())?;
                 git.expire_reflog().await?;
+                git.run_gc().await?;
 
                 startup_tx.send("Installing git hooks".to_string())?;
                 if let Some(git_hooks_path) = git_hooks_path {
