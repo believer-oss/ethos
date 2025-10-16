@@ -227,6 +227,7 @@ fn main() -> Result<(), CoreError> {
                 open_system_logs_folder,
                 open_terminal_to_path,
                 get_unrealversionselector_status,
+                get_object_count,
                 open_url,
                 quick_submit,
                 rebase,

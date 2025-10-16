@@ -4,6 +4,7 @@ import type {
 	CloneRequest,
 	GitHubPullRequest,
 	MergeQueue,
+	ObjectCountResponse,
 	PushRequest,
 	RebaseStatusResponse,
 	RepoStatus,
@@ -135,6 +136,8 @@ export const getRebaseStatus = async (): Promise<RebaseStatusResponse> =>
 export const fixRebase = async (): Promise<void> => invoke('fix_rebase');
 
 export const rebase = async (): Promise<void> => invoke('rebase');
+
+export const getObjectCount = async (): Promise<ObjectCountResponse> => invoke('get_object_count');
 
 export const resetRepo = async (): Promise<void> => invoke('reset_repo');
 

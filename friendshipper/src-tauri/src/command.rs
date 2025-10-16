@@ -59,6 +59,26 @@ pub async fn get_unrealversionselector_status(
     Ok(res.json().await?)
 }
 
+#[tauri::command]
+pub async fn get_object_count(
+    state: tauri::State<'_, State>,
+) -> Result<ethos_core::types::repo::ObjectCountResponse, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/diagnostics/object-count",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
 // Config
 #[tauri::command]
 pub async fn get_dynamic_config(
