@@ -32,9 +32,10 @@
 		MergeQueueEntry,
 		Commit,
 		SyncClientRequest
-	} from '$lib/types';
+	, Playtest } from '$lib/types';
 	import { LaunchMode } from '$lib/types';
 	import PlaytestCard from '$lib/components/playtests/PlaytestCard.svelte';
+	import ServerlessPlaytestsCard from '$lib/components/playtests/ServerlessPlaytestsCard.svelte';
 	import {
 		allModifiedFiles,
 		appConfig,
@@ -52,6 +53,33 @@
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 	import { handleError } from '$lib/utils';
 
+	const getDisplayedPlaytests = (pts: Playtest[]): Playtest[] => {
+		if (pts.length === 0) {
+			return [];
+		}
+
+		// Sort by start time (most recent first)
+		const sorted = [...pts].sort((a, b) => {
+			const timeA = new Date(a.spec.startTime).getTime();
+			const timeB = new Date(b.spec.startTime).getTime();
+			return timeB - timeA;
+		});
+
+		const mostRecent = sorted[0];
+
+		// Check if most recent playtest has game servers enabled
+		const hasGameServers = !mostRecent.spec.disableGameServers;
+
+		if (hasGameServers) {
+			// If most recent has game servers, show only that one
+			return [mostRecent];
+		}
+			// If most recent is serverless, show up to 3 serverless playtests
+			const serverless = sorted.filter((p) => p.spec.disableGameServers === true);
+			return serverless.slice(0, 3);
+
+	};
+
 	let loadingMergeQueue = false;
 	let loadingPlaytests = false;
 	let loadingRepoStatus = false;
@@ -68,6 +96,8 @@
 	);
 
 	$: shouldShowBranchComparison = $appConfig?.primaryBranch && $appConfig?.contentBranch;
+
+	$: displayedPlaytests = getDisplayedPlaytests($playtests);
 
 	const handleSyncCancelled = async () => {
 		try {
@@ -317,7 +347,7 @@
 
 <div class="flex flex-col h-full gap-2 pb-20">
 	<div class="flex flex-row gap-2">
-		{#if $nextPlaytest !== null}
+		{#if displayedPlaytests.length > 0}
 			<div class="flex flex-col gap-2 w-full overflow-x-auto overflow-y-hidden flex-grow min-w-0">
 				<div class="flex mt-2 items-center gap-2">
 					<p class="text-2xl text-primary-400 dark:text-primary-400">Next Playtest</p>
@@ -336,7 +366,19 @@
 				</div>
 
 				<div class="flex-grow min-w-0 overflow-hidden">
-					<PlaytestCard playtest={$nextPlaytest} bind:loading={loadingPlaytests} compact />
+					{#if displayedPlaytests[0].spec.disableGameServers === true}
+						<ServerlessPlaytestsCard
+							playtests={displayedPlaytests}
+							bind:loading={loadingPlaytests}
+							showTitle={false}
+						/>
+					{:else}
+						<PlaytestCard
+							playtest={displayedPlaytests[0]}
+							bind:loading={loadingPlaytests}
+							compact
+						/>
+					{/if}
 				</div>
 			</div>
 		{:else}
