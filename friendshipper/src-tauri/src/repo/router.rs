@@ -35,6 +35,10 @@ where
             "/diagnostics/rebase/fix",
             post(operations::diagnostics::remediate_rebase_handler),
         )
+        .route(
+            "/diagnostics/object-count",
+            get(operations::diagnostics::object_count_handler),
+        )
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/reset-engine", post(operations::reset_engine_handler))
         .route("/download-engine", post(operations::update_engine_handler))

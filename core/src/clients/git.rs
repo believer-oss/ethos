@@ -990,6 +990,11 @@ impl Git {
         self.run(&["gc", "--prune=now"], Opts::default()).await
     }
 
+    pub async fn count_objects(&self) -> anyhow::Result<String> {
+        self.run_and_collect_output(&["count-objects", "-v"], Opts::new_without_logs())
+            .await
+    }
+
     pub async fn expire_reflog(&self) -> anyhow::Result<()> {
         self.run(
             &[

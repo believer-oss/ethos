@@ -348,6 +348,12 @@ export interface RebaseStatusResponse {
 	headNameExists: boolean;
 }
 
+export interface ObjectCountResponse {
+	inPackCount: number;
+	isHealthy: boolean;
+	rawOutput: string;
+}
+
 export interface Snapshot {
 	commit: string;
 	message: string;

@@ -7,9 +7,9 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { repoStatus } from '$lib/stores';
-	import { fixRebase, getRebaseStatus, getRepoStatus, rebase } from '$lib/repo';
+	import { fixRebase, getObjectCount, getRebaseStatus, getRepoStatus, rebase } from '$lib/repo';
 	import { getUnrealVersionSelectorStatus } from '$lib/system';
-	import { CheckStatus, type RebaseStatusResponse } from '$lib/types';
+	import { CheckStatus, type ObjectCountResponse, type RebaseStatusResponse } from '$lib/types';
 	import EmojiStatus from '$lib/components/EmojiStatus.svelte';
 
 	// Various check statuses
@@ -17,6 +17,7 @@
 	let mergeConflictCheck: CheckStatus = CheckStatus.Loading;
 	let rebaseCheck: CheckStatus = CheckStatus.Loading;
 	let rebaseRequiredCheck: CheckStatus = CheckStatus.Loading;
+	let objectCountCheck: CheckStatus = CheckStatus.Loading;
 	let unrealVersionSelectorCheck: CheckStatus = CheckStatus.Loading;
 
 	let loading = false;
@@ -26,6 +27,12 @@
 	let rebaseStatus: RebaseStatusResponse = {
 		rebaseMergeExists: false,
 		headNameExists: false
+	};
+
+	let objectCountStatus: ObjectCountResponse = {
+		inPackCount: 0,
+		isHealthy: true,
+		rawOutput: ''
 	};
 
 	let unrealVersionSelectorStatus = {
@@ -43,6 +50,7 @@
 		mergeConflictCheck = CheckStatus.Loading;
 		rebaseCheck = CheckStatus.Loading;
 		rebaseRequiredCheck = CheckStatus.Loading;
+		objectCountCheck = CheckStatus.Loading;
 		unrealVersionSelectorCheck = CheckStatus.Loading;
 
 		try {
@@ -83,6 +91,18 @@
 		} catch (e) {
 			await emit('error', e);
 			rebaseCheck = CheckStatus.Failure;
+		}
+
+		try {
+			objectCountStatus = await getObjectCount();
+			if (objectCountStatus.isHealthy) {
+				objectCountCheck = CheckStatus.Success;
+			} else {
+				objectCountCheck = CheckStatus.Failure;
+			}
+		} catch (e) {
+			await emit('error', e);
+			objectCountCheck = CheckStatus.Failure;
 		}
 
 		try {
@@ -246,6 +266,40 @@
 				</div>
 			{:else}
 				No rebase required!
+			{/if}
+		</AccordionItem>
+		<AccordionItem class="w-full">
+			<div slot="header" class="flex items-center justify-between w-full pr-2">
+				<div class="w-1/3">Git Object Count</div>
+				<span class="text-xs text-gray-300 font-mono w-3/4"
+					>Is the Git object store healthy? (in-pack &lt; 25M objects)</span
+				>
+				<EmojiStatus checkStatus={objectCountCheck} />
+			</div>
+			{#if objectCountCheck === CheckStatus.Failure}
+				<div class="flex flex-col gap-2">
+					<span
+						>Warning: Git object store has {objectCountStatus.inPackCount.toLocaleString()} objects in
+						packfiles, which exceeds the 25 million object threshold. Consider running git gc to optimize
+						the repository.</span
+					>
+					<Highlight
+						class="text-xs font-mono tracking-wider"
+						language={json}
+						code={objectCountStatus.rawOutput}
+					/>
+				</div>
+			{:else}
+				<div class="flex flex-col gap-2">
+					<span
+						>Git object store looks healthy! Objects in packfiles: {objectCountStatus.inPackCount.toLocaleString()}</span
+					>
+					<Highlight
+						class="text-xs font-mono tracking-wider"
+						language={json}
+						code={objectCountStatus.rawOutput}
+					/>
+				</div>
 			{/if}
 		</AccordionItem>
 		<AccordionItem class="w-full">

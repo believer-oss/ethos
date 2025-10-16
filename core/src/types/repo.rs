@@ -327,6 +327,14 @@ pub struct RebaseStatusResponse {
     pub head_name_exists: bool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectCountResponse {
+    pub in_pack_count: u64,
+    pub is_healthy: bool,
+    pub raw_output: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigureUserRequest {
     pub name: String,
