@@ -31,8 +31,9 @@
 		MergeQueue,
 		MergeQueueEntry,
 		Commit,
-		SyncClientRequest
-	, Playtest } from '$lib/types';
+		SyncClientRequest,
+		Playtest
+	} from '$lib/types';
 	import { LaunchMode } from '$lib/types';
 	import PlaytestCard from '$lib/components/playtests/PlaytestCard.svelte';
 	import ServerlessPlaytestsCard from '$lib/components/playtests/ServerlessPlaytestsCard.svelte';
@@ -74,10 +75,9 @@
 			// If most recent has game servers, show only that one
 			return [mostRecent];
 		}
-			// If most recent is serverless, show up to 3 serverless playtests
-			const serverless = sorted.filter((p) => p.spec.disableGameServers === true);
-			return serverless.slice(0, 3);
-
+		// If most recent is serverless, show up to 3 serverless playtests
+		const serverless = sorted.filter((p) => p.spec.disableGameServers === true);
+		return serverless.slice(0, 3);
 	};
 
 	let loadingMergeQueue = false;
