@@ -25,7 +25,7 @@
 		ChevronSortOutline,
 		EditOutline
 	} from 'flowbite-svelte-icons';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import {
 		ModifiedFileState,
 		SubmitStatus,
@@ -54,6 +54,11 @@
 	let editingChangeSetIndex: number = -1;
 	let editingChangeSetValue: string = '';
 	let searchInput: string = '';
+
+	// scroll preservation
+	let scrollContainerRef: HTMLElement;
+	const SCROLL_STORAGE_KEY = 'modified-files-scroll';
+	let isRestoringScroll = false;
 
 	// multi select
 	let shiftHeld = false;
@@ -118,6 +123,69 @@
 		changeSetName !== 'default' &&
 		changeSets.find((cs) => cs.name === changeSetName)?.files.length === 0;
 
+	// Scroll preservation helpers
+	const saveScrollPosition = () => {
+		if (isRestoringScroll || !scrollContainerRef) return;
+
+		const rows = scrollContainerRef.querySelectorAll('[data-file-path]');
+		const containerTop = scrollContainerRef.getBoundingClientRect().top;
+
+		// Find the first visible file
+		for (const row of rows) {
+			const rect = row.getBoundingClientRect();
+			const relativeTop = rect.top - containerTop;
+
+			if (relativeTop >= 0 && relativeTop < scrollContainerRef.clientHeight) {
+				const filePath = row.getAttribute('data-file-path');
+				if (filePath) {
+					const data = { filePath, offset: relativeTop };
+					sessionStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(data));
+					break;
+				}
+			}
+		}
+	};
+
+	const restoreScrollPosition = async () => {
+		// Wait for DOM to update
+		await tick();
+
+		if (!scrollContainerRef) return;
+
+		const savedData = sessionStorage.getItem(SCROLL_STORAGE_KEY);
+		if (!savedData) return;
+
+		try {
+			const { filePath, offset } = JSON.parse(savedData);
+
+			// Find the row by iterating instead of querySelector to avoid escaping issues
+			const rows = scrollContainerRef.querySelectorAll('[data-file-path]');
+			let targetRow: Element | null = null;
+
+			for (const row of rows) {
+				if (row.getAttribute('data-file-path') === filePath) {
+					targetRow = row;
+					break;
+				}
+			}
+
+			if (targetRow) {
+				isRestoringScroll = true;
+				const containerTop = scrollContainerRef.getBoundingClientRect().top;
+				const rowTop = targetRow.getBoundingClientRect().top;
+				const currentOffset = rowTop - containerTop;
+
+				scrollContainerRef.scrollTop += currentOffset - offset;
+
+				setTimeout(() => {
+					isRestoringScroll = false;
+				}, 100);
+			}
+		} catch {
+			// Invalid data, ignore
+		}
+	};
+
 	// Make sure every file in every changeset is in modifiedFiles
 	const cleanUpChangeSets = async () => {
 		ensureDefaultChangeset();
@@ -136,6 +204,8 @@
 	// Set up a listener for changes to modifiedFiles
 	$: if (modifiedFiles) {
 		void cleanUpChangeSets();
+		// Restore scroll position when files change
+		setTimeout(restoreScrollPosition, 50);
 	}
 
 	const promptForRevertConfirmation = () => {
@@ -413,8 +483,21 @@
 		}
 	};
 
-	onMount(async () => {
-		await cleanUpChangeSets();
+	onMount(() => {
+		void cleanUpChangeSets();
+
+		// Set up scroll position tracking
+		if (scrollContainerRef) {
+			scrollContainerRef.addEventListener('scroll', saveScrollPosition);
+			// Restore scroll position on initial mount
+			setTimeout(restoreScrollPosition, 100);
+		}
+
+		return () => {
+			if (scrollContainerRef) {
+				scrollContainerRef.removeEventListener('scroll', saveScrollPosition);
+			}
+		};
 	});
 </script>
 
@@ -461,7 +544,7 @@
 			placeholder="Filter files"
 		/>
 	</div>
-	<div class="overflow-y-auto pr-1 mb-16">
+	<div bind:this={scrollContainerRef} class="overflow-y-auto pr-1 mb-16">
 		{#each filteredSortedChangeSets as changeSet, index}
 			<div
 				on:dragover|preventDefault
@@ -616,6 +699,7 @@
 									on:contextmenu={(e) => {
 										onRightClick(e, file);
 									}}
+									data-file-path={file.path}
 									class="text-left border-b-0 {fileIndex % 2 === 0
 										? 'bg-secondary-800 dark:bg-space-950'
 										: 'bg-secondary-700 dark:bg-space-900'}"
