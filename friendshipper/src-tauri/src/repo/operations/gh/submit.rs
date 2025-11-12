@@ -437,6 +437,22 @@ where
         }
 
         if needs_new_pr {
+            // If we're currently on a quicksubmit branch, we need to first checkout
+            // the target branch to ensure the new f11r branch is created from the
+            // latest target branch, not from the old quicksubmit branch.
+            // This prevents including commits from the previous quicksubmit that may
+            // have already been merged.
+            if is_quicksubmit_branch(&prev_branch) {
+                self.git_client
+                    .run(&["checkout", &target_branch], Default::default())
+                    .await?;
+
+                // Pull latest changes from target branch
+                self.git_client
+                    .run(&["pull", "origin", &target_branch], Default::default())
+                    .await?;
+            }
+
             self.git_client
                 .run(&["checkout", "-b", &f11r_branch], Default::default())
                 .await?;
@@ -583,7 +599,10 @@ where
 
             // Checkout a new branch for the worktree in the same state as the f11r branch
             self.git_client
-                .run(&["branch", &worktree_branch], git::Opts::default())
+                .run(
+                    &["branch", &worktree_branch, &f11r_branch],
+                    git::Opts::default(),
+                )
                 .await?;
 
             // now we can resolve any new changes in main with the current changes and push up to the remote
