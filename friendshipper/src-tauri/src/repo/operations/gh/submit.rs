@@ -4,7 +4,7 @@ use axum::{async_trait, Json};
 use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::{params, Octocrab};
 use std::path::PathBuf;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
@@ -437,6 +437,22 @@ where
         }
 
         if needs_new_pr {
+            // If we're currently on a quicksubmit branch, we need to first checkout
+            // the target branch to ensure the new f11r branch is created from the
+            // latest target branch, not from the old quicksubmit branch.
+            // This prevents including commits from the previous quicksubmit that may
+            // have already been merged.
+            if is_quicksubmit_branch(&prev_branch) {
+                self.git_client
+                    .run(&["checkout", &target_branch], Default::default())
+                    .await?;
+
+                // Pull latest changes from target branch
+                self.git_client
+                    .run(&["pull", "origin", &target_branch], Default::default())
+                    .await?;
+            }
+
             self.git_client
                 .run(&["checkout", "-b", &f11r_branch], Default::default())
                 .await?;
@@ -486,6 +502,18 @@ where
                 restore_op.execute().await?;
             }
 
+            // Debug logging to diagnose commit failures
+            let current_branch = self.git_client.current_branch().await?;
+            debug!("About to commit on branch: {}", current_branch);
+
+            // Check what's actually staged before committing
+            let status_output = self
+                .git_client
+                .run_and_collect_output(&["status", "--short"], git::Opts::default())
+                .await
+                .unwrap_or_else(|_| "Failed to get status".to_string());
+            debug!("Git status before commit:\n{}", status_output);
+
             // We can skip the status check because we know for a fact that there are staged files
             let commit_op = CommitOp {
                 message: self.commit_message.clone(),
@@ -494,7 +522,17 @@ where
                 skip_status_check: true,
             };
 
-            commit_op.execute().await?;
+            match commit_op.execute().await {
+                Ok(_) => debug!("Commit succeeded"),
+                Err(e) => {
+                    error!(
+                        "Commit failed on branch '{}' with error: {}",
+                        current_branch, e
+                    );
+                    error!("Status was:\n{}", status_output);
+                    return Err(e);
+                }
+            }
         }
 
         let worktree_path: PathBuf = 'path: {
@@ -583,7 +621,10 @@ where
 
             // Checkout a new branch for the worktree in the same state as the f11r branch
             self.git_client
-                .run(&["branch", &worktree_branch], git::Opts::default())
+                .run(
+                    &["branch", &worktree_branch, &f11r_branch],
+                    git::Opts::default(),
+                )
                 .await?;
 
             // now we can resolve any new changes in main with the current changes and push up to the remote
@@ -622,7 +663,25 @@ where
         // Otherwise create a whole new Github submit op.
         match quicksubmit_pr_id {
             Some(pr_id) => {
-                self.github_client.enqueue_pull_request(pr_id).await?;
+                info!("Reusing existing PR with ID: {}", pr_id);
+
+                // Wait for GitHub to process the force push and run checks before enqueueing.
+                // GitHub may silently reject the enqueue if the PR isn't ready yet.
+                info!(
+                    "Waiting 15 seconds for GitHub to process force push before re-enqueueing..."
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+                info!("Re-enqueueing PR {} to merge queue", pr_id);
+                match self.github_client.enqueue_pull_request(pr_id.clone()).await {
+                    Ok(_) => {
+                        info!("Successfully re-enqueued PR {}", pr_id);
+                    }
+                    Err(e) => {
+                        error!("Failed to re-enqueue PR {}: {}", pr_id, e);
+                        return Err(e.into());
+                    }
+                }
             }
             None => {
                 let gh_op = GitHubSubmitOp {
