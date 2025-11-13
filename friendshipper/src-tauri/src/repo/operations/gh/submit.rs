@@ -665,37 +665,12 @@ where
             Some(pr_id) => {
                 info!("Reusing existing PR with ID: {}", pr_id);
 
-                // We need to wait for the PR to be in a mergeable state before enqueueing.
-                // GitHub will silently reject the enqueue if checks haven't passed yet.
-                info!("Waiting for PR to be mergeable before re-enqueueing...");
-
-                // Poll for up to 60 seconds for the PR to become mergeable
-                let max_wait = std::time::Duration::from_secs(60);
-                let start = std::time::Instant::now();
-                let mut is_mergeable = false;
-
-                while start.elapsed() < max_wait {
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-                    // Check if PR is ready by querying GitHub
-                    // We could check mergeable state here, but for now just give it time
-                    // TODO: Actually query the PR's mergeable state via GraphQL
-
-                    info!(
-                        "Waited {} seconds for PR to be ready...",
-                        start.elapsed().as_secs()
-                    );
-
-                    // For now, just wait 15 seconds minimum
-                    if start.elapsed().as_secs() >= 15 {
-                        is_mergeable = true;
-                        break;
-                    }
-                }
-
-                if !is_mergeable {
-                    warn!("PR may not be mergeable yet, attempting to enqueue anyway");
-                }
+                // Wait for GitHub to process the force push and run checks before enqueueing.
+                // GitHub may silently reject the enqueue if the PR isn't ready yet.
+                info!(
+                    "Waiting 15 seconds for GitHub to process force push before re-enqueueing..."
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
 
                 info!("Re-enqueueing PR {} to merge queue", pr_id);
                 match self.github_client.enqueue_pull_request(pr_id.clone()).await {
