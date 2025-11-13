@@ -4,7 +4,7 @@ use axum::{async_trait, Json};
 use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::{params, Octocrab};
 use std::path::PathBuf;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
@@ -502,6 +502,18 @@ where
                 restore_op.execute().await?;
             }
 
+            // Debug logging to diagnose commit failures
+            let current_branch = self.git_client.current_branch().await?;
+            debug!("About to commit on branch: {}", current_branch);
+
+            // Check what's actually staged before committing
+            let status_output = self
+                .git_client
+                .run_and_collect_output(&["status", "--short"], git::Opts::default())
+                .await
+                .unwrap_or_else(|_| "Failed to get status".to_string());
+            debug!("Git status before commit:\n{}", status_output);
+
             // We can skip the status check because we know for a fact that there are staged files
             let commit_op = CommitOp {
                 message: self.commit_message.clone(),
@@ -510,7 +522,17 @@ where
                 skip_status_check: true,
             };
 
-            commit_op.execute().await?;
+            match commit_op.execute().await {
+                Ok(_) => debug!("Commit succeeded"),
+                Err(e) => {
+                    error!(
+                        "Commit failed on branch '{}' with error: {}",
+                        current_branch, e
+                    );
+                    error!("Status was:\n{}", status_output);
+                    return Err(e);
+                }
+            }
         }
 
         let worktree_path: PathBuf = 'path: {
@@ -641,7 +663,50 @@ where
         // Otherwise create a whole new Github submit op.
         match quicksubmit_pr_id {
             Some(pr_id) => {
-                self.github_client.enqueue_pull_request(pr_id).await?;
+                info!("Reusing existing PR with ID: {}", pr_id);
+
+                // We need to wait for the PR to be in a mergeable state before enqueueing.
+                // GitHub will silently reject the enqueue if checks haven't passed yet.
+                info!("Waiting for PR to be mergeable before re-enqueueing...");
+
+                // Poll for up to 60 seconds for the PR to become mergeable
+                let max_wait = std::time::Duration::from_secs(60);
+                let start = std::time::Instant::now();
+                let mut is_mergeable = false;
+
+                while start.elapsed() < max_wait {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+                    // Check if PR is ready by querying GitHub
+                    // We could check mergeable state here, but for now just give it time
+                    // TODO: Actually query the PR's mergeable state via GraphQL
+
+                    info!(
+                        "Waited {} seconds for PR to be ready...",
+                        start.elapsed().as_secs()
+                    );
+
+                    // For now, just wait 15 seconds minimum
+                    if start.elapsed().as_secs() >= 15 {
+                        is_mergeable = true;
+                        break;
+                    }
+                }
+
+                if !is_mergeable {
+                    warn!("PR may not be mergeable yet, attempting to enqueue anyway");
+                }
+
+                info!("Re-enqueueing PR {} to merge queue", pr_id);
+                match self.github_client.enqueue_pull_request(pr_id.clone()).await {
+                    Ok(_) => {
+                        info!("Successfully re-enqueued PR {}", pr_id);
+                    }
+                    Err(e) => {
+                        error!("Failed to re-enqueue PR {}: {}", pr_id, e);
+                        return Err(e.into());
+                    }
+                }
             }
             None => {
                 let gh_op = GitHubSubmitOp {
