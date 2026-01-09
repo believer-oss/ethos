@@ -42,6 +42,8 @@ export const stopWorkflow = async (workflow: string): Promise<string> =>
 
 export interface CreatePromoteBuildWorkflowRequest {
 	commit: string; // required
+	shard?: string; // optional, from repo config
+	metadata_path?: string; // optional, from repo config
 }
 
 export const createPromoteBuildWorkflow = async (

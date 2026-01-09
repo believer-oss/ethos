@@ -851,16 +851,31 @@ impl KubeClient {
             spec: crate::types::argo::workflow::WorkflowSpec {
                 entrypoint: Some("main".to_string()),
                 arguments: Some(WorkflowArguments {
-                    parameters: Some(vec![
-                        WorkflowParameter {
-                            name: "game_config".to_string(),
-                            value: "development".to_string(),
-                        },
-                        WorkflowParameter {
-                            name: "commit".to_string(),
-                            value: request.commit,
-                        },
-                    ]),
+                    parameters: Some({
+                        let mut params = vec![
+                            WorkflowParameter {
+                                name: "commit".to_string(),
+                                value: request.commit,
+                            },
+                            WorkflowParameter {
+                                name: "game_config".to_string(),
+                                value: "development".to_string(),
+                            },
+                        ];
+                        if let Some(metadata_path) = request.metadata_path {
+                            params.push(WorkflowParameter {
+                                name: "metadata_path".to_string(),
+                                value: metadata_path,
+                            });
+                        }
+                        if let Some(shard) = request.shard {
+                            params.push(WorkflowParameter {
+                                name: "shard".to_string(),
+                                value: shard,
+                            });
+                        }
+                        params
+                    }),
                 }),
                 workflow_template_ref: Some(WorkflowTemplateRef {
                     name: ALLOWED_TEMPLATE_NAME.to_string(),

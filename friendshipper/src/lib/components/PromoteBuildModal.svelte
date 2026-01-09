@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { Modal, Button, Input, Label, Spinner } from 'flowbite-svelte';
+	import { Modal, Button, Input, Label, Spinner, Select } from 'flowbite-svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { createPromoteBuildWorkflow, type CreatePromoteBuildWorkflowRequest } from '$lib/builds';
+	import { dynamicConfig } from '$lib/stores';
 
 	export let showModal: boolean = false;
 	export let commit: string = '';
@@ -11,6 +12,15 @@
 	let showConfirmation: boolean = false;
 	let showSuccess: boolean = false;
 	let successWorkflowName: string = '';
+	let selectedShardName: string = '';
+
+	$: shardOptions = $dynamicConfig?.promotableBuildShards ?? [];
+	$: hasShardOptions = shardOptions.length > 0;
+	$: selectItems = shardOptions.map((s) => ({ value: s.shard, name: s.displayName }));
+	$: selectedShard = shardOptions.find((s) => s.shard === selectedShardName);
+	$: if (hasShardOptions && !selectedShardName) {
+		selectedShardName = shardOptions[0].shard;
+	}
 
 	const handleInitialSubmit = () => {
 		if (!commit) {
@@ -28,7 +38,9 @@
 
 		try {
 			const request: CreatePromoteBuildWorkflowRequest = {
-				commit
+				commit,
+				shard: selectedShard?.shard,
+				metadata_path: selectedShard?.metadataPath
 			};
 
 			const workflow = await createPromoteBuildWorkflow(request);
@@ -66,6 +78,7 @@
 		showConfirmation = false;
 		showSuccess = false;
 		successWorkflowName = '';
+		selectedShardName = hasShardOptions ? shardOptions[0].shard : '';
 		showModal = false;
 	};
 </script>
@@ -86,6 +99,19 @@
 		</div>
 
 		{#if !showSuccess}
+			{#if hasShardOptions}
+				<div>
+					<Label for="shard" class="text-primary-400 mb-2">Target Shard</Label>
+					<Select
+						id="shard"
+						bind:value={selectedShardName}
+						items={selectItems}
+						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
+						disabled={loading}
+					/>
+				</div>
+			{/if}
+
 			<div>
 				<Label for="commit" class="text-primary-400 mb-2">Commit SHA</Label>
 				<Input
@@ -128,6 +154,9 @@
 							</p>
 							<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
 								<div><strong>SHA to be promoted:</strong> {commit}</div>
+								{#if selectedShard}
+									<div><strong>Target shard:</strong> {selectedShard.displayName}</div>
+								{/if}
 							</div>
 							<p class="text-green-300">
 								<strong>What happens next:</strong> Once the workflow completes successfully, launcher
@@ -186,14 +215,27 @@
 							Are you sure you want to promote this build?
 						</h3>
 						<div class="text-sm text-gray-300 space-y-2">
-							<p>
-								<strong>Warning:</strong> This action will deploy a new build that launcher users will
-								download and use.
-							</p>
-							<p class="text-yellow-300">
-								<strong>Impact:</strong> All users with the launcher will be prompted to download this
-								build when they next launch the game.
-							</p>
+							{#if selectedShard}
+								<p>
+									<strong>Warning:</strong> This action will deploy a new build to the
+									<strong class="text-yellow-400">{selectedShard.displayName}</strong> shard that launcher
+									users will download and use.
+								</p>
+								<p class="text-yellow-300">
+									<strong>Impact:</strong> All users on the
+									<strong>{selectedShard.displayName}</strong>
+									shard will be prompted to download this build when they next launch the game.
+								</p>
+							{:else}
+								<p>
+									<strong>Warning:</strong> This action will deploy a new build that launcher users will
+									download and use.
+								</p>
+								<p class="text-yellow-300">
+									<strong>Impact:</strong> All users with the launcher will be prompted to download this
+									build when they next launch the game.
+								</p>
+							{/if}
 						</div>
 					</div>
 				</div>

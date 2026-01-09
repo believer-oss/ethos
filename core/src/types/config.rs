@@ -402,6 +402,22 @@ pub struct TargetBranchConfig {
     pub uses_merge_queue: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromoteBuildShard {
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard: Option<String>,
+
+    #[serde(
+        default,
+        rename = "metadataPath",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub metadata_path: Option<String>,
+}
+
 impl Default for TargetBranchConfig {
     fn default() -> Self {
         TargetBranchConfig {
@@ -591,6 +607,9 @@ pub struct DynamicConfig {
 
     #[serde(default, rename = "mobileURLScheme")]
     pub mobile_url_scheme: String,
+
+    #[serde(default, rename = "promotableBuildShards")]
+    pub promotable_build_shards: Option<Vec<PromoteBuildShard>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
