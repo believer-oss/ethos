@@ -20,6 +20,12 @@ export interface DiscordChannelInfo {
 	url: string;
 }
 
+export interface GameServerCluster {
+	displayName: string;
+	clusterName: string;
+	region: string;
+}
+
 export interface DynamicConfig {
 	maps: string[];
 	playtestDiscordChannels: DiscordChannelInfo[];
@@ -27,6 +33,7 @@ export interface DynamicConfig {
 	profileDataPath: string;
 	mobileURLScheme: string;
 	promotableBuildShards?: PromoteBuildShard[];
+	gameServerClusters?: GameServerCluster[];
 }
 
 export interface ProjectConfig {

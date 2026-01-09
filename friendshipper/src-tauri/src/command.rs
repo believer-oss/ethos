@@ -761,6 +761,61 @@ pub async fn get_servers(
 }
 
 #[tauri::command]
+pub async fn init_additional_clusters(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<String>, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/servers/clusters/init", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_cluster_servers(
+    state: tauri::State<'_, State>,
+    cluster: Option<String>,
+    commit: Option<String>,
+) -> Result<Vec<GameServerResults>, TauriError> {
+    let mut req = state
+        .client
+        .get(format!("{}/servers/clusters/list", state.server_url));
+
+    if let Some(cluster) = cluster {
+        req = req.query(&[("cluster", cluster)]);
+    }
+    if let Some(commit) = commit {
+        req = req.query(&[("commit", commit)]);
+    }
+
+    match req.send().await {
+        Ok(res) => {
+            if is_error_status(res.status()) {
+                Err(create_tauri_error(res).await)
+            } else {
+                match res.json::<Vec<GameServerResults>>().await {
+                    Ok(res) => Ok(res),
+                    Err(err) => Err(TauriError {
+                        message: err.to_string(),
+                        status_code: 0,
+                    }),
+                }
+            }
+        }
+        Err(err) => Err(TauriError {
+            message: err.to_string(),
+            status_code: 0,
+        }),
+    }
+}
+
+#[tauri::command]
 pub async fn get_server(
     state: tauri::State<'_, State>,
     name: &str,

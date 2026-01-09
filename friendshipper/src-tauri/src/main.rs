@@ -214,6 +214,8 @@ fn main() -> Result<(), CoreError> {
                 get_repo_status,
                 get_server,
                 get_servers,
+                get_cluster_servers,
+                init_additional_clusters,
                 get_system_status,
                 get_workflows,
                 get_workflow_nodes,

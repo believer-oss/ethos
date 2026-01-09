@@ -582,6 +582,17 @@ pub struct DiscordChannelInfo {
     pub url: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GameServerCluster {
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+
+    #[serde(rename = "clusterName")]
+    pub cluster_name: String,
+
+    pub region: String,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DynamicConfig {
     #[serde(default, rename = "playtestDiscordChannels")]
@@ -610,6 +621,9 @@ pub struct DynamicConfig {
 
     #[serde(default, rename = "promotableBuildShards")]
     pub promotable_build_shards: Option<Vec<PromoteBuildShard>>,
+
+    #[serde(default, rename = "gameServerClusters")]
+    pub game_server_clusters: Option<Vec<GameServerCluster>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
