@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use opentelemetry_otlp::WithExportConfig;
@@ -48,6 +48,7 @@ pub struct AppState<T> {
 
     pub aws_client: Arc<TokioRwLock<Option<AWSClient>>>,
     pub kube_client: Arc<RwLock<Option<KubeClient>>>,
+    pub additional_kube_clients: Arc<RwLock<HashMap<String, KubeClient>>>,
 
     pub github_client: Arc<RwLock<Option<github::GraphQLClient>>>,
 
@@ -183,6 +184,7 @@ where
             frontend_op_tx,
             aws_client: Arc::new(TokioRwLock::new(aws_client)),
             kube_client,
+            additional_kube_clients: Arc::new(RwLock::new(HashMap::new())),
             github_client,
             version,
             log_path,

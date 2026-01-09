@@ -1,13 +1,18 @@
 <script lang="ts">
-	import { Button, Card, Spinner } from 'flowbite-svelte';
+	import { Button, Card, Spinner, Checkbox, Select } from 'flowbite-svelte';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { CirclePlusOutline, RefreshOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
-	import { appConfig, builds, selectedCommit } from '$lib/stores';
-	import type { ArtifactEntry, GameServerResult, Nullable } from '$lib/types';
+	import { appConfig, builds, dynamicConfig, selectedCommit } from '$lib/stores';
+	import type { ArtifactEntry, GameServerCluster, GameServerResult, Nullable } from '$lib/types';
 	import ServerTable from '$lib/components/servers/ServerTable.svelte';
-	import { getServers, openLogsFolder } from '$lib/gameServers';
+	import {
+		getServers,
+		getClusterServers,
+		initAdditionalClusters,
+		openLogsFolder
+	} from '$lib/gameServers';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
 	import { handleError } from '$lib/utils';
 	import { getBuilds } from '$lib/builds';
@@ -20,17 +25,58 @@
 	let showModal = false;
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
 
+	// Multi-cluster state
+	let multiClusterEnabled = false;
+	let selectedCluster: string = '';
+	let clustersInitialized = false;
+	let initializingClusters = false;
+
+	$: clusters = $dynamicConfig?.gameServerClusters ?? [];
+	$: hasClusters = clusters.length > 0;
+	$: clusterSelectItems = [
+		{ value: '', name: 'Default' },
+		...clusters.map((c: GameServerCluster) => ({ value: c.clusterName, name: c.displayName }))
+	];
+
 	const updateServers = async () => {
 		if ($appConfig.initialized) {
 			loadingMessage = 'Fetching servers...';
 			fetchingServers = true;
 			try {
-				servers = await getServers();
+				if (multiClusterEnabled && selectedCluster) {
+					servers = await getClusterServers(selectedCluster);
+				} else {
+					servers = await getServers();
+				}
 			} catch (e) {
 				await handleError(e);
 			}
 			fetchingServers = false;
 		}
+	};
+
+	const handleMultiClusterToggle = async () => {
+		if (multiClusterEnabled && !clustersInitialized) {
+			// Initialize additional clusters when enabling
+			initializingClusters = true;
+			loadingMessage = 'Initializing cluster connections...';
+			try {
+				await initAdditionalClusters();
+				clustersInitialized = true;
+			} catch (e) {
+				await handleError(e);
+				multiClusterEnabled = false;
+			}
+			initializingClusters = false;
+		}
+
+		// Reset to default cluster when toggling
+		selectedCluster = '';
+		await updateServers();
+	};
+
+	const handleClusterChange = async () => {
+		await updateServers();
 	};
 
 	const handleServerCreate = async () => {
@@ -59,7 +105,7 @@
 	<div class="flex items-center gap-2">
 		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Servers</p>
 		<Button
-			disabled={fetchingServers}
+			disabled={fetchingServers || initializingClusters}
 			class="!p-1.5"
 			primary
 			on:click={async () => {
@@ -73,7 +119,7 @@
 			{/if}
 		</Button>
 		<Button
-			disabled={fetchingServers}
+			disabled={fetchingServers || initializingClusters}
 			class="!p-1.5"
 			primary
 			on:click={async () => {
@@ -91,11 +137,31 @@
 				<CirclePlusOutline class="w-4 h-4" />
 			{/if}
 		</Button>
-		{#if fetchingServers}
+		{#if fetchingServers || initializingClusters}
 			<code class="text-xs text-gray-400 dark:text-gray-400">{loadingMessage}</code>
 		{/if}
 	</div>
 	<div class="flex items-center gap-2">
+		{#if hasClusters}
+			<Checkbox
+				bind:checked={multiClusterEnabled}
+				on:change={handleMultiClusterToggle}
+				disabled={initializingClusters}
+				class="text-sm"
+			>
+				Show All Clusters
+			</Checkbox>
+			{#if multiClusterEnabled}
+				<Select
+					items={clusterSelectItems}
+					bind:value={selectedCluster}
+					on:change={handleClusterChange}
+					disabled={fetchingServers || initializingClusters}
+					size="sm"
+					class="w-40 bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
+				/>
+			{/if}
+		{/if}
 		<Button outline class="!p-1.5" size="xs" on:click={openLogsFolder}>
 			<FolderOpenOutline class="w-4 h-4 mr-1" />
 			Open logs folder

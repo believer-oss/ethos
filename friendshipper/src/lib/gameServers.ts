@@ -7,6 +7,14 @@ export const getServer = async (name: string): Promise<GameServerResult> =>
 export const getServers = async (commit?: string): Promise<GameServerResult[]> =>
 	invoke('get_servers', { commit });
 
+export const initAdditionalClusters = async (): Promise<string[]> =>
+	invoke('init_additional_clusters');
+
+export const getClusterServers = async (
+	cluster?: string,
+	commit?: string
+): Promise<GameServerResult[]> => invoke('get_cluster_servers', { cluster, commit });
+
 export const launchServer = async (req: LaunchRequest): Promise<void> =>
 	invoke('launch_server', { req });
 

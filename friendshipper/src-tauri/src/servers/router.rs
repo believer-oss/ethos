@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info, instrument};
 
 use crate::engine::EngineProvider;
-use ethos_core::clients::kube::ensure_kube_client;
+use ethos_core::clients::kube::{ensure_kube_client, KubeClient};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::{GameServerResults, LaunchRequest};
 
@@ -24,6 +24,8 @@ where
     Router::new()
         .route("/", get(get_servers).post(launch_server))
         .route("/open-logs", post(open_logs_folder))
+        .route("/clusters/init", post(init_additional_clusters))
+        .route("/clusters/list", get(get_cluster_servers))
         .route("/:name", delete(terminate_server).get(get_server))
         .route("/:name/logs", post(download_logs))
         .route("/:name/logs/tail", post(tail_logs))
@@ -314,4 +316,131 @@ async fn open_logs_folder() -> Result<(), CoreError> {
     }
 
     Ok(())
+}
+
+#[instrument(skip(state))]
+async fn init_additional_clusters<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<Vec<String>>, CoreError>
+where
+    T: EngineProvider,
+{
+    let dynamic_config = state.dynamic_config.read().clone();
+    let clusters = match dynamic_config.game_server_clusters {
+        Some(clusters) => clusters,
+        None => return Ok(Json(vec![])),
+    };
+
+    let aws_client_guard = state.aws_client.read().await;
+    let aws_client = match aws_client_guard.as_ref() {
+        Some(client) => client,
+        None => {
+            return Err(CoreError::Internal(anyhow!("AWS client not initialized")));
+        }
+    };
+
+    let mut initialized_clusters = vec![];
+
+    for cluster in clusters {
+        // Check if we already have this client
+        {
+            let clients = state.additional_kube_clients.read();
+            if clients.contains_key(&cluster.cluster_name) {
+                initialized_clusters.push(cluster.cluster_name.clone());
+                continue;
+            }
+        }
+
+        info!(
+            "Initializing kube client for cluster: {} in region: {}",
+            cluster.cluster_name, cluster.region
+        );
+
+        match KubeClient::new(
+            aws_client,
+            cluster.cluster_name.clone(),
+            cluster.region.clone(),
+            Some(state.gameserver_log_tx.clone()),
+        )
+        .await
+        {
+            Ok(kube_client) => {
+                let mut clients = state.additional_kube_clients.write();
+                clients.insert(cluster.cluster_name.clone(), kube_client);
+                initialized_clusters.push(cluster.cluster_name.clone());
+                info!(
+                    "Successfully initialized kube client for cluster: {}",
+                    cluster.cluster_name
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Failed to initialize kube client for cluster {}: {:?}",
+                    cluster.cluster_name, e
+                );
+                // Continue with other clusters even if one fails
+            }
+        }
+    }
+
+    Ok(Json(initialized_clusters))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GetClusterServersParams {
+    cluster: Option<String>,
+    commit: Option<String>,
+}
+
+#[instrument(skip(state))]
+async fn get_cluster_servers<T>(
+    State(state): State<AppState<T>>,
+    params: Query<GetClusterServersParams>,
+) -> Result<Json<Vec<GameServerResults>>, CoreError>
+where
+    T: EngineProvider,
+{
+    let cluster_name = params.cluster.clone();
+
+    let kube_client = match cluster_name {
+        Some(ref name) => {
+            let clients = state.additional_kube_clients.read();
+            match clients.get(name) {
+                Some(client) => client.clone(),
+                None => {
+                    return Err(CoreError::Internal(anyhow!(
+                        "Kube client for cluster {} not initialized. Call /clusters/init first.",
+                        name
+                    )));
+                }
+            }
+        }
+        None => {
+            // Use the default kube client
+            ensure_kube_client(state.kube_client.read().clone())?
+        }
+    };
+
+    let commit = params.commit.clone();
+    let servers = kube_client.list_gameservers(commit).await;
+
+    match servers {
+        Ok(servers) => {
+            let mut servers = servers
+                .into_iter()
+                .filter(|server| server.ip.is_some())
+                .collect::<Vec<_>>();
+
+            servers.sort_by(|a, b| b.creation_timestamp.cmp(&a.creation_timestamp));
+
+            Ok(Json(servers))
+        }
+        Err(e) => {
+            error!("Error getting servers from cluster: {:?}", e);
+            Err(CoreError::Internal(anyhow!(
+                "Error getting servers: {:?}",
+                e
+            )))
+        }
+    }
 }
