@@ -44,6 +44,8 @@ pub struct WorkflowTemplateRef {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 pub struct CreatePromoteBuildWorkflowRequest {
     pub commit: String,
+    pub shard: Option<String>,
+    pub metadata_path: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]

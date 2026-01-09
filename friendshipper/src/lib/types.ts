@@ -26,6 +26,7 @@ export interface DynamicConfig {
 	playtestRegions: string[];
 	profileDataPath: string;
 	mobileURLScheme: string;
+	promotableBuildShards?: PromoteBuildShard[];
 }
 
 export interface ProjectConfig {
@@ -89,6 +90,12 @@ export interface PlaytestProfile {
 export interface TargetBranchConfig {
 	name: string;
 	usesMergeQueue: boolean;
+}
+
+export interface PromoteBuildShard {
+	displayName: string;
+	shard?: string;
+	metadataPath?: string;
 }
 
 export interface RepoConfig {
