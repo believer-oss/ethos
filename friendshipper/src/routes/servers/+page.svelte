@@ -28,7 +28,6 @@
 	// Multi-cluster state
 	let multiClusterEnabled = false;
 	let selectedCluster: string = '';
-	let clustersInitialized = false;
 	let initializingClusters = false;
 
 	$: clusters = $dynamicConfig?.gameServerClusters ?? [];
@@ -56,13 +55,12 @@
 	};
 
 	const handleMultiClusterToggle = async () => {
-		if (multiClusterEnabled && !clustersInitialized) {
-			// Initialize additional clusters when enabling
+		if (multiClusterEnabled) {
+			// Always initialize/refresh clusters when enabling to ensure fresh credentials
 			initializingClusters = true;
 			loadingMessage = 'Initializing cluster connections...';
 			try {
 				await initAdditionalClusters();
-				clustersInitialized = true;
 			} catch (e) {
 				await handleError(e);
 				multiClusterEnabled = false;

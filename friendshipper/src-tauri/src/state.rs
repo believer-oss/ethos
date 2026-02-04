@@ -352,6 +352,52 @@ where
             kube_client.replace(new_kube_client);
         }
 
+        // Refresh additional cluster clients with new credentials
+        if let Some(clusters) = new_dynamic_config.game_server_clusters.as_ref() {
+            // Collect cluster names that need refreshing (must release lock before await)
+            let cluster_names: Vec<String> = {
+                let additional_clients = self.additional_kube_clients.read();
+                additional_clients.keys().cloned().collect()
+            };
+
+            // Create new clients with fresh credentials (without holding the lock)
+            for cluster_name in cluster_names {
+                if let Some(cluster) = clusters.iter().find(|c| c.cluster_name == cluster_name) {
+                    info!(
+                        "Refreshing kube client for cluster: {} with new credentials",
+                        cluster.cluster_name
+                    );
+
+                    match KubeClient::new(
+                        &client,
+                        cluster.cluster_name.clone(),
+                        cluster.region.clone(),
+                        Some(self.gameserver_log_tx.clone()),
+                    )
+                    .await
+                    {
+                        Ok(new_client) => {
+                            let mut additional_clients = self.additional_kube_clients.write();
+                            additional_clients.insert(cluster.cluster_name.clone(), new_client);
+                            info!(
+                                "Successfully refreshed kube client for cluster: {}",
+                                cluster.cluster_name
+                            );
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to refresh kube client for cluster {}: {:?}",
+                                cluster.cluster_name, e
+                            );
+                            // Remove the stale client if refresh failed
+                            let mut additional_clients = self.additional_kube_clients.write();
+                            additional_clients.remove(&cluster.cluster_name);
+                        }
+                    }
+                }
+            }
+        }
+
         // TODO Hardcoding for now, but this will move to dynamic_config
         let s3ap =
             ethos_core::storage::S3ArtifactProvider::new(&client, &client.get_artifact_bucket());
