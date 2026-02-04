@@ -64,7 +64,7 @@ impl ArtifactList {
 
     pub fn sort_by_last_modified(&mut self) -> &Self {
         self.entries
-            .sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+            .sort_by_key(|b| std::cmp::Reverse(b.last_modified));
         self
     }
 
