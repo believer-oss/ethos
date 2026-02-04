@@ -93,8 +93,8 @@ impl RepoWorker {
             self.pause_file_watcher
                 .store(false, std::sync::atomic::Ordering::Relaxed);
 
-            if sequence.completion_tx.is_some() {
-                let _ = sequence.completion_tx.unwrap().send(err);
+            if let Some(tx) = sequence.completion_tx {
+                let _ = tx.send(err);
             }
         }
     }
