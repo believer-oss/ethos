@@ -647,12 +647,27 @@ where
 #[instrument(skip(state))]
 pub async fn create_promote_build_workflow<T>(
     State(state): State<AppState<T>>,
-    Json(payload): Json<CreatePromoteBuildWorkflowRequest>,
+    Json(mut payload): Json<CreatePromoteBuildWorkflowRequest>,
 ) -> Result<Json<Workflow>, CoreError>
 where
     T: EngineProvider,
 {
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+
+    // Get pusher from github client or fallback to user display name
+    if payload.pusher.is_none() {
+        let pusher = if let Some(github_client) = state.github_client.read().clone() {
+            Some(github_client.username.clone())
+        } else {
+            let app_config = state.app_config.read();
+            if !app_config.user_display_name.is_empty() {
+                Some(app_config.user_display_name.clone())
+            } else {
+                None
+            }
+        };
+        payload.pusher = pusher;
+    }
 
     info!(
         "Creating promote build workflow for commit: {}",
