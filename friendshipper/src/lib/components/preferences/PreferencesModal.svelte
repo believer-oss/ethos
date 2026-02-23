@@ -746,6 +746,17 @@
 						The editor will be launched automatically after syncing latest. Disable if you prefer to
 						launch it manually.
 					</Tooltip>
+					<div class="flex flex-row gap-2">
+						<Checkbox
+							bind:checked={localAppConfig.syncAfterQuickSubmit}
+							class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+						/>
+						<Label class="text-white">Sync after quick submit</Label>
+					</div>
+					<Tooltip class="text-sm" placement="bottom">
+						Automatically sync back to the target branch after a quick submit on a content branch.
+						Only applies when not using a merge queue.
+					</Tooltip>
 
 					<Label class="text-white">Github PAT</Label>
 					<Input
