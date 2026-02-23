@@ -93,6 +93,7 @@
 	let syncing = false;
 	let promptForPAT = false;
 	let promptRevertUProject = false;
+	let dismissedUProjectPrompt = false;
 	let preferencesOpen = false;
 
 	// commit inputs
@@ -183,10 +184,12 @@
 		// making changes to the .uproject.
 		if ($appConfig.pullDlls && $appConfig.engineType === 'Prebuilt') {
 			const files = inRepoStatus?.modifiedFiles ?? [];
-			for (const file of files) {
-				if (file.path === $repoConfig?.uprojectPath) {
-					promptRevertUProject = true;
-				}
+			const uprojectModified = files.some((f) => f.path === $repoConfig?.uprojectPath);
+
+			if (uprojectModified && !dismissedUProjectPrompt) {
+				promptRevertUProject = true;
+			} else if (!uprojectModified) {
+				dismissedUProjectPrompt = false;
 			}
 		}
 	});
@@ -622,6 +625,7 @@
 
 	const handleCloseRevertUproject = () => {
 		promptRevertUProject = false;
+		dismissedUProjectPrompt = true;
 	};
 
 	const getStatusBadgeText = (pull: GitHubPullRequest): string => {
