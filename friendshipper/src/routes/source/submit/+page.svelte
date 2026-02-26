@@ -1124,7 +1124,13 @@
 								<td />
 								<td colspan="4" class="border-0">
 									<div class="w-full pb-4 px-6">
-										<p class="text-white">Commit Files</p>
+										<p class="text-white flex items-center gap-1">
+											Commit Files
+											{#if !loadingCommitFiles}
+												<span class="text-xs text-gray-400 font-italic">({commitFiles.length})</span
+												>
+											{/if}
+										</p>
 										{#if loadingCommitFiles}
 											<Spinner class="w-4 h-4" />
 										{:else}
