@@ -1062,11 +1062,16 @@ pub async fn delete_playtest(
 // Project
 #[tauri::command]
 pub async fn open_project(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-    state
+    let res = state
         .client
         .post(format!("{}/project/open-project", state.server_url))
         .send()
         .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
     Ok(())
 }
 
