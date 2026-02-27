@@ -167,12 +167,19 @@ pub struct AppConfig {
     #[serde(skip_serializing_if = "Option::is_none", rename = "otlp_headers")]
     pub otlp_headers: Option<String>,
 
+    #[serde(default = "default_true", rename = "syncAfterQuickSubmit")]
+    pub sync_after_quick_submit: bool,
+
     #[serde(default)]
     pub initialized: bool,
 }
 
 fn default_playtest_region() -> String {
     AWS_REGION.to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl AppConfig {
@@ -218,6 +225,7 @@ impl AppConfig {
             otlp_endpoint: None,
             otlp_headers: None,
             max_client_cache_size_gb: 32,
+            sync_after_quick_submit: true,
             initialized: false,
         }
     }

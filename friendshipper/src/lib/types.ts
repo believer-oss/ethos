@@ -85,6 +85,7 @@ export interface AppConfig {
 	selectedArtifactProject: string;
 	maxClientCacheSizeGb: number;
 	playtestRegion: string;
+	syncAfterQuickSubmit: boolean;
 	initialized: boolean;
 }
 

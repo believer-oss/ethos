@@ -1,3 +1,5 @@
+use std::sync::mpsc::Sender;
+
 use anyhow::anyhow;
 use axum::extract::State;
 use axum::{async_trait, Json};
@@ -8,12 +10,15 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
+use crate::repo::operations::pull::PullOp;
 use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use ethos_core::clients::git;
 use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
+use ethos_core::longtail::Longtail;
+use ethos_core::msg::LongtailMsg;
 use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
@@ -55,6 +60,9 @@ where
     pub git_client: git::Git,
     pub token: String,
     pub github_client: github::GraphQLClient,
+
+    pub longtail: Longtail,
+    pub longtail_tx: Sender<LongtailMsg>,
 }
 
 const SUBMIT_PREFIX: &str = "[quick submit]";
@@ -738,6 +746,36 @@ where
 
             // unlock all files submitted
             lock_op.execute().await?;
+
+            // If auto-sync is enabled, perform a full sync (same as clicking "Sync")
+            // to checkout the target branch, pull latest, download DLLs, etc.
+            if self.app_config.read().sync_after_quick_submit {
+                info!("Auto-syncing back to target branch after quick submit");
+                if let (Some(aws_client), Some(storage)) =
+                    (self.aws_client.clone(), self.storage.clone())
+                {
+                    let pull_op = PullOp {
+                        app_config: self.app_config.clone(),
+                        repo_config: self.repo_config.clone(),
+                        repo_status: self.repo_status.clone(),
+                        longtail: self.longtail.clone(),
+                        longtail_tx: self.longtail_tx.clone(),
+                        aws_client,
+                        storage,
+                        git_client: self.git_client.clone(),
+                        github_client: Some(self.github_client.clone()),
+                        engine: self.engine.clone(),
+                    };
+                    if let Err(e) = pull_op.execute().await {
+                        warn!(
+                            "Auto-sync after quick submit failed (submit was successful): {}",
+                            e
+                        );
+                    }
+                } else {
+                    warn!("Auto-sync skipped: AWS client or storage not available");
+                }
+            }
         }
 
         Ok(())
@@ -770,6 +808,9 @@ where
         None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
     };
 
+    let aws_client = state.aws_client.read().await.clone();
+    let storage = state.storage.read().clone();
+
     let submit_op = SubmitOp {
         files: request.files.clone(),
         commit_message: request.commit_message.clone(),
@@ -777,13 +818,16 @@ where
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
         engine: state.engine.clone(),
-        aws_client: None,
-        storage: None,
+        aws_client,
+        storage,
         repo_status: state.repo_status.clone(),
 
         git_client: state.git(),
         token: token.to_string(),
         github_client,
+
+        longtail: state.longtail.clone(),
+        longtail_tx: state.longtail_tx.clone(),
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
