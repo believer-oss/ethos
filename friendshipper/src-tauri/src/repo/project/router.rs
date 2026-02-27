@@ -62,17 +62,29 @@ async fn open_project<T>(State(state): State<AppState<T>>) -> Result<(), CoreErr
 where
     T: EngineProvider,
 {
-    let allow_multiple = if state.app_config.read().engine_allow_multiple_processes {
-        AllowMultipleProcesses::True
-    } else {
-        AllowMultipleProcesses::False
+    let (allow_multiple, is_prebuilt) = {
+        let config = state.app_config.read();
+        let allow_multiple = if config.engine_allow_multiple_processes {
+            AllowMultipleProcesses::True
+        } else {
+            AllowMultipleProcesses::False
+        };
+        (allow_multiple, config.engine_type == EngineType::Prebuilt)
     };
 
     state
         .engine
         .open_project(allow_multiple)
         .await
-        .map_err(|e| CoreError::Internal(anyhow!(e)))
+        .map_err(|e| {
+            if is_prebuilt && e.to_string().contains("Could not find UnrealEditor executable") {
+                CoreError::Internal(anyhow!(
+                    "Unreal Editor not found at the expected location. Use the 'Redownload engine' option in the dropdown next to 'Open Editor' to download the engine binaries."
+                ))
+            } else {
+                CoreError::Internal(anyhow!(e))
+            }
+        })
 }
 
 async fn sln_handler<T>(
