@@ -1,5 +1,8 @@
+use crate::types::github::commits::get_commit_merge_timestamps::GetCommitMergeTimestampsRepositoryRefTarget;
 use crate::types::github::commits::get_commit_statuses::GetCommitStatusesRepositoryDefaultBranchRefTarget;
-use crate::types::github::commits::{get_commit_statuses, GetCommitStatuses};
+use crate::types::github::commits::{
+    get_commit_merge_timestamps, get_commit_statuses, GetCommitMergeTimestamps, GetCommitStatuses,
+};
 use crate::types::github::merge_queue::get_merge_queue::GetMergeQueueRepositoryMergeQueue;
 use crate::types::github::merge_queue::{get_merge_queue, GetMergeQueue};
 use crate::types::github::pulls::get_pull_request::GetPullRequestRepositoryPullRequest;
@@ -29,6 +32,7 @@ pub struct GraphQLClient {
 }
 
 pub type CommitStatusMap = HashMap<String, String>;
+pub type MergeTimestampMap = HashMap<String, String>;
 
 impl GraphQLClient {
     #[instrument(skip(token))]
@@ -443,6 +447,108 @@ impl GraphQLClient {
                 }
             }
         });
+        Ok(map)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_commit_merge_timestamps(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        limit: i64,
+    ) -> Result<MergeTimestampMap> {
+        let res = match post_graphql::<GetCommitMergeTimestamps, _>(
+            &self.client,
+            GITHUB_GRAPHQL_URL,
+            get_commit_merge_timestamps::Variables {
+                owner: owner.to_string(),
+                name: repo.to_string(),
+                qualified_name: branch.to_string(),
+                limit,
+            },
+        )
+        .await
+        {
+            Ok(res) => res,
+            Err(e) => {
+                error!("Request to get commit merge timestamps failed: {}", e);
+                return Err(anyhow!("Request to get commit merge timestamps failed"));
+            }
+        };
+
+        let data = match res.data {
+            Some(data) => data,
+            None => {
+                error!("Response data was empty: {:?}", res);
+                return Err(anyhow!("Failed to get valid response data"));
+            }
+        };
+
+        let repo = match &data.repository {
+            Some(repo) => repo,
+            None => {
+                error!("Failed to get valid repository: {:?}", data);
+                return Err(anyhow!("Failed to get valid repository"));
+            }
+        };
+
+        let branch_ref = match &repo.ref_ {
+            Some(r) => r,
+            None => {
+                error!("Failed to get valid ref for branch {}: {:?}", branch, data);
+                return Err(anyhow!("Failed to get valid ref for branch {}", branch));
+            }
+        };
+
+        let target = match &branch_ref.target {
+            Some(t) => t,
+            None => {
+                error!("Failed to get valid ref target: {:?}", data);
+                return Err(anyhow!("Failed to get valid ref target"));
+            }
+        };
+
+        let commit = match target {
+            GetCommitMergeTimestampsRepositoryRefTarget::Commit(commit) => commit,
+            _ => {
+                error!("Ref target is not a commit: {:?}", data);
+                return Err(anyhow!("Ref target is not a commit"));
+            }
+        };
+
+        let history_nodes = match &commit.history.nodes {
+            Some(nodes) => nodes,
+            None => {
+                error!("Failed to get valid history nodes: {:?}", data);
+                return Err(anyhow!("Failed to get valid history nodes"));
+            }
+        };
+
+        let mut map = HashMap::new();
+        for node in history_nodes.iter().flatten() {
+            let short_oid = node.oid.chars().take(8).collect::<String>();
+            if let Some(prs) = &node.associated_pull_requests {
+                if let Some(pr_nodes) = &prs.nodes {
+                    // Find the PR whose merge commit matches this commit
+                    let matching_pr = pr_nodes.iter().flatten().find(|pr| {
+                        pr.merged_at.is_some()
+                            && pr
+                                .merge_commit
+                                .as_ref()
+                                .is_some_and(|mc| mc.oid == node.oid)
+                    });
+                    // Fall back to any merged PR if no exact match
+                    let pr = matching_pr
+                        .or_else(|| pr_nodes.iter().flatten().find(|pr| pr.merged_at.is_some()));
+                    if let Some(pr) = pr {
+                        if let Some(merged_at) = &pr.merged_at {
+                            map.insert(short_oid, merged_at.clone());
+                        }
+                    }
+                }
+            }
+        }
         Ok(map)
     }
 }

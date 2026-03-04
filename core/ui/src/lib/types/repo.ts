@@ -45,6 +45,7 @@ export interface Commit {
 	timestamp: string;
 	local?: boolean;
 	status?: string;
+	mergeTimestamp?: string;
 }
 
 export interface CommitFileInfo {

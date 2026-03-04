@@ -127,6 +127,7 @@ impl LogOp {
                     author: Some(parts[2].to_string()),
                     timestamp,
                     status: None,
+                    merge_timestamp: None,
                 })
             })
             .collect::<Vec<_>>();
@@ -337,6 +338,7 @@ impl BranchCompareOp {
                             author: Some(parts[2].to_string()),
                             timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
                             status: None,
+                            merge_timestamp: None,
                         })
                     } else {
                         None

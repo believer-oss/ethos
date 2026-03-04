@@ -100,7 +100,8 @@
 		{/if}
 		<TableHeadCell class="pl-1">SHA</TableHeadCell>
 		<TableHeadCell>Message</TableHeadCell>
-		<TableHeadCell>Timestamp</TableHeadCell>
+		<TableHeadCell>Committed</TableHeadCell>
+		<TableHeadCell>Merged</TableHeadCell>
 		<TableHeadCell>Author</TableHeadCell>
 		<TableHeadCell />
 	</TableHead>
@@ -167,7 +168,12 @@
 					>
 				</TableBodyCell>
 				<TableBodyCell class="py-2 {isCommitLatestLocal(commit.sha) ? 'font-bold' : 'font-light'}"
-					>{commit.timestamp}</TableBodyCell
+					>{commit.timestamp ? new Date(commit.timestamp).toLocaleString() : ''}</TableBodyCell
+				>
+				<TableBodyCell class="py-2 {isCommitLatestLocal(commit.sha) ? 'font-bold' : 'font-light'}"
+					>{commit.mergeTimestamp
+						? new Date(commit.mergeTimestamp).toLocaleString()
+						: ''}</TableBodyCell
 				>
 				<TableBodyCell class="py-2 {isCommitLatestLocal(commit.sha) ? 'font-bold' : 'font-light'}"
 					>{commit.author}</TableBodyCell
@@ -200,7 +206,7 @@
 						: 'bg-secondary-800 dark:bg-space-950'}"
 				>
 					<td />
-					<td colspan="4" class="border-0">
+					<td colspan="5" class="border-0">
 						<div class="w-full pb-4 px-6">
 							<p class="text-white">Commit Files</p>
 							{#if loadingCommitFiles}
@@ -218,7 +224,7 @@
 			{/if}
 		{:else}
 			<TableBodyRow class="text-left border-b-0 p-2 bg-secondary-700">
-				<td colspan="6" class="p-4 py-2">
+				<td colspan="7" class="p-4 py-2">
 					<span class="text-gray-400">No commits yet! (We may still be loading.)</span>
 				</td>
 			</TableBodyRow>

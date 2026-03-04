@@ -1,0 +1,30 @@
+query GetCommitMergeTimestamps($owner: String!, $name: String!, $qualifiedName: String!, $limit: Int!) {
+    repository(owner: $owner, name: $name) {
+        ref(qualifiedName: $qualifiedName) {
+            __typename
+            target {
+                __typename
+                ... on Commit {
+                    history(first: $limit) {
+                        __typename
+                        nodes {
+                            __typename
+                            oid
+                            associatedPullRequests(first: 5, orderBy: {field: CREATED_AT, direction: DESC}) {
+                                __typename
+                                nodes {
+                                    __typename
+                                    mergedAt
+                                    mergeCommit {
+                                        __typename
+                                        oid
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

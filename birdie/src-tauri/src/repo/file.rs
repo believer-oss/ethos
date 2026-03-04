@@ -329,6 +329,7 @@ pub async fn get_file_history(
                 author: Some(parts[2].to_string()),
                 timestamp: Some(timestamp.with_timezone(&chrono::Local).to_string()),
                 status: None,
+                merge_timestamp: None,
             }
         })
         .collect::<Vec<_>>();
