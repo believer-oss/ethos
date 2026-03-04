@@ -15,6 +15,8 @@ pub struct Commit {
     pub message: Option<String>,
     pub timestamp: Option<String>,
     pub status: Option<String>,
+    #[serde(rename = "mergeTimestamp")]
+    pub merge_timestamp: Option<String>,
 }
 
 impl fmt::Display for Commit {
@@ -34,6 +36,7 @@ impl TryFrom<String> for Commit {
                 message: None,
                 timestamp: None,
                 status: None,
+                merge_timestamp: None,
             })
         } else {
             Err("Must pass valid short sha for commit")

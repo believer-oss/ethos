@@ -552,7 +552,8 @@
 								<TableHeadCell class="p-2">Commit</TableHeadCell>
 								<TableHeadCell class="p-2">Message</TableHeadCell>
 								<TableHeadCell class="p-2">Author</TableHeadCell>
-								<TableHeadCell class="p-2">Timestamp</TableHeadCell>
+								<TableHeadCell class="p-2">Committed</TableHeadCell>
+								<TableHeadCell class="p-2">Merged</TableHeadCell>
 							</TableHead>
 							<TableBody>
 								{#each branchComparison as commit, index}
@@ -583,6 +584,11 @@
 										</TableBodyCell>
 										<TableBodyCell class="p-2 text-center">
 											{commit.timestamp ? new Date(commit.timestamp).toLocaleString() : 'Unknown'}
+										</TableBodyCell>
+										<TableBodyCell class="p-2 text-center">
+											{commit.mergeTimestamp
+												? new Date(commit.mergeTimestamp).toLocaleString()
+												: ''}
 										</TableBodyCell>
 									</TableBodyRow>
 								{/each}
