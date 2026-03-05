@@ -743,6 +743,12 @@ impl Git {
         &self,
         branch: &str,
     ) -> anyhow::Result<Vec<String>> {
+        // If the remote branch doesn't exist, there are no incoming files to conflict with.
+        // This is expected for local-only dev branches (e.g. coho/feature-name).
+        if !self.has_remote_branch(branch).await? {
+            return Ok(vec![]);
+        }
+
         // Get current untracked files
         let untracked_files = self.get_untracked_files().await?;
 
@@ -767,6 +773,14 @@ impl Git {
             Opts::new_with_ignored(&["remote ref does not exist"]),
         )
         .await
+    }
+
+    pub async fn has_local_branch(&self, branch: &str) -> anyhow::Result<bool> {
+        let output = self
+            .run_and_collect_output(&["branch", "--list", branch], Opts::default())
+            .await?;
+
+        Ok(!output.trim().is_empty())
     }
 
     pub async fn has_remote_branch(&self, branch: &str) -> anyhow::Result<bool> {

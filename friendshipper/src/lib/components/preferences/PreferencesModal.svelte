@@ -416,7 +416,7 @@
 
 <Modal
 	defaultClass="relative flex flex-col bg-secondary-700 dark:bg-space-900 h-[calc(100vh-6rem)]"
-	bodyClass="!border-t-0 pb-16"
+	bodyClass="!border-t-0 flex-1 overflow-y-auto"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
@@ -987,7 +987,7 @@
 	</Card>
 
 	<div
-		class="absolute flex flex-col gap-2 bottom-0 left-0 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900"
+		class="flex flex-col gap-2 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900 shrink-0"
 	>
 		{#if configError !== ''}
 			<Helper class="p-2 rounded-md bg-red-800 dark:bg-red-800">

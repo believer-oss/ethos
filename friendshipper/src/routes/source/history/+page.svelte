@@ -52,18 +52,22 @@
 		try {
 			inAsyncOperation = true;
 			asyncModalText = 'Pulling latest with git';
-			await syncLatest();
-			await refresh();
+			const result = await syncLatest();
 
-			if (!$appConfig.pullDlls) {
-				asyncModalText = 'Generating projects';
-				await generateSln();
-			} else if ($appConfig.openUprojectAfterSync) {
-				asyncModalText = 'Launching Unreal Engine';
-				await openProject();
+			if (result.alreadyUpToDate) {
+				await emit('success', 'Already up to date!');
+			} else {
+				await refresh();
+				if (!$appConfig.pullDlls) {
+					asyncModalText = 'Generating projects';
+					await generateSln();
+				} else if ($appConfig.openUprojectAfterSync) {
+					asyncModalText = 'Launching Unreal Engine';
+					await openProject();
+				}
+
+				await emit('success', 'Sync complete!');
 			}
-
-			await emit('success', 'Sync complete!');
 		} catch (e) {
 			await emit('error', e);
 		}

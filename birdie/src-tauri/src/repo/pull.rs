@@ -107,5 +107,8 @@ pub async fn pull_handler(
         return Err(e);
     }
 
-    Ok(Json(PullResponse { conflicts: None }))
+    Ok(Json(PullResponse {
+        conflicts: None,
+        already_up_to_date: false,
+    }))
 }

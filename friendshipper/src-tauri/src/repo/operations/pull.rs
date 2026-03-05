@@ -23,6 +23,7 @@ use ethos_core::AWSClient;
 use crate::config::RepoConfigRef;
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
+use crate::repo::operations::validate::validate_repo_state;
 use crate::repo::operations::UpdateEngineOp;
 use crate::state::AppState;
 
@@ -71,7 +72,16 @@ where
             .clone()
             .map_or(String::default(), |x| x.username.clone());
 
+        let current_branch = self.git_client.current_branch().await?;
+
         self.engine.check_ready_to_sync_repo().await?;
+
+        // Validate git state before proceeding
+        {
+            let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
+            let repo_status = self.repo_status.read().clone();
+            validate_repo_state(&repo_path, &repo_status)?;
+        }
 
         {
             let status_op = StatusOp {
@@ -92,7 +102,6 @@ where
         }
 
         // Check for conflicts with incoming changes before creating snapshot
-        let current_branch = self.git_client.current_branch().await?;
         let branch_for_conflict_check = if is_quicksubmit_branch(&current_branch) {
             // For f11r branches, check conflicts against the target branch since that's what we'll actually pull from
             self.app_config.read().target_branch.clone()
@@ -143,7 +152,22 @@ where
         // potential conflicts when making another Quick Submit.
         if is_quicksubmit_branch(&branch) {
             let target_branch = self.app_config.read().target_branch.clone();
-            self.git_client.checkout(&target_branch).await?;
+
+            // Ensure target branch is available locally before checkout
+            if !self.git_client.has_local_branch(&target_branch).await? {
+                info!(
+                    "Target branch '{}' not found locally, fetching from remote",
+                    target_branch
+                );
+                self.git_client
+                    .run(
+                        &["checkout", "--track", &format!("origin/{}", target_branch)],
+                        Default::default(),
+                    )
+                    .await?;
+            } else {
+                self.git_client.checkout(&target_branch).await?;
+            }
 
             // cleanup the old quicksubmit branch
             if self.git_client.has_remote_branch(&branch).await? {
@@ -185,25 +209,13 @@ where
             // since the submitter synced. Since we pull using a rebase, the local commits will be safely merged with the upstream ones
             // and essentially disappear.
 
-            let repo_status = self.repo_status.read();
-            if !repo_status.conflicts.is_empty() {
-                return Err(CoreError::Input(anyhow!(
-                    "Conflicts detected, cannot pull. See Diagnostics."
-                )));
-            }
-        }
-
-        // Check repo status to see if we need to pull at all.
-        // Skip this check if this is the first sync after startup (last_updated is Unix epoch),
-        // because commits_behind may be 0 due to stale remote refs before any fetch occurs.
-        {
-            let repo_status = self.repo_status.read().clone();
-            let is_first_sync = repo_status.last_updated == chrono::DateTime::UNIX_EPOCH;
-
-            if !is_first_sync && repo_status.commits_behind == 0 {
-                info!("no commits behind, skipping pull");
-
-                return Ok(());
+            {
+                let repo_status = self.repo_status.read();
+                if !repo_status.conflicts.is_empty() {
+                    return Err(CoreError::Input(anyhow!(
+                        "Conflicts detected, cannot pull. See Diagnostics."
+                    )));
+                }
             }
         }
 
@@ -379,6 +391,44 @@ pub async fn pull_handler<T>(
 where
     T: EngineProvider,
 {
+    // Fast path: fetch and compare HEAD vs remote to skip everything if already up to date.
+    // Only applies to non-f11r branches.
+    let git_client = state.git();
+    let current_branch = git_client.current_branch().await?;
+    if !is_quicksubmit_branch(&current_branch) {
+        git_client
+            .fetch(git::ShouldPrune::Yes, git::Opts::new_without_logs())
+            .await?;
+
+        if git_client.has_remote_branch(&current_branch).await? {
+            let local_head = git_client
+                .run_and_collect_output(&["rev-parse", "HEAD"], git::Opts::new_without_logs())
+                .await?;
+            let remote_head = git_client
+                .run_and_collect_output(
+                    &["rev-parse", &format!("origin/{}", current_branch)],
+                    git::Opts::new_without_logs(),
+                )
+                .await?;
+
+            if local_head.trim() == remote_head.trim() {
+                info!(
+                    "Already up to date (HEAD matches origin/{}), skipping sync",
+                    current_branch
+                );
+                return Ok(Json(PullResponse {
+                    conflicts: None,
+                    already_up_to_date: true,
+                }));
+            }
+        } else {
+            return Err(CoreError::Input(anyhow!(
+                "Branch '{}' does not exist on the remote. Push it first, or switch to a tracked branch before syncing.",
+                current_branch
+            )));
+        }
+    }
+
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
     let storage = match state.storage.read().clone() {
@@ -413,5 +463,8 @@ where
         return Err(e);
     }
 
-    Ok(Json(PullResponse { conflicts: None }))
+    Ok(Json(PullResponse {
+        conflicts: None,
+        already_up_to_date: false,
+    }))
 }
