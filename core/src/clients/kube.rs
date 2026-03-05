@@ -842,10 +842,21 @@ impl KubeClient {
 
         let pp = PostParams::default();
 
+        let mut labels = std::collections::BTreeMap::new();
+        labels.insert(
+            "workflows.argoproj.io/workflow-template".to_string(),
+            ALLOWED_TEMPLATE_NAME.to_string(),
+        );
+        labels.insert("believer.dev/commit".to_string(), request.commit.clone());
+        if let Some(pusher) = &request.pusher {
+            labels.insert("believer.dev/pusher".to_string(), pusher.clone());
+        }
+
         let workflow = Workflow {
             metadata: kube::api::ObjectMeta {
                 generate_name: Some("promote-fellowship-build-".to_string()),
                 namespace: Some(ALLOWED_NAMESPACE.to_string()),
+                labels: Some(labels),
                 ..Default::default()
             },
             spec: crate::types::argo::workflow::WorkflowSpec {

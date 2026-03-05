@@ -46,6 +46,7 @@ pub struct CreatePromoteBuildWorkflowRequest {
     pub commit: String,
     pub shard: Option<String>,
     pub metadata_path: Option<String>,
+    pub pusher: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
