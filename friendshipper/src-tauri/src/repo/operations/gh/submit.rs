@@ -8,6 +8,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
+use crate::repo::operations::validate::validate_repo_state;
 use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
@@ -215,6 +216,13 @@ where
             return Err(CoreError::Input(anyhow!("No files to submit")));
         }
 
+        // Validate git state before proceeding
+        {
+            let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
+            let repo_status = self.repo_status.read().clone();
+            validate_repo_state(&repo_path, &repo_status)?;
+        }
+
         let status_op = StatusOp {
             repo_status: self.repo_status.clone(),
             app_config: self.app_config.clone(),
@@ -351,6 +359,15 @@ where
     pub async fn execute_internal(&self) -> Result<(), CoreError> {
         let target_branch = self.app_config.read().target_branch.clone();
         let prev_branch = self.repo_status.read().branch.clone();
+
+        // Validate target branch exists on remote before proceeding
+        if !self.git_client.has_remote_branch(&target_branch).await? {
+            return Err(CoreError::Input(anyhow!(
+                "Target branch '{}' does not exist on remote. Check your target branch configuration.",
+                target_branch
+            )));
+        }
+
         let target_branch_configs = self.repo_config.read().target_branches.clone();
         let use_merge_queue = target_branch_configs
             .iter()
@@ -443,9 +460,30 @@ where
             // This prevents including commits from the previous quicksubmit that may
             // have already been merged.
             if is_quicksubmit_branch(&prev_branch) {
-                self.git_client
-                    .run(&["checkout", &target_branch], Default::default())
-                    .await?;
+                // A branch swap is about to happen — block if the engine is running,
+                // since swapping files out from under Unreal can cause issues.
+                if self.engine.check_ready_to_sync_repo().await.is_err() {
+                    return Err(CoreError::Input(anyhow!(
+                        "Unreal Editor must be closed before submitting. Your previous submit branch has been merged, so a branch swap is required."
+                    )));
+                }
+                // Ensure target branch is available locally before checkout
+                if !self.git_client.has_local_branch(&target_branch).await? {
+                    info!(
+                        "Target branch '{}' not found locally, fetching from remote",
+                        target_branch
+                    );
+                    self.git_client
+                        .run(
+                            &["checkout", "--track", &format!("origin/{}", target_branch)],
+                            Default::default(),
+                        )
+                        .await?;
+                } else {
+                    self.git_client
+                        .run(&["checkout", &target_branch], Default::default())
+                        .await?;
+                }
 
                 // Pull latest changes from target branch
                 self.git_client

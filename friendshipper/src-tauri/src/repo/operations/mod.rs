@@ -44,3 +44,4 @@ mod show;
 mod snapshot;
 mod status;
 mod update_engine;
+pub mod validate;

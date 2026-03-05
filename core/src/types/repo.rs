@@ -348,9 +348,12 @@ pub struct LockRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PullResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conflicts: Option<Vec<String>>,
+    #[serde(default)]
+    pub already_up_to_date: bool,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]

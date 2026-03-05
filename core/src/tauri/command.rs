@@ -521,7 +521,7 @@ pub async fn release_locks(
 }
 
 #[tauri::command]
-pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<PullResponse, TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/pull", state.server_url))
@@ -548,7 +548,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
         }
     };
 
-    if let Some(conflicts) = response.conflicts {
+    if let Some(ref conflicts) = response.conflicts {
         if !conflicts.is_empty() {
             return Err(TauriError {
                 message: format!("Failed to pull due to file conflict: {}", conflicts[0]),
@@ -557,7 +557,7 @@ pub async fn sync_latest(state: tauri::State<'_, State>) -> Result<(), TauriErro
         }
     }
 
-    Ok(())
+    Ok(response)
 }
 
 // Config

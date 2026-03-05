@@ -206,17 +206,21 @@
 		try {
 			syncing = true;
 			progressModalText = 'Pulling latest with git';
-			await syncLatest();
+			const result = await syncLatest();
 
-			if (!$appConfig.pullDlls) {
-				progressModalText = 'Generating projects';
-				await generateSln();
-			} else if ($appConfig.openUprojectAfterSync) {
-				progressModalText = 'Launching Unreal Engine';
-				await openProject();
+			if (result.alreadyUpToDate) {
+				await emit('success', 'Already up to date!');
+			} else {
+				if (!$appConfig.pullDlls) {
+					progressModalText = 'Generating projects';
+					await generateSln();
+				} else if ($appConfig.openUprojectAfterSync) {
+					progressModalText = 'Launching Unreal Engine';
+					await openProject();
+				}
+
+				await emit('success', 'Sync complete!');
 			}
-
-			await emit('success', 'Sync complete!');
 		} catch (e) {
 			await emit('error', e);
 		}

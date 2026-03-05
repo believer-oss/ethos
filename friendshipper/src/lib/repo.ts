@@ -102,7 +102,11 @@ export const revertFiles = async (req: RevertFilesRequest): Promise<void> =>
 export const getPullRequests = async (limit: number): Promise<GitHubPullRequest[]> =>
 	invoke('get_pull_requests', { limit });
 
-export const syncLatest = async (): Promise<void> => invoke('sync_latest');
+export interface SyncResponse {
+	alreadyUpToDate: boolean;
+}
+
+export const syncLatest = async (): Promise<SyncResponse> => invoke('sync_latest');
 
 export const openProject = async (): Promise<void> => invoke('open_project');
 

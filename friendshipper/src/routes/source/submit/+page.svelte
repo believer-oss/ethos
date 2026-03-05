@@ -38,7 +38,8 @@
 		type CommitFileInfo,
 		type ModifiedFile,
 		ModifiedFilesCard,
-		ProgressModal
+		ProgressModal,
+		SubmitStatus
 	} from '@ethos/core';
 	import { get } from 'svelte/store';
 	import { Menu, MenuItem } from '@tauri-apps/api/menu';
@@ -85,7 +86,7 @@
 	} from '$lib/stores';
 	import { openUrl } from '$lib/utils';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
-	import { openUrlForPath } from '$lib/engine';
+	import { checkEngineReady, openUrlForPath } from '$lib/engine';
 
 	let loading = false;
 	let fetchingPulls = false;
@@ -174,11 +175,13 @@
 	};
 
 	const unsubscribeRepoStatus = repoStatus.subscribe((inRepoStatus: Nullable<RepoStatus>) => {
-		$selectedFiles = $selectedFiles.filter(
-			(file) =>
-				inRepoStatus?.modifiedFiles.some((f) => f.path === file.path) ||
-				inRepoStatus?.untrackedFiles.some((f) => f.path === file.path)
-		);
+		const allFiles = [
+			...(inRepoStatus?.modifiedFiles ?? []),
+			...(inRepoStatus?.untrackedFiles ?? [])
+		];
+		$selectedFiles = $selectedFiles
+			.map((file) => allFiles.find((f) => f.path === file.path))
+			.filter((file): file is ModifiedFile => file !== undefined);
 
 		// If a user is pulling their own game DLLs, they likely are not an engineer and should not be
 		// making changes to the .uproject.
@@ -194,7 +197,12 @@
 		}
 	});
 
-	$: canSubmit = $selectedFiles.length > 0 && get(commitMessage) !== '' && commitMessageValid;
+	$: hasUnsubmittableFiles = $selectedFiles.some((file) => file.submitStatus !== SubmitStatus.Ok);
+	$: canSubmit =
+		$selectedFiles.length > 0 &&
+		get(commitMessage) !== '' &&
+		commitMessageValid &&
+		!hasUnsubmittableFiles;
 
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
@@ -315,6 +323,16 @@
 	};
 
 	const handleRevertFiles = async () => {
+		try {
+			const engineReady = await checkEngineReady();
+			if (!engineReady) {
+				await emit('error', 'Unreal Editor must be closed before reverting files.');
+				return;
+			}
+		} catch {
+			// If the check fails, proceed
+		}
+
 		loading = true;
 		syncing = true;
 		showProgressModal = true;
@@ -446,18 +464,23 @@
 			showProgressModal = true;
 			progressModalTitle = 'Pulling latest with git';
 
-			await syncLatest();
-			await refreshFiles(true);
+			const result = await syncLatest();
 
-			if (!$appConfig.pullDlls) {
-				progressModalTitle = 'Generating projects';
-				await generateSln();
-			} else if ($appConfig.openUprojectAfterSync) {
-				progressModalTitle = 'Launching Unreal Engine';
-				await openProject();
+			if (result.alreadyUpToDate) {
+				await emit('success', 'Already up to date!');
+			} else {
+				await refreshFiles(true);
+
+				if (!$appConfig.pullDlls) {
+					progressModalTitle = 'Generating projects';
+					await generateSln();
+				} else if ($appConfig.openUprojectAfterSync) {
+					progressModalTitle = 'Launching Unreal Engine';
+					await openProject();
+				}
+
+				await emit('success', 'Sync complete!');
 			}
-
-			await emit('success', 'Sync complete!');
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -591,6 +614,16 @@
 
 	const handleRevertUproject = async () => {
 		promptRevertUProject = false;
+
+		try {
+			const engineReady = await checkEngineReady();
+			if (!engineReady) {
+				await emit('error', 'Unreal Editor must be closed before reverting files.');
+				return;
+			}
+		} catch {
+			// If the check fails, proceed
+		}
 
 		loading = true;
 		syncing = true;
@@ -1160,6 +1193,12 @@
 	class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
 	placement="bottom"
 	><p>
+		{#if hasUnsubmittableFiles}
+			<span class="text-red-400"
+				>Some selected files require checkout (lock) before submitting. Deselect them or lock them
+				first.</span
+			><br /><br />
+		{/if}
 		<span class="text-primary-400">Quick Submit</span> allows you to submit changes without syncing
 		latest from <span class="font-mono text-primary-400">main</span>.<br /><br />
 		This will open a pull request on GitHub and automatically merge it, putting your changes into the
