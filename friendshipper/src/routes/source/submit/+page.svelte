@@ -329,8 +329,9 @@
 				await emit('error', 'Unreal Editor must be closed before reverting files.');
 				return;
 			}
-		} catch {
-			// If the check fails, proceed
+		} catch (e) {
+			// eslint-disable-next-line no-console
+			console.warn('Engine ready check failed, proceeding with revert:', e);
 		}
 
 		loading = true;
@@ -621,8 +622,9 @@
 				await emit('error', 'Unreal Editor must be closed before reverting files.');
 				return;
 			}
-		} catch {
-			// If the check fails, proceed
+		} catch (e) {
+			// eslint-disable-next-line no-console
+			console.warn('Engine ready check failed, proceeding with revert:', e);
 		}
 
 		loading = true;
