@@ -86,6 +86,8 @@ export interface AppConfig {
 	maxClientCacheSizeGb: number;
 	playtestRegion: string;
 	initialized: boolean;
+	lastQuickSubmitType?: string;
+	lastQuickSubmitScope?: string;
 }
 
 export interface PlaytestProfile {
