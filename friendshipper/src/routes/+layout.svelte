@@ -36,7 +36,7 @@
 	import { type } from '@tauri-apps/plugin-os';
 	import { invoke } from '@tauri-apps/api/core';
 
-	import { ErrorToast, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
+	import { ErrorToastStack, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 	import { relaunch } from '@tauri-apps/plugin-process';
@@ -173,11 +173,13 @@
 	const loadingText = 'Refreshing data...';
 
 	// error states
-	let hasError = false;
-	let errorMessage = '';
-	const onErrorDismissed = () => {
-		hasError = false;
-		errorMessage = '';
+	let errors: Array<{ id: number; message: string }> = [];
+	let nextErrorId = 0;
+	const onErrorDismissed = (id: number) => {
+		errors = errors.filter((e) => e.id !== id);
+	};
+	const onDismissAllErrors = () => {
+		errors = [];
 	};
 
 	// success states
@@ -849,12 +851,12 @@
 	});
 
 	void listen('error', (e) => {
-		hasError = true;
 		const error = e.payload as Error;
-		if (error.message) {
-			errorMessage = error.message;
-		} else {
-			errorMessage = JSON.stringify(e.payload);
+		const message = error.message ? error.message : JSON.stringify(e.payload);
+		// De-duplicate: don't add if the same message is already showing
+		if (!errors.some((err) => err.message === message)) {
+			errors = [...errors, { id: nextErrorId, message }];
+			nextErrorId += 1;
 		}
 	});
 
@@ -1369,8 +1371,15 @@
 		</div>
 	{/if}
 </div>
-<ErrorToast bind:show={hasError} {errorMessage} onClose={onErrorDismissed} />
-<SuccessToast bind:show={hasSuccess} message={successMessage} onClose={onSuccessDismissed} />
+<div class="fixed top-0 w-full flex flex-col items-center z-50 pointer-events-none pt-2 gap-2">
+	<ErrorToastStack {errors} onDismiss={onErrorDismissed} onDismissAll={onDismissAllErrors} />
+	<SuccessToast
+		bind:show={hasSuccess}
+		message={successMessage}
+		onClose={onSuccessDismissed}
+		fixed={false}
+	/>
+</div>
 <ProgressModal bind:showModal={showProgressModal} title={progressModalTitle} />
 <!-- Hidden dark mode toggle allows us to load the theme immediately, even though the actual toggle is in the preferences modal -->
 <DarkMode class="hidden" />

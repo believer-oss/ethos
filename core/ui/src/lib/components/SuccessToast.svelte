@@ -6,6 +6,7 @@
 	export let show = false;
 	export let message: string;
 	export let onClose: () => void = () => {};
+	export let fixed = true;
 
 	$: if (show) {
 		setTimeout(() => {
@@ -14,10 +15,10 @@
 	}
 </script>
 
-<div class="w-full flex justify-center fixed top-0 pointer-events-none">
+<div class="w-full flex justify-center pointer-events-none" class:fixed class:top-0={fixed}>
 	<Toast
 		transition={fly}
-		params={{ y: -200 }}
+		params={{ y: fixed ? -200 : -50, duration: fixed ? 400 : 200 }}
 		class="my-4 p-2 left-1/2 dark:text-white text-white bg-lime-700 dark:bg-lime-700"
 		defaultIconClass="bg-lime-700 dark:bg-lime-700 dark:text-white text-white"
 		on:close={onClose}
