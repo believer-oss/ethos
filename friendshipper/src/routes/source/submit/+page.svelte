@@ -37,6 +37,7 @@
 		type ChangeSet,
 		type CommitFileInfo,
 		type ModifiedFile,
+		ModifiedFileState,
 		ModifiedFilesCard,
 		ProgressModal,
 		SubmitStatus
@@ -108,6 +109,9 @@
 	let expandedCommit = '';
 	let loadingCommitFiles = false;
 	let commitFiles: CommitFileInfo[] = [];
+
+	// quick submit preview
+	let showQuickSubmitPreview = false;
 
 	// progress modal
 	let showProgressModal = false;
@@ -198,6 +202,10 @@
 		}
 	});
 
+	$: formattedCommitMessage =
+		typeof $commitMessage === 'string'
+			? $commitMessage
+			: `${$commitMessage.type}(${$commitMessage.scope}): ${$commitMessage.message}`;
 	$: hasUnsubmittableFiles = $selectedFiles.some((file) => file.submitStatus !== SubmitStatus.Ok);
 	$: canSubmit =
 		$selectedFiles.length > 0 &&
@@ -1029,7 +1037,9 @@
 							id="quick-submit"
 							color="primary"
 							disabled={!canSubmit}
-							on:click={handleQuickSubmit}
+							on:click={() => {
+								showQuickSubmitPreview = true;
+							}}
 							>Quick Submit
 							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 						</Button>
@@ -1253,6 +1263,61 @@
 		>
 		<Button size="xs" color="green" on:click={handleRevertUproject}>Revert</Button>
 		<Button size="xs" color="red" on:click={handleCloseRevertUproject}>Keep Changes</Button>
+	</div>
+</Modal>
+
+<Modal
+	open={showQuickSubmitPreview}
+	dismissable={true}
+	on:close={() => {
+		showQuickSubmitPreview = false;
+	}}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	size="md"
+>
+	<div class="flex flex-col gap-3">
+		<h3 class="text-lg font-semibold text-white">Quick Submit Preview</h3>
+		<p class="text-sm text-gray-300 break-words">{formattedCommitMessage}</p>
+		<p class="text-sm text-gray-400">
+			{$selectedFiles.length} file{$selectedFiles.length === 1 ? '' : 's'}
+		</p>
+		<div class="max-h-64 overflow-y-auto rounded border border-gray-600">
+			{#each $selectedFiles as file}
+				<div
+					class="flex items-center gap-2 px-3 py-1.5 text-sm even:bg-secondary-800 even:dark:bg-space-950"
+				>
+					{#if file.state === ModifiedFileState.Added}
+						<Badge color="green" class="px-1.5 py-0 text-xs font-mono">A</Badge>
+					{:else if file.state === ModifiedFileState.Deleted}
+						<Badge color="red" class="px-1.5 py-0 text-xs font-mono">D</Badge>
+					{:else}
+						<Badge color="yellow" class="px-1.5 py-0 text-xs font-mono">M</Badge>
+					{/if}
+					<span class="truncate text-gray-200" title={file.path}
+						>{file.displayName || file.path}</span
+					>
+				</div>
+			{/each}
+		</div>
+		<div class="flex justify-end gap-2">
+			<Button
+				size="sm"
+				color="alternative"
+				on:click={() => {
+					showQuickSubmitPreview = false;
+				}}>Cancel</Button
+			>
+			<Button
+				size="sm"
+				color="primary"
+				on:click={async () => {
+					showQuickSubmitPreview = false;
+					await handleQuickSubmit();
+				}}>Confirm Submit</Button
+			>
+		</div>
 	</div>
 </Modal>
 
