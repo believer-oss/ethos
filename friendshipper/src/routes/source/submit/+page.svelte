@@ -916,21 +916,19 @@
 </div>
 <div class="flex flex-row flex-1 min-h-[20rem] gap-2 overflow-auto">
 	<div class="flex flex-col gap-2 w-full h-full overflow-x-auto">
-		{#key $allModifiedFiles}
-			<ModifiedFilesCard
-				disabled={loading}
-				bind:selectedFiles={$selectedFiles}
-				bind:selectAll
-				bind:changeSets={$changeSets}
-				onChangesetsSaved={handleSaveChangesets}
-				modifiedFiles={$allModifiedFiles}
-				onOpenDirectory={handleOpenDirectory}
-				onRevertFiles={handleRevertFiles}
-				onSaveSnapshot={handleSaveSnapshot}
-				onLockSelected={handleLockSelected}
-				onRightClick={onModifiedFileRightClick}
-			/>
-		{/key}
+		<ModifiedFilesCard
+			disabled={loading}
+			bind:selectedFiles={$selectedFiles}
+			bind:selectAll
+			changeSets={$changeSets}
+			onChangesetsSaved={handleSaveChangesets}
+			modifiedFiles={$allModifiedFiles}
+			onOpenDirectory={handleOpenDirectory}
+			onRevertFiles={handleRevertFiles}
+			onSaveSnapshot={handleSaveSnapshot}
+			onLockSelected={handleLockSelected}
+			onRightClick={onModifiedFileRightClick}
+		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[32rem]">
 		<Card
