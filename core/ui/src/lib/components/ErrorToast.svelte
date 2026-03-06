@@ -6,12 +6,6 @@
 	export let show = false;
 	export let errorMessage: string;
 	export let onClose: () => void = () => {};
-
-	$: if (show) {
-		setTimeout(() => {
-			show = false;
-		}, 3000);
-	}
 </script>
 
 <div class="w-full flex justify-center fixed top-0">
