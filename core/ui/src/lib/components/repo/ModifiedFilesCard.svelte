@@ -54,6 +54,7 @@
 	let editingChangeSetIndex: number = -1;
 	let editingChangeSetValue: string = '';
 	let searchInput: string = '';
+	let prevModifiedPaths: string = '';
 
 	// scroll preservation
 	let scrollContainerRef: HTMLElement;
@@ -91,16 +92,21 @@
 
 	let showRevertConfirmation = false;
 
-	// Ensure there's a "default" changeset containing all unassigned modified files
+	// Ensure there's a "default" changeset containing all unassigned modified files.
+	// NOTE: This mutates the array in-place without reassigning `changeSets` to avoid
+	// triggering intermediate Svelte reactivity. The caller is responsible for the
+	// final `changeSets = [...]` reassignment.
 	const ensureDefaultChangeset = () => {
 		let defaultChangesetIndex = changeSets.findIndex((cs) => cs.name === 'default');
 
 		if (defaultChangesetIndex === -1) {
-			// If "default" changeset doesn't exist, create it
-			changeSets = [
-				...changeSets,
-				{ name: 'default', files: [], open: true, checked: false, indeterminate: false }
-			];
+			changeSets.push({
+				name: 'default',
+				files: [],
+				open: true,
+				checked: false,
+				indeterminate: false
+			});
 			defaultChangesetIndex = changeSets.length - 1;
 		}
 
@@ -110,13 +116,12 @@
 		);
 
 		// Add unassigned files to the "default" changeset
-		changeSets[defaultChangesetIndex].files = [
-			...changeSets[defaultChangesetIndex].files,
-			...unassignedFiles
-		];
-
-		// Update changeSets
-		changeSets = [...changeSets];
+		if (unassignedFiles.length > 0) {
+			changeSets[defaultChangesetIndex].files = [
+				...changeSets[defaultChangesetIndex].files,
+				...unassignedFiles
+			];
+		}
 	};
 
 	const isDeletable = (changeSetName: string): boolean =>
@@ -198,14 +203,36 @@
 			}, []);
 		}
 
+		// Single reassignment to trigger Svelte reactivity
+		changeSets = [...changeSets];
+
 		await onChangesetsSaved(changeSets);
+	};
+
+	// Sync file properties (e.g. lock state) whenever modifiedFiles updates
+	const syncFileProperties = () => {
+		for (let i = 0; i < changeSets.length; i += 1) {
+			changeSets[i].files = changeSets[i].files.map((file) => {
+				const updated = modifiedFiles.find((mf) => mf.path === file.path);
+				return updated ?? file;
+			});
+		}
+		changeSets = [...changeSets];
 	};
 
 	// Set up a listener for changes to modifiedFiles
 	$: if (modifiedFiles) {
-		void cleanUpChangeSets();
-		// Restore scroll position when files change
-		setTimeout(restoreScrollPosition, 50);
+		const currentPaths = modifiedFiles
+			.map((f) => f.path)
+			.sort()
+			.join('\n');
+		if (currentPaths !== prevModifiedPaths) {
+			prevModifiedPaths = currentPaths;
+			void cleanUpChangeSets();
+			setTimeout(restoreScrollPosition, 50);
+		} else {
+			syncFileProperties();
+		}
 	}
 
 	const promptForRevertConfirmation = () => {
@@ -215,6 +242,9 @@
 	const closeRevertConfirmation = () => {
 		showRevertConfirmation = false;
 	};
+
+	const isSelected = (file: ModifiedFile): boolean =>
+		selectedFiles.some((sf) => sf.path === file.path);
 
 	const handleFileToggled = (selectedFile: ModifiedFile) => {
 		// if ctrl is held, select or unselect everything in between
@@ -228,7 +258,7 @@
 
 			if (currentIndex > lastSelectedIndex) {
 				for (let i = lastSelectedIndex + 1; i <= currentIndex; i += 1) {
-					if (!selectedFiles.includes(changeSetOrderedFiles[i])) {
+					if (!isSelected(changeSetOrderedFiles[i])) {
 						selectedFiles = [...selectedFiles, changeSetOrderedFiles[i]];
 					} else {
 						selectedFiles = selectedFiles.filter(
@@ -238,7 +268,7 @@
 				}
 			} else {
 				for (let i = currentIndex; i < lastSelectedIndex; i += 1) {
-					if (!selectedFiles.includes(changeSetOrderedFiles[i])) {
+					if (!isSelected(changeSetOrderedFiles[i])) {
 						selectedFiles = [...selectedFiles, changeSetOrderedFiles[i]];
 					} else {
 						selectedFiles = selectedFiles.filter(
@@ -249,7 +279,7 @@
 			}
 
 			// if we're unchecking, include the last selected file as well
-			if (!selectedFiles.includes(selectedFile)) {
+			if (!isSelected(selectedFile)) {
 				selectedFiles = selectedFiles.filter(
 					(item) => item.path !== changeSetOrderedFiles[lastSelectedIndex].path
 				);
@@ -258,36 +288,28 @@
 			return;
 		}
 
-		if (!selectedFiles.includes(selectedFile)) {
+		if (!isSelected(selectedFile)) {
 			selectedFiles = [...selectedFiles, selectedFile];
 		} else {
 			selectedFiles = selectedFiles.filter((item) => item.path !== selectedFile.path);
 		}
 	};
 
-	const handleToggleAllFilesInChangeset = (changeSetIndex: number) => {
-		// if not all files are selected, select all files in the changeset
-		// if all files are selected, unselect all files in the changeset
-		const changeSet = changeSets[changeSetIndex];
-		const allFilesSelected = changeSet.files.every((file) =>
-			selectedFiles.some((selectedFile) => selectedFile.path === file.path)
-		);
+	const handleToggleAllFilesInChangeset = (visibleFiles: ModifiedFile[]) => {
+		// Only operate on the currently visible (filtered) files so that
+		// filter and selection remain fully orthogonal.
+		const allVisibleSelected =
+			visibleFiles.length > 0 &&
+			visibleFiles.every((file) => selectedFiles.some((sf) => sf.path === file.path));
 
-		if (allFilesSelected) {
+		if (allVisibleSelected) {
 			selectedFiles = selectedFiles.filter(
-				(file) => !changeSet.files.some((csFile) => csFile.path === file.path)
+				(file) => !visibleFiles.some((vf) => vf.path === file.path)
 			);
 		} else {
-			// avoid duplicates and files that don't match the current search input
 			selectedFiles = [
 				...selectedFiles,
-				...changeSet.files.filter(
-					(file) =>
-						!selectedFiles.some((selectedFile) => selectedFile.path === file.path) &&
-						(searchInput.length < 3 ||
-							file.path.toLowerCase().includes(searchInput.toLowerCase()) ||
-							file.displayName.toLowerCase().includes(searchInput.toLowerCase()))
-				)
+				...visibleFiles.filter((file) => !selectedFiles.some((sf) => sf.path === file.path))
 			];
 		}
 	};
@@ -454,25 +476,23 @@
 	let sortKey: SortKey = SortKey.FileName;
 	let sortFunction = (a: ModifiedFile, b: ModifiedFile) =>
 		sortDirection * getFileDisplayString(a).localeCompare(getFileDisplayString(b));
-	$: filteredSortedChangeSets = changeSets.map((changeSet) => {
-		if (searchInput.length < 3) {
-			return {
-				...changeSet,
-				files: [...changeSet.files].sort(sortFunction)
-			};
-		}
 
-		return {
-			...changeSet,
-			files: changeSet.files
-				.filter(
-					(file) =>
-						file.path.toLowerCase().includes(searchInput.toLowerCase()) ||
-						file.displayName.toLowerCase().includes(searchInput.toLowerCase())
-				)
-				.sort(sortFunction)
-		};
-	});
+	const getVisibleFiles = (
+		changeSet: ChangeSet,
+		search: string,
+		sortFn: (a: ModifiedFile, b: ModifiedFile) => number
+	): ModifiedFile[] => {
+		if (search === '') {
+			return [...changeSet.files].sort(sortFn);
+		}
+		const query = search.toLowerCase();
+		return changeSet.files
+			.filter(
+				(file) =>
+					file.path.toLowerCase().includes(query) || file.displayName.toLowerCase().includes(query)
+			)
+			.sort(sortFn);
+	};
 
 	const changeSortDirection = (newSortKey: SortKey) => {
 		if (newSortKey === sortKey) {
@@ -484,8 +504,6 @@
 	};
 
 	onMount(() => {
-		void cleanUpChangeSets();
-
 		// Set up scroll position tracking
 		if (scrollContainerRef) {
 			scrollContainerRef.addEventListener('scroll', saveScrollPosition);
@@ -545,7 +563,8 @@
 		/>
 	</div>
 	<div bind:this={scrollContainerRef} class="overflow-y-auto pr-1 mb-16">
-		{#each filteredSortedChangeSets as changeSet, index}
+		{#each changeSets as changeSet, index}
+			{@const visibleFiles = getVisibleFiles(changeSet, searchInput, sortFunction)}
 			<div
 				on:dragover|preventDefault
 				on:dragenter|preventDefault={(e) => {
@@ -576,20 +595,23 @@
 							class="w-full h-8 text-white bg-secondary-800 dark:bg-space-950"
 						/>
 					{:else}
+						{@const allSelected =
+							selectedFiles.length > 0 &&
+							visibleFiles.length > 0 &&
+							visibleFiles.every((f) => selectedFiles.some((sf) => sf.path === f.path))}
+						{@const someSelected =
+							selectedFiles.length > 0 &&
+							visibleFiles.length > 0 &&
+							visibleFiles.some((f) => selectedFiles.some((sf) => sf.path === f.path))}
 						<div class="flex gap-1">
-							{#if changeSet.files.length > 0}
+							{#if visibleFiles.length > 0}
 								<Checkbox
 									class="align-middle"
 									disabled={isDeletable(changeSet.name)}
-									checked={changeSet.checked}
-									indeterminate={changeSet.indeterminate}
+									checked={allSelected}
+									indeterminate={!allSelected && someSelected}
 									on:click={() => {
-										handleToggleAllFilesInChangeset(index);
-										changeSets[index] = {
-											...changeSets[index],
-											checked: isChecked(changeSet.files),
-											indeterminate: isIndeterminate(changeSet.files)
-										};
+										handleToggleAllFilesInChangeset(visibleFiles);
 									}}
 								/>
 
@@ -604,7 +626,7 @@
 							{/if}
 							<span class="flex items-center gap-1"
 								>{changeSet.name}
-								<span class="text-xs text-gray-400 font-italic">({changeSet.files.length})</span>
+								<span class="text-xs text-gray-400 font-italic">({visibleFiles.length})</span>
 							</span>
 							{#if changeSet.name !== 'default'}
 								<Button
@@ -652,7 +674,7 @@
 						</div>
 					{/if}
 				</div>
-				{#if changeSet.files.length > 0 && changeSet.open}
+				{#if visibleFiles.length > 0 && changeSet.open}
 					<Table color="custom" striped={true}>
 						<TableHead class="w-full border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
 							<TableHeadCell />
@@ -694,7 +716,7 @@
 							</TableHeadCell>
 						</TableHead>
 						<TableBody>
-							{#each changeSet.files as file, fileIndex}
+							{#each visibleFiles as file, fileIndex}
 								<TableBodyRow
 									on:contextmenu={(e) => {
 										onRightClick(e, file);
@@ -712,11 +734,6 @@
 											)}
 											on:change={() => {
 												handleFileToggled(file);
-												changeSets[index] = {
-													...changeSet,
-													checked: isChecked(changeSet.files),
-													indeterminate: isIndeterminate(changeSet.files)
-												};
 											}}
 										/>
 									</TableBodyCell>
