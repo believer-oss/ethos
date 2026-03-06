@@ -84,6 +84,7 @@
 		repoStatus,
 		selectedFiles
 	} from '$lib/stores';
+	import { updateAppConfig } from '$lib/config';
 	import { openUrl } from '$lib/utils';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 	import { checkEngineReady, openUrlForPath } from '$lib/engine';
@@ -424,10 +425,20 @@
 		try {
 			await quickSubmit(req);
 
+			// Save last used type and scope to config for next session
+			if ($repoConfig?.useConventionalCommits) {
+				const updatedConfig = {
+					...$appConfig,
+					lastQuickSubmitType: tempCommitType,
+					lastQuickSubmitScope: tempCommitScope
+				};
+				await updateAppConfig(updatedConfig).catch(() => {});
+				$appConfig = updatedConfig;
+			}
+
 			$commitMessage = '';
 
-			// note that we don't reset tempCommitType because the UI already has a value selected
-			tempCommitScope = '';
+			// note that we don't reset tempCommitType or tempCommitScope because the UI already has values selected
 			tempCommitMessage = '';
 
 			$selectedFiles = [];
@@ -757,6 +768,11 @@
 		const currentCommitMessage = get(commitMessage);
 		if (typeof currentCommitMessage === 'string') {
 			tempCommitMessage = currentCommitMessage;
+			// Restore last quick submit type/scope from config if no type is set yet
+			if ($repoConfig?.useConventionalCommits) {
+				tempCommitType = $appConfig.lastQuickSubmitType ?? '';
+				tempCommitScope = $appConfig.lastQuickSubmitScope ?? '';
+			}
 		} else {
 			tempCommitType = currentCommitMessage.type;
 			tempCommitScope = currentCommitMessage.scope;

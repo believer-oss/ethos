@@ -169,6 +169,20 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub initialized: bool,
+
+    #[serde(
+        default,
+        rename = "lastQuickSubmitType",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_quick_submit_type: Option<String>,
+
+    #[serde(
+        default,
+        rename = "lastQuickSubmitScope",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_quick_submit_scope: Option<String>,
 }
 
 fn default_playtest_region() -> String {
@@ -219,6 +233,8 @@ impl AppConfig {
             otlp_headers: None,
             max_client_cache_size_gb: 32,
             initialized: false,
+            last_quick_submit_type: None,
+            last_quick_submit_scope: None,
         }
     }
 
