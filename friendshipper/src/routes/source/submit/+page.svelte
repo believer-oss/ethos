@@ -440,7 +440,9 @@
 					lastQuickSubmitType: tempCommitType,
 					lastQuickSubmitScope: tempCommitScope
 				};
-				await updateAppConfig(updatedConfig).catch(() => {});
+				await updateAppConfig(updatedConfig).catch((e) => {
+					console.warn('Failed to persist quick submit preferences:', e);
+				});
 				$appConfig = updatedConfig;
 			}
 
