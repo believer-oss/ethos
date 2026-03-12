@@ -633,6 +633,11 @@ where
         // they remain stubs
         let git_opts_lfs_stubs = git::Opts::default().with_lfs_stubs();
 
+        // Abort any in-progress rebase from a previous failed submit
+        _ = git_client_worktree
+            .run(&["rebase", "--abort"], git_opts_lfs_stubs)
+            .await;
+
         // make sure the worktree is hard reset
         git_client_worktree
             .run(&["reset", "--hard"], git_opts_lfs_stubs)
