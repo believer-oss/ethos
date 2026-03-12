@@ -27,7 +27,11 @@
 		QuestionCircleOutline,
 		RefreshOutline,
 		FileCodeSolid,
-		ChevronDownOutline
+		ChevronDownOutline,
+		PlusOutline,
+		PenSolid,
+		CloseCircleSolid,
+		FileCopySolid
 	} from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
@@ -743,6 +747,34 @@
 		return 'bg-primary-500 dark:bg-primary-500';
 	};
 
+	const getFileTextClass = (file: ModifiedFile): string => {
+		if (file.submitStatus !== SubmitStatus.Ok) {
+			return 'text-red-700 dark:text-red-700';
+		}
+
+		if (file.state === ModifiedFileState.Added) {
+			return 'text-lime-500 dark:text-lime-500';
+		}
+		if (file.state === ModifiedFileState.Modified) {
+			return 'text-yellow-300 dark:text-yellow-300';
+		}
+		if (file.state === ModifiedFileState.Deleted) {
+			return 'text-yellow-300 dark:text-gray-300';
+		}
+		if (file.state === ModifiedFileState.Unmerged) {
+			return 'text-red-700 dark:text-red-700';
+		}
+
+		return '';
+	};
+
+	const getFileDisplayString = (file: ModifiedFile): string => {
+		if (file.displayName === '') {
+			return file.path;
+		}
+		return file.displayName;
+	};
+
 	const refreshLocks = async () => {
 		loading = true;
 		try {
@@ -1285,20 +1317,22 @@
 		<p class="text-sm text-gray-400">
 			{$selectedFiles.length} file{$selectedFiles.length === 1 ? '' : 's'}
 		</p>
-		<div class="max-h-64 overflow-y-auto rounded border border-gray-600">
+		<div
+			class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
+		>
 			{#each $selectedFiles as file}
-				<div
-					class="flex items-center gap-2 px-3 py-1.5 text-sm even:bg-secondary-800 even:dark:bg-space-950"
-				>
+				<div class="flex gap-2 items-center" role="listitem">
 					{#if file.state === ModifiedFileState.Added}
-						<Badge color="green" class="px-1.5 py-0 text-xs font-mono">A</Badge>
+						<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
+					{:else if file.state === ModifiedFileState.Modified}
+						<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
 					{:else if file.state === ModifiedFileState.Deleted}
-						<Badge color="red" class="px-1.5 py-0 text-xs font-mono">D</Badge>
-					{:else}
-						<Badge color="yellow" class="px-1.5 py-0 text-xs font-mono">M</Badge>
+						<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
+					{:else if file.state === ModifiedFileState.Unmerged}
+						<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
 					{/if}
-					<span class="truncate text-gray-200" title={file.path}
-						>{file.displayName || file.path}</span
+					<span class="truncate {getFileTextClass(file)}" title={file.path}
+						>{getFileDisplayString(file)}</span
 					>
 				</div>
 			{/each}
