@@ -4,10 +4,12 @@ use axum::{async_trait, Json};
 use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::{params, Octocrab};
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::CommunicationType;
 use crate::engine::EngineProvider;
+use crate::repo::operations::pull::PullOp;
 use crate::repo::operations::validate::validate_repo_state;
 use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
@@ -15,6 +17,8 @@ use crate::state::AppState;
 use ethos_core::clients::git;
 use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
+use ethos_core::longtail::Longtail;
+use ethos_core::msg::LongtailMsg;
 use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
@@ -52,6 +56,10 @@ where
     pub aws_client: Option<AWSClient>,
     pub storage: Option<ArtifactStorage>,
     pub repo_status: RepoStatusRef,
+
+    pub longtail: Longtail,
+    pub longtail_tx: Sender<LongtailMsg>,
+    pub notification_tx: Sender<String>,
 
     pub git_client: git::Git,
     pub token: String,
@@ -92,56 +100,74 @@ impl Task for GitHubSubmitOp {
             .send()
             .await?;
 
-        let octocrab_clone = octocrab.clone();
-        let owner_clone = owner.clone();
-        let repo_clone = repo.clone();
-        let client_clone = self.client.clone();
-        let use_merge_queue = self.use_merge_queue;
-        let self_clone = self.clone();
+        if self.use_merge_queue {
+            // Fire-and-forget for merge queue path
+            let self_clone = self.clone();
+            let octocrab_clone = octocrab.clone();
+            let owner_clone = owner.clone();
+            let repo_clone = repo.clone();
 
-        // There's a lot of variability in how long this takes, so we give the frontend
-        // a chance to return control to the user before it starts polling
-        tokio::spawn(async move {
-            match self_clone
-                .poll_for_mergeable(
-                    octocrab_clone.clone(),
-                    pr,
-                    owner_clone.clone(),
-                    repo_clone.clone(),
-                )
-                .await
-            {
-                Ok(updated_pr) => {
-                    if let Ok(id) = client_clone
-                        .get_pull_request_id(
-                            owner_clone.clone(),
-                            repo_clone.clone(),
-                            updated_pr.number as i64,
-                        )
-                        .await
-                    {
-                        if use_merge_queue {
-                            if let Err(e) = client_clone.enqueue_pull_request(id).await {
-                                warn!("Failed to enqueue pull request: {:?}", e);
-                            }
-                        } else if let Err(e) = octocrab_clone
-                            .pulls(owner_clone.clone(), repo_clone.clone())
-                            .merge(updated_pr.number)
-                            .method(params::pulls::MergeMethod::Rebase)
-                            .send()
+            tokio::spawn(async move {
+                match self_clone
+                    .poll_for_mergeable(
+                        octocrab_clone.clone(),
+                        pr,
+                        owner_clone.clone(),
+                        repo_clone.clone(),
+                    )
+                    .await
+                {
+                    Ok(updated_pr) => {
+                        if let Ok(id) = self_clone
+                            .client
+                            .get_pull_request_id(
+                                owner_clone.clone(),
+                                repo_clone.clone(),
+                                updated_pr.number as i64,
+                            )
                             .await
                         {
-                            warn!("Failed to auto-merge pull request: {:?}", e);
+                            if let Err(e) = self_clone.client.enqueue_pull_request(id).await {
+                                warn!("Failed to enqueue pull request: {:?}", e);
+                            }
+                        } else {
+                            warn!("Failed to get pull request ID");
                         }
-                    } else {
-                        warn!("Failed to get pull request ID");
                     }
+                    Err(e) => warn!("Failed to poll for mergeable state: {:?}", e),
                 }
-                Err(e) => warn!("Failed to poll for mergeable state: {:?}", e),
-            }
-        });
+            });
 
-        Ok(())
+            Ok(())
+        } else {
+            // Non-merge-queue: wait inline for merge to complete with timeout
+            let result = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+                let updated_pr = self
+                    .poll_for_mergeable(octocrab.clone(), pr, owner.clone(), repo.clone())
+                    .await?;
+
+                octocrab
+                    .pulls(owner, repo)
+                    .merge(updated_pr.number)
+                    .method(params::pulls::MergeMethod::Rebase)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        CoreError::Internal(anyhow!("Failed to merge pull request: {}", e))
+                    })?;
+
+                Ok::<(), CoreError>(())
+            })
+            .await;
+
+            match result {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err(CoreError::Internal(anyhow!(
+                    "Timed out waiting for PR merge (120s)"
+                ))),
+            }
+        }
     }
 
     fn get_name(&self) -> String {
@@ -162,7 +188,7 @@ impl GitHubSubmitOp {
         while let Some(state) = pr.mergeable_state.clone() {
             match state {
                 MergeableState::Blocked | MergeableState::Behind | MergeableState::Unknown => {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     pr = octocrab
                         .pulls(owner.clone(), repo.clone())
                         .get(pr.clone().number)
@@ -635,7 +661,10 @@ where
 
         // Abort any in-progress rebase from a previous failed submit
         _ = git_client_worktree
-            .run(&["rebase", "--abort"], git_opts_lfs_stubs)
+            .run(
+                &["rebase", "--abort"],
+                git::Opts::new_with_ignored(&["no rebase in progress"]).with_lfs_stubs(),
+            )
             .await;
 
         // make sure the worktree is hard reset
@@ -654,11 +683,7 @@ where
             // f11r_branch exactly, and the old worktree branch will likely have changes from main mixed
             // up into it.
             if worktree_branch == worktree_prev_branch {
-                _ = git_client_worktree
-                    .run(&["checkout", "--detach"], git_opts_lfs_stubs)
-                    .await;
-                _ = git_client_worktree
-                    .delete_branch(&worktree_branch, git::BranchType::Local)
+                cleanup_worktree_branch(&git_client_worktree, &worktree_branch, git_opts_lfs_stubs)
                     .await;
             }
 
@@ -705,6 +730,7 @@ where
         // If we already have a PR, we must be using the merge queue so just requeue it.
         // Otherwise create a whole new Github submit op.
         match quicksubmit_pr_id {
+            // We have a PR, this is a requeue
             Some(pr_id) => {
                 info!("Reusing existing PR with ID: {}", pr_id);
 
@@ -725,7 +751,10 @@ where
                         return Err(e.into());
                     }
                 }
+                cleanup_worktree_branch(&git_client_worktree, &worktree_branch, git_opts_lfs_stubs)
+                    .await;
             }
+            // We have no active PR in queue, lets setup a new one
             None => {
                 let gh_op = GitHubSubmitOp {
                     head_branch: worktree_branch.clone(),
@@ -737,54 +766,121 @@ where
                     use_merge_queue,
                 };
 
-                gh_op.execute().await?;
-            }
-        }
+                if use_merge_queue {
+                    gh_op.execute().await?;
 
-        // cleanup worktree branch
-        _ = git_client_worktree
-            .run(&["checkout", "--detach"], git_opts_lfs_stubs)
-            .await;
-        _ = git_client_worktree
-            .delete_branch(&worktree_branch, git::BranchType::Local)
-            .await;
+                    cleanup_worktree_branch(
+                        &git_client_worktree,
+                        &worktree_branch,
+                        git_opts_lfs_stubs,
+                    )
+                    .await;
 
-        // if we aren't using the merge queue, the PR will merge immediately, so we can wait for it
-        // to be merged and unlock files now.
-        if !use_merge_queue {
-            let github_username = self.github_client.username.clone();
-            let lock_op = LockOp {
-                git_client: self.git_client.clone(),
-                paths: self.files.clone(),
-                op: LockOperation::Unlock,
-                response_tx: None,
-                github_pat: self.token.clone(),
-                repo_status: self.repo_status.clone(),
-                github_username,
-                force: false,
-            };
+                    return Ok(());
+                } else {
+                    // Non-merge-queue: gh_op.execute() blocks until merge completes
+                    let merge_result = gh_op.execute().await;
 
-            let owner = self.repo_status.read().repo_owner.clone();
-            let repo_name = self.repo_status.read().repo_name.clone();
+                    cleanup_worktree_branch(
+                        &git_client_worktree,
+                        &worktree_branch,
+                        git_opts_lfs_stubs,
+                    )
+                    .await;
 
-            let start = std::time::Instant::now();
-            let mut has_open_prs = true;
-            while has_open_prs && start.elapsed().as_secs() < 10 {
-                has_open_prs = self
-                    .github_client
-                    .is_branch_pr_open(&owner, &repo_name, &worktree_branch, 25)
-                    .await?;
-                if has_open_prs {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    match merge_result {
+                        Ok(()) => {
+                            info!("PR merge confirmed, unlocking files");
+                            let github_username = self.github_client.username.clone();
+                            let lock_op = LockOp {
+                                git_client: self.git_client.clone(),
+                                paths: self.files.clone(),
+                                op: LockOperation::Unlock,
+                                response_tx: None,
+                                github_pat: self.token.clone(),
+                                repo_status: self.repo_status.clone(),
+                                github_username,
+                                force: false,
+                            };
+                            lock_op.execute().await?;
+
+                            // Autosync if editor is not running
+                            if self.engine.check_ready_to_sync_repo().await.is_ok() {
+                                if let (Some(aws_client), Some(storage)) =
+                                    (self.aws_client.clone(), self.storage.clone())
+                                {
+                                    info!(
+                                        "Auto-syncing back to target branch after quicksubmit merge"
+                                    );
+                                    let pull_op = PullOp {
+                                        app_config: self.app_config.clone(),
+                                        repo_config: self.repo_config.clone(),
+                                        repo_status: self.repo_status.clone(),
+                                        longtail: self.longtail.clone(),
+                                        longtail_tx: self.longtail_tx.clone(),
+                                        aws_client,
+                                        storage,
+                                        git_client: self.git_client.clone(),
+                                        github_client: Some(self.github_client.clone()),
+                                        engine: self.engine.clone(),
+                                    };
+                                    if let Err(e) = pull_op.execute().await {
+                                        // Don't return Err here — the commit/push/merge all
+                                        // succeeded, and returning Err would trigger the
+                                        // destructive snapshot-restore in execute().
+                                        let msg = format!(
+                                            "Changes submitted successfully, but auto-sync failed: {}. Please sync manually.",
+                                            e
+                                        );
+                                        error!("{}", msg);
+                                        let _ = self.notification_tx.send(msg);
+                                        return Ok(());
+                                    }
+                                } else {
+                                    warn!("AWS client or storage not available, skipping autosync after quicksubmit");
+                                }
+                            } else {
+                                info!(
+                                    "Editor is running, skipping autosync after quicksubmit merge"
+                                );
+                            }
+
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            // Merge failed or timed out. Files stay locked.
+                            // Don't return Err — the commit/push/PR all succeeded, and
+                            // returning Err would trigger the destructive snapshot-restore
+                            // in execute().
+                            warn!("PR created but merge did not complete: {}", e);
+                            if self.engine.check_ready_to_sync_repo().await.is_ok() {
+                                let msg = format!(
+                                    "PR was created but merge did not confirm: {}. Files remain locked.",
+                                    e
+                                );
+                                error!("{}", msg);
+                                let _ = self.notification_tx.send(msg);
+                            } else {
+                                info!("Editor running, merge timeout is not critical. PR may still merge via GitHub.");
+                            }
+                            return Ok(());
+                        }
+                    }
                 }
             }
-
-            // unlock all files submitted
-            lock_op.execute().await?;
         }
 
         Ok(())
     }
+}
+
+/// Detach the worktree HEAD and delete the given local branch.
+/// Errors are intentionally swallowed — this is best-effort cleanup.
+async fn cleanup_worktree_branch(git_client: &git::Git, branch: &str, opts: git::Opts<'_>) {
+    _ = git_client.run(&["checkout", "--detach"], opts).await;
+    _ = git_client
+        .delete_branch(branch, git::BranchType::Local)
+        .await;
 }
 
 #[instrument(skip(state))]
@@ -813,6 +909,9 @@ where
         None => return Err(CoreError::Internal(anyhow!(TokenNotFoundError))),
     };
 
+    let aws_client = state.aws_client.read().await.clone();
+    let storage = state.storage.read().clone();
+
     let submit_op = SubmitOp {
         files: request.files.clone(),
         commit_message: request.commit_message.clone(),
@@ -820,9 +919,13 @@ where
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
         engine: state.engine.clone(),
-        aws_client: None,
-        storage: None,
+        aws_client,
+        storage,
         repo_status: state.repo_status.clone(),
+
+        longtail: state.longtail.clone(),
+        longtail_tx: state.longtail_tx.clone(),
+        notification_tx: state.notification_tx.clone(),
 
         git_client: state.git(),
         token: token.to_string(),
