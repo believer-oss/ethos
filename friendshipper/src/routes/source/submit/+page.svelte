@@ -422,7 +422,7 @@
 		loading = true;
 		quickSubmitting = true;
 		showProgressModal = true;
-		progressModalTitle = 'Opening pull request';
+		progressModalTitle = 'Submitting changes';
 
 		const message = get(commitMessage);
 
@@ -433,6 +433,8 @@
 					: `${message.type}(${message.scope}): ${message.message}`,
 			files: $selectedFiles.map((file) => file.path)
 		};
+
+		let quickSubmitSucceeded = false;
 
 		try {
 			await quickSubmit(req);
@@ -460,7 +462,7 @@
 
 			await refreshPulls();
 
-			await emit('success', 'Pull request opened!');
+			quickSubmitSucceeded = true;
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -468,6 +470,12 @@
 		// refresh files after quick submit, whether it was successful or not
 		progressModalTitle = 'Refreshing files';
 		await refreshFiles(true);
+
+		if (quickSubmitSucceeded) {
+			const currentBranch = $repoStatus?.branch ?? '';
+			const didSync = !currentBranch.startsWith('f11r');
+			await emit('success', didSync ? 'Changes submitted and synced!' : 'Pull request opened!');
+		}
 
 		showProgressModal = false;
 		loading = false;
