@@ -837,7 +837,10 @@ where
                                         return Ok(());
                                     }
                                 } else {
-                                    warn!("AWS client or storage not available, skipping autosync after quicksubmit");
+                                    error!("AWS client or storage not available, skipping autosync after quicksubmit");
+                                    let _ = self.notification_tx.send(
+                                        "AWS client or storage not available, unable to auto-sync. Please sync manually.".to_string()
+                                    );
                                 }
                             } else {
                                 info!(
@@ -862,6 +865,9 @@ where
                                 let _ = self.notification_tx.send(msg);
                             } else {
                                 info!("Editor running, merge timeout is not critical. PR may still merge via GitHub.");
+                                let _ = self.notification_tx.send(
+                                    format!("PR was created but merge did not confirm: {}. PR may still merge via GitHub.", e)
+                                );
                             }
                             return Ok(());
                         }
