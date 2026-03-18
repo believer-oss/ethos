@@ -286,13 +286,15 @@ fn main() -> Result<(), CoreError> {
                             Notification::Success(msg) => ("success", msg.as_str()),
                             Notification::Error(msg) => ("error", msg.as_str()),
                         };
-                        notification_handle
+                        if let Err(e) = notification_handle
                             .notification()
                             .builder()
                             .title(APP_NAME)
                             .body(message)
                             .show()
-                            .unwrap();
+                        {
+                            warn!("Failed to show OS notification: {}", e);
+                        }
                         let _ = notification_handle.emit(event, message);
                     }
                 });
