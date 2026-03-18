@@ -14,6 +14,7 @@ use crate::repo::operations::validate::validate_repo_state;
 use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
+use crate::state::Notification;
 use ethos_core::clients::git;
 use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
@@ -59,7 +60,7 @@ where
 
     pub longtail: Longtail,
     pub longtail_tx: Sender<LongtailMsg>,
-    pub notification_tx: Sender<String>,
+    pub notification_tx: Sender<Notification>,
 
     pub git_client: git::Git,
     pub token: String,
@@ -833,19 +834,23 @@ where
                                             e
                                         );
                                         error!("{}", msg);
-                                        let _ = self.notification_tx.send(msg);
+                                        let _ = self.notification_tx.send(Notification::Error(msg));
                                         return Ok(());
                                     }
+                                    let _ = self.notification_tx.send(Notification::Success(
+                                        "Changes submitted and auto-sync complete.".to_string(),
+                                    ));
                                 } else {
+                                    // Note: don't expect this to be hit since we shouldn't be able to get here, but logging error if we do.
                                     error!("AWS client or storage not available, skipping autosync after quicksubmit");
                                     let _ = self.notification_tx.send(
-                                        "AWS client or storage not available, unable to auto-sync. Please sync manually.".to_string()
+                                        Notification::Error("AWS client or storage not available, unable to auto-sync. Please sync manually.".to_string())
                                     );
                                 }
                             } else {
-                                info!(
-                                    "Editor is running, skipping autosync after quicksubmit merge"
-                                );
+                                let msg = "Quicksubmit merge complete, but skipping auto-sync since Editor is running".to_string();
+                                info!("{}", msg);
+                                let _ = self.notification_tx.send(Notification::Success(msg));
                             }
 
                             return Ok(());
@@ -862,11 +867,11 @@ where
                                     e
                                 );
                                 error!("{}", msg);
-                                let _ = self.notification_tx.send(msg);
+                                let _ = self.notification_tx.send(Notification::Error(msg));
                             } else {
                                 info!("Editor running, merge timeout is not critical. PR may still merge via GitHub.");
                                 let _ = self.notification_tx.send(
-                                    format!("PR was created but merge did not confirm: {}. PR may still merge via GitHub.", e)
+                                    Notification::Error(format!("PR was created but merge did not confirm: {}. PR should be available to merge manually via GitHub.", e))
                                 );
                             }
                             return Ok(());

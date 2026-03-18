@@ -29,6 +29,12 @@ pub enum FrontendOp {
     ShowUI,
 }
 
+#[derive(Clone, Debug)]
+pub enum Notification {
+    Success(String),
+    Error(String),
+}
+
 #[derive(Clone)]
 pub struct AppState<T> {
     pub app_config: AppConfigRef,
@@ -43,7 +49,7 @@ pub struct AppState<T> {
     pub longtail_tx: STDSender<LongtailMsg>,
 
     pub operation_tx: MPSCSender<TaskSequence>,
-    pub notification_tx: STDSender<String>,
+    pub notification_tx: STDSender<Notification>,
     pub frontend_op_tx: STDSender<FrontendOp>,
 
     pub aws_client: Arc<TokioRwLock<Option<AWSClient>>>,
@@ -80,7 +86,7 @@ where
         storage: Option<ArtifactStorage>,
         longtail_tx: STDSender<LongtailMsg>,
         operation_tx: MPSCSender<TaskSequence>,
-        notification_tx: STDSender<String>,
+        notification_tx: STDSender<Notification>,
         frontend_op_tx: STDSender<FrontendOp>,
         version: String,
         aws_client: Option<AWSClient>,
@@ -203,9 +209,9 @@ where
         git::Git::new(repo_path, self.git_tx.clone())
     }
 
-    pub fn send_notification(&self, message: &str) {
+    pub fn send_notification(&self, notification: Notification) {
         self.notification_tx
-            .send(message.to_string())
+            .send(notification)
             .expect("error sending notification");
     }
 

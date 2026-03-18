@@ -433,7 +433,7 @@ pub async fn setup(
     info!("Starting notification logger");
     tokio::spawn(async move {
         while let Ok(msg) = notification_rx.recv() {
-            info!("notification: {}", msg);
+            info!("notification: {:?}", msg);
         }
     });
 
