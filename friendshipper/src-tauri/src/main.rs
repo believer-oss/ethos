@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 
 use ethos_core::tauri::State;
 use ethos_core::{clients, msg::LongtailMsg, utils, utils::logging};
-use friendshipper::state::FrontendOp;
+use friendshipper::state::{FrontendOp, Notification};
 use friendshipper::APP_NAME;
 
 use crate::command::*;
@@ -282,13 +282,18 @@ fn main() -> Result<(), CoreError> {
                 let notification_handle = handle.clone();
                 thread::spawn(move || {
                     while let Ok(notification) = notification_rx.recv() {
+                        let (event, message) = match &notification {
+                            Notification::Success(msg) => ("success", msg.as_str()),
+                            Notification::Error(msg) => ("error", msg.as_str()),
+                        };
                         notification_handle
                             .notification()
                             .builder()
                             .title(APP_NAME)
-                            .body(&notification)
+                            .body(message)
                             .show()
                             .unwrap();
+                        let _ = notification_handle.emit(event, message);
                     }
                 });
 

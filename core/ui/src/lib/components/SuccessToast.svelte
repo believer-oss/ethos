@@ -11,7 +11,7 @@
 	$: if (show) {
 		setTimeout(() => {
 			show = false;
-		}, 3000);
+		}, 5000);
 	}
 </script>
 

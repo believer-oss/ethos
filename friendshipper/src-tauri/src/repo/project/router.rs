@@ -79,7 +79,7 @@ where
         .map_err(|e| {
             if is_prebuilt && e.to_string().contains("Could not find UnrealEditor executable") {
                 CoreError::Internal(anyhow!(
-                    "Unreal Editor not found at the expected location. Use the 'Redownload engine' option in the dropdown next to 'Open Editor' to download the engine binaries."
+                    "Unreal Editor not found at the expected location. On the Submit page, use the 'Redownload engine' option in the dropdown next to 'Open Editor' to download the engine binaries."
                 ))
             } else {
                 CoreError::Internal(anyhow!(e))

@@ -31,14 +31,14 @@ use ethos_core::worker::{RepoWorker, TaskSequence};
 use crate::client::FriendshipperClient;
 use crate::engine::{EngineProvider, UnrealEngineProvider};
 use crate::repo::operations::InstallGitHooksOp;
-use crate::state::FrontendOp;
+use crate::state::{FrontendOp, Notification};
 use crate::APP_NAME;
 use crate::{state::AppState, KEYRING_USER, VERSION};
 
 pub struct Server {
     port: u16,
     longtail_tx: STDSender<LongtailMsg>,
-    notification_tx: STDSender<String>,
+    notification_tx: STDSender<Notification>,
     frontend_op_tx: STDSender<FrontendOp>,
     log_path: PathBuf,
     git_tx: STDSender<String>,
@@ -52,7 +52,7 @@ impl Server {
     pub fn new(
         port: u16,
         longtail_tx: STDSender<LongtailMsg>,
-        notification_tx: STDSender<String>,
+        notification_tx: STDSender<Notification>,
         frontend_op_tx: STDSender<FrontendOp>,
         log_path: PathBuf,
         git_tx: STDSender<String>,
@@ -334,13 +334,14 @@ impl Server {
                         match git.remove_partial_clone_filter_and_refetch().await {
                             Ok(_) => {
                                 info!("Successfully converted partial clone to full repository");
-                                shared_state.send_notification(
-                                    "Repository converted to full clone with complete history",
-                                );
+                                shared_state.send_notification(Notification::Success(
+                                    "Repository converted to full clone with complete history"
+                                        .to_string(),
+                                ));
                             }
                             Err(e) => {
                                 warn!("Failed to convert partial clone to full repository: {}", e);
-                                shared_state.send_notification("Warning: Failed to convert repository to full clone. Some history operations may be limited.");
+                                shared_state.send_notification(Notification::Error("Warning: Failed to convert repository to full clone. Some history operations may be limited.".to_string()));
                             }
                         }
                     }

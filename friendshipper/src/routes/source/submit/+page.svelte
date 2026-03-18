@@ -472,9 +472,7 @@
 		await refreshFiles(true);
 
 		if (quickSubmitSucceeded) {
-			const currentBranch = $repoStatus?.branch ?? '';
-			const didSync = !currentBranch.startsWith('f11r');
-			await emit('success', didSync ? 'Changes submitted and synced!' : 'Pull request opened!');
+			await emit('success', 'Changes submitted successfully!');
 		}
 
 		showProgressModal = false;
