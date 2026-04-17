@@ -824,13 +824,22 @@ where
                                         git_client: self.git_client.clone(),
                                         github_client: Some(self.github_client.clone()),
                                         engine: self.engine.clone(),
+                                        // The pre-submit snapshot already covers the working
+                                        // tree, so skip the expensive duplicate snapshot inside
+                                        // PullOp. git pull --autostash still protects dirty
+                                        // files during the rebase.
+                                        skip_snapshot: true,
                                     };
                                     if let Err(e) = pull_op.execute().await {
                                         // Don't return Err here — the commit/push/merge all
                                         // succeeded, and returning Err would trigger the
                                         // destructive snapshot-restore in execute().
                                         let msg = format!(
-                                            "Changes submitted successfully, but auto-sync failed: {}. Please sync manually.",
+                                            "Your changes were submitted successfully! \
+                                            Auto-sync back to the target branch failed: {}. \
+                                            If you see conflicts with your local files, you can \
+                                            restore them from the pre-submit snapshot in the \
+                                            Snapshots tab. Otherwise, just Sync manually when ready.",
                                             e
                                         );
                                         error!("{}", msg);

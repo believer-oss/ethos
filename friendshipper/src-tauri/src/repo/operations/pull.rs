@@ -41,6 +41,13 @@ pub struct PullOp<T> {
     pub git_client: git::Git,
     pub github_client: Option<GraphQLClient>,
     pub engine: T,
+
+    /// When true, skip taking a pre-pull snapshot of dirty files. This is used
+    /// when the caller already holds a snapshot that covers the current working
+    /// tree state (e.g. the pre-submit snapshot in quick-submit), avoiding an
+    /// expensive duplicate stash cycle on hundreds of files. The git pull
+    /// `--autostash` flag still protects dirty files during the rebase itself.
+    pub skip_snapshot: bool,
 }
 
 #[async_trait]
@@ -125,15 +132,19 @@ where
         // stashes resolve inside out correctly
         let mut snapshot = None;
         let mut snapshot_modified_files = vec![];
-        let repo_status = self.repo_status.read().clone();
-        if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
-            // Capture the modified files at snapshot time for restore_snapshot
-            snapshot_modified_files = repo_status.modified_files.0.clone();
-            snapshot = Some(
-                self.git_client
-                    .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::DiscardIndex)
-                    .await?,
-            );
+        if !self.skip_snapshot {
+            let repo_status = self.repo_status.read().clone();
+            if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
+                // Capture the modified files at snapshot time for restore_snapshot
+                snapshot_modified_files = repo_status.modified_files.0.clone();
+                snapshot = Some(
+                    self.git_client
+                        .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::DiscardIndex)
+                        .await?,
+                );
+            }
+        } else {
+            info!("Skipping pre-pull snapshot (caller already holds a snapshot)");
         }
 
         // No need to hold a lock for this operation, but pass the ref directly to StatusOp so it can
@@ -451,6 +462,7 @@ where
         git_client: state.git(),
         github_client: state.github_client.read().clone(),
         engine: state.engine.clone(),
+        skip_snapshot: false,
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
