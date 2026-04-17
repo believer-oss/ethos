@@ -230,6 +230,7 @@ fn main() -> Result<(), CoreError> {
                 open_terminal_to_path,
                 get_unrealversionselector_status,
                 get_object_count,
+                run_git_gc,
                 open_url,
                 quick_submit,
                 rebase,

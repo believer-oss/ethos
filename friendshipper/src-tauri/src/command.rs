@@ -79,6 +79,21 @@ pub async fn get_object_count(
     Ok(res.json().await?)
 }
 
+#[tauri::command]
+pub async fn run_git_gc(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/diagnostics/gc", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
 // Config
 #[tauri::command]
 pub async fn get_dynamic_config(

@@ -225,6 +225,24 @@ impl Task for RebaseOp {
     }
 }
 
+#[derive(Clone)]
+pub struct GcOp {
+    pub git_client: git::Git,
+}
+
+#[async_trait]
+impl Task for GcOp {
+    #[instrument(name = "GcOp::execute", skip(self))]
+    async fn execute(&self) -> Result<(), CoreError> {
+        self.git_client.run_gc_preserve_unreachable().await?;
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        String::from("RepoGc")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LockOp {
     pub git_client: git::Git,

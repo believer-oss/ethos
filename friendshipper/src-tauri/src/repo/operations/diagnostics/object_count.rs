@@ -2,8 +2,10 @@ use axum::extract::State;
 use axum::Json;
 
 use crate::engine::EngineProvider;
+use ethos_core::operations::GcOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::ObjectCountResponse;
+use ethos_core::worker::TaskSequence;
 
 use crate::state::AppState;
 
@@ -33,6 +35,25 @@ where
         is_healthy,
         raw_output,
     }))
+}
+
+pub async fn run_gc_handler<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
+    let mut sequence = TaskSequence::new().with_completion_tx(tx);
+
+    sequence.push(Box::new(GcOp {
+        git_client: state.git(),
+    }));
+
+    let _ = state.operation_tx.send(sequence).await;
+    if let Ok(Some(err)) = rx.await {
+        return Err(err);
+    }
+
+    Ok(())
 }
 
 fn parse_in_pack(output: &str) -> u64 {
