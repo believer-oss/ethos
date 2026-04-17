@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Accordion, AccordionItem, Button, Card, Spinner, Tooltip } from 'flowbite-svelte';
+	import { Accordion, AccordionItem, Button, Card, Modal, Spinner, Tooltip } from 'flowbite-svelte';
 	import { FileCopyOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { json } from 'svelte-highlight/languages';
 	import Highlight from 'svelte-highlight';
@@ -7,7 +7,14 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { repoStatus } from '$lib/stores';
-	import { fixRebase, getObjectCount, getRebaseStatus, getRepoStatus, rebase } from '$lib/repo';
+	import {
+		fixRebase,
+		getObjectCount,
+		getRebaseStatus,
+		getRepoStatus,
+		rebase,
+		runGitGc
+	} from '$lib/repo';
 	import { getUnrealVersionSelectorStatus } from '$lib/system';
 	import { CheckStatus, type ObjectCountResponse, type RebaseStatusResponse } from '$lib/types';
 	import EmojiStatus from '$lib/components/EmojiStatus.svelte';
@@ -23,6 +30,7 @@
 	let loading = false;
 	let updatingRebaseStatus = false;
 	let rebasing = false;
+	let runningGc = false;
 
 	let rebaseStatus: RebaseStatusResponse = {
 		rebaseMergeExists: false,
@@ -134,6 +142,19 @@
 		} finally {
 			await refresh();
 			updatingRebaseStatus = false;
+		}
+	};
+
+	const handleRunGc = async () => {
+		runningGc = true;
+		try {
+			await runGitGc();
+			await emit('success', 'git gc complete!');
+		} catch (e) {
+			await emit('error', e);
+		} finally {
+			await refresh();
+			runningGc = false;
 		}
 	};
 
@@ -301,6 +322,17 @@
 					/>
 				</div>
 			{/if}
+			{#if objectCountCheck !== CheckStatus.Loading}
+				<div class="flex items-center gap-2 mt-2">
+					<Button disabled={runningGc || loading} size="sm" primary on:click={handleRunGc}>
+						Run git gc
+					</Button>
+					<span class="text-xs text-gray-300"
+						>Runs <code>git gc</code> to optimize the repository. Unreachable objects newer than two
+						weeks are kept so lost commits can still be recovered. This may take a while.</span
+					>
+				</div>
+			{/if}
 		</AccordionItem>
 		<AccordionItem class="w-full">
 			<div slot="header" class="flex items-center justify-between w-full pr-2">
@@ -325,3 +357,23 @@
 		</AccordionItem>
 	</Accordion>
 </Card>
+
+<Modal
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	dismissable={false}
+	size="sm"
+	open={runningGc}
+>
+	<div class="flex items-center gap-3">
+		<Spinner size="6" />
+		<div class="flex flex-col">
+			<p class="text-xl text-primary-400">Running git gc</p>
+			<p class="text-sm text-gray-300">
+				Please don't close Friendshipper or run other git operations. This may take a while.
+			</p>
+		</div>
+	</div>
+</Modal>

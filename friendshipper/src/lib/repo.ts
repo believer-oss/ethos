@@ -143,6 +143,8 @@ export const rebase = async (): Promise<void> => invoke('rebase');
 
 export const getObjectCount = async (): Promise<ObjectCountResponse> => invoke('get_object_count');
 
+export const runGitGc = async (): Promise<void> => invoke('run_git_gc');
+
 export const resetRepo = async (): Promise<void> => invoke('reset_repo');
 
 export const refetchRepo = async (): Promise<void> => invoke('refetch_repo');
