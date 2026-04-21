@@ -533,6 +533,13 @@ export interface FileHistoryResponse {
 	revisions: FileHistoryRevision[];
 }
 
+export interface RestoreFileToRevisionRequest {
+	path: string;
+	sha: string;
+	takeSnapshot?: boolean;
+	skipEngineCheck?: boolean;
+}
+
 export interface CommitInfo {
 	sha: string;
 	shortSha: string;

@@ -240,6 +240,7 @@ fn main() -> Result<(), CoreError> {
                 reset_config,
                 restore_snapshot,
                 revert_files,
+                restore_file_to_revision,
                 force_download_dlls,
                 force_download_engine,
                 reset_engine,

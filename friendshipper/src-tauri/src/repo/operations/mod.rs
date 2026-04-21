@@ -13,6 +13,7 @@ pub use log::log_handler;
 pub use pull::{pull_handler, PullOp};
 pub use refetch::refetch_repo;
 pub use reset::{reset_repo, reset_repo_to_commit};
+pub use restore::{restore_file_to_revision_handler, RestoreFileToRevisionRequest};
 pub use revert::{revert_files_handler, RevertFilesOp};
 pub use show::show_commit_files;
 pub use snapshot::{
@@ -43,6 +44,7 @@ mod log;
 mod pull;
 mod refetch;
 mod reset;
+mod restore;
 mod revert;
 mod show;
 mod snapshot;

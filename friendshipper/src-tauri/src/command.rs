@@ -21,7 +21,7 @@ use ethos_core::types::repo::{
 };
 use friendshipper::builds::router::GetWorkflowsResponse;
 use friendshipper::repo::operations::{
-    RestoreSnapshotRequest, SaveChangeSetRequest, SaveSnapshotRequest,
+    RestoreFileToRevisionRequest, RestoreSnapshotRequest, SaveChangeSetRequest, SaveSnapshotRequest,
 };
 
 // Update the TauriError creation to include status_code
@@ -267,6 +267,25 @@ pub async fn get_file_history(
     }
 
     Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn restore_file_to_revision(
+    state: tauri::State<'_, State>,
+    req: RestoreFileToRevisionRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/restore-file", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

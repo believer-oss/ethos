@@ -11,6 +11,7 @@ import type {
 	RebaseStatusResponse,
 	RepoDirectoryListing,
 	RepoStatus,
+	RestoreFileToRevisionRequest,
 	RevertFilesRequest,
 	Snapshot
 } from '$lib/types';
@@ -196,3 +197,6 @@ export const getFileHistory = async (path: string): Promise<FileHistoryResponse>
 
 export const getCommitInfo = async (sha: string): Promise<CommitInfo> =>
 	invoke('get_commit_info', { sha });
+
+export const restoreFileToRevision = async (req: RestoreFileToRevisionRequest): Promise<void> =>
+	invoke('restore_file_to_revision', { req });

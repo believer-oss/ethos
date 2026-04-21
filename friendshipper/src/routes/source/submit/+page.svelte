@@ -249,6 +249,11 @@
 		}
 	};
 
+	const handleFileReverted = async () => {
+		fileHistoryModalOpen = false;
+		await refreshFiles(false);
+	};
+
 	const refreshPulls = async () => {
 		fetchingPulls = true;
 		try {
@@ -1374,4 +1379,8 @@
 
 <ProgressModal showModal={showProgressModal} title={progressModalTitle} />
 
-<FileHistoryModal bind:open={fileHistoryModalOpen} filePath={fileHistoryPath} />
+<FileHistoryModal
+	bind:open={fileHistoryModalOpen}
+	filePath={fileHistoryPath}
+	onReverted={handleFileReverted}
+/>

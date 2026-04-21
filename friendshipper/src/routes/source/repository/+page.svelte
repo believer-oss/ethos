@@ -208,6 +208,7 @@
 			displayName={selectedDisplayName}
 			{revisions}
 			loading={historyLoading}
+			onReverted={handleRefresh}
 		/>
 	</div>
 </div>
