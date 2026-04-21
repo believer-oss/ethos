@@ -7,7 +7,8 @@
 		CloseOutline,
 		CodeOutline,
 		CodeBranchOutline,
-		ArrowUpOutline
+		ArrowUpOutline,
+		InfoCircleOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
@@ -20,6 +21,7 @@
 	export let commits: CommitWorkflowInfo[];
 	export let showPromoteBuildModal: boolean = false;
 	export let promoteBuildCommit: string = '';
+	export let onShowCommitInfo: Nullable<(sha: string) => void> = null;
 
 	const setSelectedCommit = (commit: string) => {
 		selectedCommit = commit;
@@ -194,13 +196,30 @@
 
 {#each commits as commit}
 	<div class="flex items-center justify-between gap-0">
-		<div class="flex items-center gap-2 w-40 flex-none">
+		<div class="flex items-center gap-2 w-60 flex-none">
 			<a
 				class="text-sm text-center text-primary-400 dark:text-primary-400 hover:underline"
 				href={commit.compareUrl}
 				target="_blank"
 				rel="noopener noreferrer"><code>{commit.commit.substring(0, 8)}</code></a
 			>
+			{#if onShowCommitInfo}
+				{@const handler = onShowCommitInfo}
+				<Button
+					outline
+					size="xs"
+					class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
+					on:click={() => {
+						handler(commit.commit);
+					}}
+				>
+					<InfoCircleOutline class="w-4 h-4" />
+				</Button>
+				<Tooltip
+					class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+					placement="right">Show commit details</Tooltip
+				>
+			{/if}
 			{#if commit.branch}
 				<div class="flex items-center gap-1">
 					{#if isPrimaryBranch(commit.branch)}

@@ -10,7 +10,12 @@
 		TableHeadCell,
 		Tooltip
 	} from 'flowbite-svelte';
-	import { ChevronDownOutline, ChevronRightOutline, ChevronUpOutline } from 'flowbite-svelte-icons';
+	import {
+		ChevronDownOutline,
+		ChevronRightOutline,
+		ChevronUpOutline,
+		InfoCircleOutline
+	} from 'flowbite-svelte-icons';
 	import type { Commit, CommitFileInfo, Nullable } from '$lib/types/index.js';
 
 	export let commits: Commit[];
@@ -18,6 +23,9 @@
 	export let showBuildStatus: boolean = false;
 
 	export let showFilesHandler: (commit: string, stash: boolean) => Promise<CommitFileInfo[]>;
+
+	// Optional: when provided, renders an info button per row that invokes this handler with the SHA.
+	export let onShowCommitInfo: Nullable<(sha: string) => void> = null;
 
 	let searchTerm = '';
 
@@ -99,6 +107,9 @@
 			<TableHeadCell class="p-1" />
 		{/if}
 		<TableHeadCell class="pl-1">SHA</TableHeadCell>
+		{#if onShowCommitInfo}
+			<TableHeadCell class="p-1 w-8" />
+		{/if}
 		<TableHeadCell>Message</TableHeadCell>
 		<TableHeadCell>Committed</TableHeadCell>
 		<TableHeadCell>Merged</TableHeadCell>
@@ -157,6 +168,25 @@
 				>
 					<code>{commit.sha}</code></TableBodyCell
 				>
+				{#if onShowCommitInfo}
+					{@const handler = onShowCommitInfo}
+					<TableBodyCell tdClass="p-1 w-8 align-middle">
+						<Button
+							outline
+							size="xs"
+							class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
+							on:click={() => {
+								handler(commit.sha);
+							}}
+						>
+							<InfoCircleOutline class="w-4 h-4" />
+						</Button>
+						<Tooltip
+							class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+							placement="right">Show commit details</Tooltip
+						>
+					</TableBodyCell>
+				{/if}
 				<TableBodyCell
 					id="sha-{commit.sha}"
 					class="py-2 break-normal overflow-ellipsis overflow-hidden whitespace-nowrap w-3/4 max-w-[20vw]"
@@ -206,7 +236,7 @@
 						: 'bg-secondary-800 dark:bg-space-950'}"
 				>
 					<td />
-					<td colspan="5" class="border-0">
+					<td colspan={onShowCommitInfo ? 6 : 5} class="border-0">
 						<div class="w-full pb-4 px-6">
 							<p class="text-white">Commit Files</p>
 							{#if loadingCommitFiles}
@@ -224,7 +254,7 @@
 			{/if}
 		{:else}
 			<TableBodyRow class="text-left border-b-0 p-2 bg-secondary-700">
-				<td colspan="7" class="p-4 py-2">
+				<td colspan={onShowCommitInfo ? 8 : 7} class="p-4 py-2">
 					<span class="text-gray-400">No commits yet! (We may still be loading.)</span>
 				</td>
 			</TableBodyRow>

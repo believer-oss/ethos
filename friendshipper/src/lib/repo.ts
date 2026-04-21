@@ -2,6 +2,7 @@ import type { ChangeSet, Commit, CommitFileInfo } from '@ethos/core';
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	CloneRequest,
+	CommitInfo,
 	GitHubPullRequest,
 	MergeQueue,
 	ObjectCountResponse,
@@ -158,18 +159,32 @@ export const showCommitFiles = async (
 ): Promise<CommitFileInfo[]> => invoke('show_commit_files', { commit, stash });
 
 export const getCommitFileTextClass = (action: string) => {
-	if (action === 'M') {
-		return 'text-yellow-300';
+	// git --name-status emits single-letter codes for M/A/D/T/U and letter+similarity for R/C
+	// (e.g. R080, C75). Match the leading letter so renames/copies color too.
+	const code = action.charAt(0).toUpperCase();
+	switch (code) {
+		case 'M':
+			return 'text-yellow-300';
+		case 'D':
+			return 'text-red-700';
+		case 'A':
+			return 'text-lime-500';
+		case 'R':
+			return 'text-sky-400';
+		case 'C':
+			return 'text-purple-400';
+		case 'T':
+			return 'text-orange-400';
+		case 'U':
+			return 'text-red-500';
+		default:
+			return '';
 	}
-	if (action === 'D') {
-		return 'text-red-700';
-	}
-	if (action === 'A') {
-		return 'text-lime-500';
-	}
-	return '';
 };
 
 export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');
 
 export const checkoutTargetBranch = async (): Promise<void> => invoke('checkout_target_branch');
+
+export const getCommitInfo = async (sha: string): Promise<CommitInfo> =>
+	invoke('get_commit_info', { sha });

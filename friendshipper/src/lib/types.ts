@@ -488,3 +488,17 @@ export interface JunitTestSuite {
 	testcase: Nullable<JunitTestCase[]>;
 	testsuite: Nullable<JunitTestSuite[]>;
 }
+
+export interface CommitInfo {
+	sha: string;
+	shortSha: string;
+	authorName: string;
+	authorEmail: string;
+	authorDate: string;
+	committerName: string;
+	committerEmail: string;
+	committerDate: string;
+	parents: string[];
+	subject: string;
+	message: string;
+}

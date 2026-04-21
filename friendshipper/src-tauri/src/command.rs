@@ -15,7 +15,9 @@ use ethos_core::types::playtests::{
     AssignUserRequest, CreatePlaytestRequest, Playtest, UnassignUserRequest, UpdatePlaytestRequest,
 };
 use ethos_core::types::project::ProjectConfig;
-use ethos_core::types::repo::{ChangeSet, CommitFileInfo, PushRequest, RepoStatus, Snapshot};
+use ethos_core::types::repo::{
+    ChangeSet, CommitFileInfo, CommitInfo, PushRequest, RepoStatus, Snapshot,
+};
 use friendshipper::builds::router::GetWorkflowsResponse;
 use friendshipper::repo::operations::{
     RestoreSnapshotRequest, SaveChangeSetRequest, SaveSnapshotRequest,
@@ -214,6 +216,28 @@ pub async fn show_commit_files(
         .get(format!(
             "{}/repo/show?commit={}&stash={}",
             state.server_url, commit, stash
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_commit_info(
+    state: tauri::State<'_, State>,
+    sha: String,
+) -> Result<CommitInfo, TauriError> {
+    let encoded = urlencoding::encode(&sha);
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/commit-info?sha={}",
+            state.server_url, encoded
         ))
         .send()
         .await?;
