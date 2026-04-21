@@ -4,6 +4,7 @@ use ethos_core::types::repo::{FileHistoryResponse, FileHistoryRevision};
 use serde::Deserialize;
 use tracing::instrument;
 
+use crate::engine;
 use crate::engine::EngineProvider;
 use ethos_core::types::errors::CoreError;
 
@@ -192,7 +193,27 @@ where
         revision.revision_number = (len - index) as u32;
     }
 
-    Ok(Json(FileHistoryResponse { revisions }))
+    // Best-effort OFPA name translation via the running editor. Falls back to empty when the
+    // editor isn't reachable; the frontend only renders when non-empty.
+    let engine_path = state
+        .app_config
+        .read()
+        .load_engine_path_from_repo(&state.repo_config.read())
+        .unwrap_or_default();
+    let display_names = state
+        .engine
+        .get_asset_display_names(
+            engine::CommunicationType::IpcOnly,
+            &engine_path,
+            std::slice::from_ref(&params.path),
+        )
+        .await;
+    let display_name = display_names.into_iter().next().unwrap_or_default();
+
+    Ok(Json(FileHistoryResponse {
+        display_name,
+        revisions,
+    }))
 }
 
 // We do have separate code for this conversion in the core library, but this is meant to

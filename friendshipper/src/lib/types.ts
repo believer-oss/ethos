@@ -489,6 +489,50 @@ export interface JunitTestSuite {
 	testsuite: Nullable<JunitTestSuite[]>;
 }
 
+// Repository file browser types
+export type RepoFileKind = 'directory' | 'file';
+
+export type RepoFileState =
+	| 'unmodified'
+	| 'modified'
+	| 'added'
+	| 'untracked'
+	| 'deleted'
+	| 'outOfDate'
+	| 'conflicted';
+
+export interface RepoDirectoryEntry {
+	name: string;
+	path: string;
+	kind: RepoFileKind;
+	state: RepoFileState;
+	size?: number;
+}
+
+export interface RepoDirectoryListing {
+	path: string;
+	entries: RepoDirectoryEntry[];
+}
+
+export interface FileHistoryRevision {
+	filename: string;
+	commitId: string;
+	shortCommitId: string;
+	commitIdNumber: number;
+	revisionNumber: number;
+	fileHash: string;
+	description: string;
+	userName: string;
+	action: string;
+	date: string;
+	fileSize: number;
+}
+
+export interface FileHistoryResponse {
+	displayName: string;
+	revisions: FileHistoryRevision[];
+}
+
 export interface CommitInfo {
 	sha: string;
 	shortSha: string;
