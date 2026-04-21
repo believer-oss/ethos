@@ -27,6 +27,40 @@ pub use update_engine::{
 
 pub use crate::repo::operations::gh::submit::GitHubSubmitOp;
 
+use ethos_core::types::errors::CoreError;
+
+/// Validates a repo-relative path supplied by the frontend. Normalizes backslashes to forward
+/// slashes, strips leading/trailing slashes, and rejects empty segments, `.` / `..` traversal,
+/// and absolute paths (anything containing `:`, which catches Windows drive letters).
+///
+/// Returns an empty string for empty input (meaning "repo root"), which callers can reject
+/// further if they require a specific file.
+pub(crate) fn sanitize_repo_path(input: &str) -> Result<String, CoreError> {
+    let normalized = input.replace('\\', "/");
+    let trimmed = normalized.trim_matches('/').to_string();
+
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+
+    for seg in trimmed.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err(CoreError::Input(anyhow::anyhow!(
+                "Invalid path segment in '{}'",
+                trimmed
+            )));
+        }
+    }
+
+    if trimmed.contains(':') {
+        return Err(CoreError::Input(anyhow::anyhow!(
+            "Absolute paths are not allowed"
+        )));
+    }
+
+    Ok(trimmed)
+}
+
 mod branch_compare;
 mod browse;
 mod changeset;

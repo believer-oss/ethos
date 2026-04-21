@@ -60,8 +60,15 @@
 			});
 			await emit('success', `Reverted ${filePath} to ${revertTarget.shortCommitId}.`);
 			revertTarget = null;
+			// Post-revert refresh is best-effort. The revert itself already succeeded, so a
+			// transient failure in the host's refresh callback should not surface as a second
+			// error toast on top of the success toast.
 			if (onReverted) {
-				await onReverted();
+				try {
+					await onReverted();
+				} catch (_) {
+					// intentional: don't clobber the success with a refresh error
+				}
 			}
 		} catch (e) {
 			await emit('error', e);
@@ -222,6 +229,7 @@
 <Modal
 	open={revertTarget !== null}
 	size="md"
+	color="none"
 	class="bg-secondary-700 dark:bg-space-900"
 	bodyClass="!border-t-0 flex-1 overflow-y-auto overscroll-contain"
 	backdropClass="fixed inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"

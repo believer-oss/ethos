@@ -5,6 +5,7 @@ use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
+use super::sanitize_repo_path;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
@@ -35,7 +36,7 @@ pub async fn restore_file_to_revision_handler<T>(
 where
     T: EngineProvider,
 {
-    let path = req.path.trim();
+    let path = sanitize_repo_path(&req.path)?;
     if path.is_empty() {
         return Err(CoreError::Input(anyhow::anyhow!("path is required")));
     }
@@ -59,7 +60,7 @@ where
     if req.take_snapshot {
         let status_output = git
             .run_and_collect_output(
-                &["status", "--porcelain", "--", path],
+                &["status", "--porcelain", "--", &path],
                 Opts {
                     skip_notify_frontend: true,
                     should_log_stdout: false,
@@ -72,7 +73,7 @@ where
         if !status_output.trim().is_empty() {
             git.save_snapshot(
                 "pre-restore-to-previous-version-of-file",
-                vec![path.to_string()],
+                vec![path.clone()],
                 SaveSnapshotIndexOption::DiscardIndex,
             )
             .await
@@ -80,7 +81,7 @@ where
         }
     }
 
-    git.run(&["checkout", &req.sha, "--", path], Opts::default())
+    git.run(&["checkout", &req.sha, "--", &path], Opts::default())
         .await
         .map_err(|e| CoreError::Internal(anyhow::anyhow!("git checkout failed: {}", e)))?;
 

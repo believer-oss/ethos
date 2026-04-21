@@ -10,6 +10,7 @@ use ethos_core::types::repo::{
 use serde::Deserialize;
 use tracing::{debug, instrument};
 
+use super::sanitize_repo_path;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
@@ -17,32 +18,6 @@ use crate::state::AppState;
 pub struct BrowseParams {
     #[serde(default)]
     pub path: String,
-}
-
-fn sanitize_path(input: &str) -> Result<String, CoreError> {
-    let normalized = input.replace('\\', "/");
-    let trimmed = normalized.trim_matches('/').to_string();
-
-    if trimmed.is_empty() {
-        return Ok(String::new());
-    }
-
-    for seg in trimmed.split('/') {
-        if seg.is_empty() || seg == "." || seg == ".." {
-            return Err(CoreError::Input(anyhow::anyhow!(
-                "Invalid path segment in '{}'",
-                trimmed
-            )));
-        }
-    }
-
-    if trimmed.contains(':') {
-        return Err(CoreError::Input(anyhow::anyhow!(
-            "Absolute paths are not allowed"
-        )));
-    }
-
-    Ok(trimmed)
 }
 
 #[instrument(skip(state))]
@@ -53,7 +28,7 @@ pub async fn list_directory_handler<T>(
 where
     T: EngineProvider,
 {
-    let path = sanitize_path(&params.path)?;
+    let path = sanitize_repo_path(&params.path)?;
 
     let quiet_opts = Opts {
         skip_notify_frontend: true,
