@@ -90,6 +90,7 @@
 <Modal
 	bind:open
 	size="xl"
+	color="none"
 	class="bg-secondary-700 dark:bg-space-900"
 	bodyClass="!border-t-0 flex-1 overflow-y-auto overscroll-contain"
 	backdropClass="fixed inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"

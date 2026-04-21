@@ -33,9 +33,12 @@ where
         )));
     }
 
-    // Format: pipe-delimited metadata on line 1, raw body follows.
-    // %H=full, %h=short, %an/%ae/%aI=author, %cn/%ce/%cI=committer, %P=parents, %B=body
-    let format_spec = "--pretty=format:%H|%h|%an|%ae|%aI|%cn|%ce|%cI|%P%n%B";
+    // NUL-delimited metadata fields, message last. NUL (%x00) is used instead of a printable
+    // delimiter so author/committer names or emails that happen to contain characters like `|`
+    // don't corrupt the parse. Git guarantees no field contains a NUL byte.
+    //   %H=full, %h=short, %an/%ae/%aI=author, %cn/%ce/%cI=committer, %P=parents, %B=body
+    let format_spec =
+        "--pretty=format:%H%x00%h%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%P%x00%B";
 
     let output = state
         .git()
@@ -50,12 +53,13 @@ where
         .await
         .map_err(|e| CoreError::Internal(anyhow::anyhow!("git show failed: {}", e)))?;
 
-    let (first_line, message) = output.split_once('\n').unwrap_or((output.as_str(), ""));
-    let parts: Vec<&str> = first_line.splitn(9, '|').collect();
-    if parts.len() < 9 {
+    // First 9 NUL splits are the metadata fields; the 10th is the raw message body (which may
+    // contain its own newlines — we preserve them).
+    let parts: Vec<&str> = output.splitn(10, '\0').collect();
+    if parts.len() < 10 {
         return Err(CoreError::Internal(anyhow::anyhow!(
-            "unexpected git show output: {}",
-            first_line
+            "unexpected git show output (got {} fields)",
+            parts.len()
         )));
     }
 
@@ -68,7 +72,7 @@ where
 
     let parents: Vec<String> = parts[8].split_whitespace().map(|s| s.to_string()).collect();
 
-    let message = message.trim_end().to_string();
+    let message = parts[9].trim_end().to_string();
     let subject = message.lines().next().unwrap_or("").to_string();
 
     Ok(Json(CommitInfo {
