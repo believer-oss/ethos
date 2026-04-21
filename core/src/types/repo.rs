@@ -377,6 +377,22 @@ pub struct FileHistoryResponse {
     pub revisions: Vec<FileHistoryRevision>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitInfo {
+    pub sha: String,
+    pub short_sha: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub author_date: DateTime<Utc>,
+    pub committer_name: String,
+    pub committer_email: String,
+    pub committer_date: DateTime<Utc>,
+    pub parents: Vec<String>,
+    pub subject: String,
+    pub message: String,
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitFileInfo {

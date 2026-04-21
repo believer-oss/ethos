@@ -17,6 +17,7 @@ where
         .route("/pull", post(operations::pull_handler))
         .route("/show", get(operations::show_commit_files))
         .route("/file-history", get(operations::file_history_handler))
+        .route("/commit-info", get(operations::commit_info_handler))
         .route(
             "/snapshots",
             get(operations::list_snapshots).delete(operations::delete_snapshot),

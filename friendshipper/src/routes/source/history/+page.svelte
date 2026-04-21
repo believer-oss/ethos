@@ -11,6 +11,7 @@
 	import { ChevronDownOutline, RefreshOutline, FileCodeSolid } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { CommitTable, ProgressModal } from '@ethos/core';
+	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
 	import {
 		getAllCommits,
 		syncLatest,
@@ -36,6 +37,14 @@
 	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus.conflicts.length > 0;
 
 	let selectedCommit = '';
+
+	let commitInfoModalOpen = false;
+	let commitInfoSha: string | null = null;
+
+	const showCommitInfo = (sha: string) => {
+		commitInfoSha = sha;
+		commitInfoModalOpen = true;
+	};
 
 	const refresh = async () => {
 		loading = true;
@@ -333,8 +342,11 @@
 		commits={$commits}
 		latestLocalCommit={$latestLocalCommit}
 		showFilesHandler={showCommitFiles}
+		onShowCommitInfo={showCommitInfo}
 		showBuildStatus
 	/>
 </Card>
+
+<CommitInfoModal bind:open={commitInfoModalOpen} sha={commitInfoSha} />
 
 <ProgressModal bind:showModal={inAsyncOperation} bind:title={asyncModalText} />
