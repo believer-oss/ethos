@@ -2,7 +2,6 @@
 	import { Button, Card, Spinner, TabItem, Tabs, Tooltip } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
 	import { RefreshOutline } from 'flowbite-svelte-icons';
-	import { emit } from '@tauri-apps/api/event';
 	import { getWorkflows } from '$lib/builds';
 	import type { Nullable, Workflow } from '$lib/types';
 	import WorkflowLogsModal from '$lib/components/workflows/WorkflowLogsModal.svelte';
@@ -10,7 +9,6 @@
 	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
 	import { appConfig, engineWorkflows, workflows } from '$lib/stores';
 	import WorkflowTable from '$lib/components/workflows/WorkflowTable.svelte';
-	import { openUrl } from '$lib/utils';
 
 	let loading: boolean = false;
 	let selectedCommit: string = '';
@@ -23,32 +21,16 @@
 
 	let commitInfoModalOpen = false;
 	let commitInfoSha: string | null = null;
-	const showGameCommitInfo = (sha: string) => {
-		commitInfoSha = sha;
-		commitInfoModalOpen = true;
-	};
 
-	// Engine commits live in the engine repo, which isn't guaranteed to be cloned locally (Prebuilt
-	// engines), so instead of opening the rich modal we send the user straight to GitHub.
-	const openEngineCommitOnGitHub = async (sha: string) => {
-		const url = $appConfig.engineRepoUrl?.trim();
-		if (!url) {
-			await emit('error', 'Engine repo URL is not configured.');
-			return;
-		}
-		const parts = url.replace(/\.git$/, '').split('/');
-		if (parts.length < 2) {
-			await emit('error', `Cannot parse engine repo URL: ${url}`);
-			return;
-		}
-		const owner = parts[parts.length - 2].toLowerCase();
-		const name = parts[parts.length - 1].toLowerCase();
-		try {
-			await openUrl(`https://github.com/${owner}/${name}/commit/${sha}`);
-		} catch (e) {
-			await emit('error', e);
-		}
-	};
+	// The rich CommitInfoModal needs a local clone of the game repo to run `git show`.
+	// Playtester configs without a clone fall back to the clickable short-SHA link (which
+	// already opens the commit on GitHub), so we just hide the info button for those users.
+	$: gameCommitInfoHandler = $appConfig.repoPath?.trim()
+		? (sha: string) => {
+				commitInfoSha = sha;
+				commitInfoModalOpen = true;
+		  }
+		: null;
 
 	const refreshWorkflows = async () => {
 		loading = true;
@@ -97,7 +79,7 @@
 				bind:selectedCommit
 				bind:showPromoteBuildModal
 				bind:promoteBuildCommit
-				onShowCommitInfo={showGameCommitInfo}
+				onShowCommitInfo={gameCommitInfoHandler}
 			/>
 		</TabItem>
 		<TabItem
@@ -110,7 +92,6 @@
 				bind:showWorkflowLogsModal
 				bind:selectedWorkflow
 				bind:selectedCommit
-				onShowCommitInfo={openEngineCommitOnGitHub}
 			/>
 		</TabItem>
 	</Tabs>
