@@ -93,6 +93,14 @@
 	import { openUrl } from '$lib/utils';
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 	import { checkEngineReady, openUrlForPath } from '$lib/engine';
+	import FileHistoryModal from '$lib/components/FileHistoryModal.svelte';
+
+	let fileHistoryModalOpen = false;
+	let fileHistoryPath: string | null = null;
+	const showFileHistory = (path: string) => {
+		fileHistoryPath = path;
+		fileHistoryModalOpen = true;
+	};
 
 	let loading = false;
 	let fetchingPulls = false;
@@ -976,6 +984,7 @@
 			onSaveSnapshot={handleSaveSnapshot}
 			onLockSelected={handleLockSelected}
 			onRightClick={onModifiedFileRightClick}
+			onShowFileHistory={showFileHistory}
 		/>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[32rem]">
@@ -1364,3 +1373,5 @@
 </Modal>
 
 <ProgressModal showModal={showProgressModal} title={progressModalTitle} />
+
+<FileHistoryModal bind:open={fileHistoryModalOpen} filePath={fileHistoryPath} />

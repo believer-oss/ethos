@@ -23,6 +23,7 @@
 		FileCopySolid,
 		TrashBinSolid,
 		ChevronSortOutline,
+		ClockSolid,
 		EditOutline
 	} from 'flowbite-svelte-icons';
 	import { onMount, tick } from 'svelte';
@@ -48,6 +49,9 @@
 	export let onChangesetsSaved: (changeSets: ChangeSet[]) => Promise<void>;
 	export let enableGlobalSearch: boolean = false;
 	export let onRightClick: (e: MouseEvent, file: ModifiedFile) => void = () => {};
+	// Optional: when provided, renders a history button per row that invokes this handler with
+	// the file path. When not provided, the column is hidden (no-op for consumers like Birdie).
+	export let onShowFileHistory: ((path: string) => void) | null = null;
 
 	let hoveringSetIndex: number = -1;
 	let hoveringCreateNewChangeset: boolean = false;
@@ -701,6 +705,7 @@
 									<ChevronSortOutline class="text-gray-400" size="xs" />
 								</div>
 							</TableHeadCell>
+							<TableHeadCell class="p-1 w-px" />
 							<TableHeadCell
 								class="p-1 cursor-pointer"
 								on:click={() => {
@@ -775,25 +780,42 @@
 											<span class="text-gray-300">Unlocked</span>
 										{/if}
 									</TableBodyCell>
-									<TableBodyCell
-										class="p-1 flex gap-1 items-center h-full whitespace-nowrap font-medium"
-									>
-										<Button
-											outline
-											size="xs"
-											class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
-											on:click={async () => onOpenDirectory(file.path)}
-										>
-											<FolderOpenOutline class="w-4 h-4" />
-										</Button>
-										{#if file.submitStatus !== SubmitStatus.Ok}
-											<span> ⚠️ </span>
-											<Tooltip
-												class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+									<TableBodyCell tdClass="p-1 whitespace-nowrap font-medium w-px">
+										<div class="flex gap-1 items-center">
+											<Button
+												outline
+												size="xs"
+												class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
+												on:click={async () => onOpenDirectory(file.path)}
 											>
-												{getFileTooltip(file)}
-											</Tooltip>
-										{/if}
+												<FolderOpenOutline class="w-4 h-4" />
+											</Button>
+											{#if onShowFileHistory}
+												{@const historyHandler = onShowFileHistory}
+												<Button
+													outline
+													size="xs"
+													class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
+													on:click={() => { historyHandler(file.path); }}
+												>
+													<ClockSolid class="w-4 h-4" />
+												</Button>
+												<Tooltip
+													class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+													placement="left">Show file history</Tooltip
+												>
+											{/if}
+											{#if file.submitStatus !== SubmitStatus.Ok}
+												<span> ⚠️ </span>
+												<Tooltip
+													class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												>
+													{getFileTooltip(file)}
+												</Tooltip>
+											{/if}
+										</div>
+									</TableBodyCell>
+									<TableBodyCell class="p-1 whitespace-nowrap font-medium">
 										<div
 											draggable={true}
 											role="button"
@@ -818,7 +840,7 @@
 								</TableBodyRow>
 							{:else}
 								<TableBodyRow class="text-center border-b-0 bg-secondary-700 dark:bg-space-900">
-									<TableBodyCell class="p-1" colspan="4">
+									<TableBodyCell class="p-1" colspan="5">
 										<p class="text-gray-300">No modified files</p>
 									</TableBodyCell>
 								</TableBodyRow>
