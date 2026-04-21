@@ -194,8 +194,12 @@
 	});
 </script>
 
-{#each commits as commit}
-	<div class="flex items-center justify-between gap-0">
+{#each commits as commit, index}
+	<div
+		class="flex items-center justify-between gap-0 px-2 py-1 {index % 2 === 0
+			? 'bg-secondary-800 dark:bg-space-950'
+			: 'bg-secondary-700 dark:bg-space-900'}"
+	>
 		<div class="flex items-center gap-2 w-60 flex-none">
 			<a
 				class="text-sm text-center text-primary-400 dark:text-primary-400 hover:underline"
