@@ -1234,6 +1234,14 @@
 									active={activeUrl === '/source/history'}
 								/>
 								<SidebarItem
+									label="Repository"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/repository"
+									active={activeUrl === '/source/repository'}
+								/>
+								<SidebarItem
 									label="Locks"
 									activeClass={sidebarSubItemActiveClass}
 									nonActiveClass={sidebarSubItemInactiveClass}

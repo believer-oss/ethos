@@ -373,8 +373,50 @@ pub struct FileHistoryRevision {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileHistoryResponse {
+    /// OFPA-translated friendly name for the queried path, when the engine can resolve it.
+    /// Empty when the editor isn't running or the path doesn't translate to an asset name.
+    #[serde(default)]
+    pub display_name: String,
     pub revisions: Vec<FileHistoryRevision>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoFileKind {
+    Directory,
+    File,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoFileState {
+    Unmodified,
+    Modified,
+    Added,
+    Untracked,
+    Deleted,
+    OutOfDate,
+    Conflicted,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoDirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: RepoFileKind,
+    pub state: RepoFileState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoDirectoryListing {
+    pub path: String,
+    pub entries: Vec<RepoDirectoryEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

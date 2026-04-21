@@ -16,7 +16,8 @@ use ethos_core::types::playtests::{
 };
 use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::{
-    ChangeSet, CommitFileInfo, CommitInfo, PushRequest, RepoStatus, Snapshot,
+    ChangeSet, CommitFileInfo, CommitInfo, FileHistoryResponse, PushRequest, RepoDirectoryListing,
+    RepoStatus, Snapshot,
 };
 use friendshipper::builds::router::GetWorkflowsResponse;
 use friendshipper::repo::operations::{
@@ -216,6 +217,47 @@ pub async fn show_commit_files(
         .get(format!(
             "{}/repo/show?commit={}&stash={}",
             state.server_url, commit, stash
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn list_repo_directory(
+    state: tauri::State<'_, State>,
+    path: String,
+) -> Result<RepoDirectoryListing, TauriError> {
+    let encoded = urlencoding::encode(&path);
+    let res = state
+        .client
+        .get(format!("{}/repo/browse?path={}", state.server_url, encoded))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_file_history(
+    state: tauri::State<'_, State>,
+    path: String,
+) -> Result<FileHistoryResponse, TauriError> {
+    let encoded = urlencoding::encode(&path);
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/file-history?path={}",
+            state.server_url, encoded
         ))
         .send()
         .await?;

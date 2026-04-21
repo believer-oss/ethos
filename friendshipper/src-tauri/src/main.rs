@@ -261,6 +261,8 @@ fn main() -> Result<(), CoreError> {
                 open_sln,
                 reset_longtail,
                 show_commit_files,
+                list_repo_directory,
+                get_file_history,
                 get_commit_info,
                 shutdown_server,
                 start_gameserver_log_tail,

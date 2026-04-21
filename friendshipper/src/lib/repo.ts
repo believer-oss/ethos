@@ -3,11 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
 	CloneRequest,
 	CommitInfo,
+	FileHistoryResponse,
 	GitHubPullRequest,
 	MergeQueue,
 	ObjectCountResponse,
 	PushRequest,
 	RebaseStatusResponse,
+	RepoDirectoryListing,
 	RepoStatus,
 	RevertFilesRequest,
 	Snapshot
@@ -185,6 +187,12 @@ export const getCommitFileTextClass = (action: string) => {
 export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');
 
 export const checkoutTargetBranch = async (): Promise<void> => invoke('checkout_target_branch');
+
+export const listRepoDirectory = async (path: string): Promise<RepoDirectoryListing> =>
+	invoke('list_repo_directory', { path });
+
+export const getFileHistory = async (path: string): Promise<FileHistoryResponse> =>
+	invoke('get_file_history', { path });
 
 export const getCommitInfo = async (sha: string): Promise<CommitInfo> =>
 	invoke('get_commit_info', { sha });
