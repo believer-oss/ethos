@@ -7,6 +7,7 @@
 
 	export let open: boolean = false;
 	export let filePath: string | null = null;
+	export let onReverted: (() => void | Promise<void>) | null = null;
 
 	let revisions: FileHistoryRevision[] = [];
 	let displayName = '';
@@ -52,6 +53,6 @@
 	</svelte:fragment>
 
 	<div class="h-[65vh]">
-		<FileHistoryPanel {filePath} {displayName} {revisions} {loading} />
+		<FileHistoryPanel {filePath} {displayName} {revisions} {loading} {onReverted} />
 	</div>
 </Modal>

@@ -57,6 +57,10 @@ where
         .route("/refetch", post(operations::refetch_repo))
         .route("/reset/:commit", post(operations::reset_repo_to_commit))
         .route("/revert", post(operations::revert_files_handler::<T>))
+        .route(
+            "/restore-file",
+            post(operations::restore_file_to_revision_handler::<T>),
+        )
         .route("/locks/lock", post(operations::acquire_locks_handler))
         .route("/locks/unlock", post(operations::release_locks_handler))
         .route(
