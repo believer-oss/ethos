@@ -17,6 +17,7 @@
 	import {
 		CloseCircleSolid,
 		PenSolid,
+		ExclamationCircleSolid,
 		FolderOpenOutline,
 		InfoCircleSolid,
 		PlusOutline,
@@ -796,7 +797,9 @@
 													outline
 													size="xs"
 													class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
-													on:click={() => { historyHandler(file.path); }}
+													on:click={() => {
+														historyHandler(file.path);
+													}}
 												>
 													<ClockSolid class="w-4 h-4" />
 												</Button>
@@ -805,7 +808,14 @@
 													placement="left">Show file history</Tooltip
 												>
 											{/if}
-											{#if file.submitStatus !== SubmitStatus.Ok}
+											{#if file.submitStatus === SubmitStatus.Conflicted}
+												<ExclamationCircleSolid class="w-5 h-5 text-red-500 animate-pulse" />
+												<Tooltip
+													class="w-auto bg-red-900 dark:bg-red-900 text-white font-semibold shadow-2xl"
+												>
+													{getFileTooltip(file)}
+												</Tooltip>
+											{:else if file.submitStatus !== SubmitStatus.Ok}
 												<span> ⚠️ </span>
 												<Tooltip
 													class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
