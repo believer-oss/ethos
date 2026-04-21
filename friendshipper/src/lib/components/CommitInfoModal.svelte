@@ -185,7 +185,7 @@
 				</div>
 				<div class="max-h-96 overflow-y-auto bg-secondary-800 dark:bg-space-950 rounded-md">
 					<Table color="custom" striped={true}>
-						<TableHead class="w-full border-b-0 p-2 bg-secondary-900 dark:bg-space-950">
+						<TableHead class="w-full border-b-0 p-2 bg-secondary-900 dark:bg-space-950 text-white">
 							<TableHeadCell class="p-1 w-8">Action</TableHeadCell>
 							<TableHeadCell class="p-1">File</TableHeadCell>
 						</TableHead>
