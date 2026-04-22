@@ -108,16 +108,30 @@ where
             status_op.execute().await?;
         }
 
-        // Check for conflicts with incoming changes before creating snapshot
+        // Check for conflicts with incoming changes before creating snapshot.
+        // Reuse the untracked file list from the StatusOp above instead of
+        // running another `git status` inside the check — on large worktrees
+        // this single status call is multi-second.
         let branch_for_conflict_check = if is_quicksubmit_branch(&current_branch) {
             // For f11r branches, check conflicts against the target branch since that's what we'll actually pull from
             self.app_config.read().target_branch.clone()
         } else {
             current_branch.clone()
         };
+        let known_untracked_paths: Vec<String> = self
+            .repo_status
+            .read()
+            .untracked_files
+            .0
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
         let sync_conflicts = self
             .git_client
-            .check_sync_vs_untracked_file_conflicts(&branch_for_conflict_check)
+            .check_sync_vs_untracked_file_conflicts(
+                &branch_for_conflict_check,
+                &known_untracked_paths,
+            )
             .await?;
         if !sync_conflicts.is_empty() {
             return Err(CoreError::Input(anyhow!(
@@ -127,9 +141,16 @@ where
             )));
         }
 
-        // take a snapshot if we have any modified files
+        // take a snapshot if we have any modified or untracked files.
         // we need to do this before we check for quicksubmit branch so that the
-        // stashes resolve inside out correctly
+        // stashes resolve inside out correctly.
+        //
+        // Pass the exact modified + untracked paths from the StatusOp above
+        // rather than letting `save_snapshot` do a full `git add -- .` /
+        // `git stash create .` pathspec walk. On large worktrees (100K+ files)
+        // the pathspec walk alone can take tens of seconds even when the tree
+        // is clean; scoping to known-dirty paths makes snapshot cost
+        // proportional to the dirty set instead of total tracked files.
         let mut snapshot = None;
         let mut snapshot_modified_files = vec![];
         if !self.skip_snapshot {
@@ -137,9 +158,20 @@ where
             if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
                 // Capture the modified files at snapshot time for restore_snapshot
                 snapshot_modified_files = repo_status.modified_files.0.clone();
+                let snapshot_paths: Vec<String> = repo_status
+                    .modified_files
+                    .0
+                    .iter()
+                    .chain(repo_status.untracked_files.0.iter())
+                    .map(|file| file.path.clone())
+                    .collect();
                 snapshot = Some(
                     self.git_client
-                        .save_snapshot_all("pre-pull", git::SaveSnapshotIndexOption::DiscardIndex)
+                        .save_snapshot(
+                            "pre-pull",
+                            snapshot_paths,
+                            git::SaveSnapshotIndexOption::DiscardIndex,
+                        )
                         .await?,
                 );
             }

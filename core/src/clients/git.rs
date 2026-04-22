@@ -739,24 +739,35 @@ impl Git {
         Ok(files)
     }
 
+    /// Check for conflicts between the caller's known untracked files and
+    /// files that would come in from a pull of `branch`.
+    ///
+    /// The caller is expected to pass the already-known untracked set — for
+    /// example, from a `StatusOp` that just ran — so we don't spawn another
+    /// full `git status` here. On large worktrees this is the difference
+    /// between "free" and a multi-second scan.
     pub async fn check_sync_vs_untracked_file_conflicts(
         &self,
         branch: &str,
+        untracked_files: &[String],
     ) -> anyhow::Result<Vec<String>> {
+        // If the caller has no untracked files, there is nothing a tracked
+        // incoming file can collide with. Skip the network round-trip.
+        if untracked_files.is_empty() {
+            return Ok(vec![]);
+        }
+
         // If the remote branch doesn't exist, there are no incoming files to conflict with.
         // This is expected for local-only dev branches (e.g. coho/feature-name).
         if !self.has_remote_branch(branch).await? {
             return Ok(vec![]);
         }
 
-        // Get current untracked files
-        let untracked_files = self.get_untracked_files().await?;
-
         // Get files that would be incoming in a pull/sync
         let incoming_files = self.get_incoming_files(branch).await?;
 
         // Find conflicts between untracked local files and incoming tracked files
-        let conflicts = Self::find_tracked_conflicts(&incoming_files, &untracked_files);
+        let conflicts = Self::find_tracked_conflicts(&incoming_files, untracked_files);
 
         Ok(conflicts)
     }
