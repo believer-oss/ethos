@@ -263,11 +263,6 @@
 								onSelectFile(entry);
 							}
 						}}
-						on:dblclick={() => {
-							if (entry.kind === 'directory') {
-								onNavigateDirectory(entry);
-							}
-						}}
 					>
 						<TableBodyCell tdClass="p-1 w-10">
 							<Button
