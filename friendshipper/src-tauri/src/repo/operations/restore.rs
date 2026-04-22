@@ -5,7 +5,7 @@ use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use super::sanitize_repo_path;
+use super::{is_valid_sha, sanitize_repo_path};
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
@@ -22,10 +22,6 @@ pub struct RestoreFileToRevisionRequest {
     pub take_snapshot: bool,
     #[serde(default)]
     pub skip_engine_check: bool,
-}
-
-fn is_valid_sha(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[instrument(skip(state))]

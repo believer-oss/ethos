@@ -66,8 +66,10 @@
 			if (onReverted) {
 				try {
 					await onReverted();
-				} catch (_) {
-					// intentional: don't clobber the success with a refresh error
+				} catch (refreshErr) {
+					// Intentional: don't clobber the success toast with a refresh error, but log
+					// so failures are debuggable if someone reports missing state after revert.
+					console.warn('post-revert refresh failed', refreshErr);
 				}
 			}
 		} catch (e) {

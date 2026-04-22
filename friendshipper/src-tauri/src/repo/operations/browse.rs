@@ -30,9 +30,16 @@ where
 {
     let path = sanitize_repo_path(&params.path)?;
 
+    // Expected "doesn't resolve" cases we treat as an empty listing rather than a hard error:
+    //   - "Not a valid object name": HEAD is unborn (fresh repo) or the path doesn't exist at HEAD
+    //   - "not a tree object":       the path resolves to a blob, not a directory
+    // Anything else (permissions, corruption, etc.) still bubbles up to the caller.
+    const LS_TREE_IGNORED: &[&str] = &["Not a valid object name", "not a tree object"];
+
     let quiet_opts = Opts {
         skip_notify_frontend: true,
         should_log_stdout: false,
+        ignored_errors: LS_TREE_IGNORED,
         ..Default::default()
     };
 
@@ -49,7 +56,7 @@ where
         .git()
         .run_and_collect_output_into_lines(&["ls-tree", &tree_ref], quiet_opts)
         .await
-        .unwrap_or_default(); // Empty path at a brand-new or empty ref -> empty listing, not an error.
+        .map_err(|e| CoreError::Internal(anyhow::anyhow!("git ls-tree failed: {}", e)))?;
 
     debug!(
         path = %path,
