@@ -126,6 +126,16 @@ where
             .iter()
             .map(|file| file.path.clone())
             .collect();
+        // `get_incoming_files` (called from `check_sync_vs_untracked_file_conflicts`)
+        // assumes fresh remote refs. `pull_handler` fetches before scheduling
+        // `PullOp` for non-quicksubmit branches, so we only need to fetch here
+        // for the quicksubmit path — and only when there's an untracked set
+        // worth checking against. Avoids a second fetch on every sync.
+        if is_quicksubmit_branch(&current_branch) && !known_untracked_paths.is_empty() {
+            self.git_client
+                .fetch(git::ShouldPrune::No, git::Opts::new_without_logs())
+                .await?;
+        }
         let sync_conflicts = self
             .git_client
             .check_sync_vs_untracked_file_conflicts(

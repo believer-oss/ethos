@@ -726,12 +726,13 @@ impl Git {
         conflicts
     }
 
+    /// Compute the files that would be incoming in a pull from `origin/<branch>`.
+    ///
+    /// Callers are responsible for ensuring remote refs are fresh (e.g. by
+    /// running `fetch` beforehand). This function deliberately does not fetch
+    /// so that callers who have already fetched don't pay for a redundant
+    /// network round-trip.
     pub async fn get_incoming_files(&self, branch: &str) -> anyhow::Result<Vec<String>> {
-        // Fetch latest changes to ensure we have up-to-date refs
-        self.fetch(ShouldPrune::No, Opts::new_without_logs())
-            .await?;
-
-        // Get files that would be incoming in a pull
         let remote_branch = format!("origin/{}", branch);
         let range = format!("HEAD..{}", remote_branch);
 
