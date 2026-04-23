@@ -453,7 +453,13 @@ where
             .fetch(git::ShouldPrune::Yes, git::Opts::new_without_logs())
             .await?;
 
-        if git_client.has_remote_branch(&current_branch).await? {
+        // `fetch --prune` above just synced refs/remotes/origin/* with the
+        // server's branch set, so a local ref check is equivalent to a second
+        // ls-remote — and avoids another ~1s network round-trip on every sync.
+        if git_client
+            .has_local_remote_tracking_branch(&current_branch)
+            .await?
+        {
             let local_head = git_client
                 .run_and_collect_output(&["rev-parse", "HEAD"], git::Opts::new_without_logs())
                 .await?;

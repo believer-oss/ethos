@@ -803,6 +803,25 @@ impl Git {
         Ok(!output.is_empty())
     }
 
+    /// Check whether `refs/remotes/origin/<branch>` exists locally.
+    ///
+    /// This is purely local — no network round-trip. Use this when you have
+    /// just fetched and want to know whether the remote advertised the branch,
+    /// as a cheap replacement for `has_remote_branch`. Prefer `has_remote_branch`
+    /// when you need source-of-truth from the remote right now (e.g. deciding
+    /// whether to `push -d` an old branch).
+    pub async fn has_local_remote_tracking_branch(&self, branch: &str) -> anyhow::Result<bool> {
+        let refname = format!("refs/remotes/origin/{branch}");
+        let output = self
+            .run_and_collect_output(
+                &["for-each-ref", "--format=%(refname)", &refname],
+                Opts::new_without_logs(),
+            )
+            .await?;
+
+        Ok(!output.trim().is_empty())
+    }
+
     pub async fn verify_locks(&self) -> anyhow::Result<VerifyLocksResponse> {
         let output = match self
             .run_and_collect_output(
