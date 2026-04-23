@@ -424,6 +424,18 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
+                // Channel for high-level sync phase labels (e.g. "Pulling latest
+                // changes from GitHub"). Separate from `git_tx` so phase labels
+                // in the pulling modal don't get stomped by the verbose `Running
+                // 'git ...'` messages that flow through `git-log`.
+                let (sync_phase_tx, sync_phase_rx) = std::sync::mpsc::channel::<String>();
+                let sync_phase_app_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = sync_phase_rx.recv() {
+                        sync_phase_app_handle.emit("sync-phase", &msg).unwrap();
+                    }
+                });
+
                 let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
                 let longtail_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -505,6 +517,7 @@ fn main() -> Result<(), CoreError> {
                         frontend_op_tx,
                         server_log_path,
                         git_tx.clone(),
+                        sync_phase_tx.clone(),
                         gameserver_log_tx.clone(),
                         workflow_log_tx.clone(),
                         otel_reload_handle,

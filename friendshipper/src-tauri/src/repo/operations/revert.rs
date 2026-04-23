@@ -3,6 +3,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use std::fs;
 use std::io::Write;
+use std::sync::mpsc::Sender;
 use tempfile::NamedTempFile;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::info;
@@ -26,6 +27,10 @@ pub struct RevertFilesOp<T> {
     pub repo_status: RepoStatusRef,
     pub engine: Option<T>,
     pub take_snapshot: bool,
+    /// Forwarded so the op can post phase labels ("Reverting modified
+    /// files", "Releasing file locks") to the revert modal. Send errors
+    /// are ignored — the receiver lives for the app's lifetime.
+    pub sync_phase_tx: Sender<String>,
 }
 
 // Note: This is not "git revert", it's "git checkout -- <files>"
@@ -45,6 +50,9 @@ where
         }
 
         if self.take_snapshot {
+            let _ = self
+                .sync_phase_tx
+                .send("Snapshotting local changes".to_string());
             // Include all files being reverted (both modified and untracked)
             let _ = self
                 .git_client
@@ -55,6 +63,10 @@ where
                 )
                 .await?;
         }
+
+        let _ = self
+            .sync_phase_tx
+            .send("Reverting modified files".to_string());
 
         let branch = self.repo_status.read().branch.clone();
 
@@ -72,6 +84,11 @@ where
         ];
 
         self.git_client.run(&args, git::Opts::default()).await?;
+
+        // Pre-emit the next phase so when the LockOp runs after this op,
+        // the modal already shows the right label rather than hanging on
+        // "Reverting modified files".
+        let _ = self.sync_phase_tx.send("Releasing file locks".to_string());
 
         Ok(())
     }
@@ -134,6 +151,9 @@ where
 
     // Create prerevert snapshot including all files (both modified and untracked) before any operations
     if request.take_snapshot && (!added.is_empty() || !modified.is_empty()) {
+        let _ = state
+            .sync_phase_tx
+            .send("Snapshotting local changes".to_string());
         let all_files: Vec<String> = request.files.clone();
         let _ = state
             .git()
@@ -146,6 +166,7 @@ where
     }
 
     if !added.is_empty() {
+        let _ = state.sync_phase_tx.send("Removing added files".to_string());
         for file in &added {
             let path = repo_path.clone() + "/" + &file.path;
             fs::remove_file(&path)?;
@@ -163,6 +184,7 @@ where
                 Some(state.engine.clone())
             },
             take_snapshot: false, // Snapshot already taken above
+            sync_phase_tx: state.sync_phase_tx.clone(),
         };
 
         sequence.push(Box::new(op));
@@ -170,6 +192,13 @@ where
 
     // unlock reverted files
     if !request.files.is_empty() {
+        // When there are no modified files, no RevertFilesOp will run before
+        // the LockOp, so the modal would still be showing "Removing added
+        // files" (or the initial title). Emit the lock phase here so the
+        // worker thread picks up the right label as soon as LockOp starts.
+        if modified.is_empty() {
+            let _ = state.sync_phase_tx.send("Releasing file locks".to_string());
+        }
         let lock_paths = request.files.to_vec();
         let github_pat = state
             .app_config

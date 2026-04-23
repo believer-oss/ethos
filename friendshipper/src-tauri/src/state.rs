@@ -65,6 +65,11 @@ pub struct AppState<T> {
     pub gameserver_log_tx: STDSender<String>,
     pub workflow_log_tx: STDSender<String>,
     pub git_tx: STDSender<String>,
+    /// Emits high-level sync phase labels (e.g. "Pulling latest changes from
+    /// GitHub") to the frontend as `sync-phase` Tauri events. Used by the
+    /// pulling modal to show coarse progress distinct from the noisier
+    /// `git-log` stream.
+    pub sync_phase_tx: STDSender<String>,
 
     pub engine: T,
 
@@ -93,6 +98,7 @@ where
         log_path: PathBuf,
         otel_reload_handle: Option<OtelReloadHandle>,
         git_tx: STDSender<String>,
+        sync_phase_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
         workflow_log_tx: STDSender<String>,
     ) -> Result<Self> {
@@ -196,6 +202,7 @@ where
             log_path,
             otel_reload_handle,
             git_tx,
+            sync_phase_tx,
             gameserver_log_tx: server_log_tx,
             workflow_log_tx,
             engine,

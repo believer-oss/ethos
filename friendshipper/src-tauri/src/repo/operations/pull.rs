@@ -42,12 +42,29 @@ pub struct PullOp<T> {
     pub github_client: Option<GraphQLClient>,
     pub engine: T,
 
+    /// Channel for high-level phase labels ("Pulling latest changes from
+    /// GitHub", "Restoring local changes from temporary snapshot", …).
+    /// Surfaced to the frontend as `sync-phase` Tauri events so the
+    /// pulling modal can show a persistent, user-friendly step label
+    /// distinct from the verbose `git-log` stream.
+    pub sync_phase_tx: Sender<String>,
+
     /// When true, skip taking a pre-pull snapshot of dirty files. This is used
     /// when the caller already holds a snapshot that covers the current working
     /// tree state (e.g. the pre-submit snapshot in quick-submit), avoiding an
     /// expensive duplicate stash cycle on hundreds of files. The git pull
     /// `--autostash` flag still protects dirty files during the rebase itself.
     pub skip_snapshot: bool,
+}
+
+impl<T> PullOp<T> {
+    /// Post a high-level phase label to the pulling modal. Ignores send
+    /// errors: the channel receiver lives for the lifetime of the app, so
+    /// a failure here just means the frontend closed early — not worth
+    /// bubbling up and failing the sync over.
+    fn emit_phase(&self, phase: impl Into<String>) {
+        let _ = self.sync_phase_tx.send(phase.into());
+    }
 }
 
 #[async_trait]
@@ -90,6 +107,7 @@ where
             validate_repo_state(&repo_path, &repo_status)?;
         }
 
+        self.emit_phase("Checking repository status");
         {
             let status_op = StatusOp {
                 repo_status: self.repo_status.clone(),
@@ -166,6 +184,7 @@ where
         if !self.skip_snapshot {
             let repo_status = self.repo_status.read().clone();
             if !repo_status.modified_files.is_empty() || !repo_status.untracked_files.is_empty() {
+                self.emit_phase("Snapshotting local changes");
                 // Capture the modified files at snapshot time for restore_snapshot
                 snapshot_modified_files = repo_status.modified_files.0.clone();
                 let snapshot_paths: Vec<String> = repo_status
@@ -205,6 +224,7 @@ where
         // potential conflicts when making another Quick Submit.
         if is_quicksubmit_branch(&branch) {
             let target_branch = self.app_config.read().target_branch.clone();
+            self.emit_phase(format!("Switching back to {target_branch}"));
 
             // Ensure target branch is available locally before checkout
             if !self.git_client.has_local_branch(&target_branch).await? {
@@ -288,6 +308,7 @@ where
         };
 
         // run git pull but retry one time if it fails
+        self.emit_phase("Pulling latest changes from GitHub");
         match self
             .git_client
             .pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
@@ -309,6 +330,7 @@ where
 
         // Attempt to restore any snapshots that were made above.
         if let Some(snapshot) = snapshot {
+            self.emit_phase("Restoring local changes from temporary snapshot");
             errors.push(
                 self.git_client
                     .restore_snapshot(&snapshot.commit, snapshot_modified_files, false)
@@ -319,6 +341,7 @@ where
         }
 
         // Refresh the repo status with new information from the pull
+        self.emit_phase("Refreshing status");
         {
             let status_op = {
                 StatusOp {
@@ -383,6 +406,7 @@ where
                                 engine: self.engine.clone(),
                                 engine_path,
                             };
+                            self.emit_phase("Downloading latest binaries");
                             errors.push(download_op.execute().await.err())
                         }
                         None => {
@@ -417,6 +441,7 @@ where
                             project,
                             engine: self.engine.clone(),
                         };
+                        self.emit_phase("Updating engine");
                         errors.push(update_engine_op.execute().await.err());
                     }
                 }
@@ -449,6 +474,7 @@ where
     let git_client = state.git();
     let current_branch = git_client.current_branch().await?;
     if !is_quicksubmit_branch(&current_branch) {
+        let _ = state.sync_phase_tx.send("Checking for updates".to_string());
         git_client
             .fetch(git::ShouldPrune::Yes, git::Opts::new_without_logs())
             .await?;
@@ -510,6 +536,7 @@ where
         git_client: state.git(),
         github_client: state.github_client.read().clone(),
         engine: state.engine.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
         skip_snapshot: false,
     };
 

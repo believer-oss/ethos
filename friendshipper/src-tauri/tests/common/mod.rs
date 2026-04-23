@@ -426,6 +426,7 @@ pub async fn setup(
     info!("Started operation worker. Creating channels for longtail, git, and gameserver.");
     let (longtail_tx, longtail_rx) = std::sync::mpsc::channel();
     let (git_tx, git_rx) = std::sync::mpsc::channel();
+    let (sync_phase_tx, _sync_phase_rx) = std::sync::mpsc::channel::<String>();
     let (gs_tx, _gs_rx) = std::sync::mpsc::channel();
     let (workflow_tx, _workflow_rx) = std::sync::mpsc::channel();
 
@@ -488,6 +489,7 @@ pub async fn setup(
         PathBuf::from_str("test-path").unwrap(),
         None,
         git_tx,
+        sync_phase_tx,
         gs_tx,
         workflow_tx,
     )
