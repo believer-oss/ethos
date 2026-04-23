@@ -61,6 +61,10 @@ where
     pub longtail: Longtail,
     pub longtail_tx: Sender<LongtailMsg>,
     pub notification_tx: Sender<Notification>,
+    /// Forwarded into the auto-sync `PullOp` kicked off after a successful
+    /// quicksubmit merge so the pulling modal shows the same phase labels
+    /// a standalone Sync would.
+    pub sync_phase_tx: Sender<String>,
 
     pub git_client: git::Git,
     pub token: String,
@@ -68,6 +72,19 @@ where
 }
 
 const SUBMIT_PREFIX: &str = "[quick submit]";
+
+impl<T> SubmitOp<T>
+where
+    T: EngineProvider,
+{
+    /// Post a high-level phase label to the submitting modal. Mirrors
+    /// `PullOp::emit_phase`. Send errors are ignored: the receiver lives
+    /// for the app's lifetime, so a failed send means the listener has
+    /// gone away — not worth bubbling up and failing the submit over.
+    fn emit_phase(&self, phase: impl Into<String>) {
+        let _ = self.sync_phase_tx.send(phase.into());
+    }
+}
 
 #[async_trait]
 impl Task for GitHubSubmitOp {
@@ -250,6 +267,7 @@ where
             validate_repo_state(&repo_path, &repo_status)?;
         }
 
+        self.emit_phase("Checking repository status");
         let status_op = StatusOp {
             repo_status: self.repo_status.clone(),
             app_config: self.app_config.clone(),
@@ -334,11 +352,14 @@ where
         let status = self.repo_status.read().clone();
         let modified_files = status.modified_files.0.clone();
         let untracked_files = status.untracked_files.0.clone();
-        let all_files = modified_files
+        let all_files: Vec<String> = modified_files
             .into_iter()
             .chain(untracked_files.into_iter())
             .map(|file| file.path.clone())
             .collect();
+        if !all_files.is_empty() {
+            self.emit_phase("Snapshotting local changes");
+        }
         let snapshot = self
             .git_client
             .save_snapshot("pre-submit", all_files, SaveSnapshotIndexOption::KeepIndex)
@@ -494,6 +515,7 @@ where
                         "Unreal Editor must be closed before submitting. Your previous submit branch has been merged, so a branch swap is required."
                     )));
                 }
+                self.emit_phase(format!("Switching to {target_branch}"));
                 // Ensure target branch is available locally before checkout
                 if !self.git_client.has_local_branch(&target_branch).await? {
                     info!(
@@ -533,6 +555,7 @@ where
         }
 
         // commit changes
+        self.emit_phase("Committing changes");
         {
             let add_op = AddOp {
                 files: self.files.clone(),
@@ -600,6 +623,7 @@ where
             }
         }
 
+        self.emit_phase("Pushing to GitHub");
         let worktree_path: PathBuf = 'path: {
             let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
 
@@ -733,6 +757,7 @@ where
         match quicksubmit_pr_id {
             // We have a PR, this is a requeue
             Some(pr_id) => {
+                self.emit_phase("Re-queuing pull request");
                 info!("Reusing existing PR with ID: {}", pr_id);
 
                 // Wait for GitHub to process the force push and run checks before enqueueing.
@@ -768,6 +793,7 @@ where
                 };
 
                 if use_merge_queue {
+                    self.emit_phase("Adding to merge queue");
                     gh_op.execute().await?;
 
                     cleanup_worktree_branch(
@@ -779,6 +805,7 @@ where
 
                     return Ok(());
                 } else {
+                    self.emit_phase("Submitting pull request");
                     // Non-merge-queue: gh_op.execute() blocks until merge completes
                     let merge_result = gh_op.execute().await;
 
@@ -791,6 +818,7 @@ where
 
                     match merge_result {
                         Ok(()) => {
+                            self.emit_phase("Releasing file locks");
                             info!("PR merge confirmed, unlocking files");
                             let github_username = self.github_client.username.clone();
                             let lock_op = LockOp {
@@ -824,6 +852,7 @@ where
                                         git_client: self.git_client.clone(),
                                         github_client: Some(self.github_client.clone()),
                                         engine: self.engine.clone(),
+                                        sync_phase_tx: self.sync_phase_tx.clone(),
                                         // The pre-submit snapshot already covers the working
                                         // tree, so skip the expensive duplicate snapshot inside
                                         // PullOp. git pull --autostash still protects dirty
@@ -946,6 +975,7 @@ where
         longtail: state.longtail.clone(),
         longtail_tx: state.longtail_tx.clone(),
         notification_tx: state.notification_tx.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
 
         git_client: state.git(),
         token: token.to_string(),

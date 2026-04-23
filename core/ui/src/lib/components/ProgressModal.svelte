@@ -12,6 +12,11 @@
 	let remaining = '';
 
 	let message = '';
+	// High-level sync phase label (e.g. "Pulling latest changes from GitHub").
+	// Sent by the backend on the `sync-phase` event. Rendered above the noisier
+	// git-log detail so users see a persistent, plain-language step instead of
+	// a blur of "Running 'git ...'" messages.
+	let phase = '';
 
 	void listen('longtail-sync-progress', (event) => {
 		const captures = event.payload as { progress: string; elapsed: string; remaining: string };
@@ -29,11 +34,16 @@
 		}
 	});
 
+	void listen('sync-phase', (event) => {
+		phase = event.payload as string;
+	});
+
 	const onOpen = () => {
 		progress = 0;
 		elapsed = '';
 		remaining = '';
 		message = '';
+		phase = '';
 	};
 </script>
 
@@ -63,7 +73,14 @@
 			{/if}
 		</div>
 	</div>
-	{#if message}
+	{#if phase}
+		<div class="rounded-md p-3 bg-secondary-800 dark:bg-space-950">
+			<p class="text-base text-primary-300 dark:text-primary-300 font-medium m-0">{phase}</p>
+			{#if message}
+				<p class="text-xs text-gray-400 dark:text-gray-400 mt-1 m-0 truncate">{message}</p>
+			{/if}
+		</div>
+	{:else if message}
 		<div class="rounded-md p-2 bg-secondary-800 dark:bg-space-950">
 			<p class="text-sm text-gray-300 dark:text-gray-300 m-0">{message}</p>
 		</div>

@@ -106,6 +106,16 @@ where
         force: request.force,
     };
 
+    // Emit a phase label so any progress modal showing during a lock/unlock
+    // displays a user-friendly step name. Goes through `sync_phase_tx`, the
+    // same channel pull/submit/revert use; emitted synchronously here so the
+    // modal is updated by the time the worker picks up the LockOp.
+    let phase = match op {
+        LockOperation::Lock => "Locking files",
+        LockOperation::Unlock => "Unlocking files",
+    };
+    let _ = state.sync_phase_tx.send(phase.to_string());
+
     let (task_tx, task_rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
 
     let mut sequence = TaskSequence::new().with_completion_tx(task_tx);
