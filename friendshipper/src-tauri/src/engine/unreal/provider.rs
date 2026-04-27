@@ -239,10 +239,7 @@ impl EngineProvider for UnrealEngineProvider {
     }
 
     fn get_url_for_path(&self, path: &str) -> Option<String> {
-        let scheme = match &self.editor_url_scheme {
-            Some(s) => s,
-            None => return None,
-        };
+        let scheme = self.editor_url_scheme.as_ref()?;
 
         // if it's not a uasset or a umap, we can't open it in the editor
         if !path.ends_with(".uasset") && !path.ends_with(".umap") {

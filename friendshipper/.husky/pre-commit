@@ -9,9 +9,6 @@ npx lint-staged --cwd core/ui
 echo 'Checking friendshipper...'
 npx lint-staged --cwd friendshipper
 
-echo 'Checking birdie...'
-npx lint-staged --cwd birdie
-
 echo 'Checking Rust...'
 cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
