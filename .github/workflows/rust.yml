@@ -18,7 +18,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     strategy:
       matrix:
-        app: ["core/ui", "friendshipper", "birdie"]
+        app: ["core/ui", "friendshipper"]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,7 +44,7 @@ jobs:
       group: ethos-linux
     strategy:
       matrix:
-        app: [friendshipper, birdie]
+        app: [friendshipper]
     permissions:
       contents: write
 
@@ -128,7 +128,7 @@ jobs:
       group: ethos-windows
     strategy:
       matrix:
-        app: [friendshipper, birdie]
+        app: [friendshipper]
     permissions:
       contents: write
 

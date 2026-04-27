@@ -45,7 +45,6 @@ flowchart LR
 There are a few internal libs that are built into friendshipper:
 
 - `friendshipper/` - the Friendshipper UI and backend
-- `birdie` - A PoC art pipeline tool
 - `core/`: Code shared between various applications
 
 # Development

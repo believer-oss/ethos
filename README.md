@@ -30,14 +30,6 @@ Friendshipper is a desktop application for viewing and downloading builds of an 
 
 All of our playtesting at Believer is done through Friendshipper. See full docs [here](./friendshipper/README.md).
 
-### Birdie
-
-Birdie is an application for art teams to manage their assets through Git LFS. At current state, it functions like a simple file browser, allowing users to browse, download, check out, and submit files via Git. Birdie utilizes specific Git configuration parameters to ensure that users can download and work on exactly the files they need without requiring them to sync all assets in the repository.
-
-Birdie is in its early stages. Our plan for Birdie is to introduce a more well-defined game-centric taxonomy to files via metadata, enabling users to search for files by "character", "location", or "chapter", for example.
-
-See Birdie's documentation [here](./birdie/README.md).
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.

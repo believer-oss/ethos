@@ -51,7 +51,7 @@
 	export let enableGlobalSearch: boolean = false;
 	export let onRightClick: (e: MouseEvent, file: ModifiedFile) => void = () => {};
 	// Optional: when provided, renders a history button per row that invokes this handler with
-	// the file path. When not provided, the column is hidden (no-op for consumers like Birdie).
+	// the file path. When not provided, the column is hidden.
 	export let onShowFileHistory: ((path: string) => void) | null = null;
 
 	let hoveringSetIndex: number = -1;

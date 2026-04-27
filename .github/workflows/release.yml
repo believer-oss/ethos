@@ -9,7 +9,6 @@ on:
         required: true
         options:
           - friendshipper
-          - birdie
       version:
         description: "version tag (e.g. 1.0.0)"
         required: true
