@@ -4,6 +4,7 @@ use axum::response::{IntoResponse, Response};
 pub mod commits;
 pub mod merge_queue;
 pub mod pulls;
+pub mod status;
 pub mod user;
 
 #[derive(Debug)]

@@ -9,6 +9,7 @@
 	import { repoStatus } from '$lib/stores';
 	import {
 		fixRebase,
+		getGithubStatus,
 		getObjectCount,
 		getRebaseStatus,
 		getRepoStatus,
@@ -16,7 +17,12 @@
 		runGitGc
 	} from '$lib/repo';
 	import { getUnrealVersionSelectorStatus } from '$lib/system';
-	import { CheckStatus, type ObjectCountResponse, type RebaseStatusResponse } from '$lib/types';
+	import {
+		CheckStatus,
+		type GitHubStatusResponse,
+		type ObjectCountResponse,
+		type RebaseStatusResponse
+	} from '$lib/types';
 	import EmojiStatus from '$lib/components/EmojiStatus.svelte';
 
 	// Various check statuses
@@ -26,6 +32,8 @@
 	let rebaseRequiredCheck: CheckStatus = CheckStatus.Loading;
 	let objectCountCheck: CheckStatus = CheckStatus.Loading;
 	let unrealVersionSelectorCheck: CheckStatus = CheckStatus.Loading;
+	let githubStatusCheck: CheckStatus = CheckStatus.Loading;
+	let githubStatus: GitHubStatusResponse | null = null;
 
 	let loading = false;
 	let updatingRebaseStatus = false;
@@ -60,6 +68,7 @@
 		rebaseRequiredCheck = CheckStatus.Loading;
 		objectCountCheck = CheckStatus.Loading;
 		unrealVersionSelectorCheck = CheckStatus.Loading;
+		githubStatusCheck = CheckStatus.Loading;
 
 		try {
 			repoStatus.set(await getRepoStatus());
@@ -126,6 +135,16 @@
 		} catch (e) {
 			await emit('error', e);
 			unrealVersionSelectorCheck = CheckStatus.Failure;
+		}
+
+		try {
+			githubStatus = await getGithubStatus();
+			githubStatusCheck =
+				githubStatus.indicator === 'none' ? CheckStatus.Success : CheckStatus.Failure;
+		} catch (e) {
+			await emit('error', e);
+			githubStatus = null;
+			githubStatusCheck = CheckStatus.Failure;
 		}
 
 		updatingRebaseStatus = false;
@@ -353,6 +372,31 @@
 				/>
 			{:else}
 				Everything looks good!
+			{/if}
+		</AccordionItem>
+		<AccordionItem class="w-full">
+			<div slot="header" class="flex items-center justify-between w-full pr-2">
+				<div class="w-1/3">GitHub Status</div>
+				<span class="text-xs text-gray-300 font-mono w-3/4"
+					>Is GitHub reporting all systems operational?</span
+				>
+				<EmojiStatus checkStatus={githubStatusCheck} />
+			</div>
+			{#if githubStatus}
+				<div class="flex flex-col gap-1">
+					<span>
+						<span class="font-semibold">{githubStatus.description}</span>
+						<span class="text-xs text-gray-300">(indicator: {githubStatus.indicator})</span>
+					</span>
+					<a
+						class="text-xs text-primary-400 underline"
+						href={githubStatus.url}
+						target="_blank"
+						rel="noopener noreferrer">{githubStatus.url}</a
+					>
+				</div>
+			{:else}
+				Could not reach the GitHub status page.
 			{/if}
 		</AccordionItem>
 	</Accordion>

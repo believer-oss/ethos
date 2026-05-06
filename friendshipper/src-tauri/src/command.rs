@@ -97,6 +97,26 @@ pub async fn run_git_gc(state: tauri::State<'_, State>) -> Result<(), TauriError
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_github_status(
+    state: tauri::State<'_, State>,
+) -> Result<ethos_core::types::github::status::GitHubStatusResponse, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/diagnostics/github-status",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
 // Config
 #[tauri::command]
 pub async fn get_dynamic_config(

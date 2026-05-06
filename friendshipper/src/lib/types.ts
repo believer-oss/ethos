@@ -370,6 +370,12 @@ export interface ObjectCountResponse {
 	rawOutput: string;
 }
 
+export interface GitHubStatusResponse {
+	indicator: 'none' | 'minor' | 'major' | 'critical' | 'maintenance';
+	description: string;
+	url: string;
+}
+
 export interface Snapshot {
 	commit: string;
 	message: string;

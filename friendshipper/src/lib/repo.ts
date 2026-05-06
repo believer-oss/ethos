@@ -5,6 +5,7 @@ import type {
 	CommitInfo,
 	FileHistoryResponse,
 	GitHubPullRequest,
+	GitHubStatusResponse,
 	MergeQueue,
 	ObjectCountResponse,
 	PushRequest,
@@ -146,6 +147,9 @@ export const fixRebase = async (): Promise<void> => invoke('fix_rebase');
 export const rebase = async (): Promise<void> => invoke('rebase');
 
 export const getObjectCount = async (): Promise<ObjectCountResponse> => invoke('get_object_count');
+
+export const getGithubStatus = async (): Promise<GitHubStatusResponse> =>
+	invoke('get_github_status');
 
 export const runGitGc = async (): Promise<void> => invoke('run_git_gc');
 
