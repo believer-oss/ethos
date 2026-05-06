@@ -134,10 +134,12 @@ impl GraphQLClient {
             )
             .build()?;
 
+        // PAT validation is interactive (user is waiting on the settings save) and a bad
+        // PAT is a permanent error, so don't burn the retry budget here — fail fast.
         match post_graphql_with_retry::<GetUsername>(
             &client,
             "get_username",
-            RETRY_DEFAULT_ATTEMPTS,
+            RETRY_NO_RETRY_ATTEMPTS,
             || get_username::Variables {},
         )
         .await
