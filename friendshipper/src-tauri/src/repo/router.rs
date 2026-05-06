@@ -45,6 +45,10 @@ where
             "/diagnostics/gc",
             post(operations::diagnostics::run_gc_handler),
         )
+        .route(
+            "/diagnostics/github-status",
+            get(operations::diagnostics::github_status_handler),
+        )
         .route("/download-dlls", post(operations::download_dlls_handler))
         .route("/reset-engine", post(operations::reset_engine_handler))
         .route("/download-engine", post(operations::update_engine_handler))

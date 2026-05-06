@@ -458,7 +458,10 @@ where
                 return Err(CoreError::Internal(anyhow::anyhow!("Repository information not yet available - please wait for repo status to initialize")));
             }
 
-            let merge_queue = self.github_client.get_merge_queue(&owner, &repo).await?;
+            let merge_queue = self
+                .github_client
+                .get_merge_queue_no_retry(&owner, &repo)
+                .await?;
             if let Some(entries) = merge_queue.entries {
                 if let Some(nodes) = entries.nodes {
                     for node in nodes.into_iter().flatten() {

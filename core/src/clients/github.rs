@@ -18,12 +18,96 @@ use crate::types::github::pulls::{
 use crate::types::github::user::{get_username, GetUsername};
 use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
+use graphql_client::{GraphQLQuery, Response};
+use rand::Rng;
 use reqwest::Client;
 use std::collections::HashMap;
-use tracing::error;
-use tracing::instrument;
+use std::time::{Duration, Instant};
+use tracing::{error, instrument, warn};
 
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
+
+const RETRY_DEFAULT_ATTEMPTS: u32 = 3;
+const RETRY_NO_RETRY_ATTEMPTS: u32 = 1;
+const RETRY_BASE_DELAY_MS: u64 = 500;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
+const SLOW_CALL_WARN_SECS: u64 = 20;
+
+fn is_transient_transport_error(e: &reqwest::Error) -> bool {
+    // graphql_client::reqwest::post_graphql does not call error_for_status, so 5xx and
+    // 429 responses surface either as a successful Response with errors[] populated or,
+    // when the body is HTML (Cloudflare/Varnish error pages), as a JSON decode error.
+    // is_decode() therefore covers the practical 5xx/429 cases.
+    e.is_timeout() || e.is_connect() || e.is_decode()
+}
+
+async fn post_graphql_with_retry<Q>(
+    client: &Client,
+    op: &'static str,
+    max_attempts: u32,
+    mut variables: impl FnMut() -> Q::Variables,
+) -> Result<Response<Q::ResponseData>, reqwest::Error>
+where
+    Q: GraphQLQuery,
+{
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let started = Instant::now();
+        let res = post_graphql::<Q, _>(client, GITHUB_GRAPHQL_URL, variables()).await;
+        let elapsed = started.elapsed();
+        if elapsed >= Duration::from_secs(SLOW_CALL_WARN_SECS) {
+            warn!(
+                "{op} attempt {attempt} took {elapsed:?} (approaching {REQUEST_TIMEOUT_SECS}s timeout)"
+            );
+        }
+        let retry_reason: Option<String> = match &res {
+            Ok(response)
+                if response.data.is_none()
+                    && response.errors.as_ref().is_none_or(|e| e.is_empty()) =>
+            {
+                Some("empty GraphQL response (likely transient GitHub outage)".to_string())
+            }
+            Err(e) if is_transient_transport_error(e) => Some(e.to_string()),
+            _ => None,
+        };
+        match retry_reason {
+            Some(reason) if attempt < max_attempts => {
+                let base_ms = RETRY_BASE_DELAY_MS
+                    .checked_shl(attempt - 1)
+                    .unwrap_or(u64::MAX);
+                // ±25% jitter centered on the nominal backoff to avoid thundering herds.
+                let jitter_factor: f64 = rand::thread_rng().gen_range(0.75..=1.25);
+                let delay = Duration::from_millis((base_ms as f64 * jitter_factor) as u64);
+                warn!(
+                    "{op} attempt {attempt}/{max_attempts} failed: {reason}; retrying in {delay:?}"
+                );
+                tokio::time::sleep(delay).await;
+            }
+            _ => return res,
+        }
+    }
+}
+
+#[track_caller]
+fn missing_data_error<T: std::fmt::Debug>(op: &str, res: &Response<T>) -> anyhow::Error {
+    let caller = std::panic::Location::caller();
+    let errors_msg = res
+        .errors
+        .as_ref()
+        .filter(|errs| !errs.is_empty())
+        .map(|errs| {
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .unwrap_or_else(|| "no errors returned (likely a transient GitHub outage)".to_string());
+    error!(
+        "GraphQL response missing data for {op} at {caller}: errors=[{errors_msg}], response={res:?}"
+    );
+    anyhow!("Failed to get valid response data for {op}: {errors_msg}")
+}
 
 #[derive(Debug, Clone)]
 pub struct GraphQLClient {
@@ -39,6 +123,8 @@ impl GraphQLClient {
     pub async fn new(token: String) -> Result<Self> {
         let client = Client::builder()
             .user_agent("graphql-rust/0.10.0")
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(10))
             .default_headers(
                 std::iter::once((
                     reqwest::header::AUTHORIZATION,
@@ -48,10 +134,11 @@ impl GraphQLClient {
             )
             .build()?;
 
-        match post_graphql::<GetUsername, _>(
+        match post_graphql_with_retry::<GetUsername>(
             &client,
-            GITHUB_GRAPHQL_URL,
-            get_username::Variables {},
+            "get_username",
+            RETRY_DEFAULT_ATTEMPTS,
+            || get_username::Variables {},
         )
         .await
         {
@@ -73,12 +160,13 @@ impl GraphQLClient {
         repo: String,
         number: i64,
     ) -> Result<String> {
-        let res = match post_graphql::<GetPullRequestId, _>(
+        let res = match post_graphql_with_retry::<GetPullRequestId>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            get_pull_request_id::Variables {
-                owner: owner.clone().to_string(),
-                name: repo.clone().to_string(),
+            "get_pull_request_id",
+            RETRY_DEFAULT_ATTEMPTS,
+            || get_pull_request_id::Variables {
+                owner: owner.clone(),
+                name: repo.clone(),
                 number,
             },
         )
@@ -93,10 +181,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("get_pull_request_id", &res)),
         };
 
         let repo = match &data.repository {
@@ -125,12 +210,13 @@ impl GraphQLClient {
         repo: String,
         number: i64,
     ) -> Result<GetPullRequestRepositoryPullRequest> {
-        let res = match post_graphql::<GetPullRequest, _>(
+        let res = match post_graphql_with_retry::<GetPullRequest>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            get_pull_request::Variables {
-                owner: owner.clone().to_string(),
-                name: repo.clone().to_string(),
+            "get_pull_request",
+            RETRY_DEFAULT_ATTEMPTS,
+            || get_pull_request::Variables {
+                owner: owner.clone(),
+                name: repo.clone(),
                 number,
             },
         )
@@ -145,10 +231,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("get_pull_request", &res)),
         };
 
         let repo = match &data.repository {
@@ -178,10 +261,14 @@ impl GraphQLClient {
         limit: i64,
     ) -> Result<Vec<GetPullRequestsSearchEdgesNodeOnPullRequest>> {
         let query = format!("is:pr author:{} repo:{}/{}", self.username, owner, repo);
-        let res = match post_graphql::<GetPullRequests, _>(
+        let res = match post_graphql_with_retry::<GetPullRequests>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            get_pull_requests::Variables { query, limit },
+            "get_pull_requests",
+            RETRY_DEFAULT_ATTEMPTS,
+            || get_pull_requests::Variables {
+                query: query.clone(),
+                limit,
+            },
         )
         .await
         {
@@ -194,10 +281,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("get_pull_requests", &res)),
         };
 
         let search_edges = match data.search.edges {
@@ -256,10 +340,11 @@ impl GraphQLClient {
         branch: &str,
         limit: i64,
     ) -> Result<bool> {
-        let res = match post_graphql::<IsBranchPrOpen, _>(
+        let res = match post_graphql_with_retry::<IsBranchPrOpen>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            is_branch_pr_open::Variables {
+            "is_branch_pr_open",
+            RETRY_DEFAULT_ATTEMPTS,
+            || is_branch_pr_open::Variables {
                 owner: owner.to_string(),
                 name: repo.to_string(),
                 branch: branch.to_string(),
@@ -277,10 +362,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("is_branch_pr_open", &res)),
         };
 
         let repo = match &data.repository {
@@ -308,10 +390,33 @@ impl GraphQLClient {
         owner: &str,
         repo: &str,
     ) -> Result<GetMergeQueueRepositoryMergeQueue> {
-        let res = match post_graphql::<GetMergeQueue, _>(
+        self.get_merge_queue_inner(owner, repo, RETRY_DEFAULT_ATTEMPTS)
+            .await
+    }
+
+    /// Fail-fast variant of `get_merge_queue` used in interactive paths (e.g. submit)
+    /// where waiting through the full retry budget would feel like a hang to the user.
+    #[instrument(skip(self))]
+    pub async fn get_merge_queue_no_retry(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<GetMergeQueueRepositoryMergeQueue> {
+        self.get_merge_queue_inner(owner, repo, RETRY_NO_RETRY_ATTEMPTS)
+            .await
+    }
+
+    async fn get_merge_queue_inner(
+        &self,
+        owner: &str,
+        repo: &str,
+        max_attempts: u32,
+    ) -> Result<GetMergeQueueRepositoryMergeQueue> {
+        let res = match post_graphql_with_retry::<GetMergeQueue>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            get_merge_queue::Variables {
+            "get_merge_queue",
+            max_attempts,
+            || get_merge_queue::Variables {
                 owner: owner.to_string(),
                 name: repo.to_string(),
             },
@@ -327,10 +432,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("get_merge_queue", &res)),
         };
 
         let repo = match &data.repository {
@@ -359,10 +461,11 @@ impl GraphQLClient {
         repo: &str,
         limit: i64,
     ) -> Result<CommitStatusMap> {
-        let res = match post_graphql::<GetCommitStatuses, _>(
+        let res = match post_graphql_with_retry::<GetCommitStatuses>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            get_commit_statuses::Variables {
+            "get_commit_statuses",
+            RETRY_DEFAULT_ATTEMPTS,
+            || get_commit_statuses::Variables {
                 owner: owner.to_string(),
                 name: repo.to_string(),
                 limit,
@@ -379,10 +482,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("get_commit_statuses", &res)),
         };
 
         let repo = match &data.repository {
@@ -458,10 +558,11 @@ impl GraphQLClient {
         branch: &str,
         limit: i64,
     ) -> Result<MergeTimestampMap> {
-        let res = match post_graphql::<GetCommitMergeTimestamps, _>(
+        let res = match post_graphql_with_retry::<GetCommitMergeTimestamps>(
             &self.client,
-            GITHUB_GRAPHQL_URL,
-            get_commit_merge_timestamps::Variables {
+            "get_commit_merge_timestamps",
+            RETRY_DEFAULT_ATTEMPTS,
+            || get_commit_merge_timestamps::Variables {
                 owner: owner.to_string(),
                 name: repo.to_string(),
                 qualified_name: branch.to_string(),
@@ -479,10 +580,7 @@ impl GraphQLClient {
 
         let data = match res.data {
             Some(data) => data,
-            None => {
-                error!("Response data was empty: {:?}", res);
-                return Err(anyhow!("Failed to get valid response data"));
-            }
+            None => return Err(missing_data_error("get_commit_merge_timestamps", &res)),
         };
 
         let repo = match &data.repository {

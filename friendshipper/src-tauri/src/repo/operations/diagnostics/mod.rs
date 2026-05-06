@@ -1,6 +1,8 @@
+mod github_status;
 mod object_count;
 mod rebase;
 
+pub use github_status::github_status_handler;
 pub use object_count::object_count_handler;
 pub use object_count::run_gc_handler;
 pub use rebase::rebase_handler;
