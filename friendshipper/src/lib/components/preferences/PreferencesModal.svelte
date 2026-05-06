@@ -235,90 +235,96 @@
 
 		const internal = async () => {
 			requestInFlight = true;
+			try {
+				progressModalTitle = 'Saving preferences...';
+				await saveChangeSet($changeSets);
 
-			progressModalTitle = 'Saving preferences...';
-			await saveChangeSet($changeSets);
+				// make sure maxClientCacheSizeGb is a number
+				localAppConfig.maxClientCacheSizeGb = Number(localAppConfig.maxClientCacheSizeGb);
 
-			// make sure maxClientCacheSizeGb is a number
-			localAppConfig.maxClientCacheSizeGb = Number(localAppConfig.maxClientCacheSizeGb);
+				const accessToken = $oktaAuth?.getAccessToken();
+				if (accessToken) {
+					await updateAppConfig(localAppConfig, accessToken, true);
+				} else {
+					throw new Error('Failed to save preferences. No access token found.');
+				}
 
-			const accessToken = $oktaAuth?.getAccessToken();
-			if (accessToken) {
-				await updateAppConfig(localAppConfig, accessToken, true);
-			} else {
-				await emit('error', 'Failed to save preferences. No access token found.');
+				const regionChanged = $appConfig.playtestRegion !== localAppConfig.playtestRegion;
+
+				try {
+					$appConfig = await getAppConfig();
+				} catch (e) {
+					await emit('error', e);
+				}
+
+				let playtestPromise: Nullable<Promise> = null;
+				let statusPromise: Nullable<Promise> = null;
+				let commitsPromise: Nullable<Promise> = null;
+				let workflowsPromise: Nullable<Promise> = null;
+
+				if (regionChanged) {
+					playtestPromise = getPlaytests();
+				}
+
+				if (hasTargetBranchChanged) {
+					await checkoutTargetBranch();
+					statusPromise = getRepoStatus();
+					commitsPromise = getAllCommits();
+				}
+
+				if (hasRepoUrlChanged) {
+					statusPromise = getRepoStatus();
+					commitsPromise = getAllCommits();
+
+					if (localAppConfig.repoUrl !== '') {
+						workflowsPromise = await getWorkflows();
+					}
+				}
+
+				const { playtestResponse, statusResponse, commitsResponse, workflowsResponse } =
+					await Promise.all([playtestPromise, statusPromise, commitsPromise, workflowsPromise]);
+
+				if (playtestResponse) {
+					playtests.set(playtestResponse);
+				}
+
+				if (statusResponse) {
+					repoStatus.set(statusResponse);
+				}
+
+				if (commitsResponse) {
+					commits.set(commitsResponse);
+				}
+
+				if (workflowsResponse) {
+					$engineWorkflows = workflowsResponse.commits;
+				}
+
+				$changeSets = await loadChangeSet();
+				void emit('preferences-closed');
+			} finally {
 				requestInFlight = false;
 			}
-
-			const regionChanged = $appConfig.playtestRegion !== localAppConfig.playtestRegion;
-
-			try {
-				$appConfig = await getAppConfig();
-			} catch (e) {
-				await emit('error', e);
-			}
-
-			let playtestPromise: Nullable<Promise> = null;
-			let statusPromise: Nullable<Promise> = null;
-			let commitsPromise: Nullable<Promise> = null;
-			let workflowsPromise: Nullable<Promise> = null;
-
-			if (regionChanged) {
-				playtestPromise = getPlaytests();
-			}
-
-			if (hasTargetBranchChanged) {
-				await checkoutTargetBranch();
-				statusPromise = getRepoStatus();
-				commitsPromise = getAllCommits();
-			}
-
-			if (hasRepoUrlChanged) {
-				statusPromise = getRepoStatus();
-				commitsPromise = getAllCommits();
-
-				if (localAppConfig.repoUrl !== '') {
-					workflowsPromise = await getWorkflows();
-				}
-			}
-
-			const { playtestResponse, statusResponse, commitsResponse, workflowsResponse } =
-				await Promise.all([playtestPromise, statusPromise, commitsPromise, workflowsPromise]);
-
-			if (playtestResponse) {
-				playtests.set(playtestResponse);
-			}
-
-			if (statusResponse) {
-				repoStatus.set(statusResponse);
-			}
-
-			if (commitsResponse) {
-				commits.set(commitsResponse);
-			}
-
-			if (workflowsResponse) {
-				$engineWorkflows = workflowsResponse.commits;
-			}
-
-			$changeSets = await loadChangeSet();
-			void emit('preferences-closed');
-			requestInFlight = false;
 		};
 
 		showModal = false;
 
-		await internal();
-		if (hasRepoUrlChanged || hasTargetBranchChanged) {
-			await restart();
+		try {
+			await internal();
+			if (hasRepoUrlChanged || hasTargetBranchChanged) {
+				await restart();
 
-			// wait 5 seconds before closing the modal
-			setTimeout(() => {
-				showProgressModal = false;
-			}, 5000);
+				// wait 5 seconds before closing the modal
+				setTimeout(() => {
+					showProgressModal = false;
+				}, 5000);
+			}
+		} catch (e) {
+			await emit('error', e);
+		} finally {
+			configuringNewRepo = false;
+			showProgressModal = false;
 		}
-		configuringNewRepo = false;
-		showProgressModal = false;
 	};
 
 	const onDiscardClicked = () => {
