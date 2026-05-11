@@ -56,11 +56,7 @@ where
             // Include all files being reverted (both modified and untracked)
             let _ = self
                 .git_client
-                .save_snapshot(
-                    "pre-revert",
-                    self.files.clone(),
-                    git::SaveSnapshotIndexOption::DiscardIndex,
-                )
+                .save_snapshot("pre-revert", self.files.clone())
                 .await?;
         }
 
@@ -155,14 +151,7 @@ where
             .sync_phase_tx
             .send("Snapshotting local changes".to_string());
         let all_files: Vec<String> = request.files.clone();
-        let _ = state
-            .git()
-            .save_snapshot(
-                "pre-revert",
-                all_files,
-                git::SaveSnapshotIndexOption::DiscardIndex,
-            )
-            .await?;
+        let _ = state.git().save_snapshot("pre-revert", all_files).await?;
     }
 
     if !added.is_empty() {

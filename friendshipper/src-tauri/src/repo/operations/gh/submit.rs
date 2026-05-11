@@ -16,7 +16,6 @@ use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use crate::state::Notification;
 use ethos_core::clients::git;
-use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::clients::github;
 use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
@@ -362,7 +361,7 @@ where
         }
         let snapshot = self
             .git_client
-            .save_snapshot("pre-submit", all_files, SaveSnapshotIndexOption::KeepIndex)
+            .save_snapshot("pre-submit", all_files)
             .await?;
 
         match self.execute_internal().await {

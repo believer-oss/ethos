@@ -1,6 +1,6 @@
 use axum::extract::State;
 use axum::Json;
-use ethos_core::clients::git::{Opts, SaveSnapshotIndexOption};
+use ethos_core::clients::git::Opts;
 use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -70,7 +70,6 @@ where
             git.save_snapshot(
                 "pre-restore-to-previous-version-of-file",
                 vec![path.clone()],
-                SaveSnapshotIndexOption::DiscardIndex,
             )
             .await
             .map_err(|e| CoreError::Internal(anyhow::anyhow!("failed to save snapshot: {}", e)))?;

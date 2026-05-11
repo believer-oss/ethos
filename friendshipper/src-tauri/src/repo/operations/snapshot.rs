@@ -2,7 +2,6 @@ use crate::engine::EngineProvider;
 use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::Json;
-use ethos_core::clients::git::SaveSnapshotIndexOption;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{Snapshot, SnapshotPreviewEntry};
 use serde::{Deserialize, Serialize};
@@ -48,10 +47,7 @@ where
         req.files
     };
 
-    state
-        .git()
-        .save_snapshot(&req.message, files, SaveSnapshotIndexOption::KeepIndex)
-        .await?;
+    state.git().save_snapshot(&req.message, files).await?;
 
     Ok(())
 }

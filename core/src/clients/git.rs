@@ -75,12 +75,6 @@ pub enum BranchType {
 }
 
 #[derive(Eq, PartialEq)]
-pub enum SaveSnapshotIndexOption {
-    KeepIndex,
-    DiscardIndex,
-}
-
-#[derive(Eq, PartialEq)]
 pub enum PullStrategy {
     Rebase,
     FFOnly,
@@ -387,25 +381,17 @@ impl Git {
         Ok(snapshots)
     }
 
-    #[instrument(name = "save_snapshot_all", skip_all, fields(message, keep_index))]
-    pub async fn save_snapshot_all(
-        &self,
-        message: &str,
-        keep_index: SaveSnapshotIndexOption,
-    ) -> anyhow::Result<Snapshot> {
-        self.save_snapshot(message, vec![], keep_index).await
+    #[instrument(name = "save_snapshot_all", skip_all, fields(message))]
+    pub async fn save_snapshot_all(&self, message: &str) -> anyhow::Result<Snapshot> {
+        self.save_snapshot(message, vec![]).await
     }
 
-    #[instrument(name = "save_snapshot", skip_all, fields(message, keep_index))]
+    #[instrument(name = "save_snapshot", skip_all, fields(message))]
     pub async fn save_snapshot(
         &self,
         message: &str,
         paths: Vec<String>,
-        _keep_index: SaveSnapshotIndexOption,
     ) -> anyhow::Result<Snapshot> {
-        // _keep_index is preserved in the signature for API stability but no
-        // longer drives anything: the new pipeline builds the snapshot commit
-        // on a temporary index, so the user's real index is never modified.
         self.wait_for_lock().await;
 
         let stash_message = format!("{SNAPSHOT_PREFIX} {message}");

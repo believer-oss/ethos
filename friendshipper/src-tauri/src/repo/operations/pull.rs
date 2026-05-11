@@ -196,11 +196,7 @@ where
                     .collect();
                 snapshot = Some(
                     self.git_client
-                        .save_snapshot(
-                            "pre-pull",
-                            snapshot_paths,
-                            git::SaveSnapshotIndexOption::DiscardIndex,
-                        )
+                        .save_snapshot("pre-pull", snapshot_paths)
                         .await?,
                 );
             }
