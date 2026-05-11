@@ -58,6 +58,8 @@
 		type RepoStatus,
 		type RevertFilesRequest,
 		type Snapshot,
+		type SnapshotPreviewEntry,
+		type SnapshotPreviewResponse,
 		type ZipPreviewEntry,
 		type ZipPreviewResponse
 	} from '$lib/types';
@@ -75,6 +77,7 @@
 		openProject,
 		openSln,
 		previewImportZip,
+		previewSnapshot,
 		quickSubmit,
 		reinstallGitHooks,
 		restoreSnapshot,
@@ -143,6 +146,17 @@
 	let importing = false;
 	let importSelective = false;
 	let importSelectedPaths: Set<string> = new Set();
+
+	// restore snapshot preview
+	let showRestorePreview = false;
+	let restorePreview: SnapshotPreviewResponse | null = null;
+	let restorePreviewCommit: string | null = null;
+	let restoring = false;
+	let restoreSelective = false;
+	let restoreSelectedPaths: Set<string> = new Set();
+	// Reset to false every time the modal opens so users can't accidentally
+	// stomp local changes by leaving the toggle on from a previous restore.
+	let restoreOverwriteLocal = false;
 
 	// progress modal
 	let showProgressModal = false;
@@ -310,20 +324,65 @@
 		loadingSnapshots = false;
 	};
 
-	const handleRestoreSnapshot = async (commit: string) => {
+	const handleStartRestoreSnapshot = async (commit: string) => {
+		try {
+			const preview = await previewSnapshot(commit);
+			restorePreview = preview;
+			restorePreviewCommit = commit;
+			restoreSelective = false;
+			restoreSelectedPaths = new Set(preview.entries.map((e) => e.path));
+			restoreOverwriteLocal = false;
+			showRestorePreview = true;
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const toggleRestoreEntry = (path: string) => {
+		if (restoreSelectedPaths.has(path)) {
+			restoreSelectedPaths.delete(path);
+		} else {
+			restoreSelectedPaths.add(path);
+		}
+		restoreSelectedPaths = new Set(restoreSelectedPaths);
+	};
+
+	const setAllRestoreEntries = (checked: boolean) => {
+		if (!restorePreview) return;
+		restoreSelectedPaths = checked ? new Set(restorePreview.entries.map((e) => e.path)) : new Set();
+	};
+
+	const handleConfirmRestoreSnapshot = async () => {
+		if (!restorePreview || !restorePreviewCommit) return;
+
+		// Always pass the explicit path list so the backend goes through the
+		// preview-driven selective restore path (which honors `overwriteLocal`)
+		// instead of the legacy cherry-pick code path, whose conflict guard
+		// has the opposite sense and would reject the request whenever the
+		// user checked the overwrite box.
+		const subset = restoreSelective
+			? Array.from(restoreSelectedPaths)
+			: restorePreview.entries.map((e) => e.path);
+
+		restoring = true;
 		loadingSnapshots = true;
 		showProgressModal = true;
 		syncing = true;
 		progressModalTitle = 'Restoring snapshot';
 
 		try {
-			await restoreSnapshot(commit);
+			await restoreSnapshot(restorePreviewCommit, subset, restoreOverwriteLocal);
 
 			$selectedFiles = [];
 			selectAll = false;
+			showRestorePreview = false;
+			restorePreview = null;
+			restorePreviewCommit = null;
+			restoreSelective = false;
+			restoreSelectedPaths = new Set();
+			restoreOverwriteLocal = false;
 
 			await refreshFiles(true);
-
 			await emit('success', 'Snapshot restored!');
 		} catch (e) {
 			await emit('error', e);
@@ -332,6 +391,7 @@
 		loadingSnapshots = false;
 		showProgressModal = false;
 		syncing = false;
+		restoring = false;
 	};
 
 	const handleDeleteSnapshot = async (commit: string) => {
@@ -833,6 +893,41 @@
 		: [];
 	$: importAllSelected = importTotal > 0 && importSelectedPaths.size === importTotal;
 	$: importSomeSelected = importSelectedPaths.size > 0 && importSelectedPaths.size < importTotal;
+
+	const getRestoreEntryTextClass = (entry: SnapshotPreviewEntry): string => {
+		if (entry.conflictsWithLocal) {
+			return 'text-red-500 dark:text-red-500';
+		}
+		if (entry.state === 'Added') {
+			return 'text-lime-500 dark:text-lime-500';
+		}
+		if (entry.state === 'Deleted') {
+			return 'text-yellow-300 dark:text-gray-300';
+		}
+		if (entry.state === 'Modified') {
+			return 'text-yellow-300 dark:text-yellow-300';
+		}
+		return 'text-white';
+	};
+
+	$: restoreConflictCount = restorePreview?.entries.filter((e) => e.conflictsWithLocal).length ?? 0;
+	$: restoreSelectedConflictCount =
+		restorePreview?.entries.filter((e) => e.conflictsWithLocal && restoreSelectedPaths.has(e.path))
+			.length ?? 0;
+	$: restoreTotal = restorePreview?.entries.length ?? 0;
+	$: restoreSortedEntries = restorePreview
+		? [...restorePreview.entries].sort((a, b) => {
+				const rank = (e: SnapshotPreviewEntry) => {
+					if (e.conflictsWithLocal) return 0;
+					if (e.existsOnDisk && e.state !== 'Deleted') return 1;
+					return 2;
+				};
+				return rank(a) - rank(b);
+		  })
+		: [];
+	$: restoreAllSelected = restoreTotal > 0 && restoreSelectedPaths.size === restoreTotal;
+	$: restoreSomeSelected =
+		restoreSelectedPaths.size > 0 && restoreSelectedPaths.size < restoreTotal;
 
 	const handleOpenPreferences = async () => {
 		promptForPAT = false;
@@ -1421,7 +1516,7 @@
 										color="primary"
 										size="xs"
 										on:click={async () => {
-											await handleRestoreSnapshot(snapshot.commit);
+											await handleStartRestoreSnapshot(snapshot.commit);
 										}}>Restore</Button
 									>
 									<Button
@@ -1782,6 +1877,145 @@
 					(importSelective && importSelectedPaths.size === 0)}
 				on:click={handleConfirmImport}
 				>Import{importSelective ? ` (${importSelectedPaths.size})` : ''}</Button
+			>
+		</div>
+	</div>
+</Modal>
+
+<Modal
+	open={showRestorePreview}
+	dismissable={true}
+	on:close={() => {
+		showRestorePreview = false;
+		restorePreview = null;
+		restorePreviewCommit = null;
+	}}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	size="lg"
+>
+	<div class="flex flex-col gap-3">
+		<h3 class="text-lg font-semibold text-white">Restore Snapshot</h3>
+		{#if restorePreview}
+			<p class="text-sm text-gray-300">
+				{restoreSelective ? restoreSelectedPaths.size : restoreTotal} of {restoreTotal} file{restoreTotal ===
+				1
+					? ''
+					: 's'} will be written to your repo.
+				{#if restoreSelective ? restoreSelectedConflictCount > 0 : restoreConflictCount > 0}
+					<span class="text-red-400 font-semibold"
+						>{restoreSelective ? restoreSelectedConflictCount : restoreConflictCount} will overwrite
+						uncommitted local change{(restoreSelective
+							? restoreSelectedConflictCount
+							: restoreConflictCount) === 1
+							? ''
+							: 's'}.</span
+					>
+				{/if}
+			</p>
+			<div class="flex flex-row items-center justify-between gap-2 px-1">
+				<Toggle bind:checked={restoreSelective} class="text-sm text-gray-300"
+					>Selectively choose files</Toggle
+				>
+				{#if restoreSelective}
+					<div class="flex items-center gap-2 text-sm text-gray-300">
+						<Checkbox
+							class="!p-1.5"
+							checked={restoreAllSelected}
+							indeterminate={restoreSomeSelected}
+							on:change={() => {
+								setAllRestoreEntries(!restoreAllSelected);
+							}}>{restoreAllSelected ? 'Deselect all' : 'Select all'}</Checkbox
+						>
+					</div>
+				{/if}
+			</div>
+			<div
+				class="bg-secondary-800 dark:bg-space-950 p-2 max-h-72 overflow-y-auto rounded text-nowrap"
+			>
+				{#each restoreSortedEntries as entry}
+					{@const checked = restoreSelectedPaths.has(entry.path)}
+					{@const dimmed = restoreSelective && !checked}
+					<div class="flex gap-2 items-center" class:opacity-40={dimmed} role="listitem">
+						{#if restoreSelective}
+							<Checkbox
+								class="!p-1.5 shrink-0"
+								{checked}
+								on:change={() => {
+									toggleRestoreEntry(entry.path);
+								}}
+							/>
+						{/if}
+						{#if entry.state === 'Added'}
+							<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
+						{:else if entry.state === 'Modified'}
+							<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
+						{:else if entry.state === 'Deleted'}
+							<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
+						{:else if entry.state === 'Unmerged'}
+							<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
+						{:else}
+							<FileCodeSolid class="w-4 h-4 text-gray-400 shrink-0" />
+						{/if}
+						<span class="truncate {getRestoreEntryTextClass(entry)}" title={entry.path}>
+							{entry.path}
+						</span>
+						{#if entry.conflictsWithLocal}
+							<span class="text-xs text-red-400 shrink-0">[overwrites local change]</span>
+						{:else if entry.existsOnDisk && entry.state !== 'Deleted'}
+							<span class="text-xs text-yellow-400 shrink-0">[overwrites file]</span>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			{#if (restoreSelective ? restoreSelectedConflictCount : restoreConflictCount) > 0}
+				<div class="flex flex-col gap-1 px-1">
+					<Checkbox bind:checked={restoreOverwriteLocal} class="text-sm text-gray-300">
+						Overwrite local changes
+					</Checkbox>
+					<p class="text-xs text-red-400">
+						{restoreSelective ? restoreSelectedConflictCount : restoreConflictCount} selected file{(restoreSelective
+							? restoreSelectedConflictCount
+							: restoreConflictCount) === 1
+							? ''
+							: 's'} would overwrite uncommitted local change{(restoreSelective
+							? restoreSelectedConflictCount
+							: restoreConflictCount) === 1
+							? ''
+							: 's'}. Check the box to proceed anyway, deselect the file{(restoreSelective
+							? restoreSelectedConflictCount
+							: restoreConflictCount) === 1
+							? ''
+							: 's'}, or take a snapshot of your current state first.
+					</p>
+				</div>
+			{/if}
+		{:else}
+			<Spinner class="w-4 h-4" />
+		{/if}
+		<div class="flex justify-end gap-2">
+			<Button
+				size="sm"
+				color="alternative"
+				disabled={restoring}
+				on:click={() => {
+					showRestorePreview = false;
+					restorePreview = null;
+					restorePreviewCommit = null;
+				}}>Cancel</Button
+			>
+			<Button
+				size="sm"
+				color="primary"
+				disabled={restoring ||
+					restorePreview === null ||
+					restorePreview.entries.length === 0 ||
+					(restoreSelective && restoreSelectedPaths.size === 0) ||
+					((restoreSelective ? restoreSelectedConflictCount : restoreConflictCount) > 0 &&
+						!restoreOverwriteLocal)}
+				on:click={handleConfirmRestoreSnapshot}
+				>Restore{restoreSelective ? ` (${restoreSelectedPaths.size})` : ''}</Button
 			>
 		</div>
 	</div>

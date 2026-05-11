@@ -453,6 +453,24 @@ pub struct Snapshot {
     pub stash_index: String,
 }
 
+/// One entry the user would see in the restore-snapshot preview, mirroring the
+/// shape of `ZipPreviewEntry` so the frontend can render it with the same
+/// component logic.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotPreviewEntry {
+    pub path: String,
+    /// What the snapshot will do to this path on restore: Added means it will
+    /// appear, Modified means content will be replaced, Deleted means it will
+    /// be removed from the working tree.
+    pub state: FileState,
+    /// True if this path is currently in the user's modified or untracked
+    /// list — restoring will overwrite their local change.
+    pub conflicts_with_local: bool,
+    /// True if a file currently exists at this path on disk.
+    pub exists_on_disk: bool,
+}
+
 pub type ShowCommitFilesResponse = Vec<CommitFileInfo>;
 
 #[cfg(test)]

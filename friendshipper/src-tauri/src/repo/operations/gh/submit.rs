@@ -377,7 +377,7 @@ where
 
                     match self
                         .git_client
-                        .restore_snapshot(&snapshot.commit, vec![], false) // Submit restore: prefer local versions
+                        .restore_snapshot(&snapshot.commit, vec![], false, None) // Submit restore: prefer local versions
                         .await
                     {
                         Ok(_) => {}
