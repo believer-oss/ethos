@@ -279,6 +279,9 @@ fn main() -> Result<(), CoreError> {
                 update_playtest,
                 verify_build,
                 wipe_client_data,
+                zip_local_changes,
+                preview_import_zip,
+                import_zipped_changes,
                 exit_app,
             ])
             .setup(move |app| {

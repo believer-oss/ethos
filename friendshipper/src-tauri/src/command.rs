@@ -21,7 +21,8 @@ use ethos_core::types::repo::{
 };
 use friendshipper::builds::router::GetWorkflowsResponse;
 use friendshipper::repo::operations::{
-    RestoreFileToRevisionRequest, RestoreSnapshotRequest, SaveChangeSetRequest, SaveSnapshotRequest,
+    ImportZippedChangesRequest, RestoreFileToRevisionRequest, RestoreSnapshotRequest,
+    SaveChangeSetRequest, SaveSnapshotRequest, ZipLocalChangesRequest,
 };
 
 // Update the TauriError creation to include status_code
@@ -763,6 +764,68 @@ pub async fn load_changeset(state: tauri::State<'_, State>) -> Result<Vec<Change
     })?;
 
     Ok(json)
+}
+
+#[tauri::command]
+pub async fn zip_local_changes(
+    state: tauri::State<'_, State>,
+    files: Vec<String>,
+    destination: String,
+) -> Result<serde_json::Value, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/zip/local-changes", state.server_url))
+        .json(&ZipLocalChangesRequest { files, destination })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn preview_import_zip(
+    state: tauri::State<'_, State>,
+    source: String,
+) -> Result<serde_json::Value, TauriError> {
+    let encoded = urlencoding::encode(&source);
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/zip/import/preview?source={}",
+            state.server_url, encoded
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn import_zipped_changes(
+    state: tauri::State<'_, State>,
+    source: String,
+    files: Option<Vec<String>>,
+) -> Result<serde_json::Value, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/zip/import", state.server_url))
+        .json(&ImportZippedChangesRequest { source, files })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
 }
 
 #[tauri::command]

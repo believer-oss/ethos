@@ -6,6 +6,7 @@ import type {
 	FileHistoryResponse,
 	GitHubPullRequest,
 	GitHubStatusResponse,
+	ImportZippedChangesResponse,
 	MergeQueue,
 	ObjectCountResponse,
 	PushRequest,
@@ -14,7 +15,9 @@ import type {
 	RepoStatus,
 	RestoreFileToRevisionRequest,
 	RevertFilesRequest,
-	Snapshot
+	Snapshot,
+	ZipLocalChangesResponse,
+	ZipPreviewResponse
 } from '$lib/types';
 
 export const getCommits = async (
@@ -204,3 +207,16 @@ export const getCommitInfo = async (sha: string): Promise<CommitInfo> =>
 
 export const restoreFileToRevision = async (req: RestoreFileToRevisionRequest): Promise<void> =>
 	invoke('restore_file_to_revision', { req });
+
+export const zipLocalChanges = async (
+	files: string[],
+	destination: string
+): Promise<ZipLocalChangesResponse> => invoke('zip_local_changes', { files, destination });
+
+export const previewImportZip = async (source: string): Promise<ZipPreviewResponse> =>
+	invoke('preview_import_zip', { source });
+
+export const importZippedChanges = async (
+	source: string,
+	files: string[] | null = null
+): Promise<ImportZippedChangesResponse> => invoke('import_zipped_changes', { source, files });

@@ -4,6 +4,7 @@
 		Button,
 		ButtonGroup,
 		Card,
+		Checkbox,
 		Dropdown,
 		DropdownItem,
 		Input,
@@ -11,6 +12,7 @@
 		Modal,
 		Select,
 		Spinner,
+		Toggle,
 		TabItem,
 		Table,
 		TableBody,
@@ -36,6 +38,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/plugin-shell';
+	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { sendNotification } from '@tauri-apps/plugin-notification';
 	import {
 		type ChangeSet,
@@ -54,7 +57,9 @@
 		type PushRequest,
 		type RepoStatus,
 		type RevertFilesRequest,
-		type Snapshot
+		type Snapshot,
+		type ZipPreviewEntry,
+		type ZipPreviewResponse
 	} from '$lib/types';
 	import {
 		acquireLocks,
@@ -65,9 +70,11 @@
 		getCommitFileTextClass,
 		getPullRequests,
 		getRepoStatus,
+		importZippedChanges,
 		listSnapshots,
 		openProject,
 		openSln,
+		previewImportZip,
 		quickSubmit,
 		reinstallGitHooks,
 		restoreSnapshot,
@@ -77,7 +84,8 @@
 		showCommitFiles,
 		syncEngineCommitWithUproject,
 		syncLatest,
-		syncUprojectWithEngineCommit
+		syncUprojectWithEngineCommit,
+		zipLocalChanges
 	} from '$lib/repo';
 	import {
 		activeProjectConfig,
@@ -124,6 +132,17 @@
 
 	// quick submit preview
 	let showQuickSubmitPreview = false;
+
+	// zip local changes
+	let showZipPreview = false;
+	let zipping = false;
+
+	// import zipped changes
+	let showImportPreview = false;
+	let importPreview: ZipPreviewResponse | null = null;
+	let importing = false;
+	let importSelective = false;
+	let importSelectedPaths: Set<string> = new Set();
 
 	// progress modal
 	let showProgressModal = false;
@@ -460,6 +479,7 @@
 					lastQuickSubmitScope: tempCommitScope
 				};
 				await updateAppConfig(updatedConfig).catch((e) => {
+					// eslint-disable-next-line no-console
 					console.warn('Failed to persist quick submit preferences:', e);
 				});
 				$appConfig = updatedConfig;
@@ -650,6 +670,169 @@
 		loading = false;
 		showProgressModal = false;
 	};
+
+	const handleZipLocalChanges = async () => {
+		if ($selectedFiles.length === 0) return;
+
+		const defaultName = `friendshipper-changes-${new Date().toISOString().slice(0, 10)}.zip`;
+		const dest = await saveDialog({
+			defaultPath: defaultName,
+			filters: [{ name: 'Zip Archive', extensions: ['zip'] }]
+		});
+
+		if (!dest) return;
+
+		zipping = true;
+		showProgressModal = true;
+		progressModalTitle = 'Zipping local changes';
+
+		try {
+			const result = await zipLocalChanges(
+				$selectedFiles.map((file) => file.path),
+				dest
+			);
+			showZipPreview = false;
+			await emit(
+				'success',
+				`Wrote ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} to ${
+					result.destination
+				}`
+			);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		showProgressModal = false;
+		zipping = false;
+	};
+
+	const handleStartImport = async () => {
+		const source = await openDialog({
+			multiple: false,
+			directory: false,
+			filters: [{ name: 'Zip Archive', extensions: ['zip'] }]
+		});
+
+		if (!source || Array.isArray(source)) return;
+
+		try {
+			importPreview = await previewImportZip(source);
+			importSelective = false;
+			importSelectedPaths = new Set(importPreview.entries.map((e) => e.path));
+			showImportPreview = true;
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const toggleImportEntry = (path: string) => {
+		if (importSelectedPaths.has(path)) {
+			importSelectedPaths.delete(path);
+		} else {
+			importSelectedPaths.add(path);
+		}
+		importSelectedPaths = new Set(importSelectedPaths);
+	};
+
+	const setAllImportEntries = (checked: boolean) => {
+		if (!importPreview) return;
+		importSelectedPaths = checked ? new Set(importPreview.entries.map((e) => e.path)) : new Set();
+	};
+
+	const handleConfirmImport = async () => {
+		if (!importPreview) return;
+
+		const allSelected = importSelectedPaths.size === importPreview.entries.length;
+		const subset = importSelective && !allSelected ? Array.from(importSelectedPaths) : null;
+
+		// Anything we're about to extract that has uncommitted local changes will
+		// be clobbered (overwrites or deletions). Snapshot those paths first so
+		// the user has a way back.
+		const entriesToImport = importPreview.entries.filter(
+			(entry) => subset === null || importSelectedPaths.has(entry.path)
+		);
+		const pathsAtRisk = entriesToImport
+			.filter((entry) => entry.conflictsWithLocal)
+			.map((entry) => entry.path);
+
+		importing = true;
+		showProgressModal = true;
+
+		try {
+			if (pathsAtRisk.length > 0) {
+				progressModalTitle = 'Snapshotting local changes before import';
+				const zipName = importPreview.source.split(/[\\/]/).pop() || importPreview.source;
+				await saveSnapshot(`Auto-snapshot before importing ${zipName}`, pathsAtRisk);
+				await refreshSnapshots();
+			}
+
+			progressModalTitle = 'Importing zipped changes';
+			const result = await importZippedChanges(importPreview.source, subset);
+			showImportPreview = false;
+			importPreview = null;
+			importSelective = false;
+			importSelectedPaths = new Set();
+
+			await refreshFiles(true);
+
+			const parts: string[] = [];
+			if (result.extracted > 0) {
+				parts.push(`extracted ${result.extracted}`);
+			}
+			if (result.deleted > 0) {
+				parts.push(`deleted ${result.deleted}`);
+			}
+			if (pathsAtRisk.length > 0) {
+				parts.push(
+					`snapshotted ${pathsAtRisk.length} local change${pathsAtRisk.length === 1 ? '' : 's'}`
+				);
+			}
+			const summary = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+			await emit('success', `Imported zipped changes${summary}`);
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		showProgressModal = false;
+		importing = false;
+	};
+
+	const getImportEntryTextClass = (entry: ZipPreviewEntry): string => {
+		if (entry.conflictsWithLocal) {
+			return 'text-red-500 dark:text-red-500';
+		}
+		if (entry.state === 'Added') {
+			return 'text-lime-500 dark:text-lime-500';
+		}
+		if (entry.state === 'Deleted') {
+			return 'text-yellow-300 dark:text-gray-300';
+		}
+		if (entry.state === 'Modified') {
+			return 'text-yellow-300 dark:text-yellow-300';
+		}
+		return 'text-white';
+	};
+
+	$: importConflictCount = importPreview?.entries.filter((e) => e.conflictsWithLocal).length ?? 0;
+	$: importSelectedConflictCount =
+		importPreview?.entries.filter((e) => e.conflictsWithLocal && importSelectedPaths.has(e.path))
+			.length ?? 0;
+	$: importTotal = importPreview?.entries.length ?? 0;
+	// Surface the riskiest entries first: conflicts with local changes, then plain
+	// disk overwrites, then everything else. Array#sort with a stable key keeps
+	// each tier in the manifest's original order.
+	$: importSortedEntries = importPreview
+		? [...importPreview.entries].sort((a, b) => {
+				const rank = (e: ZipPreviewEntry) => {
+					if (e.conflictsWithLocal) return 0;
+					if (e.existsOnDisk && e.state !== 'Deleted') return 1;
+					return 2;
+				};
+				return rank(a) - rank(b);
+		  })
+		: [];
+	$: importAllSelected = importTotal > 0 && importSelectedPaths.size === importTotal;
+	$: importSomeSelected = importSelectedPaths.size > 0 && importSelectedPaths.size < importTotal;
 
 	const handleOpenPreferences = async () => {
 		promptForPAT = false;
@@ -990,7 +1173,44 @@
 			onLockSelected={handleLockSelected}
 			onRightClick={onModifiedFileRightClick}
 			onShowFileHistory={showFileHistory}
-		/>
+		>
+			<Button
+				slot="actions-dropdown-trigger"
+				size="xs"
+				color="primary"
+				id="modified-files-actions-dropdown"
+				disabled={loading || zipping || importing}
+			>
+				<ChevronDownOutline size="xs" />
+			</Button>
+			<Dropdown
+				slot="actions-dropdown"
+				placement="bottom-end"
+				triggeredBy="#modified-files-actions-dropdown"
+			>
+				<DropdownItem
+					class="text-xs"
+					disabled={$selectedFiles.length === 0 || zipping}
+					on:click={() => {
+						if ($selectedFiles.length === 0) return;
+						showZipPreview = true;
+					}}
+				>
+					Zip Local Changes{$selectedFiles.length > 0 ? ` (${$selectedFiles.length})` : ''}
+				</DropdownItem>
+				<Tooltip class="text-xs w-[22rem]" placement="left"
+					>Bundle the selected files into a zip preserving their repo paths so a teammate can drop
+					them onto their working tree.</Tooltip
+				>
+				<DropdownItem class="text-xs" disabled={importing} on:click={handleStartImport}
+					>Import Zipped Changes</DropdownItem
+				>
+				<Tooltip class="text-xs w-[22rem]" placement="left"
+					>Pick a zip created by Zip Local Changes and extract it on top of your repo. You'll see a
+					preview before anything is written.</Tooltip
+				>
+			</Dropdown>
+		</ModifiedFilesCard>
 	</div>
 	<div class="flex flex-col h-full gap-2 w-full max-w-[32rem]">
 		<Card
@@ -1372,6 +1592,196 @@
 					showQuickSubmitPreview = false;
 					await handleQuickSubmit();
 				}}>Confirm Submit</Button
+			>
+		</div>
+	</div>
+</Modal>
+
+<Modal
+	open={showZipPreview}
+	dismissable={true}
+	on:close={() => {
+		showZipPreview = false;
+	}}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	size="md"
+>
+	<div class="flex flex-col gap-3">
+		<h3 class="text-lg font-semibold text-white">Zip Local Changes Preview</h3>
+		<p class="text-sm text-gray-400">
+			{$selectedFiles.length} file{$selectedFiles.length === 1 ? '' : 's'} will be bundled. Hover an
+			OFPA file to see its full repo path.
+		</p>
+		<div
+			class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
+		>
+			{#each $selectedFiles as file}
+				<div class="flex gap-2 items-center" role="listitem">
+					{#if file.state === ModifiedFileState.Added}
+						<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
+					{:else if file.state === ModifiedFileState.Modified}
+						<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
+					{:else if file.state === ModifiedFileState.Deleted}
+						<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
+					{:else if file.state === ModifiedFileState.Unmerged}
+						<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
+					{/if}
+					<span class="truncate {getFileTextClass(file)}" title={file.path}
+						>{getFileDisplayString(file)}</span
+					>
+				</div>
+			{/each}
+		</div>
+		<div class="flex justify-end gap-2">
+			<Button
+				size="sm"
+				color="alternative"
+				disabled={zipping}
+				on:click={() => {
+					showZipPreview = false;
+				}}>Cancel</Button
+			>
+			<Button
+				size="sm"
+				color="primary"
+				disabled={zipping || $selectedFiles.length === 0}
+				on:click={handleZipLocalChanges}>Choose destination & zip</Button
+			>
+		</div>
+	</div>
+</Modal>
+
+<Modal
+	open={showImportPreview}
+	dismissable={true}
+	on:close={() => {
+		showImportPreview = false;
+		importPreview = null;
+	}}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	size="lg"
+>
+	<div class="flex flex-col gap-3">
+		<h3 class="text-lg font-semibold text-white">Import Zipped Changes</h3>
+		{#if importPreview}
+			<p class="text-xs text-gray-400 break-all">Source: {importPreview.source}</p>
+			{#if importPreview.createdBy || importPreview.createdAt}
+				<p class="text-xs text-gray-400">
+					Created
+					{#if importPreview.createdBy}by <span class="text-primary-400"
+							>{importPreview.createdBy}</span
+						>{/if}
+					{#if importPreview.createdAt}
+						on {new Date(importPreview.createdAt).toLocaleString()}
+					{/if}
+				</p>
+			{/if}
+			<p class="text-sm text-gray-300">
+				{importSelective ? importSelectedPaths.size : importTotal} of {importTotal} file{importTotal ===
+				1
+					? ''
+					: 's'} will be written to your repo.
+				{#if importSelective ? importSelectedConflictCount > 0 : importConflictCount > 0}
+					<span class="text-red-400 font-semibold"
+						>{importSelective ? importSelectedConflictCount : importConflictCount} will overwrite uncommitted
+						local change{(importSelective ? importSelectedConflictCount : importConflictCount) === 1
+							? ''
+							: 's'}.</span
+					>
+				{/if}
+			</p>
+			<div class="flex flex-row items-center justify-between gap-2 px-1">
+				<Toggle bind:checked={importSelective} class="text-sm text-gray-300"
+					>Selectively choose files</Toggle
+				>
+				{#if importSelective}
+					<div class="flex items-center gap-2 text-sm text-gray-300">
+						<Checkbox
+							class="!p-1.5"
+							checked={importAllSelected}
+							indeterminate={importSomeSelected}
+							on:change={() => {
+								setAllImportEntries(!importAllSelected);
+							}}>{importAllSelected ? 'Deselect all' : 'Select all'}</Checkbox
+						>
+					</div>
+				{/if}
+			</div>
+			<div
+				class="bg-secondary-800 dark:bg-space-950 p-2 max-h-72 overflow-y-auto rounded text-nowrap"
+			>
+				{#each importSortedEntries as entry}
+					{@const checked = importSelectedPaths.has(entry.path)}
+					{@const dimmed = importSelective && !checked}
+					<div class="flex gap-2 items-center" class:opacity-40={dimmed} role="listitem">
+						{#if importSelective}
+							<Checkbox
+								class="!p-1.5 shrink-0"
+								{checked}
+								on:change={() => {
+									toggleImportEntry(entry.path);
+								}}
+							/>
+						{/if}
+						{#if entry.state === 'Added'}
+							<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
+						{:else if entry.state === 'Modified'}
+							<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
+						{:else if entry.state === 'Deleted'}
+							<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
+						{:else if entry.state === 'Unmerged'}
+							<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
+						{:else}
+							<FileCodeSolid class="w-4 h-4 text-gray-400 shrink-0" />
+						{/if}
+						<span
+							class="truncate {getImportEntryTextClass(entry)}"
+							title={entry.displayName && entry.displayName !== entry.path
+								? `${entry.displayName} — ${entry.path}`
+								: entry.path}
+						>
+							{entry.displayName !== '' ? entry.displayName : entry.path}
+						</span>
+						{#if entry.conflictsWithLocal}
+							<span class="text-xs text-red-400 shrink-0">[overwrites local change]</span>
+						{:else if entry.existsOnDisk && entry.state !== 'Deleted'}
+							<span class="text-xs text-yellow-400 shrink-0">[overwrites file]</span>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			{#if (importSelective ? importSelectedConflictCount : importConflictCount) > 0}
+				<p class="text-xs text-yellow-300">
+					A snapshot of the affected local changes will be saved automatically before the import so
+					you can restore them.
+				</p>
+			{/if}
+		{:else}
+			<Spinner class="w-4 h-4" />
+		{/if}
+		<div class="flex justify-end gap-2">
+			<Button
+				size="sm"
+				color="alternative"
+				disabled={importing}
+				on:click={() => {
+					showImportPreview = false;
+					importPreview = null;
+				}}>Cancel</Button
+			>
+			<Button
+				size="sm"
+				color="primary"
+				disabled={importing ||
+					importPreview === null ||
+					importPreview.entries.length === 0 ||
+					(importSelective && importSelectedPaths.size === 0)}
+				on:click={handleConfirmImport}
+				>Import{importSelective ? ` (${importSelectedPaths.size})` : ''}</Button
 			>
 		</div>
 	</div>
