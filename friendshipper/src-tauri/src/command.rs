@@ -672,11 +672,17 @@ pub async fn list_snapshots(state: tauri::State<'_, State>) -> Result<Vec<Snapsh
 pub async fn restore_snapshot(
     state: tauri::State<'_, State>,
     commit: String,
+    files: Option<Vec<String>>,
+    overwrite_local: Option<bool>,
 ) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/repo/snapshots/restore", state.server_url))
-        .json(&RestoreSnapshotRequest { commit })
+        .json(&RestoreSnapshotRequest {
+            commit,
+            files,
+            overwrite_local: overwrite_local.unwrap_or(false),
+        })
         .send()
         .await?;
 
@@ -685,6 +691,28 @@ pub async fn restore_snapshot(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn preview_snapshot(
+    state: tauri::State<'_, State>,
+    commit: String,
+) -> Result<serde_json::Value, TauriError> {
+    let encoded = urlencoding::encode(&commit);
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/snapshots/preview?commit={}",
+            state.server_url, encoded
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
 }
 
 #[tauri::command]

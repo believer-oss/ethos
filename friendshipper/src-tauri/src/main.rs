@@ -239,6 +239,7 @@ fn main() -> Result<(), CoreError> {
                 acquire_locks,
                 release_locks,
                 reset_config,
+                preview_snapshot,
                 restore_snapshot,
                 revert_files,
                 restore_file_to_revision,

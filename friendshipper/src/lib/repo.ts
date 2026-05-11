@@ -16,6 +16,7 @@ import type {
 	RestoreFileToRevisionRequest,
 	RevertFilesRequest,
 	Snapshot,
+	SnapshotPreviewResponse,
 	ZipLocalChangesResponse,
 	ZipPreviewResponse
 } from '$lib/types';
@@ -90,8 +91,14 @@ export const quickSubmit = async (req: PushRequest): Promise<void> =>
 
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 
-export const restoreSnapshot = async (commit: string): Promise<void> =>
-	invoke('restore_snapshot', { commit });
+export const restoreSnapshot = async (
+	commit: string,
+	files?: string[],
+	overwriteLocal: boolean = false
+): Promise<void> => invoke('restore_snapshot', { commit, files: files ?? null, overwriteLocal });
+
+export const previewSnapshot = async (commit: string): Promise<SnapshotPreviewResponse> =>
+	invoke('preview_snapshot', { commit });
 
 export const saveSnapshot = async (message: string, files: string[]): Promise<void> =>
 	invoke('save_snapshot', { message, files });
