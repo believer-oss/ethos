@@ -358,7 +358,13 @@ impl Git {
                 }
 
                 let stash_index = parts[0].trim();
-                let message = parts[1].split(SNAPSHOT_PREFIX).collect::<Vec<_>>()[1].trim();
+                // Split only at the first occurrence so messages that themselves contain
+                // the word "snapshot" (e.g. "Auto-snapshot before importing X.zip") are
+                // preserved in full instead of being truncated at the embedded match.
+                let message = match parts[1].split_once(SNAPSHOT_PREFIX) {
+                    Some((_, m)) => m.trim(),
+                    None => return None,
+                };
                 let commit = parts[2].trim();
                 let date = parts[3].trim();
 
@@ -399,23 +405,52 @@ impl Git {
         self.wait_for_lock().await;
 
         if paths.is_empty() {
-            self.run(&["add", "--", "."], Opts::default()).await?;
+            self.run(&["add", "-A", "--", "."], Opts::default()).await?;
         } else {
-            let mut temp_file = NamedTempFile::new()?;
-            for path in &paths {
-                writeln!(temp_file, "{path}")?;
-            }
-            temp_file.flush()?;
+            // Split paths by working-tree presence. `git add <exact-path>` rejects paths
+            // whose file no longer exists on disk ("pathspec did not match any files"),
+            // even with `-A`, so we have to stage deletions via `git rm --cached`.
+            let (deleted_paths, existing_paths): (Vec<&String>, Vec<&String>) =
+                paths.iter().partition(|p| !self.repo_path.join(p).exists());
 
-            self.run(
-                &[
-                    "add",
-                    "--pathspec-from-file",
-                    temp_file.path().to_str().unwrap(),
-                ],
-                Opts::default(),
-            )
-            .await?;
+            if !existing_paths.is_empty() {
+                let mut add_temp = NamedTempFile::new()?;
+                for path in &existing_paths {
+                    writeln!(add_temp, "{path}")?;
+                }
+                add_temp.flush()?;
+                self.run(
+                    &[
+                        "add",
+                        "--pathspec-from-file",
+                        add_temp.path().to_str().unwrap(),
+                    ],
+                    Opts::default(),
+                )
+                .await?;
+            }
+
+            if !deleted_paths.is_empty() {
+                let mut rm_temp = NamedTempFile::new()?;
+                for path in &deleted_paths {
+                    writeln!(rm_temp, "{path}")?;
+                }
+                rm_temp.flush()?;
+                // `--cached` keeps git from trying to remove files from the working tree
+                // (they're already gone); `--ignore-unmatch` keeps the command from
+                // failing if a path happens to be missing from the index.
+                self.run(
+                    &[
+                        "rm",
+                        "--cached",
+                        "--ignore-unmatch",
+                        "--pathspec-from-file",
+                        rm_temp.path().to_str().unwrap(),
+                    ],
+                    Opts::default(),
+                )
+                .await?;
+            }
         }
 
         let stash_message = format!("{SNAPSHOT_PREFIX} {message}");

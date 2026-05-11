@@ -24,6 +24,10 @@ pub use status::{status_handler, RepoStatusRef, StatusOp};
 pub use update_engine::{
     reset_engine_handler, update_engine_handler, UpdateEngineOp, WipeEngineOp,
 };
+pub use zip_changes::{
+    import_zipped_changes_handler, preview_import_zip_handler, zip_local_changes_handler,
+    ImportZippedChangesRequest, ZipLocalChangesRequest,
+};
 
 pub use crate::repo::operations::gh::submit::GitHubSubmitOp;
 
@@ -173,3 +177,4 @@ mod snapshot;
 mod status;
 mod update_engine;
 pub mod validate;
+mod zip_changes;

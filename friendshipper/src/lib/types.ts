@@ -559,3 +559,29 @@ export interface CommitInfo {
 	subject: string;
 	message: string;
 }
+
+export interface ZipLocalChangesResponse {
+	destination: string;
+	fileCount: number;
+}
+
+export interface ZipPreviewEntry {
+	path: string;
+	displayName: string;
+	state: 'Unknown' | 'Added' | 'Modified' | 'Deleted' | 'Unmerged';
+	size: number;
+	conflictsWithLocal: boolean;
+	existsOnDisk: boolean;
+}
+
+export interface ZipPreviewResponse {
+	source: string;
+	createdBy: string | null;
+	createdAt: string | null;
+	entries: ZipPreviewEntry[];
+}
+
+export interface ImportZippedChangesResponse {
+	extracted: number;
+	deleted: number;
+}

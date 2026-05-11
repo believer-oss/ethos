@@ -76,4 +76,16 @@ where
         .route("/gh/pulls", get(operations::gh::get_pull_requests))
         .route("/gh/pulls/:id", get(operations::gh::get_pull_request))
         .route("/gh/user", get(operations::gh::get_user))
+        .route(
+            "/zip/local-changes",
+            post(operations::zip_local_changes_handler),
+        )
+        .route(
+            "/zip/import/preview",
+            get(operations::preview_import_zip_handler),
+        )
+        .route(
+            "/zip/import",
+            post(operations::import_zipped_changes_handler::<T>),
+        )
 }

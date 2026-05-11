@@ -2,6 +2,7 @@
 	import {
 		Alert,
 		Button,
+		ButtonGroup,
 		Card,
 		Checkbox,
 		Input,
@@ -539,25 +540,35 @@
 			<span class="text-xs text-gray-400 font-italic">({selectedFiles.length} selected)</span>
 		</div>
 		<div class="flex gap-2">
-			{#if lockSelectedEnabled}
+			<ButtonGroup size="xs" class="space-x-px">
+				{#if lockSelectedEnabled}
+					<Button
+						size="xs"
+						color="primary"
+						disabled={disabled || selectedFiles.length === 0}
+						on:click={onLockSelected}
+						>Lock Selected
+					</Button>
+				{/if}
 				<Button
 					size="xs"
+					color="primary"
 					disabled={disabled || selectedFiles.length === 0}
-					on:click={onLockSelected}
-					>Lock Selected
+					on:click={promptForRevertConfirmation}
+					>Revert Selected
 				</Button>
-			{/if}
-			<Button
-				size="xs"
-				disabled={disabled || selectedFiles.length === 0}
-				on:click={promptForRevertConfirmation}
-				>Revert Selected
-			</Button>
-			{#if snapshotsEnabled}
-				<Button size="xs" disabled={modifiedFiles.length === 0} on:click={onSaveSnapshot}
-					>Save Snapshot {selectedFiles.length > 0 ? `(${selectedFiles.length})` : '(all)'}
-				</Button>
-			{/if}
+				{#if snapshotsEnabled}
+					<Button
+						size="xs"
+						color="primary"
+						disabled={modifiedFiles.length === 0}
+						on:click={onSaveSnapshot}
+						>Save Snapshot {selectedFiles.length > 0 ? `(${selectedFiles.length})` : '(all)'}
+					</Button>
+				{/if}
+				<slot name="actions-dropdown-trigger" />
+			</ButtonGroup>
+			<slot name="actions-dropdown" />
 		</div>
 	</div>
 	<div class="flex gap-2 pb-1">
