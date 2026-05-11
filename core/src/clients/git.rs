@@ -400,16 +400,92 @@ impl Git {
         &self,
         message: &str,
         paths: Vec<String>,
-        keep_index: SaveSnapshotIndexOption,
+        _keep_index: SaveSnapshotIndexOption,
     ) -> anyhow::Result<Snapshot> {
+        // _keep_index is preserved in the signature for API stability but no
+        // longer drives anything: the new pipeline builds the snapshot commit
+        // on a temporary index, so the user's real index is never modified.
         self.wait_for_lock().await;
 
+        let stash_message = format!("{SNAPSHOT_PREFIX} {message}");
+        let snapshot_commit = self.build_snapshot_commit(&paths, &stash_message).await?;
+
+        self.run(
+            &[
+                "stash",
+                "store",
+                "--message",
+                &stash_message,
+                &snapshot_commit,
+            ],
+            Opts::default(),
+        )
+        .await?;
+
+        let snapshots = self.list_snapshots().await?;
+        let first = snapshots.first().cloned();
+        assert!(first.is_some(), "Failed to get snapshot");
+
+        // keep at most 25 snapshots — drop the oldest if we exceeded
+        if snapshots.len() > 25 {
+            if let Some(snapshot) = snapshots.get(25) {
+                self.run(&["stash", "drop", &snapshot.stash_index], Opts::default())
+                    .await?;
+            }
+        }
+
+        Ok(first.unwrap())
+    }
+
+    /// Build a stash-shaped commit that captures exactly the requested paths
+    /// (or every dirty + untracked path when `paths` is empty). All staging
+    /// happens against a temp index via `GIT_INDEX_FILE`, so the user's real
+    /// index and working tree are not touched.
+    ///
+    /// The returned commit has two parents — `HEAD` and an "index" commit
+    /// pointing at the same snapshot tree — which matches the shape `git stash
+    /// create` produces. That lets `restore_snapshot`'s `git cherry-pick -m1`
+    /// keep working unchanged.
+    async fn build_snapshot_commit(
+        &self,
+        paths: &[String],
+        stash_message: &str,
+    ) -> anyhow::Result<String> {
+        // Resolve HEAD to a SHA once. We use the same SHA for `read-tree` (the
+        // tree we diff against) and for `commit-tree -p` (the first parent),
+        // so a concurrent HEAD-changing op can't leave us with a snapshot
+        // tree built against an old HEAD but parented to a new one.
+        let head_sha = self
+            .run_and_collect_output(&["rev-parse", "HEAD"], Opts::default())
+            .await?
+            .trim()
+            .to_string();
+
+        // Use a temp DIR (not NamedTempFile) for GIT_INDEX_FILE. NamedTempFile
+        // keeps an open handle on the file; on Windows that can race git's
+        // lock-then-rename pattern when it writes the index and surface as
+        // "could not write index". With a tempdir we just hand git a path and
+        // let it create the file itself.
+        let temp_dir = tempfile::tempdir()?;
+        let temp_index_path = temp_dir.path().join("snapshot-index");
+
+        // Seed the temp index with HEAD so subsequent `git add`/`git rm` calls
+        // produce a tree diffed against HEAD.
+        self.run_with_index_file(&["read-tree", &head_sha], &temp_index_path)
+            .await?;
+
         if paths.is_empty() {
-            self.run(&["add", "-A", "--", "."], Opts::default()).await?;
+            // Full snapshot: a single `git add -A -- .` walks the working tree
+            // once and stages additions, modifications, AND deletions into the
+            // temp index. Doing this via `ls-files` + `git add --pathspec-from-
+            // file` is functionally equivalent but walks the tree twice, which
+            // is noticeable on a large Unreal repo.
+            self.run_with_index_file(&["add", "-A", "--", "."], &temp_index_path)
+                .await?;
         } else {
-            // Split paths by working-tree presence. `git add <exact-path>` rejects paths
-            // whose file no longer exists on disk ("pathspec did not match any files"),
-            // even with `-A`, so we have to stage deletions via `git rm --cached`.
+            // Selective snapshot: files still on disk get staged via `git add`;
+            // files already deleted need `git rm --cached` because
+            // `git add <path>` rejects paths whose working-tree file is gone.
             let (deleted_paths, existing_paths): (Vec<&String>, Vec<&String>) =
                 paths.iter().partition(|p| !self.repo_path.join(p).exists());
 
@@ -419,13 +495,13 @@ impl Git {
                     writeln!(add_temp, "{path}")?;
                 }
                 add_temp.flush()?;
-                self.run(
+                self.run_with_index_file(
                     &[
                         "add",
                         "--pathspec-from-file",
                         add_temp.path().to_str().unwrap(),
                     ],
-                    Opts::default(),
+                    &temp_index_path,
                 )
                 .await?;
             }
@@ -436,10 +512,7 @@ impl Git {
                     writeln!(rm_temp, "{path}")?;
                 }
                 rm_temp.flush()?;
-                // `--cached` keeps git from trying to remove files from the working tree
-                // (they're already gone); `--ignore-unmatch` keeps the command from
-                // failing if a path happens to be missing from the index.
-                self.run(
+                self.run_with_index_file(
                     &[
                         "rm",
                         "--cached",
@@ -447,72 +520,83 @@ impl Git {
                         "--pathspec-from-file",
                         rm_temp.path().to_str().unwrap(),
                     ],
-                    Opts::default(),
+                    &temp_index_path,
                 )
                 .await?;
             }
         }
 
-        let stash_message = format!("{SNAPSHOT_PREFIX} {message}");
-        let mut stash_create_args = vec!["stash", "create"];
-        if keep_index == SaveSnapshotIndexOption::KeepIndex {
-            stash_create_args.push("--keep-index");
+        let tree_sha = self
+            .run_with_index_file(&["write-tree"], &temp_index_path)
+            .await?
+            .trim()
+            .to_string();
+
+        // Mimic `git stash create`'s 2-parent shape: parent 1 = HEAD,
+        // parent 2 = an "index" commit pointing at the same tree.
+        let index_commit_message = format!("index on {stash_message}");
+        let index_commit = self
+            .run_and_collect_output(
+                &["commit-tree", &tree_sha, "-m", &index_commit_message],
+                Opts::default(),
+            )
+            .await?
+            .trim()
+            .to_string();
+
+        let snapshot_commit = self
+            .run_and_collect_output(
+                &[
+                    "commit-tree",
+                    &tree_sha,
+                    "-p",
+                    &head_sha,
+                    "-p",
+                    &index_commit,
+                    "-m",
+                    stash_message,
+                ],
+                Opts::default(),
+            )
+            .await?
+            .trim()
+            .to_string();
+
+        Ok(snapshot_commit)
+    }
+
+    /// Run a git command against a specific index file. Used by the snapshot
+    /// builder to keep its staging out of the user's real index. Returns the
+    /// command's stdout on success; errors carry stderr in the message.
+    async fn run_with_index_file(
+        &self,
+        args: &[&str],
+        index_file: &Path,
+    ) -> anyhow::Result<String> {
+        let mut cmd = Command::new("git");
+        for arg in args {
+            cmd.arg(arg);
         }
-
-        // if paths is empty, stash everything
-        let mut temp_file = NamedTempFile::new()?;
-        if paths.is_empty() {
-            stash_create_args.push(".");
-        } else {
-            // set up a temp file
-            for path in &paths {
-                writeln!(temp_file, "{path}")?;
-            }
-            temp_file.flush()?;
-
-            stash_create_args.push("--pathspec-from-file");
-            stash_create_args.push(temp_file.path().to_str().unwrap());
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+        cmd.env("GIT_INDEX_FILE", index_file);
+        if !self.repo_path.as_os_str().is_empty() {
+            cmd.current_dir(&self.repo_path.canonicalize()?);
         }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
-        // We use the stash create and store commands because stash push modifies the working
-        // tree, and we need to avoid doing that when the engine is running, as it could cause
-        // the command to fail and put the repo into a bad state. The create/store commands
-        // create a stash commit and store it into the stash list, respectively, without
-        // messing with the working tree at all.
-        let stash_sha = self
-            .run_and_collect_output(&stash_create_args, Opts::default())
-            .await?;
+        info!(
+            "Running with temp index: git {} (index={})",
+            args.join(" "),
+            index_file.display()
+        );
 
-        let stash_store_args = &["stash", "store", "--message", &stash_message, &stash_sha];
-        self.run(stash_store_args, Opts::default()).await?;
-
-        let snapshots = self.list_snapshots().await?;
-
-        let first = snapshots.first();
-        assert!(first.is_some(), "Failed to get snapshot");
-
-        // if we have more than 25 snapshots, drop the oldest one
-        if snapshots.len() > 25 {
-            if let Some(snapshot) = snapshots.get(25) {
-                self.run(&["stash", "drop", &snapshot.stash_index], Opts::default())
-                    .await?;
-            }
+        let output = cmd.output().await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("git {:?} failed: {}", args, stderr.trim());
         }
-
-        let mut temp_file = NamedTempFile::new()?;
-        for path in &paths {
-            writeln!(temp_file, "{path}")?;
-        }
-        temp_file.flush()?;
-
-        let mut args = vec!["reset"];
-        args.push("--pathspec-from-file");
-        args.push(temp_file.path().to_str().unwrap());
-
-        self.run(&args, Opts::default()).await?;
-
-        // We can unwrap because we asserted earlier
-        Ok(first.unwrap().clone())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     pub async fn delete_snapshot(&self, commit: &str) -> anyhow::Result<()> {

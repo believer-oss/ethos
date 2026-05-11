@@ -30,9 +30,27 @@ pub async fn save_snapshot<T>(
 where
     T: EngineProvider,
 {
+    // An empty `files` list means "snapshot all my changes" from the UI. We
+    // already track the dirty set in `repo_status` (same source the UI shows),
+    // so resolve it here instead of letting core run `git add -A -- .`, which
+    // would walk the entire working tree. On a large Unreal repo that walk
+    // dominates snapshot latency for the all-files case.
+    let files = if req.files.is_empty() {
+        let status = state.repo_status.read();
+        status
+            .modified_files
+            .0
+            .iter()
+            .chain(status.untracked_files.0.iter())
+            .map(|f| f.path.clone())
+            .collect()
+    } else {
+        req.files
+    };
+
     state
         .git()
-        .save_snapshot(&req.message, req.files, SaveSnapshotIndexOption::KeepIndex)
+        .save_snapshot(&req.message, files, SaveSnapshotIndexOption::KeepIndex)
         .await?;
 
     Ok(())
