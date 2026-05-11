@@ -414,16 +414,19 @@ impl Git {
                 paths.iter().partition(|p| !self.repo_path.join(p).exists());
 
             if !existing_paths.is_empty() {
-                let mut add_temp = NamedTempFile::new()?;
-                for path in &existing_paths {
-                    writeln!(add_temp, "{path}")?;
-                }
-                add_temp.flush()?;
+                let add_path = {
+                    let mut add_temp = NamedTempFile::new()?;
+                    for path in &existing_paths {
+                        writeln!(add_temp, "{path}")?;
+                    }
+                    add_temp.flush()?;
+                    add_temp.into_temp_path()
+                };
                 self.run(
                     &[
                         "add",
                         "--pathspec-from-file",
-                        add_temp.path().to_str().unwrap(),
+                        add_path.to_str().expect("temp file path is non-UTF-8"),
                     ],
                     Opts::default(),
                 )
@@ -431,11 +434,14 @@ impl Git {
             }
 
             if !deleted_paths.is_empty() {
-                let mut rm_temp = NamedTempFile::new()?;
-                for path in &deleted_paths {
-                    writeln!(rm_temp, "{path}")?;
-                }
-                rm_temp.flush()?;
+                let rm_path = {
+                    let mut rm_temp = NamedTempFile::new()?;
+                    for path in &deleted_paths {
+                        writeln!(rm_temp, "{path}")?;
+                    }
+                    rm_temp.flush()?;
+                    rm_temp.into_temp_path()
+                };
                 // `--cached` keeps git from trying to remove files from the working tree
                 // (they're already gone); `--ignore-unmatch` keeps the command from
                 // failing if a path happens to be missing from the index.
@@ -445,7 +451,7 @@ impl Git {
                         "--cached",
                         "--ignore-unmatch",
                         "--pathspec-from-file",
-                        rm_temp.path().to_str().unwrap(),
+                        rm_path.to_str().expect("temp file path is non-UTF-8"),
                     ],
                     Opts::default(),
                 )
@@ -460,18 +466,21 @@ impl Git {
         }
 
         // if paths is empty, stash everything
-        let mut temp_file = NamedTempFile::new()?;
-        if paths.is_empty() {
+        let stash_path = if paths.is_empty() {
             stash_create_args.push(".");
+            None
         } else {
             // set up a temp file
+            let mut temp_file = NamedTempFile::new()?;
             for path in &paths {
                 writeln!(temp_file, "{path}")?;
             }
             temp_file.flush()?;
-
+            Some(temp_file.into_temp_path())
+        };
+        if let Some(ref path) = stash_path {
             stash_create_args.push("--pathspec-from-file");
-            stash_create_args.push(temp_file.path().to_str().unwrap());
+            stash_create_args.push(path.to_str().expect("temp file path is non-UTF-8"));
         }
 
         // We use the stash create and store commands because stash push modifies the working
@@ -499,15 +508,18 @@ impl Git {
             }
         }
 
-        let mut temp_file = NamedTempFile::new()?;
-        for path in &paths {
-            writeln!(temp_file, "{path}")?;
-        }
-        temp_file.flush()?;
+        let reset_path = {
+            let mut temp_file = NamedTempFile::new()?;
+            for path in &paths {
+                writeln!(temp_file, "{path}")?;
+            }
+            temp_file.flush()?;
+            temp_file.into_temp_path()
+        };
 
         let mut args = vec!["reset"];
         args.push("--pathspec-from-file");
-        args.push(temp_file.path().to_str().unwrap());
+        args.push(reset_path.to_str().expect("temp file path is non-UTF-8"));
 
         self.run(&args, Opts::default()).await?;
 
