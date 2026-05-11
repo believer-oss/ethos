@@ -22,6 +22,7 @@ use tracing::{debug, error, info, instrument};
 use crate::types::errors::CoreError;
 use crate::types::locks::VerifyLocksResponse;
 use crate::types::repo::File;
+use crate::types::repo::FileState;
 use crate::types::repo::Snapshot;
 
 static SNAPSHOT_PREFIX: &str = "snapshot";
@@ -617,7 +618,25 @@ impl Git {
         commit: &str,
         currently_modified_files: Vec<File>,
         prefer_snapshot_versions: bool,
+        paths_filter: Option<Vec<String>>,
     ) -> anyhow::Result<()> {
+        // Selective restore takes a different, simpler path: we extract each
+        // selected file straight out of the snapshot's tree (or delete it,
+        // for paths the snapshot recorded as deleted) without touching the
+        // user's real index. The selective fn uses `prefer_snapshot_versions`
+        // as the "overwrite local changes" toggle — when false, it refuses
+        // to touch paths that have uncommitted local edits.
+        if let Some(filter) = paths_filter {
+            return self
+                .restore_snapshot_selective(
+                    commit,
+                    &filter,
+                    &currently_modified_files,
+                    prefer_snapshot_versions,
+                )
+                .await;
+        }
+
         self.wait_for_lock().await;
 
         // Get list of files in the snapshot
@@ -785,6 +804,114 @@ impl Git {
         Ok(())
     }
 
+    /// Restore only the requested subset of paths from a snapshot. The
+    /// snapshot's view of each selected path is either applied as a working-
+    /// tree deletion (for entries the snapshot recorded as deleted) or
+    /// extracted via `git checkout` against a temp index (otherwise). Using
+    /// `checkout` means `.gitattributes` filters — most importantly the LFS
+    /// smudge filter — run, so LFS-tracked assets come out as real content
+    /// rather than pointer files. The user's real index is never touched.
+    async fn restore_snapshot_selective(
+        &self,
+        commit: &str,
+        paths_filter: &[String],
+        currently_local_files: &[File],
+        overwrite_local: bool,
+    ) -> anyhow::Result<()> {
+        self.wait_for_lock().await;
+
+        let entries = self.get_snapshot_entries_with_state(commit).await?;
+        let filter: std::collections::HashSet<&str> =
+            paths_filter.iter().map(String::as_str).collect();
+
+        // Before touching disk, refuse to clobber uncommitted local changes
+        // (modified OR untracked) unless the caller explicitly opted in. The
+        // frontend gates the same check in the modal; this is a backstop so
+        // a stale UI or scripted caller can't silently stomp work.
+        if !overwrite_local {
+            let local: std::collections::HashSet<&str> = currently_local_files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect();
+            let mut conflicts: Vec<&str> = entries
+                .iter()
+                .filter(|(p, _)| filter.contains(p.as_str()) && local.contains(p.as_str()))
+                .map(|(p, _)| p.as_str())
+                .collect();
+            if !conflicts.is_empty() {
+                conflicts.sort();
+                bail!(
+                    "Cannot restore: {} selected file(s) would overwrite uncommitted local changes:\n  - {}\n\nCheck \"Overwrite local changes\" to proceed, or deselect the conflicting files.",
+                    conflicts.len(),
+                    conflicts.join("\n  - ")
+                );
+            }
+        }
+
+        // Partition selected entries into "delete from working tree" vs
+        // "extract from snapshot".
+        let mut to_delete: Vec<&str> = Vec::new();
+        let mut to_extract: Vec<&str> = Vec::new();
+        for (path, state) in entries.iter().filter(|(p, _)| filter.contains(p.as_str())) {
+            match state {
+                FileState::Deleted => to_delete.push(path.as_str()),
+                _ => to_extract.push(path.as_str()),
+            }
+        }
+
+        // Apply deletions directly — no git invocation needed, and `fs::
+        // remove_file` doesn't care whether the file was LFS-tracked.
+        for path in &to_delete {
+            let abs = self.repo_path.join(path);
+            if abs.exists() {
+                std::fs::remove_file(&abs).map_err(|e| {
+                    anyhow!("failed to remove {} during selective restore: {}", path, e)
+                })?;
+            }
+        }
+
+        // Apply extractions via a batched `git checkout <commit>
+        // --pathspec-from-file <list>` against a temp index. Running through
+        // checkout (rather than dumping raw blobs ourselves) ensures the LFS
+        // smudge filter runs and assets come back smudged on disk. The temp
+        // index keeps the user's real index untouched.
+        if !to_extract.is_empty() {
+            let temp_dir = tempfile::tempdir()?;
+            let temp_index_path = temp_dir.path().join("restore-index");
+
+            // Seed the temp index from HEAD (resolved to a SHA so a
+            // concurrent ref move can't desync us). `git checkout` reads the
+            // index file to know what to update; a populated, valid index is
+            // the safest starting point.
+            let head_sha = self
+                .run_and_collect_output(&["rev-parse", "HEAD"], Opts::default())
+                .await?
+                .trim()
+                .to_string();
+            self.run_with_index_file(&["read-tree", &head_sha], &temp_index_path)
+                .await?;
+
+            let mut pathspec = NamedTempFile::new()?;
+            for path in &to_extract {
+                writeln!(pathspec, "{path}")?;
+            }
+            pathspec.flush()?;
+
+            self.run_with_index_file(
+                &[
+                    "checkout",
+                    commit,
+                    "--pathspec-from-file",
+                    pathspec.path().to_str().unwrap(),
+                ],
+                &temp_index_path,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn get_untracked_files(&self) -> anyhow::Result<Vec<String>> {
         let output = self.status(vec![]).await?;
 
@@ -828,6 +955,61 @@ impl Git {
             .collect();
 
         Ok(files)
+    }
+
+    /// Like `get_files_in_snapshot`, but returns each path's diff state vs the
+    /// snapshot's first parent (HEAD at snapshot time). Used by the
+    /// restore-preview UI so we can show whether a file would be added,
+    /// overwritten, or deleted on restore.
+    pub async fn get_snapshot_entries_with_state(
+        &self,
+        snapshot_commit: &str,
+    ) -> anyhow::Result<Vec<(String, FileState)>> {
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "diff",
+                    "--name-status",
+                    "-z",
+                    &format!("{}^1", snapshot_commit),
+                    snapshot_commit,
+                ],
+                Opts::new_without_logs(),
+            )
+            .await?;
+
+        // `-z` emits fields NUL-terminated, one field per record:
+        //   STATUS\0PATH\0                         for A/M/D/T/U
+        //   STATUS\0OLDPATH\0NEWPATH\0             for R/C
+        // (Verified via `git diff --name-status -z … | od -c`.) Status and
+        // path are SEPARATE tokens; there's no tab between them.
+        let mut tokens = output.split('\0').filter(|s| !s.is_empty());
+        let mut entries = Vec::new();
+        while let Some(status) = tokens.next() {
+            let state = match status.chars().next() {
+                Some('A') => FileState::Added,
+                Some('D') => FileState::Deleted,
+                Some('U') => FileState::Unmerged,
+                Some('M') | Some('T') | Some('R') | Some('C') => FileState::Modified,
+                _ => FileState::Unknown,
+            };
+            let path = match status.chars().next() {
+                // R/C: consume OLDPATH, use NEWPATH.
+                Some('R') | Some('C') => {
+                    let _old = tokens.next();
+                    match tokens.next() {
+                        Some(p) => p.to_string(),
+                        None => continue,
+                    }
+                }
+                _ => match tokens.next() {
+                    Some(p) => p.to_string(),
+                    None => continue,
+                },
+            };
+            entries.push((path, state));
+        }
+        Ok(entries)
     }
 
     pub fn find_tracked_conflicts(

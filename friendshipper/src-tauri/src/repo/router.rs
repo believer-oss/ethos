@@ -23,6 +23,7 @@ where
             "/snapshots",
             get(operations::list_snapshots).delete(operations::delete_snapshot),
         )
+        .route("/snapshots/preview", get(operations::preview_snapshot))
         .route("/snapshots/restore", post(operations::restore_snapshot))
         .route("/snapshots/save", post(operations::save_snapshot))
         .route("/changeset/save", post(operations::save_changeset))

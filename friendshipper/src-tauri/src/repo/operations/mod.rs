@@ -17,8 +17,8 @@ pub use restore::{restore_file_to_revision_handler, RestoreFileToRevisionRequest
 pub use revert::{revert_files_handler, RevertFilesOp};
 pub use show::show_commit_files;
 pub use snapshot::{
-    delete_snapshot, list_snapshots, restore_snapshot, save_snapshot, RestoreSnapshotRequest,
-    SaveSnapshotRequest,
+    delete_snapshot, list_snapshots, preview_snapshot, restore_snapshot, save_snapshot,
+    PreviewSnapshotParams, PreviewSnapshotResponse, RestoreSnapshotRequest, SaveSnapshotRequest,
 };
 pub use status::{status_handler, RepoStatusRef, StatusOp};
 pub use update_engine::{

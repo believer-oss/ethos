@@ -585,3 +585,14 @@ export interface ImportZippedChangesResponse {
 	extracted: number;
 	deleted: number;
 }
+
+export interface SnapshotPreviewEntry {
+	path: string;
+	state: 'Unknown' | 'Added' | 'Modified' | 'Deleted' | 'Unmerged';
+	conflictsWithLocal: boolean;
+	existsOnDisk: boolean;
+}
+
+export interface SnapshotPreviewResponse {
+	entries: SnapshotPreviewEntry[];
+}
