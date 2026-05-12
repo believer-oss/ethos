@@ -886,18 +886,21 @@ impl Git {
             self.run_with_index_file(&["read-tree", &head_sha], &temp_index_path)
                 .await?;
 
-            let mut pathspec = NamedTempFile::new()?;
-            for path in &to_extract {
-                writeln!(pathspec, "{path}")?;
-            }
-            pathspec.flush()?;
+            let pathspec_path = {
+                let mut pathspec = NamedTempFile::new()?;
+                for path in &to_extract {
+                    writeln!(pathspec, "{path}")?;
+                }
+                pathspec.flush()?;
+                pathspec.into_temp_path()
+            };
 
             self.run_with_index_file(
                 &[
                     "checkout",
                     commit,
                     "--pathspec-from-file",
-                    pathspec.path().to_str().unwrap(),
+                    pathspec_path.to_str().expect("temp file path is non-UTF-8"),
                 ],
                 &temp_index_path,
             )
