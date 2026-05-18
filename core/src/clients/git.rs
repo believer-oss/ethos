@@ -410,8 +410,10 @@ impl Git {
         .await?;
 
         let snapshots = self.list_snapshots().await?;
-        let first = snapshots.first().cloned();
-        assert!(first.is_some(), "Failed to get snapshot");
+        let first = snapshots
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow!("Failed to get snapshot after store"))?;
 
         // keep at most 25 snapshots — drop the oldest if we exceeded
         if snapshots.len() > 25 {
@@ -421,7 +423,7 @@ impl Git {
             }
         }
 
-        Ok(first.unwrap())
+        Ok(first)
     }
 
     /// Build a stash-shaped commit that captures exactly the requested paths
@@ -855,13 +857,17 @@ impl Git {
         }
 
         // Apply deletions directly — no git invocation needed, and `fs::
-        // remove_file` doesn't care whether the file was LFS-tracked.
+        // remove_file` doesn't care whether the file was LFS-tracked. Collect
+        // per-path failures and keep going so one stuck file (e.g. a handle
+        // held by another process) doesn't abort the rest of the restore;
+        // we'll surface the full list at the end.
+        let mut errors: Vec<String> = Vec::new();
         for path in &to_delete {
             let abs = self.repo_path.join(path);
             if abs.exists() {
-                std::fs::remove_file(&abs).map_err(|e| {
-                    anyhow!("failed to remove {} during selective restore: {}", path, e)
-                })?;
+                if let Err(e) = std::fs::remove_file(&abs) {
+                    errors.push(format!("failed to remove {}: {}", path, e));
+                }
             }
         }
 
@@ -895,16 +901,32 @@ impl Git {
                 pathspec.into_temp_path()
             };
 
-            self.run_with_index_file(
-                &[
-                    "checkout",
-                    commit,
-                    "--pathspec-from-file",
-                    pathspec_path.to_str().expect("temp file path is non-UTF-8"),
-                ],
-                &temp_index_path,
-            )
-            .await?;
+            if let Err(e) = self
+                .run_with_index_file(
+                    &[
+                        "checkout",
+                        commit,
+                        "--pathspec-from-file",
+                        pathspec_path.to_str().expect("temp file path is non-UTF-8"),
+                    ],
+                    &temp_index_path,
+                )
+                .await
+            {
+                errors.push(format!(
+                    "failed to extract {} file(s): {}",
+                    to_extract.len(),
+                    e
+                ));
+            }
+        }
+
+        if !errors.is_empty() {
+            bail!(
+                "Selective restore completed with {} error(s):\n  - {}",
+                errors.len(),
+                errors.join("\n  - ")
+            );
         }
 
         Ok(())
@@ -1752,4 +1774,137 @@ pub async fn configure_global(key: &str, value: &str) -> Result<(), CoreError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command as StdCommand;
+    use std::sync::mpsc;
+    use tempfile::TempDir;
+
+    /// Initialize a fresh git repo in a tempdir with one committed `seed.txt`.
+    /// The TempDir guard must be kept alive for the duration of the test.
+    fn setup_repo() -> (Git, TempDir) {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().to_path_buf();
+
+        let config_steps: &[&[&str]] = &[
+            &["init"],
+            &["config", "user.email", "test@example.com"],
+            &["config", "user.name", "test"],
+            &["config", "commit.gpgsign", "false"],
+            &["config", "core.autocrlf", "false"],
+        ];
+        for args in config_steps {
+            let out = StdCommand::new("git")
+                .args(*args)
+                .current_dir(&path)
+                .output()
+                .expect("run git");
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        std::fs::write(path.join("seed.txt"), "seed").unwrap();
+        let out = StdCommand::new("git")
+            .args(["add", "seed.txt"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "seed"])
+            .current_dir(&path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "seed commit failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let (tx, _rx) = mpsc::channel();
+        let git = Git::new(path, tx);
+        (git, dir)
+    }
+
+    // Pre-PR regression: full snapshots silently dropped untracked files. The
+    // snapshot is now built via `git add -A` against a temp index, which
+    // stages additions/mods/dels — including untracked paths.
+    #[tokio::test]
+    async fn test_save_snapshot_all_captures_untracked_files() {
+        let (git, _dir) = setup_repo();
+
+        std::fs::write(git.repo_path.join("new.txt"), "hello").unwrap();
+
+        let snapshot = git
+            .save_snapshot_all("test untracked")
+            .await
+            .expect("save_snapshot_all");
+
+        let files = git
+            .get_files_in_snapshot(&snapshot.commit)
+            .await
+            .expect("get_files_in_snapshot");
+
+        assert!(
+            files.iter().any(|f| f == "new.txt"),
+            "expected new.txt in snapshot, got: {:?}",
+            files
+        );
+    }
+
+    // Pre-PR regression: selective snapshots could capture paths the caller
+    // didn't ask for. The snapshot tree is now built against a temp index
+    // seeded from HEAD with only the requested paths staged, so the diff
+    // against HEAD covers exactly those paths.
+    #[tokio::test]
+    async fn test_save_snapshot_with_paths_only_captures_those_paths() {
+        let (git, _dir) = setup_repo();
+
+        std::fs::write(git.repo_path.join("a.txt"), "a-base").unwrap();
+        std::fs::write(git.repo_path.join("b.txt"), "b-base").unwrap();
+        let out = StdCommand::new("git")
+            .args(["add", "a.txt", "b.txt"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "ab"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Dirty both tracked files; we only want a.txt in the snapshot.
+        std::fs::write(git.repo_path.join("a.txt"), "a-dirty").unwrap();
+        std::fs::write(git.repo_path.join("b.txt"), "b-dirty").unwrap();
+
+        let snapshot = git
+            .save_snapshot("only a", vec!["a.txt".to_string()])
+            .await
+            .expect("save_snapshot");
+
+        let files = git
+            .get_files_in_snapshot(&snapshot.commit)
+            .await
+            .expect("get_files_in_snapshot");
+
+        assert!(
+            files.iter().any(|f| f == "a.txt"),
+            "a.txt missing from selective snapshot: {:?}",
+            files
+        );
+        assert!(
+            !files.iter().any(|f| f == "b.txt"),
+            "b.txt leaked into selective snapshot: {:?}",
+            files
+        );
+    }
 }
