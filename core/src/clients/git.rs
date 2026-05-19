@@ -1994,15 +1994,16 @@ mod tests {
         );
     }
 
-    // Reported via Slack 2026-05: an untracked .py file (Jak's case)
-    // round-tripped through the cherry-pick restore was reported as a
-    // conflict, with the snapshot version dropped at `.snapshotcopy`,
-    // even though the content was identical to the user's local file.
-    // Root cause: `.gitattributes`/`autocrlf` normalize EOLs into the
+    // Regression: an untracked file round-tripped through the
+    // cherry-pick restore could be reported as a conflict — with the
+    // snapshot version dropped at `.snapshotcopy` — even though its
+    // content was identical to the user's local file modulo line
+    // endings. `.gitattributes`/`autocrlf` normalize EOLs into the
     // snapshot blob, so the cherry-picked file (post-smudge) and the
-    // renamed `.localcopy` (raw user bytes) differed by `\r` but
-    // semantically matched. The fix is to compare via `git hash-object
-    // --path=<path>` so the same clean filters apply on both sides.
+    // renamed `.localcopy` (raw user bytes) differed by `\r` while git
+    // considered them the same content. The fix compares both sides
+    // via `git hash-object --path=<path>` so the same clean filters
+    // apply.
     #[tokio::test]
     async fn test_cherry_pick_restore_ignores_eol_normalization() {
         let (git, _dir) = setup_repo();
