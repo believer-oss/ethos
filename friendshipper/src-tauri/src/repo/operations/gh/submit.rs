@@ -376,7 +376,7 @@ where
 
                     match self
                         .git_client
-                        .restore_snapshot(&snapshot.commit, vec![], false, None) // Submit restore: prefer local versions
+                        .restore_snapshot_via_cherry_pick(&snapshot.commit, vec![])
                         .await
                     {
                         Ok(_) => {}

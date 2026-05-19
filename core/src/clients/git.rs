@@ -433,8 +433,8 @@ impl Git {
     ///
     /// The returned commit has two parents — `HEAD` and an "index" commit
     /// pointing at the same snapshot tree — which matches the shape `git stash
-    /// create` produces. That lets `restore_snapshot`'s `git cherry-pick -m1`
-    /// keep working unchanged.
+    /// create` produces. That lets `restore_snapshot_via_cherry_pick`'s
+    /// `git cherry-pick -m1` keep working unchanged.
     async fn build_snapshot_commit(
         &self,
         paths: &[String],
@@ -607,59 +607,75 @@ impl Git {
         }
     }
 
+    /// User-facing snapshot restore. Always extracts the snapshot's view of
+    /// the selected paths via the selective code path — when `paths_filter`
+    /// is `None`, every path the snapshot touches is restored, giving the
+    /// "restore everything" call a single mechanism with the same conflict
+    /// semantics as a per-path restore.
+    ///
+    /// Pull/submit do NOT go through here — they invoke
+    /// `restore_snapshot_via_cherry_pick` directly because they need
+    /// 3-way-merge replay against a HEAD that may already contain upstream
+    /// changes from a rebase.
     pub async fn restore_snapshot(
         &self,
         commit: &str,
-        currently_modified_files: Vec<File>,
-        prefer_snapshot_versions: bool,
+        currently_local_files: Vec<File>,
+        overwrite_local: bool,
         paths_filter: Option<Vec<String>>,
     ) -> anyhow::Result<()> {
-        // Selective restore takes a different, simpler path: we extract each
-        // selected file straight out of the snapshot's tree (or delete it,
-        // for paths the snapshot recorded as deleted) without touching the
-        // user's real index. The selective fn uses `prefer_snapshot_versions`
-        // as the "overwrite local changes" toggle — when false, it refuses
-        // to touch paths that have uncommitted local edits.
-        if let Some(filter) = paths_filter {
-            return self
-                .restore_snapshot_selective(
-                    commit,
-                    &filter,
-                    &currently_modified_files,
-                    prefer_snapshot_versions,
-                )
-                .await;
-        }
+        // Fetch the snapshot's entries once here and pass the selected
+        // subset down — `restore_snapshot_selective` no longer needs to
+        // re-run `git diff --name-status` itself.
+        let entries = self.get_snapshot_entries_with_state(commit).await?;
+        let selected: Vec<(String, FileState)> = match paths_filter {
+            Some(f) => {
+                let filter: std::collections::HashSet<&str> =
+                    f.iter().map(String::as_str).collect();
+                entries
+                    .into_iter()
+                    .filter(|(p, _)| filter.contains(p.as_str()))
+                    .collect()
+            }
+            None => entries,
+        };
+        self.restore_snapshot_selective(commit, &selected, &currently_local_files, overwrite_local)
+            .await
+    }
 
+    /// Replay a snapshot's diff onto current HEAD via `git cherry-pick`.
+    /// Used as the post-pull/post-submit safety net: the working tree may
+    /// already contain upstream changes merged in by autostash (pull) or
+    /// have just been reset to the pre-submit branch (submit), and we need
+    /// to re-apply the captured local edits on top. Cherry-pick gives us a
+    /// 3-way merge against the snapshot's parent, so upstream changes
+    /// applied by autostash aren't blindly stomped by snapshot contents.
+    ///
+    /// Intended only for those two internal callers — anything user-facing
+    /// should go through `restore_snapshot`, which routes through the
+    /// selective path and gets the cleaner overwrite/bail semantics.
+    ///
+    /// Untracked-file collisions during the cherry-pick are handled with
+    /// the long-standing `.localcopy` / `.snapshotcopy` dance.
+    /// TODO(snapshot-eol-normalize): the conflict-detection branch in the
+    /// rename-restore loop compares post-checkout bytes against the
+    /// renamed local copy, which means git's EOL/text normalization can
+    /// manufacture spurious "conflicts" (see Jak's 2026-05 Slack report).
+    /// Fix by comparing through `git hash-object` so normalization is
+    /// symmetric on both sides.
+    pub async fn restore_snapshot_via_cherry_pick(
+        &self,
+        commit: &str,
+        currently_modified_files: Vec<File>,
+    ) -> anyhow::Result<()> {
         self.wait_for_lock().await;
 
-        // Get list of files in the snapshot
         let snapshot_files = self.get_files_in_snapshot(commit).await?;
-
-        // Get current untracked files
         let untracked_files = self.get_untracked_files().await?;
-
-        // Check for conflicts with currently modified files
-        let conflicting_files: Vec<String> = snapshot_files
-            .iter()
-            .filter(|f| currently_modified_files.iter().any(|cf| cf.path == **f))
-            .cloned()
-            .collect();
-
-        if !conflicting_files.is_empty() && prefer_snapshot_versions {
-            let file_list = conflicting_files.join("\n  - ");
-            let error_msg = format!(
-                "Cannot restore snapshot due to conflicting modified files:\n  - {}\n\nPlease commit, revert, or stash these files before restoring the snapshot.",
-                file_list
-            );
-            error!("Snapshot restore failed: {}", error_msg);
-            bail!(error_msg);
-        }
 
         // Rename untracked and modified files to .localcopy to avoid conflicts during restoration
         let mut renamed_files: Vec<(String, PathBuf)> = Vec::new();
 
-        // Handle untracked files
         for untracked_file in &untracked_files {
             let source_path = self.repo_path.join(untracked_file);
             if source_path.exists() {
@@ -669,7 +685,6 @@ impl Git {
             }
         }
 
-        // Handle all modified files to avoid cherry-pick conflicts
         for modified_file in &currently_modified_files {
             let source_path = self.repo_path.join(&modified_file.path);
             if source_path.exists() {
@@ -689,19 +704,12 @@ impl Git {
             }
         }
 
-        let mut apply_args = vec!["cherry-pick", "-n", "-m1"];
-
-        // When prefer_snapshot_versions is true, use theirs strategy to keep snapshot versions
-        // When false, use ours strategy to prefer current working tree versions
-        if prefer_snapshot_versions {
-            apply_args.push("-X");
-            apply_args.push("theirs");
-        }
-
-        apply_args.push("--rerere-autoupdate");
-        apply_args.push(commit);
-
-        let cherry_pick_result = self.run(&apply_args, Opts::default()).await;
+        let cherry_pick_result = self
+            .run(
+                &["cherry-pick", "-n", "-m1", "--rerere-autoupdate", commit],
+                Opts::default(),
+            )
+            .await;
 
         // reset so everything is unstaged
         let reset_path = {
@@ -811,15 +819,11 @@ impl Git {
     async fn restore_snapshot_selective(
         &self,
         commit: &str,
-        paths_filter: &[String],
+        entries: &[(String, FileState)],
         currently_local_files: &[File],
         overwrite_local: bool,
     ) -> anyhow::Result<()> {
         self.wait_for_lock().await;
-
-        let entries = self.get_snapshot_entries_with_state(commit).await?;
-        let filter: std::collections::HashSet<&str> =
-            paths_filter.iter().map(String::as_str).collect();
 
         // Before touching disk, refuse to clobber uncommitted local changes
         // (modified OR untracked) unless the caller explicitly opted in. The
@@ -832,7 +836,7 @@ impl Git {
                 .collect();
             let mut conflicts: Vec<&str> = entries
                 .iter()
-                .filter(|(p, _)| filter.contains(p.as_str()) && local.contains(p.as_str()))
+                .filter(|(p, _)| local.contains(p.as_str()))
                 .map(|(p, _)| p.as_str())
                 .collect();
             if !conflicts.is_empty() {
@@ -845,11 +849,10 @@ impl Git {
             }
         }
 
-        // Partition selected entries into "delete from working tree" vs
-        // "extract from snapshot".
+        // Partition entries into "delete from working tree" vs "extract from snapshot".
         let mut to_delete: Vec<&str> = Vec::new();
         let mut to_extract: Vec<&str> = Vec::new();
-        for (path, state) in entries.iter().filter(|(p, _)| filter.contains(p.as_str())) {
+        for (path, state) in entries {
             match state {
                 FileState::Deleted => to_delete.push(path.as_str()),
                 _ => to_extract.push(path.as_str()),
@@ -1905,6 +1908,52 @@ mod tests {
             !files.iter().any(|f| f == "b.txt"),
             "b.txt leaked into selective snapshot: {:?}",
             files
+        );
+    }
+
+    // restore_snapshot with paths_filter=None must route through the
+    // selective path now (no more legacy cherry-pick body). This test
+    // proves the routing works end-to-end: take a snapshot of a modified
+    // file, overwrite the file locally with different content, restore
+    // with None + overwrite_local=true, and assert the snapshot's content
+    // is what landed on disk.
+    #[tokio::test]
+    async fn test_restore_snapshot_none_filter_routes_through_selective() {
+        let (git, _dir) = setup_repo();
+
+        // Commit a tracked file we can later diverge from.
+        std::fs::write(git.repo_path.join("a.txt"), "base").unwrap();
+        let out = StdCommand::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "add a"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Take a snapshot of "a.txt = snapshot-version".
+        std::fs::write(git.repo_path.join("a.txt"), "snapshot-version").unwrap();
+        let snapshot = git
+            .save_snapshot_all("snapshot of a")
+            .await
+            .expect("save_snapshot_all");
+
+        // Move on locally to a different content; restore should overwrite.
+        std::fs::write(git.repo_path.join("a.txt"), "post-snapshot").unwrap();
+
+        git.restore_snapshot(&snapshot.commit, vec![], true, None)
+            .await
+            .expect("restore_snapshot");
+
+        let on_disk = std::fs::read_to_string(git.repo_path.join("a.txt")).unwrap();
+        assert_eq!(
+            on_disk, "snapshot-version",
+            "restore_snapshot(None) should have restored the snapshot's content"
         );
     }
 }
