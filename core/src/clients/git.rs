@@ -409,21 +409,36 @@ impl Git {
         )
         .await?;
 
-        let snapshots = self.list_snapshots().await?;
-        let first = snapshots
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("Failed to get snapshot after store"))?;
+        // Build the Snapshot from data we already have rather than
+        // searching for our just-stored entry in `list_snapshots`.
+        // The lookup was platform-fragile — `git stash list` against the
+        // reflog-subject formatting from `git stash store --message ...`
+        // doesn't behave the same across git versions, and on some
+        // Linux builds the entry doesn't pass our SNAPSHOT_PREFIX filter
+        // even when the store itself succeeded. `git stash store` always
+        // pushes to the top of refs/stash, so the just-stored snapshot
+        // is at stash@{0} until anything else touches the stash list.
+        let new_snapshot = Snapshot {
+            commit: snapshot_commit,
+            message: message.to_string(),
+            timestamp: Utc::now(),
+            stash_index: "stash@{0}".to_string(),
+        };
 
-        // keep at most 25 snapshots — drop the oldest if we exceeded
-        if snapshots.len() > 25 {
-            if let Some(snapshot) = snapshots.get(25) {
-                self.run(&["stash", "drop", &snapshot.stash_index], Opts::default())
-                    .await?;
+        // Keep at most 25 snapshots — drop the oldest if we exceeded.
+        // Best-effort: if list_snapshots hiccups for any reason we'd
+        // rather skip pruning than fail the save itself.
+        if let Ok(snapshots) = self.list_snapshots().await {
+            if snapshots.len() > 25 {
+                if let Some(snapshot) = snapshots.get(25) {
+                    let _ = self
+                        .run(&["stash", "drop", &snapshot.stash_index], Opts::default())
+                        .await;
+                }
             }
         }
 
-        Ok(first)
+        Ok(new_snapshot)
     }
 
     /// Build a stash-shaped commit that captures exactly the requested paths
