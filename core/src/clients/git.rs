@@ -656,13 +656,12 @@ impl Git {
     /// selective path and gets the cleaner overwrite/bail semantics.
     ///
     /// Untracked-file collisions during the cherry-pick are handled with
-    /// the long-standing `.localcopy` / `.snapshotcopy` dance.
-    /// TODO(snapshot-eol-normalize): the conflict-detection branch in the
-    /// rename-restore loop compares post-checkout bytes against the
-    /// renamed local copy, which means git's EOL/text normalization can
-    /// manufacture spurious "conflicts" (see Jak's 2026-05 Slack report).
-    /// Fix by comparing through `git hash-object` so normalization is
-    /// symmetric on both sides.
+    /// the long-standing `.localcopy` / `.snapshotcopy` dance. The
+    /// "are these files different?" comparison runs through
+    /// `hash_object_with_attrs` rather than raw bytes so git's
+    /// EOL/text-normalization rules apply symmetrically — otherwise a
+    /// user's CRLF file and the cherry-picked LF copy register as a
+    /// conflict purely because of `autocrlf` / `.gitattributes` smudging.
     pub async fn restore_snapshot_via_cherry_pick(
         &self,
         commit: &str,
@@ -739,20 +738,36 @@ impl Git {
             let target_path = self.repo_path.join(&original_path);
 
             if target_path.exists() {
-                // Conflict: snapshot restored a file with same name
-                // Compare file contents to see if they're identical
-                let original_content = std::fs::read(&localcopy_path)?;
-                let restored_content = std::fs::read(&target_path)?;
+                // Hash both files as if `git add` were staging them at
+                // `original_path` so the same clean filters
+                // (autocrlf, eol=, custom drivers, LFS) apply on both
+                // sides. Raw byte comparison here is unsafe because the
+                // cherry-pick already ran the smudge filter on its
+                // output while the .localcopy is the user's untouched
+                // pre-rename bytes — they can differ purely by EOL even
+                // when git considers them the same content.
+                let local_hash = self
+                    .hash_object_with_attrs(&original_path, &localcopy_path)
+                    .await;
+                let restored_hash = self
+                    .hash_object_with_attrs(&original_path, &target_path)
+                    .await;
+                let identical = match (local_hash, restored_hash) {
+                    (Ok(local), Ok(restored)) => local == restored,
+                    // If hash-object failed on either side we can't be
+                    // sure — preserve the local copy as `.snapshotcopy`
+                    // so the user can review rather than silently
+                    // dropping it.
+                    _ => false,
+                };
 
-                if original_content != restored_content {
-                    // Files differ, preserve the local version (rename snapshot version)
+                if !identical {
                     let snapshot_copy_name = format!("{}.snapshotcopy", original_path);
                     let snapshot_copy_path = self.repo_path.join(&snapshot_copy_name);
                     std::fs::rename(&target_path, &snapshot_copy_path)?;
                     std::fs::rename(&localcopy_path, &target_path)?;
                     conflicts.push((original_path.clone(), snapshot_copy_name));
                 } else {
-                    // Files are identical, remove the unnecessary .localcopy file
                     std::fs::remove_file(&localcopy_path)?;
                 }
             } else {
@@ -933,6 +948,28 @@ impl Git {
         }
 
         Ok(())
+    }
+
+    /// Hash a file the way `git add` would — applying the same clean
+    /// filters (`autocrlf`, `text`, `eol=`, custom clean drivers, LFS)
+    /// that staging would apply. `attr_path` is the repo-relative path
+    /// used for `.gitattributes` lookup; `file` is the actual on-disk
+    /// file to hash. Used by the cherry-pick restore path so a renamed
+    /// `.localcopy` and the cherry-picked extraction compare equal when
+    /// they're semantically identical modulo normalization, instead of
+    /// raw byte-equal.
+    async fn hash_object_with_attrs(&self, attr_path: &str, file: &Path) -> anyhow::Result<String> {
+        let file_str = file
+            .to_str()
+            .ok_or_else(|| anyhow!("hash-object path is non-UTF-8"))?;
+        let path_arg = format!("--path={attr_path}");
+        let out = self
+            .run_and_collect_output(
+                &["hash-object", &path_arg, "--", file_str],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        Ok(out.trim().to_string())
     }
 
     pub async fn get_untracked_files(&self) -> anyhow::Result<Vec<String>> {
@@ -1954,6 +1991,136 @@ mod tests {
         assert_eq!(
             on_disk, "snapshot-version",
             "restore_snapshot(None) should have restored the snapshot's content"
+        );
+    }
+
+    // Reported via Slack 2026-05: an untracked .py file (Jak's case)
+    // round-tripped through the cherry-pick restore was reported as a
+    // conflict, with the snapshot version dropped at `.snapshotcopy`,
+    // even though the content was identical to the user's local file.
+    // Root cause: `.gitattributes`/`autocrlf` normalize EOLs into the
+    // snapshot blob, so the cherry-picked file (post-smudge) and the
+    // renamed `.localcopy` (raw user bytes) differed by `\r` but
+    // semantically matched. The fix is to compare via `git hash-object
+    // --path=<path>` so the same clean filters apply on both sides.
+    #[tokio::test]
+    async fn test_cherry_pick_restore_ignores_eol_normalization() {
+        let (git, _dir) = setup_repo();
+
+        // Force LF in the snapshot blob regardless of platform/autocrlf.
+        std::fs::write(git.repo_path.join(".gitattributes"), "*.py text eol=lf\n").unwrap();
+        let out = StdCommand::new("git")
+            .args(["add", ".gitattributes"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "gitattributes"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Untracked .py with CRLF line endings on disk.
+        std::fs::write(git.repo_path.join("foo.py"), "hello\r\nworld\r\n").unwrap();
+
+        let snapshot = git
+            .save_snapshot_all("eol normalization")
+            .await
+            .expect("save_snapshot_all");
+
+        // With the bug, this would Err with "Snapshot restored successfully,
+        // but 1 untracked file conflicts were found ... foo.py.snapshotcopy".
+        // With the fix, hash-object sees the two files as the same blob.
+        let result = git
+            .restore_snapshot_via_cherry_pick(&snapshot.commit, vec![])
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "cherry-pick restore reported a spurious EOL conflict: {:?}",
+            result.err()
+        );
+        assert!(
+            !git.repo_path.join("foo.py.snapshotcopy").exists(),
+            ".snapshotcopy was created despite content being EOL-equivalent"
+        );
+    }
+
+    // Positive companion to the EOL test: when the local and snapshot
+    // contents really do differ, the cherry-pick restore must still
+    // preserve the local version, write the snapshot version to
+    // `.snapshotcopy`, and surface the conflict in its Err. Guards
+    // against a regression where the hash-object comparison gets stuck
+    // on one side and silently treats every comparison as equal.
+    #[tokio::test]
+    async fn test_cherry_pick_restore_preserves_local_on_real_conflict() {
+        let (git, _dir) = setup_repo();
+
+        // Commit foo.py as a tracked baseline.
+        std::fs::write(git.repo_path.join("foo.py"), "print('committed')\n").unwrap();
+        let out = StdCommand::new("git")
+            .args(["add", "foo.py"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "add foo"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Snapshot a modified version (content A).
+        std::fs::write(git.repo_path.join("foo.py"), "print('snapshot edit')\n").unwrap();
+        let snapshot = git
+            .save_snapshot_all("snapshot foo")
+            .await
+            .expect("save_snapshot_all");
+
+        // Diverge locally to a different content (content B). The cherry-
+        // pick path will rename this aside as .localcopy, cherry-pick
+        // pulls in A, and the conflict-detection loop must see A != B.
+        std::fs::write(
+            git.repo_path.join("foo.py"),
+            "print('different local edit')\n",
+        )
+        .unwrap();
+
+        let modified = vec![File {
+            path: "foo.py".to_string(),
+            ..Default::default()
+        }];
+
+        let result = git
+            .restore_snapshot_via_cherry_pick(&snapshot.commit, modified)
+            .await;
+
+        // The function reports conflicts by returning Err with a
+        // descriptive message — local files are preserved on disk
+        // regardless.
+        let err = result.expect_err("expected conflict Err for genuinely different files");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("foo.py.snapshotcopy"),
+            "error message should name the .snapshotcopy file; got: {msg}"
+        );
+
+        // foo.py on disk should hold the local edit (content B).
+        let on_disk = std::fs::read_to_string(git.repo_path.join("foo.py")).unwrap();
+        assert_eq!(
+            on_disk, "print('different local edit')\n",
+            "local edit must be preserved at the original path"
+        );
+
+        // foo.py.snapshotcopy should hold the snapshot's version (content A).
+        let snapshotcopy =
+            std::fs::read_to_string(git.repo_path.join("foo.py.snapshotcopy")).unwrap();
+        assert_eq!(
+            snapshotcopy, "print('snapshot edit')\n",
+            "snapshotcopy must hold the snapshot's content"
         );
     }
 }
