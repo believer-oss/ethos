@@ -329,7 +329,7 @@ where
             self.emit_phase("Restoring local changes from temporary snapshot");
             errors.push(
                 self.git_client
-                    .restore_snapshot(&snapshot.commit, snapshot_modified_files, false, None)
+                    .restore_snapshot_via_cherry_pick(&snapshot.commit, snapshot_modified_files)
                     .await
                     .map_err(|e| e.into())
                     .err(),
