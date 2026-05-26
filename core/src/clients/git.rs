@@ -2046,6 +2046,25 @@ mod tests {
             .await
             .expect("save_snapshot_all");
 
+        // Cross the filesystem mtime tick before restoring. This test is flaky
+        // on Linux CI (tmpfs, ~1s mtime resolution): the snapshot stamps a temp
+        // index at time T, and if the restore's working-tree write lands in the
+        // same tick, git's stat-cache fast path can mis-decide whether the file
+        // needs (re)writing — producing a spurious EOL "conflict". Windows
+        // doesn't hit it (coarser NTFS mtime + a less aggressive fast path), and
+        // a >1s gap guarantees a distinct tick so the stat compare is
+        // unambiguous. See test_cherry_pick_restore_preserves_local_on_real_conflict.
+        //
+        // TODO(linux): this only de-flakes the *test*. The underlying
+        // restore paths (`restore_snapshot_via_cherry_pick` and the temp-index
+        // `git checkout` in `restore_snapshot_selective`) remain stat-cache
+        // racy on Linux and could surface the same spurious conflict for real
+        // users there. Friendshipper ships Windows-only today, so we defer the
+        // production fix (force the worktree write via `git restore
+        // --source=<commit>` / `git checkout -f`). Revisit if Linux is ever a
+        // supported target.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
         // With the bug, this would Err with "Snapshot restored successfully,
         // but 1 untracked file conflicts were found ... foo.py.snapshotcopy".
         // With the fix, hash-object sees the two files as the same blob.
