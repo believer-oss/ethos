@@ -204,6 +204,12 @@ async fn filter_to_textlike_paths(
 /// `leftover conflict marker` and ignore the whitespace-error lines that
 /// `--check` also emits.
 ///
+/// `--check` flags each marker line independently, so it can't distinguish a
+/// real conflict from a lone `=======` (a Markdown/RST section underline) or
+/// a stray `>>>>>>> ...` banner. A second pass (`confirm_paired_markers`)
+/// therefore keeps only files whose introduced lines carry both an opening
+/// and a closing marker — the shape a genuine conflict always has.
+///
 /// # Caveats
 ///
 /// - **The diff needs no pathspec.** The temp index is seeded from HEAD's
@@ -218,6 +224,11 @@ async fn filter_to_textlike_paths(
 /// - **Output paths must round-trip cleanly.** `run_git_with_index` passes
 ///   `-c core.quotePath=false` so non-ASCII paths come back as raw UTF-8
 ///   instead of double-quoted with octal escapes.
+/// - **A document that literally demonstrates conflict syntax can still
+///   flag.** The pairing pass narrows to open+close, but a file that
+///   deliberately contains both a `<<<<<<<` and a `>>>>>>>` line (e.g. a
+///   merge tutorial) carries the full shape and will be caught. That's far
+///   rarer than the lone-divider case and is the accepted residual.
 async fn find_files_with_conflict_markers(
     git_client: &git::Git,
     paths: &[String],
@@ -310,12 +321,110 @@ async fn find_files_with_conflict_markers(
 
     let code = check_out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&check_out.stdout);
-    parse_conflict_check(code, &stdout).map_err(|e| {
+    let candidates = parse_conflict_check(code, &stdout).map_err(|e| {
         CoreError::Internal(anyhow!(
             "{e} (git diff --check stderr: {})",
             String::from_utf8_lossy(&check_out.stderr).trim()
         ))
-    })
+    })?;
+    if candidates.is_empty() {
+        return Ok(candidates);
+    }
+
+    // 5. `git diff --check` flags every marker line on its own and can't tell
+    //    a real conflict from a lone `=======` section divider or a stray
+    //    `>>>>>>> ...` banner line. Narrow to files that contain a *coherent*
+    //    conflict — both an opening (`<<<<<<<`) and a closing (`>>>>>>>`)
+    //    marker among the introduced (added) lines. Requiring both ends can
+    //    only drop unpaired false positives; a genuine conflict always
+    //    carries an open and a close, so this never hides one. No pathspec on
+    //    the diff for the same reason as step 4 — the temp index already
+    //    scopes it to the submit set; we filter to `candidates` while parsing.
+    let marker_size = read_conflict_marker_size(git_client, &temp_index).await;
+    let diff_out =
+        run_git_with_index(git_client, &["diff", "--cached", "HEAD"], &temp_index).await?;
+    if !diff_out.status.success() {
+        // The diff failed unexpectedly. Fall back to the stricter `--check`
+        // result rather than risk letting a real conflict slip through.
+        return Ok(candidates);
+    }
+    let diff = String::from_utf8_lossy(&diff_out.stdout);
+    Ok(confirm_paired_markers(&diff, &candidates, marker_size))
+}
+
+/// Count the leading run of byte `c` at the start of `s`. Used to recognize a
+/// conflict marker line (`<<<<<<<`, `>>>>>>>`) by its opening run length.
+fn leading_run(s: &str, c: u8) -> usize {
+    s.bytes().take_while(|&b| b == c).count()
+}
+
+/// Read the effective `merge.conflictMarkerSize` (default 7) so the pairing
+/// pass recognizes markers the same way `git diff --check` did. `git config
+/// --get` exits non-zero when the key is unset, which falls through to the
+/// default.
+async fn read_conflict_marker_size(git_client: &git::Git, index_file: &std::path::Path) -> usize {
+    const DEFAULT: usize = 7;
+    match run_git_with_index(
+        git_client,
+        &["config", "--get", "merge.conflictMarkerSize"],
+        index_file,
+    )
+    .await
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT),
+        _ => DEFAULT,
+    }
+}
+
+/// From a `git diff --cached HEAD` unified diff, return the subset of
+/// `candidates` whose introduced (added) lines contain both an opening
+/// (`<<<<<<<`) and a closing (`>>>>>>>`) conflict marker of at least
+/// `marker_size` characters. Files with only a `=======` divider or a single
+/// stray marker — section underlines, banners — are dropped.
+///
+/// Pure (no I/O) so the pairing rule can be unit tested directly.
+fn confirm_paired_markers(diff: &str, candidates: &[String], marker_size: usize) -> Vec<String> {
+    let candidate_set: std::collections::HashSet<&str> =
+        candidates.iter().map(String::as_str).collect();
+    // path -> (saw opening marker, saw closing marker), among added lines.
+    let mut seen: std::collections::BTreeMap<String, (bool, bool)> =
+        std::collections::BTreeMap::new();
+    let mut current: Option<String> = None;
+    for line in diff.lines() {
+        // Reset at each file header so a deletion's `+++ /dev/null` can't
+        // bleed added lines onto the previous file.
+        if line.starts_with("diff --git ") {
+            current = None;
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            current = candidate_set.get(path).map(|p| (*p).to_string());
+            continue;
+        }
+        let Some(cur) = current.as_deref() else {
+            continue;
+        };
+        // Added content lines start with a single '+' (the '+++' header was
+        // handled above and won't reach here).
+        let Some(added) = line.strip_prefix('+') else {
+            continue;
+        };
+        let entry = seen.entry(cur.to_string()).or_insert((false, false));
+        if leading_run(added, b'<') >= marker_size {
+            entry.0 = true;
+        } else if leading_run(added, b'>') >= marker_size {
+            entry.1 = true;
+        }
+    }
+    seen.into_iter()
+        .filter(|(_, (open, close))| *open && *close)
+        .map(|(path, _)| path)
+        .collect()
 }
 
 /// Classify a `git diff --check` result and extract the conflicted paths.
@@ -1607,5 +1716,84 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(parse_conflict_check(0, "").unwrap().is_empty());
+    }
+
+    // A minimal `git diff --cached HEAD`-shaped unified diff adding `body` as
+    // the contents of a single new file.
+    fn diff_adding(path: &str, body: &str) -> String {
+        let mut out = format!(
+            "diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,9 @@\n"
+        );
+        for l in body.lines() {
+            out.push('+');
+            out.push_str(l);
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn confirm_paired_keeps_real_conflict() {
+        let diff = diff_adding("a.txt", "x\n<<<<<<< HEAD\nm\n=======\nt\n>>>>>>> b\ny");
+        let candidates = vec!["a.txt".to_string()];
+        assert_eq!(
+            confirm_paired_markers(&diff, &candidates, 7),
+            vec!["a.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn confirm_paired_drops_lone_divider() {
+        // The real-world false positive: a `=======` section underline with
+        // no opening/closing marker.
+        let diff = diff_adding("doc.txt", "SUMMARY\n=======\nall good");
+        let candidates = vec!["doc.txt".to_string()];
+        assert!(confirm_paired_markers(&diff, &candidates, 7).is_empty());
+    }
+
+    #[test]
+    fn confirm_paired_drops_single_ended_markers() {
+        // Opening-only (a `<<<<<<< note` banner) and closing-only are both
+        // incoherent and must be dropped.
+        let open_only = diff_adding("o.txt", "head\n<<<<<<< not a conflict\ntail");
+        let close_only = diff_adding("c.txt", "head\n>>>>>>> end of section\ntail");
+        assert!(confirm_paired_markers(&open_only, &["o.txt".to_string()], 7).is_empty());
+        assert!(confirm_paired_markers(&close_only, &["c.txt".to_string()], 7).is_empty());
+    }
+
+    #[test]
+    fn confirm_paired_honors_marker_size() {
+        // A 7-char marker is not a marker when the configured size is 8.
+        let diff = diff_adding("a.txt", "<<<<<<< h\n=======\n>>>>>>> b");
+        assert!(confirm_paired_markers(&diff, &["a.txt".to_string()], 8).is_empty());
+        assert_eq!(
+            confirm_paired_markers(&diff, &["a.txt".to_string()], 7),
+            vec!["a.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn confirm_paired_ignores_files_not_in_candidates() {
+        let diff = diff_adding("other.txt", "<<<<<<< h\n=======\n>>>>>>> b");
+        assert!(confirm_paired_markers(&diff, &["a.txt".to_string()], 7).is_empty());
+    }
+
+    #[tokio::test]
+    async fn lone_divider_is_not_flagged_end_to_end() {
+        // Full path through find_files: a new file with a lone `=======`
+        // divider trips `git diff --check`, but the pairing pass clears it,
+        // so a legitimate submit is not blocked. This is the
+        // VALIDATION_ANALYSIS.txt case from the fellowship repo.
+        let (dir, git) = make_test_repo().await;
+        let path = "NOTES.txt";
+        fs::write(dir.path().join(path), "SUMMARY\n=======\nLooks good.\n").unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert!(
+            result.is_empty(),
+            "lone === divider should not be flagged, got {result:?}"
+        );
     }
 }
