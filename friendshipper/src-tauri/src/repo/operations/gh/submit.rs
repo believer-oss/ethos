@@ -1,9 +1,11 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use axum::extract::State;
 use axum::{async_trait, Json};
 use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::{params, Octocrab};
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::mpsc::Sender;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -71,6 +73,313 @@ where
 }
 
 const SUBMIT_PREFIX: &str = "[quick submit]";
+
+/// Ask git which of the given paths are NOT LFS-tracked or declared non-text
+/// in `.gitattributes`, returning only paths that could plausibly contain
+/// human-readable conflict markers.
+///
+/// `git diff --check` skips binary files via its own classification, so this
+/// pre-filter doesn't change correctness — it just avoids staging files that
+/// would force a full working-tree read + LFS clean filter for each entry.
+/// On a 15k-asset submit that turns ~15 minutes of LFS hashing into a single
+/// fast `check-attr` lookup.
+///
+/// We classify by two attributes:
+/// - `filter=lfs` — git-lfs tracked, content lives outside the tree
+/// - `text=unset` — `-text` set (directly or via the `binary` macro)
+///
+/// Both cases mean "treat as binary", and `--check` would skip them anyway.
+/// Files with `text=auto` or `text=unspecified` are kept; `--check` will run
+/// its own NUL-byte heuristic on them at diff time. That costs an extra
+/// staging round-trip for those files but doesn't change the result.
+async fn filter_to_textlike_paths(
+    git_client: &git::Git,
+    paths: &[String],
+) -> anyhow::Result<Vec<String>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build NUL-separated input for `git check-attr -z --stdin`. Streaming
+    // via stdin keeps us under the OS command-line cap regardless of submit
+    // size.
+    let mut input: Vec<u8> = Vec::with_capacity(paths.iter().map(|p| p.len() + 1).sum());
+    for path in paths {
+        input.extend_from_slice(path.as_bytes());
+        input.push(0u8);
+    }
+
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args([
+        "-c",
+        "core.quotePath=false",
+        "check-attr",
+        "-z",
+        "--stdin",
+        "filter",
+        "text",
+    ]);
+    cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+    cmd.env("LC_ALL", "C");
+    if !git_client.repo_path.as_os_str().is_empty() {
+        cmd.current_dir(git_client.repo_path.canonicalize()?);
+    }
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    #[cfg(windows)]
+    cmd.creation_flags(crate::repo::CREATE_NO_WINDOW);
+
+    let mut child = cmd.spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("git check-attr stdin should have been piped"))?;
+    // Feed stdin from a dedicated task so it runs concurrently with
+    // `wait_with_output`'s stdout drain. Without this we deadlock for large
+    // submits: input fills the stdin pipe buffer (~64 KB), check-attr fills
+    // the stdout pipe buffer in response, and both sides block waiting for
+    // the other. At 15k paths the input is well over a megabyte — exactly
+    // the case this gate was optimized for.
+    let stdin_writer = tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        let result = stdin.write_all(&input).await;
+        // Drop closes the pipe → EOF so check-attr can finish.
+        drop(stdin);
+        result
+    });
+    let output = child.wait_with_output().await?;
+    stdin_writer
+        .await
+        .map_err(|e| anyhow!("git check-attr stdin task panicked: {e}"))??;
+    if !output.status.success() {
+        bail!(
+            "git check-attr failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    // Output is `<path>\0<attr>\0<info>\0` repeating — one record per
+    // requested attribute per input path. Collect the paths to exclude
+    // into a set, then return the input list minus those.
+    let mut excluded: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let fields: Vec<&[u8]> = output
+        .stdout
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut i = 0;
+    while i + 2 < fields.len() {
+        let attr = std::str::from_utf8(fields[i + 1]).unwrap_or("");
+        let value = std::str::from_utf8(fields[i + 2]).unwrap_or("");
+        let exclude = (attr == "filter" && value == "lfs") || (attr == "text" && value == "unset");
+        if exclude {
+            if let Ok(path) = std::str::from_utf8(fields[i]) {
+                excluded.insert(path.to_string());
+            }
+        }
+        i += 3;
+    }
+
+    Ok(paths
+        .iter()
+        .filter(|p| !excluded.contains(p.as_str()))
+        .cloned()
+        .collect())
+}
+
+/// Ask git itself which submit paths have unresolved conflict markers.
+///
+/// We can't just run `git diff --check HEAD -- <paths>` because untracked
+/// files aren't part of `git diff`'s view, so a brand-new file pasted with
+/// conflict markers would slip through. Instead we seed a **temp index**
+/// from HEAD, stage the submit set into it (so new files become "added"
+/// entries), and then run `git diff --check --cached HEAD` against the
+/// temp index. The user's real index is never touched.
+///
+/// Using `--check` (the same check `git rebase` runs and the sample
+/// `pre-commit` hook uses) means we honor `merge.conflictMarkerSize`,
+/// git's binary/text detection, and `.gitattributes` filters — LFS-tracked
+/// assets are skipped automatically. We only collect lines tagged
+/// `leftover conflict marker` and ignore the whitespace-error lines that
+/// `--check` also emits.
+///
+/// # Caveats
+///
+/// - **`git diff` does not accept `--pathspec-from-file`** (other commands
+///   like `add`, `rm`, `checkout` do). Paths are passed positionally after
+///   `--` for the diff invocation. This means a submit set with many long
+///   paths could theoretically exceed the OS command-line length cap
+///   (~32 KB on Windows). In practice Friendshipper submits are
+///   well-bounded by the UI checkbox list, so this hasn't been a problem;
+///   if a future workflow batches thousands of files into one submit,
+///   chunk the diff call.
+/// - **Parser depends on git's English output strings** (`"leftover
+///   conflict marker"`). `run_git_with_index` pins `LC_ALL=C` so this
+///   holds regardless of the user's locale.
+/// - **Output paths must round-trip cleanly.** `run_git_with_index` passes
+///   `-c core.quotePath=false` so non-ASCII paths come back as raw UTF-8
+///   instead of double-quoted with octal escapes.
+async fn find_files_with_conflict_markers(
+    git_client: &git::Git,
+    paths: &[String],
+) -> anyhow::Result<Vec<String>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Drop paths that git already classifies as LFS-tracked or binary
+    // before doing any I/O. `git diff --check` would skip them anyway via
+    // its own binary detection, and staging them via `git add` would
+    // trigger a full working-tree read + LFS clean filter per file. On a
+    // 15k-asset submit this turns minutes into seconds.
+    let paths = filter_to_textlike_paths(git_client, paths).await?;
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Write the pathspec list once and reuse it for both `git add` and
+    // `git diff` so they stay scoped to the same files.
+    let mut pathspec = tempfile::NamedTempFile::new()?;
+    for path in &paths {
+        writeln!(pathspec, "{path}")?;
+    }
+    pathspec.flush()?;
+    let pathspec_arg = pathspec
+        .path()
+        .to_str()
+        .ok_or_else(|| anyhow!("pathspec temp file path is not valid UTF-8"))?
+        .to_string();
+
+    let temp_dir = tempfile::tempdir()?;
+    let temp_index = temp_dir.path().join("conflict-check-index");
+
+    // 1. Resolve HEAD to a SHA so a concurrent ref move can't desync the
+    //    seed tree from the comparison base.
+    let head_sha_out = run_git_with_index(git_client, &["rev-parse", "HEAD"], &temp_index).await?;
+    if !head_sha_out.status.success() {
+        bail!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&head_sha_out.stderr).trim()
+        );
+    }
+    let head_sha = String::from_utf8_lossy(&head_sha_out.stdout)
+        .trim()
+        .to_string();
+
+    // 2. Seed the temp index with HEAD's tree.
+    let read_tree_out =
+        run_git_with_index(git_client, &["read-tree", &head_sha], &temp_index).await?;
+    if !read_tree_out.status.success() {
+        bail!(
+            "git read-tree HEAD failed: {}",
+            String::from_utf8_lossy(&read_tree_out.stderr).trim()
+        );
+    }
+
+    // 3. Stage the submit set into the temp index. `-A` covers
+    //    additions/modifications/deletions in one shot.
+    let add_out = run_git_with_index(
+        git_client,
+        &["add", "-A", "--pathspec-from-file", &pathspec_arg],
+        &temp_index,
+    )
+    .await?;
+    if !add_out.status.success() {
+        bail!(
+            "Could not stage one or more selected files for the pre-submit \
+             conflict-marker check — your file list may be stale (a file may \
+             have been deleted or moved since you opened the submit modal). \
+             Refresh Friendshipper and try again.\n\nGit said: {}",
+            String::from_utf8_lossy(&add_out.stderr).trim()
+        );
+    }
+
+    // 4. Diff HEAD vs the temp index with `--check`. `git diff --check`
+    //    exits non-zero when it finds issues, which is information, not
+    //    an error — we look at stdout regardless of exit status.
+    //
+    //    `git diff` does NOT accept `--pathspec-from-file` (unlike `git add`
+    //    above), so we pass paths positionally after `--`. The submit set is
+    //    bounded by what the user can tick in the UI, so we won't hit the
+    //    OS command-line length cap in practice.
+    let mut diff_args: Vec<&str> = vec!["diff", "--check", "--cached", "HEAD", "--"];
+    for path in &paths {
+        diff_args.push(path.as_str());
+    }
+    let check_out = run_git_with_index(git_client, &diff_args, &temp_index).await?;
+
+    // `git diff --check` exit conventions, empirically:
+    //   0 — clean
+    //   1 — whitespace warnings only (no conflict markers)
+    //   2 — conflict markers found (and/or whitespace)
+    // Anything outside that range is a fatal error (bad ref, usage, repo
+    // problem) — bail loudly rather than parse an empty stdout and let the
+    // submit through. This is the guard that would have caught the
+    // `--pathspec-from-file` regression: that bug returned exit 129 with
+    // an empty stdout, which the old code treated as "no markers found".
+    let code = check_out.status.code().unwrap_or(-1);
+    if !matches!(code, 0..=2) {
+        bail!(
+            "conflict-marker check failed (git diff --check exit {}): {}",
+            code,
+            String::from_utf8_lossy(&check_out.stderr).trim()
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&check_out.stdout);
+    // Lines look like:
+    //   path/to/file:7: leftover conflict marker
+    // De-dup via BTreeSet so files with multiple marker lines are reported
+    // once, and the final list comes out sorted.
+    let mut conflicted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for line in stdout.lines() {
+        let Some(rest_idx) = line.rfind(": leftover conflict marker") else {
+            continue;
+        };
+        let before_marker = &line[..rest_idx];
+        // before_marker is "path/to/file:linenum"; strip the trailing ":linenum".
+        if let Some((path, _line_num)) = before_marker.rsplit_once(':') {
+            if !path.is_empty() {
+                conflicted.insert(path.to_string());
+            }
+        }
+    }
+    Ok(conflicted.into_iter().collect())
+}
+
+/// Spawn a git command with `GIT_INDEX_FILE` pointing at the given path.
+/// Returns the raw `Output` (including non-success exit statuses) because
+/// callers want to inspect stdout/stderr regardless.
+///
+/// Two invariants this helper enforces for every call:
+/// - `-c core.quotePath=false` so output paths come back as raw UTF-8 bytes
+///   instead of double-quoted with octal escapes whenever a byte ≥ 0x80
+///   shows up. The conflict-marker parser depends on path strings round-
+///   tripping cleanly; without this a single asset with a non-ASCII name
+///   in fellowship would slip past the gate.
+/// - `LC_ALL=C` so git's user-facing messages (notably the
+///   "leftover conflict marker" string our parser scans for) come back in
+///   English regardless of the user's locale. Otherwise a Friendshipper
+///   user with a translated git would silently bypass the entire check.
+async fn run_git_with_index(
+    git_client: &git::Git,
+    args: &[&str],
+    index_file: &std::path::Path,
+) -> anyhow::Result<std::process::Output> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("-c").arg("core.quotePath=false");
+    cmd.args(args);
+    cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+    cmd.env("GIT_INDEX_FILE", index_file);
+    cmd.env("LC_ALL", "C");
+    if !git_client.repo_path.as_os_str().is_empty() {
+        cmd.current_dir(git_client.repo_path.canonicalize()?);
+    }
+    #[cfg(windows)]
+    cmd.creation_flags(crate::repo::CREATE_NO_WINDOW);
+    Ok(cmd.output().await?)
+}
 
 impl<T> SubmitOp<T>
 where
@@ -343,6 +652,28 @@ where
                     tracing::error!("{}: {}", reason, name_formatted);
                 }
                 return Err(CoreError::Input(anyhow!("Some files are not allowed to be submitted. Check the log for specific errors.")));
+            }
+        }
+
+        // Refuse to ship files with unresolved git conflict markers. We
+        // delegate to `git diff --check`, which is what git itself uses
+        // (rebase, sample pre-commit hook) — so it respects
+        // `merge.conflictMarkerSize` and git's own binary/text detection,
+        // and only complains about markers in changes being introduced (not
+        // pre-existing markers in unrelated content). Runs before the
+        // snapshot so a doomed submit doesn't waste one.
+        {
+            let conflicted =
+                find_files_with_conflict_markers(&self.git_client, &self.files).await?;
+            if !conflicted.is_empty() {
+                for path in &conflicted {
+                    tracing::error!("Unresolved conflict markers in {}", path);
+                }
+                return Err(CoreError::Input(anyhow!(
+                    "Cannot submit: {} file(s) still contain unresolved merge conflict markers:\n  - {}\n\nResolve the conflict markers (the <<<<<<<, =======, >>>>>>> lines) before submitting.",
+                    conflicted.len(),
+                    conflicted.join("\n  - ")
+                )));
             }
         }
 
@@ -1003,4 +1334,225 @@ where
 
 pub fn is_quicksubmit_branch(branch: &str) -> bool {
     branch.starts_with("f11r")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::mpsc;
+
+    /// Initialize an empty git repo with one initial commit so HEAD resolves.
+    /// Returns the temp dir guard (drop = cleanup) and a `Git` client pointed
+    /// at it.
+    async fn make_test_repo() -> (tempfile::TempDir, git::Git) {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let (tx, _rx) = mpsc::channel::<String>();
+        // Leak the receiver — the channel just needs to stay open for the
+        // duration of the test. Dropping `_rx` is fine; the sender's send()
+        // calls will fail silently but git's run() doesn't propagate that.
+        let git = git::Git::new(dir.path().to_path_buf(), tx);
+
+        git.run(&["init", "-q"], git::Opts::default())
+            .await
+            .expect("git init");
+        git.run(
+            &["config", "user.email", "test@example.com"],
+            git::Opts::default(),
+        )
+        .await
+        .expect("set user.email");
+        git.run(&["config", "user.name", "Test"], git::Opts::default())
+            .await
+            .expect("set user.name");
+
+        fs::write(dir.path().join("seed.txt"), "seed\n").expect("write seed");
+        git.run(&["add", "seed.txt"], git::Opts::default())
+            .await
+            .expect("git add seed");
+        git.run(&["commit", "-qm", "seed"], git::Opts::default())
+            .await
+            .expect("initial commit");
+
+        (dir, git)
+    }
+
+    #[tokio::test]
+    async fn flags_untracked_new_file_with_markers() {
+        // The regression case: a brand-new file (not in HEAD, not staged)
+        // with conflict markers — exactly what slipped through PR #21040.
+        let (dir, git) = make_test_repo().await;
+        let path = "Config/DummyTestWithConflicts.ini";
+        fs::create_dir_all(dir.path().join("Config")).unwrap();
+        fs::write(
+            dir.path().join(path),
+            "test\n<<<<<<< Updated upstream\ntest\n=======\ntest\n>>>>>>> Stashed changes\ntest\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert_eq!(result, vec![path.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn flags_tracked_file_modified_with_markers() {
+        let (dir, git) = make_test_repo().await;
+        let path = "conflicted.txt";
+        // First commit it clean...
+        fs::write(dir.path().join(path), "before\n").unwrap();
+        git.run(&["add", path], git::Opts::default()).await.unwrap();
+        git.run(&["commit", "-qm", "add"], git::Opts::default())
+            .await
+            .unwrap();
+        // ...then modify in place to add a conflict.
+        fs::write(
+            dir.path().join(path),
+            "ok\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\nok\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert_eq!(result, vec![path.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn skips_binary_file_even_with_marker_bytes() {
+        // A binary file (NUL byte in the first 8 KB) that happens to contain
+        // bytes spelling out conflict markers should not be flagged — that's
+        // how LFS-tracked smudged assets stay out of the check.
+        let (dir, git) = make_test_repo().await;
+        let path = "binary.dat";
+        let mut content: Vec<u8> = b"<<<<<<< HEAD\nbefore-nul\n".to_vec();
+        content.push(0u8); // NUL forces git's binary classifier
+        content.extend_from_slice(b"after-nul\n=======\nstuff\n>>>>>>> branch\n");
+        fs::write(dir.path().join(path), content).unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert!(
+            result.is_empty(),
+            "binary content with marker-shaped bytes should be skipped, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_deletion() {
+        // A file tracked in HEAD that's been removed from the working tree
+        // has no `+` lines to scan — `--check` (correctly) finds nothing.
+        let (dir, git) = make_test_repo().await;
+        let path = "to-delete.txt";
+        fs::write(dir.path().join(path), "original\n").unwrap();
+        git.run(&["add", path], git::Opts::default()).await.unwrap();
+        git.run(&["commit", "-qm", "add"], git::Opts::default())
+            .await
+            .unwrap();
+        fs::remove_file(dir.path().join(path)).unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert!(
+            result.is_empty(),
+            "deletions cannot carry conflict markers, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedups_multiple_marker_lines_per_file() {
+        // A single file with two separate conflict regions should appear in
+        // the result list exactly once.
+        let (dir, git) = make_test_repo().await;
+        let path = "multi.txt";
+        fs::write(
+            dir.path().join(path),
+            "a\n<<<<<<< HEAD\nm1\n=======\nt1\n>>>>>>> b\n\
+             b\n<<<<<<< HEAD\nm2\n=======\nt2\n>>>>>>> b\nc\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert_eq!(result, vec![path.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn passes_clean_file() {
+        let (dir, git) = make_test_repo().await;
+        let path = "clean.txt";
+        fs::write(dir.path().join(path), "all good\nno markers here\n").unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert!(result.is_empty(), "clean file flagged: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn early_returns_on_empty_input() {
+        let (_dir, git) = make_test_repo().await;
+        let result = find_files_with_conflict_markers(&git, &[])
+            .await
+            .expect("check ran");
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prefilter_skips_binary_per_gitattributes() {
+        // A path declared `-text` (or via the `binary` macro) in
+        // `.gitattributes` should be filtered out before we even stage it.
+        // This is the optimization that keeps 15k-asset submits fast: the
+        // file never gets read, never gets hashed, never gets piped through
+        // an LFS clean filter.
+        let (dir, git) = make_test_repo().await;
+        fs::write(dir.path().join(".gitattributes"), "*.dat -text\n").unwrap();
+        git.run(&["add", ".gitattributes"], git::Opts::default())
+            .await
+            .unwrap();
+        git.run(&["commit", "-qm", "attrs"], git::Opts::default())
+            .await
+            .unwrap();
+
+        // Even though the file's bytes spell out a conflict marker, the
+        // -text attribute pre-filters it out. `git diff --check` would
+        // skip it anyway via binary detection; we just save the I/O.
+        let evil = "evil.dat";
+        fs::write(
+            dir.path().join(evil),
+            "<<<<<<< HEAD\nm\n=======\nt\n>>>>>>> b\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[evil.to_string()])
+            .await
+            .expect("check ran");
+        assert!(
+            result.is_empty(),
+            "pre-filter should have excluded the binary path, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn prefilter_keeps_textlike_paths() {
+        // Sanity check that the pre-filter doesn't accidentally exclude
+        // normal source files. A text file with no .gitattributes entry
+        // should pass through and get scanned for markers.
+        let (dir, git) = make_test_repo().await;
+        let path = "regular.txt";
+        fs::write(
+            dir.path().join(path),
+            "ok\n<<<<<<< HEAD\nm\n=======\nt\n>>>>>>> b\nok\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &[path.to_string()])
+            .await
+            .expect("check ran");
+        assert_eq!(result, vec![path.to_string()]);
+    }
 }
