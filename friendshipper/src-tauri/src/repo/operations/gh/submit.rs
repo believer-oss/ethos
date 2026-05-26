@@ -206,14 +206,12 @@ async fn filter_to_textlike_paths(
 ///
 /// # Caveats
 ///
-/// - **`git diff` does not accept `--pathspec-from-file`** (other commands
-///   like `add`, `rm`, `checkout` do). Paths are passed positionally after
-///   `--` for the diff invocation. This means a submit set with many long
-///   paths could theoretically exceed the OS command-line length cap
-///   (~32 KB on Windows). In practice Friendshipper submits are
-///   well-bounded by the UI checkbox list, so this hasn't been a problem;
-///   if a future workflow batches thousands of files into one submit,
-///   chunk the diff call.
+/// - **The diff needs no pathspec.** The temp index is seeded from HEAD's
+///   full tree and only the submit set is re-staged, so `git diff --check
+///   --cached HEAD` already reports exactly the submit-set paths and nothing
+///   else. We deliberately pass no `-- <paths>`, which also sidesteps the OS
+///   command-line length cap (~32 KB on Windows) no matter how large the
+///   submit grows.
 /// - **Parser depends on git's English output strings** (`"leftover
 ///   conflict marker"`). `run_git_with_index` pins `LC_ALL=C` so this
 ///   holds regardless of the user's locale.
@@ -223,7 +221,7 @@ async fn filter_to_textlike_paths(
 async fn find_files_with_conflict_markers(
     git_client: &git::Git,
     paths: &[String],
-) -> anyhow::Result<Vec<String>> {
+) -> Result<Vec<String>, CoreError> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
@@ -258,10 +256,10 @@ async fn find_files_with_conflict_markers(
     //    seed tree from the comparison base.
     let head_sha_out = run_git_with_index(git_client, &["rev-parse", "HEAD"], &temp_index).await?;
     if !head_sha_out.status.success() {
-        bail!(
+        return Err(CoreError::Internal(anyhow!(
             "git rev-parse HEAD failed: {}",
             String::from_utf8_lossy(&head_sha_out.stderr).trim()
-        );
+        )));
     }
     let head_sha = String::from_utf8_lossy(&head_sha_out.stdout)
         .trim()
@@ -271,10 +269,10 @@ async fn find_files_with_conflict_markers(
     let read_tree_out =
         run_git_with_index(git_client, &["read-tree", &head_sha], &temp_index).await?;
     if !read_tree_out.status.success() {
-        bail!(
+        return Err(CoreError::Internal(anyhow!(
             "git read-tree HEAD failed: {}",
             String::from_utf8_lossy(&read_tree_out.stderr).trim()
-        );
+        )));
     }
 
     // 3. Stage the submit set into the temp index. `-A` covers
@@ -286,48 +284,59 @@ async fn find_files_with_conflict_markers(
     )
     .await?;
     if !add_out.status.success() {
-        bail!(
+        // User-actionable: the selected file list is stale relative to the
+        // working tree. Surface as Input (400) so the message reaches the
+        // user instead of being logged as an internal 500.
+        return Err(CoreError::Input(anyhow!(
             "Could not stage one or more selected files for the pre-submit \
              conflict-marker check — your file list may be stale (a file may \
              have been deleted or moved since you opened the submit modal). \
              Refresh Friendshipper and try again.\n\nGit said: {}",
             String::from_utf8_lossy(&add_out.stderr).trim()
-        );
+        )));
     }
 
-    // 4. Diff HEAD vs the temp index with `--check`. `git diff --check`
-    //    exits non-zero when it finds issues, which is information, not
-    //    an error — we look at stdout regardless of exit status.
-    //
-    //    `git diff` does NOT accept `--pathspec-from-file` (unlike `git add`
-    //    above), so we pass paths positionally after `--`. The submit set is
-    //    bounded by what the user can tick in the UI, so we won't hit the
-    //    OS command-line length cap in practice.
-    let mut diff_args: Vec<&str> = vec!["diff", "--check", "--cached", "HEAD", "--"];
-    for path in &paths {
-        diff_args.push(path.as_str());
-    }
-    let check_out = run_git_with_index(git_client, &diff_args, &temp_index).await?;
+    // 4. Diff HEAD vs the temp index with `--check`. No pathspec needed: the
+    //    temp index equals HEAD except for the submit set we just staged, so
+    //    the diff is already scoped to exactly those files. `git diff
+    //    --check` exits non-zero when it finds issues, which is information,
+    //    not an error — we inspect stdout regardless of exit status.
+    let check_out = run_git_with_index(
+        git_client,
+        &["diff", "--check", "--cached", "HEAD"],
+        &temp_index,
+    )
+    .await?;
 
-    // `git diff --check` exit conventions, empirically:
-    //   0 — clean
-    //   1 — whitespace warnings only (no conflict markers)
-    //   2 — conflict markers found (and/or whitespace)
-    // Anything outside that range is a fatal error (bad ref, usage, repo
-    // problem) — bail loudly rather than parse an empty stdout and let the
-    // submit through. This is the guard that would have caught the
-    // `--pathspec-from-file` regression: that bug returned exit 129 with
-    // an empty stdout, which the old code treated as "no markers found".
     let code = check_out.status.code().unwrap_or(-1);
-    if !matches!(code, 0..=2) {
-        bail!(
-            "conflict-marker check failed (git diff --check exit {}): {}",
-            code,
+    let stdout = String::from_utf8_lossy(&check_out.stdout);
+    parse_conflict_check(code, &stdout).map_err(|e| {
+        CoreError::Internal(anyhow!(
+            "{e} (git diff --check stderr: {})",
             String::from_utf8_lossy(&check_out.stderr).trim()
-        );
+        ))
+    })
+}
+
+/// Classify a `git diff --check` result and extract the conflicted paths.
+///
+/// Exit conventions, empirically:
+///   0 — clean
+///   1 — whitespace warnings only (no conflict markers)
+///   2 — conflict markers found (and/or whitespace)
+/// Anything outside `0..=2` is a fatal error (bad ref, usage, repo problem) —
+/// we error rather than parse an empty stdout and let the submit through.
+/// This is the guard that would have caught the `--pathspec-from-file`
+/// regression: that bug returned exit 129 with an empty stdout, which the old
+/// code treated as "no markers found".
+///
+/// Pure (no I/O) so the exit-code guard and the line parser can be unit
+/// tested directly without standing up a git repo.
+fn parse_conflict_check(code: i32, stdout: &str) -> anyhow::Result<Vec<String>> {
+    if !matches!(code, 0..=2) {
+        bail!("conflict-marker check failed (git diff --check exit {code})");
     }
 
-    let stdout = String::from_utf8_lossy(&check_out.stdout);
     // Lines look like:
     //   path/to/file:7: leftover conflict marker
     // De-dup via BTreeSet so files with multiple marker lines are reported
@@ -1554,5 +1563,49 @@ mod tests {
             .await
             .expect("check ran");
         assert_eq!(result, vec![path.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn stale_file_list_is_input_error() {
+        // A selected path that is neither tracked nor present in the working
+        // tree makes `git add --pathspec-from-file` fail with "pathspec did
+        // not match". That's user-actionable (stale file list), so it must
+        // surface as CoreError::Input (400) — not Internal (500).
+        let (_dir, git) = make_test_repo().await;
+        let result =
+            find_files_with_conflict_markers(&git, &["does/not/exist.txt".to_string()]).await;
+        match result {
+            Err(CoreError::Input(_)) => {}
+            other => panic!("expected CoreError::Input for a stale file list, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_conflict_check_errors_on_unexpected_exit() {
+        // Exit codes outside 0..=2 (e.g. 129 from a usage error) must be an
+        // error, not silently treated as "clean" — the regression guard.
+        assert!(parse_conflict_check(129, "").is_err());
+        assert!(parse_conflict_check(-1, "").is_err());
+    }
+
+    #[test]
+    fn parse_conflict_check_extracts_and_dedups_paths() {
+        let stdout = "a/b.txt:7: leftover conflict marker\n\
+                      a/b.txt:42: leftover conflict marker\n\
+                      c.ini:1: leftover conflict marker\n";
+        assert_eq!(
+            parse_conflict_check(2, stdout).unwrap(),
+            vec!["a/b.txt".to_string(), "c.ini".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_conflict_check_ignores_whitespace_warnings() {
+        // `git diff --check` also emits whitespace-error lines (exit 1); only
+        // "leftover conflict marker" lines should count.
+        assert!(parse_conflict_check(1, "x.txt:3: trailing whitespace.\n")
+            .unwrap()
+            .is_empty());
+        assert!(parse_conflict_check(0, "").unwrap().is_empty());
     }
 }
