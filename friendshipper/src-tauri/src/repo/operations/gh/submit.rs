@@ -366,7 +366,7 @@ fn parse_conflict_check(code: i32, stdout: &str) -> anyhow::Result<Vec<String>> 
 ///   instead of double-quoted with octal escapes whenever a byte ≥ 0x80
 ///   shows up. The conflict-marker parser depends on path strings round-
 ///   tripping cleanly; without this a single asset with a non-ASCII name
-///   in fellowship would slip past the gate.
+///   would slip past the gate.
 /// - `LC_ALL=C` so git's user-facing messages (notably the
 ///   "leftover conflict marker" string our parser scans for) come back in
 ///   English regardless of the user's locale. Otherwise a Friendshipper
@@ -1389,7 +1389,7 @@ mod tests {
     #[tokio::test]
     async fn flags_untracked_new_file_with_markers() {
         // The regression case: a brand-new file (not in HEAD, not staged)
-        // with conflict markers — exactly what slipped through PR #21040.
+        // with conflict markers — the kind that previously slipped through.
         let (dir, git) = make_test_repo().await;
         let path = "Config/DummyTestWithConflicts.ini";
         fs::create_dir_all(dir.path().join("Config")).unwrap();
