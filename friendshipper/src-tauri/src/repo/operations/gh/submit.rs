@@ -5,7 +5,6 @@ use octocrab::models::pulls::{MergeableState, PullRequest};
 use octocrab::{params, Octocrab};
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::mpsc::Sender;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -124,34 +123,13 @@ async fn filter_to_textlike_paths(
     if !git_client.repo_path.as_os_str().is_empty() {
         cmd.current_dir(git_client.repo_path.canonicalize()?);
     }
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
     #[cfg(windows)]
     cmd.creation_flags(crate::repo::CREATE_NO_WINDOW);
 
-    let mut child = cmd.spawn()?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow!("git check-attr stdin should have been piped"))?;
-    // Feed stdin from a dedicated task so it runs concurrently with
-    // `wait_with_output`'s stdout drain. Without this we deadlock for large
-    // submits: input fills the stdin pipe buffer (~64 KB), check-attr fills
-    // the stdout pipe buffer in response, and both sides block waiting for
-    // the other. At 15k paths the input is well over a megabyte — exactly
-    // the case this gate was optimized for.
-    let stdin_writer = tokio::spawn(async move {
-        use tokio::io::AsyncWriteExt;
-        let result = stdin.write_all(&input).await;
-        // Drop closes the pipe → EOF so check-attr can finish.
-        drop(stdin);
-        result
-    });
-    let output = child.wait_with_output().await?;
-    stdin_writer
-        .await
-        .map_err(|e| anyhow!("git check-attr stdin task panicked: {e}"))??;
+    // `run_with_stdin` feeds the (potentially >1 MB) path list to check-attr
+    // from a dedicated task while draining stdout, so a large submit can't
+    // deadlock on the pipe buffers. See its docs for the gory details.
+    let output = ethos_core::utils::process::run_with_stdin(cmd, input).await?;
     if !output.status.success() {
         bail!(
             "git check-attr failed: {}",
@@ -168,17 +146,18 @@ async fn filter_to_textlike_paths(
         .split(|&b| b == 0)
         .filter(|s| !s.is_empty())
         .collect();
-    let mut i = 0;
-    while i + 2 < fields.len() {
-        let attr = std::str::from_utf8(fields[i + 1]).unwrap_or("");
-        let value = std::str::from_utf8(fields[i + 2]).unwrap_or("");
+    for record in fields.chunks_exact(3) {
+        let [path, attr, value] = record else {
+            unreachable!("chunks_exact(3) yields 3-element slices");
+        };
+        let attr = std::str::from_utf8(attr).unwrap_or("");
+        let value = std::str::from_utf8(value).unwrap_or("");
         let exclude = (attr == "filter" && value == "lfs") || (attr == "text" && value == "unset");
         if exclude {
-            if let Ok(path) = std::str::from_utf8(fields[i]) {
+            if let Ok(path) = std::str::from_utf8(path) {
                 excluded.insert(path.to_string());
             }
         }
-        i += 3;
     }
 
     Ok(paths
@@ -392,9 +371,11 @@ fn confirm_paired_markers(diff: &str, candidates: &[String], marker_size: usize)
     let candidate_set: std::collections::HashSet<&str> =
         candidates.iter().map(String::as_str).collect();
     // path -> (saw opening marker, saw closing marker), among added lines.
-    let mut seen: std::collections::BTreeMap<String, (bool, bool)> =
+    // Keyed by the candidate's own `&str` so the per-line scan allocates
+    // nothing; we only materialize Strings for the paths we keep.
+    let mut seen: std::collections::BTreeMap<&str, (bool, bool)> =
         std::collections::BTreeMap::new();
-    let mut current: Option<String> = None;
+    let mut current: Option<&str> = None;
     for line in diff.lines() {
         // Reset at each file header so a deletion's `+++ /dev/null` can't
         // bleed added lines onto the previous file.
@@ -403,10 +384,10 @@ fn confirm_paired_markers(diff: &str, candidates: &[String], marker_size: usize)
             continue;
         }
         if let Some(path) = line.strip_prefix("+++ b/") {
-            current = candidate_set.get(path).map(|p| (*p).to_string());
+            current = candidate_set.get(path).copied();
             continue;
         }
-        let Some(cur) = current.as_deref() else {
+        let Some(cur) = current else {
             continue;
         };
         // Added content lines start with a single '+' (the '+++' header was
@@ -414,7 +395,7 @@ fn confirm_paired_markers(diff: &str, candidates: &[String], marker_size: usize)
         let Some(added) = line.strip_prefix('+') else {
             continue;
         };
-        let entry = seen.entry(cur.to_string()).or_insert((false, false));
+        let entry = seen.entry(cur).or_insert((false, false));
         if leading_run(added, b'<') >= marker_size {
             entry.0 = true;
         } else if leading_run(added, b'>') >= marker_size {
@@ -423,7 +404,7 @@ fn confirm_paired_markers(diff: &str, candidates: &[String], marker_size: usize)
     }
     seen.into_iter()
         .filter(|(_, (open, close))| *open && *close)
-        .map(|(path, _)| path)
+        .map(|(path, _)| path.to_string())
         .collect()
 }
 
