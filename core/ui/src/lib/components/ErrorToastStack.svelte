@@ -21,7 +21,7 @@
 	<div class="w-full flex flex-col items-center pointer-events-none gap-2">
 		{#each visibleErrors as error (error.id)}
 			<div
-				class="pointer-events-auto flex items-center gap-3 w-full max-w-xs p-4 rounded-lg shadow text-white bg-red-700"
+				class="pointer-events-auto flex items-center gap-3 w-full max-w-[30rem] p-4 rounded-lg shadow text-white bg-red-700"
 				role="alert"
 				transition:fly={{ y: -50, duration: 200 }}
 			>
@@ -30,16 +30,16 @@
 				>
 					<ExclamationCircleSolid class="w-5 h-5" />
 				</div>
-				<div class="text-sm font-normal flex-1">{error.message}</div>
+				<div class="text-sm font-normal flex-1 min-w-0 break-words">{error.message}</div>
 				<button
 					type="button"
-					class="ml-auto -mx-1.5 -my-1.5 rounded-lg p-1.5 inline-flex items-center justify-center h-8 w-8 text-white hover:text-gray-200 hover:bg-red-800 focus:ring-2 focus:ring-red-300"
+					class="ml-auto -mx-1.5 -my-1.5 shrink-0 rounded-lg border border-white/40 p-3 inline-flex items-center justify-center h-12 w-12 text-white hover:text-gray-200 hover:bg-red-800 focus:ring-2 focus:ring-red-300"
 					aria-label="Close"
 					on:click={() => {
 						onDismiss(error.id);
 					}}
 				>
-					<CloseOutline class="w-3 h-3" />
+					<CloseOutline class="w-6 h-6" />
 				</button>
 			</div>
 		{/each}

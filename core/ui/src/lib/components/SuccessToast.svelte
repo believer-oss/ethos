@@ -19,7 +19,9 @@
 	<Toast
 		transition={fly}
 		params={{ y: fixed ? -200 : -50, duration: fixed ? 400 : 200 }}
-		class="my-4 p-2 left-1/2 dark:text-white text-white bg-lime-700 dark:bg-lime-700"
+		dismissable={false}
+		contentClass="w-full text-sm font-normal break-words min-w-0"
+		class="my-4 p-2 left-1/2 max-w-[30rem] dark:text-white text-white bg-lime-700 dark:bg-lime-700"
 		defaultIconClass="bg-lime-700 dark:bg-lime-700 dark:text-white text-white"
 		on:close={onClose}
 		bind:open={show}
