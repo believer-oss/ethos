@@ -1236,7 +1236,7 @@ impl Git {
                 "--no-pager",
                 "log",
                 &format!("-{limit}"),
-                "--pretty=format:%H|%B|%an|%aI|END",
+                "--pretty=format:%H%x1f%B%x1f%an%x1f%aI%x1f%x1e",
                 git_ref,
             ],
             Opts::new_without_logs(),

@@ -89,9 +89,9 @@ impl LogOp {
 
         let output = self.git_client.log(self.limit, &git_ref).await?;
         let result = output
-            .split("END\n")
+            .split("\x1e\n")
             .filter_map(|line| {
-                let parts = line.split('|').collect::<Vec<_>>();
+                let parts = line.split('\x1f').collect::<Vec<_>>();
 
                 // Ensure we have at least 4 parts
                 if parts.len() < 4 {
@@ -335,10 +335,10 @@ impl BranchCompareOp {
         );
         let output = self.git_client.log(self.limit, &commit_range).await?;
         let result = output
-            .split("END\n")
+            .split("\x1e\n")
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| {
-                let parts = line.split('|').collect::<Vec<_>>();
+                let parts = line.split('\x1f').collect::<Vec<_>>();
 
                 if parts.len() >= 4 {
                     let full_sha = parts[0];
