@@ -1768,7 +1768,7 @@ impl Git {
         let out_lines_thread = out_lines.clone();
         let is_collecting_out_lines = output.is_some();
         let should_log_stdout = opts.should_log_stdout;
-        tokio::spawn(async move {
+        let out_handle = tokio::spawn(async move {
             while let Some(line) = out_reader.next_line().await.unwrap() {
                 // Shorten any line starting with "Updating files". Git currently sends us a huge
                 // wall of text with all the individual percentage updates, instead of one line
@@ -1789,7 +1789,7 @@ impl Git {
         });
 
         let err_lines_thread = err_lines.clone();
-        tokio::spawn(async move {
+        let err_handle = tokio::spawn(async move {
             while let Some(line) = err_reader.next_line().await.unwrap() {
                 err_lines_thread.write().push(line.clone());
                 info!("{}", line);
@@ -1797,6 +1797,15 @@ impl Git {
         });
 
         let status = git_proc.wait().await?;
+
+        // The child has exited and closed its pipes, but the spawned readers may
+        // not have flushed their final lines into out_lines/err_lines yet. Join
+        // them before reading the collected output below — otherwise a command
+        // that succeeded (e.g. `commit-tree` printing a single SHA) can
+        // intermittently yield empty captured output under load, which then
+        // corrupts callers like build_snapshot_commit (`commit-tree -p ""`).
+        let _ = out_handle.await;
+        let _ = err_handle.await;
 
         if !status.success() {
             // git config --get <blah> has empty output with a bad exit code if the variable is
