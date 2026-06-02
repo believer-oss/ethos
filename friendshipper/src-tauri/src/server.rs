@@ -269,7 +269,10 @@ impl Server {
         )
         .await?;
 
-        // start the maintenance runner if we have a repo path
+        // Resolve the repo path and clear any stale index.lock. The background
+        // fetch/maintenance runner is started later, after the initial git config
+        // is written, so its `git fetch` / `git maintenance run --auto` don't race
+        // those config writes on .git/config.
         let span = tracing::info_span!("acquire_config_lock").entered();
         let repo_path = shared_state.app_config.read().repo_path.clone();
         span.exit();
@@ -292,18 +295,6 @@ impl Server {
             }
 
             span.exit();
-
-            let maintenance_runner =
-                GitMaintenanceRunner::new(repo_path, pause_background_tasks, tx)
-                    .with_fetch_interval(Duration::from_secs(5));
-            tokio::spawn(async move {
-                match maintenance_runner.run().await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Failed to run maintenance runner: {:?}", e);
-                    }
-                };
-            });
         }
 
         // install git hooks + set initial git config
@@ -381,6 +372,25 @@ impl Server {
                     });
                 }
             }
+        }
+
+        // Now that the initial git config has been written, start the background
+        // fetch/maintenance runner. Starting it before the config writes above
+        // raced them against the runner's `git maintenance run --auto` / `git
+        // fetch` reading the same .git/config — on Windows that surfaces as
+        // "unable to access '.git/config': Permission denied".
+        if !repo_path.is_empty() {
+            let maintenance_runner =
+                GitMaintenanceRunner::new(repo_path, pause_background_tasks.clone(), tx)
+                    .with_fetch_interval(Duration::from_secs(5));
+            tokio::spawn(async move {
+                match maintenance_runner.run().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Failed to run maintenance runner: {:?}", e);
+                    }
+                };
+            });
         }
 
         let span = tracing::info_span!("create_router").entered();
