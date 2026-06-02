@@ -1,4 +1,4 @@
-import type { ChangeSet, Commit, CommitFileInfo } from '@ethos/core';
+import type { ChangeSet, Commit, CommitFileInfo, ModifiedFile } from '@ethos/core';
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	CloneRequest,
@@ -110,6 +110,62 @@ export const saveChangeSet = async (changeSets: ChangeSet[]): Promise<void> =>
 	invoke('save_changeset', { changeSets });
 
 export const loadChangeSet = async (): Promise<ChangeSet[]> => invoke('load_changeset');
+
+/**
+ * Reconcile loaded changesets against the live working-tree file list.
+ *
+ * `loadChangeSet` returns whatever is persisted in changesets.json verbatim, so
+ * files that were committed or branch-switched away while Friendshipper was
+ * closed would otherwise linger as phantom "modified" entries that survive
+ * restarts. Intersect each changeset with the current modified + untracked set:
+ * drop files no longer present, refresh kept entries to the live file data, and
+ * file any currently-changed path that isn't grouped anywhere into "default" —
+ * all while preserving which named changeset each surviving file belongs to.
+ *
+ * Must be called with a populated `liveFiles` (i.e. after repo status has
+ * loaded); reconciling against an empty list would wrongly drop everything.
+ * Returns the reconciled changesets plus the dropped paths so callers can log.
+ */
+export const reconcileChangeSets = (
+	changeSets: ChangeSet[],
+	liveFiles: ModifiedFile[]
+): { changeSets: ChangeSet[]; dropped: string[] } => {
+	const liveByPath = new Map(liveFiles.map((f) => [f.path, f]));
+	const placed = new Set<string>();
+	const dropped: string[] = [];
+
+	const reconciled: ChangeSet[] = changeSets.map((cs) => {
+		const files: ModifiedFile[] = [];
+		for (const f of cs.files) {
+			const live = liveByPath.get(f.path);
+			if (live) {
+				files.push(live);
+				placed.add(f.path);
+			} else {
+				dropped.push(f.path);
+			}
+		}
+		return { ...cs, checked: false, indeterminate: false, files };
+	});
+
+	const unplaced = liveFiles.filter((f) => !placed.has(f.path));
+	if (unplaced.length > 0) {
+		const def = reconciled.find((cs) => cs.name === 'default');
+		if (def) {
+			def.files = [...def.files, ...unplaced];
+		} else {
+			reconciled.unshift({
+				name: 'default',
+				files: unplaced,
+				open: true,
+				checked: false,
+				indeterminate: false
+			});
+		}
+	}
+
+	return { changeSets: reconciled, dropped };
+};
 
 export const revertFiles = async (req: RevertFilesRequest): Promise<void> =>
 	invoke('revert_files', { req });
