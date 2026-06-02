@@ -1420,18 +1420,53 @@ impl Git {
             .await
     }
 
+    /// Expire old reflog entries so unreachable objects can eventually be pruned.
+    ///
+    /// We deliberately do NOT use `git reflog expire --all`. The stash stack lives
+    /// in the reflog of `refs/stash`, and every stash entry below the top is
+    /// unreachable from the ref tip (stash commits aren't ancestors of each
+    /// other and sit on no branch). So `--all` with explicit
+    /// `--expire`/`--expire-unreachable` times prunes the user's stashes —
+    /// including manual, non-snapshot ones — on every boot: anything past the
+    /// window is swept away. Explicit CLI expiry times also override git's
+    /// per-ref config protection for `refs/stash`, so the only safe option is to
+    /// never hand `refs/stash` to `reflog expire`.
+    ///
+    /// Instead we enumerate concrete refs (branches, remotes, tags, plus HEAD),
+    /// drop anything under `refs/stash`, and expire those. Refs are expired in
+    /// batches to stay well under the OS command-line length limit (notably
+    /// Windows' ~32k cap) on repos with many refs.
     pub async fn expire_reflog(&self) -> anyhow::Result<()> {
-        self.run(
-            &[
+        let refs_output = self
+            .run_and_collect_output(
+                &["for-each-ref", "--format=%(refname)"],
+                Opts::new_without_logs(),
+            )
+            .await?;
+
+        // HEAD has its own reflog that `--all` would have covered; keep expiring
+        // it. Everything under refs/stash is excluded so stashes are never touched.
+        let mut refs: Vec<&str> = vec!["HEAD"];
+        refs.extend(
+            refs_output
+                .lines()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .filter(|r| *r != "refs/stash" && !r.starts_with("refs/stash@")),
+        );
+
+        for chunk in refs.chunks(200) {
+            let mut args = vec![
                 "reflog",
                 "expire",
                 "--expire-unreachable=30.days",
                 "--expire=30.days",
-                "--all",
-            ],
-            Opts::default(),
-        )
-        .await
+            ];
+            args.extend(chunk.iter().copied());
+            self.run(&args, Opts::default()).await?;
+        }
+
+        Ok(())
     }
 
     pub async fn refetch(&self) -> anyhow::Result<()> {
@@ -1886,6 +1921,65 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let git = Git::new(path, tx);
         (git, dir)
+    }
+
+    // Regression: startup maintenance ran `git reflog expire --all`, which
+    // prunes the user's git stashes. The stash stack lives in refs/stash's
+    // reflog and entries are unreachable from the tip, so an explicit expiry
+    // window swept away stashes (including manual, non-snapshot ones) on every
+    // boot. expire_reflog must never hand refs/stash to `reflog expire`.
+    #[tokio::test]
+    async fn test_expire_reflog_preserves_stashes() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let (git, _dir) = setup_repo();
+
+        // Create a real (non-snapshot) stash from a dirty tracked file.
+        std::fs::write(git.repo_path.join("seed.txt"), "dirty").unwrap();
+        let out = StdCommand::new("git")
+            .args(["stash", "push", "-m", "manual work"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git stash push failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let stash_count = |g: &Git| {
+            let out = StdCommand::new("git")
+                .args(["stash", "list"])
+                .current_dir(&g.repo_path)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).lines().count()
+        };
+        assert_eq!(stash_count(&git), 1, "expected one stash before expiry");
+
+        // Backdate the stash reflog entry past the 30-day window so a buggy
+        // `--all` expiry would drop it. Only the entry's timestamp is rewritten.
+        let log_path = git.repo_path.join(".git/logs/refs/stash");
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let (left, msg) = content.split_once('\t').expect("reflog line has a message");
+        let mut tail = left.rsplitn(3, ' ');
+        let tz = tail.next().unwrap();
+        let _old_ts = tail.next().unwrap();
+        let head = tail.next().unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let backdated = now - 60 * 24 * 60 * 60;
+        std::fs::write(&log_path, format!("{head} {backdated} {tz}\t{msg}")).unwrap();
+
+        git.expire_reflog().await.expect("expire_reflog");
+
+        assert_eq!(
+            stash_count(&git),
+            1,
+            "expire_reflog dropped a user stash that was older than the expiry window"
+        );
     }
 
     // Pre-PR regression: full snapshots silently dropped untracked files. The
