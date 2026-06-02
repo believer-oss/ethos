@@ -403,7 +403,7 @@ impl KubeClient {
                     && !e.to_string().contains(
                         format!(
                             "previous terminated container \"game-server\" in pod \"{}\" not found",
-                            &name
+                            name
                         )
                         .as_str(),
                     )

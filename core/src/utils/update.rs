@@ -41,7 +41,7 @@ pub async fn get_latest_github_release(
             if release
                 .assets
                 .iter()
-                .any(|asset| asset.name == format!("{}{}", &app_name, BIN_SUFFIX))
+                .any(|asset| asset.name == format!("{}{}", app_name, BIN_SUFFIX))
             {
                 return Some(release);
             }
@@ -53,14 +53,8 @@ pub async fn get_latest_github_release(
     // sort by semver
     latest.sort_by(|a, b| {
         // we can unwrap because we asserted this format earlier
-        let a = a
-            .tag_name
-            .strip_prefix(&format!("{}-v", &app_name))
-            .unwrap();
-        let b = b
-            .tag_name
-            .strip_prefix(&format!("{}-v", &app_name))
-            .unwrap();
+        let a = a.tag_name.strip_prefix(&format!("{}-v", app_name)).unwrap();
+        let b = b.tag_name.strip_prefix(&format!("{}-v", app_name)).unwrap();
         let a = semver::Version::parse(a).unwrap();
         let b = semver::Version::parse(b).unwrap();
 

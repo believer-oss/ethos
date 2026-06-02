@@ -307,7 +307,7 @@ impl OFPANameCache {
                         Ok(file) => {
                             let mut writer = std::io::BufWriter::new(file);
                             for path in paths_to_request {
-                                if let Err(e) = writeln!(writer, "{}", &path) {
+                                if let Err(e) = writeln!(writer, "{}", path) {
                                     warn!(
                                         "Failed to write string '{}' to file {:?}. Reason: {}",
                                         path, listfile_path, e

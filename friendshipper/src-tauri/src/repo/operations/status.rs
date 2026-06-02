@@ -438,7 +438,7 @@ where
         // is the same modification.
         let target_branch = self.app_config.read().target_branch.clone();
         let user_modified_upstream: Vec<String> = if branch != target_branch {
-            let commit_range = format!("HEAD...origin/{}", &target_branch);
+            let commit_range = format!("HEAD...origin/{}", target_branch);
             let args = &[
                 "log",
                 "--pretty=",
