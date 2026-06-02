@@ -75,7 +75,9 @@
 		getRepoStatus,
 		SkipDllCheck,
 		AllowOfflineCommunication,
-		loadChangeSet
+		loadChangeSet,
+		reconcileChangeSets,
+		saveChangeSet
 	} from '$lib/repo';
 
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
@@ -255,7 +257,27 @@
 			return;
 		}
 
-		$changeSets = await loadChangeSet();
+		// Reconcile the persisted changesets against the live working-tree status
+		// so files committed or branch-switched away while Friendshipper was
+		// closed don't linger as phantom entries. Relies on $repoStatus already
+		// being set (this is called after repoStatus.set in loadAppData).
+		const loaded = await loadChangeSet();
+		const liveFiles = [
+			...($repoStatus?.modifiedFiles ?? []),
+			...($repoStatus?.untrackedFiles ?? [])
+		];
+		const { changeSets: reconciled, dropped } = reconcileChangeSets(loaded, liveFiles);
+		$changeSets = reconciled;
+
+		if (dropped.length > 0) {
+			await logInfo(
+				`Reconciled changesets on load: dropped ${
+					dropped.length
+				} file(s) no longer modified/untracked: ${dropped.join(', ')}`
+			);
+			// persist the cleaned set so changesets.json converges on disk
+			await saveChangeSet(reconciled);
+		}
 	};
 
 	const loadAppData = async () => {
@@ -283,13 +305,18 @@
 				const [repoConfigResponse, repoStatusResponse, commitsResponse] = await Promise.all([
 					getRepoConfig(),
 					getRepoStatus(SkipDllCheck.False, AllowOfflineCommunication.False),
-					getAllCommits(),
-					initializeChangeSets()
+					getAllCommits()
 				]);
 
 				repoConfig.set(repoConfigResponse);
 				repoStatus.set(repoStatusResponse);
 				commits.set(commitsResponse);
+
+				// Initialize changesets only AFTER repoStatus is set, so they can be
+				// reconciled against the live working-tree status. Doing this inside
+				// the Promise.all above raced status loading: loadChangeSet would win,
+				// see an empty status, and drop real changeset grouping.
+				await initializeChangeSets();
 			}
 
 			loadingBuilds = true;
