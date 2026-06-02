@@ -349,10 +349,7 @@ impl AWSClient {
         signing_instructions.apply_to_request_http0x(&mut fake_req);
         let uri = fake_req.uri().to_string();
 
-        Ok(format!(
-            "k8s-aws-v1.{}",
-            &BASE64_URL_SAFE_NO_PAD.encode(uri)
-        ))
+        Ok(format!("k8s-aws-v1.{}", BASE64_URL_SAFE_NO_PAD.encode(uri)))
     }
 
     #[instrument]

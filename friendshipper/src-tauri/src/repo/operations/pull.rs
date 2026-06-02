@@ -407,7 +407,7 @@ where
                         }
                         None => {
                             let e = CoreError::Input(
-                                anyhow!("Unable to parse project name from uproject path {}. DLL download unavailable.", &uproject_path_relative)
+                                anyhow!("Unable to parse project name from uproject path {}. DLL download unavailable.", uproject_path_relative)
                             );
                             errors.push(Some(e))
                         }
