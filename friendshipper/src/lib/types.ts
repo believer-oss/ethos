@@ -596,3 +596,17 @@ export interface SnapshotPreviewEntry {
 export interface SnapshotPreviewResponse {
 	entries: SnapshotPreviewEntry[];
 }
+
+export interface TraceEntry {
+	date: string;
+	serverName: string;
+	filename: string;
+	key: string;
+	size: number;
+	lastModified: string | null;
+}
+
+export interface RecentTracesResponse {
+	traces: TraceEntry[];
+	nextCursor: string | null;
+}

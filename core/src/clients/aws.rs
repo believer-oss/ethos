@@ -42,6 +42,13 @@ pub struct AWSClient {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct S3ObjectEntry {
+    pub key: String,
+    pub size: i64,
+    pub last_modified: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredAccessToken {
     pub access_token: String,
     pub expires_at: DateTime<Utc>,
@@ -222,6 +229,72 @@ impl AWSClient {
                         )))
                     }
                 }
+            }
+        }
+
+        Ok(output)
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn list_common_prefixes(
+        &self,
+        prefix: &str,
+        delimiter: &str,
+    ) -> Result<Vec<String>, CoreError> {
+        let mut output = vec![];
+        let client = S3Client::new(&self.get_sdk_config().await);
+        let mut paginator = client
+            .list_objects_v2()
+            .bucket(self.artifact_bucket_name.clone())
+            .prefix(prefix)
+            .delimiter(delimiter)
+            .into_paginator()
+            .send();
+
+        while let Some(resp) = paginator.next().await {
+            let page = resp.map_err(|e| {
+                CoreError::Internal(anyhow!("Error listing common prefixes: {:?}", e))
+            })?;
+            for cp in page.common_prefixes() {
+                if let Some(p) = cp.prefix() {
+                    output.push(p.to_string());
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
+    #[instrument(skip(self), err)]
+    pub async fn list_objects_with_metadata(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<S3ObjectEntry>, CoreError> {
+        let mut output = vec![];
+        let client = S3Client::new(&self.get_sdk_config().await);
+        let mut paginator = client
+            .list_objects_v2()
+            .bucket(self.artifact_bucket_name.clone())
+            .prefix(prefix)
+            .into_paginator()
+            .send();
+
+        while let Some(resp) = paginator.next().await {
+            let page =
+                resp.map_err(|e| CoreError::Internal(anyhow!("Error listing objects: {:?}", e)))?;
+            for object in page.contents() {
+                let key = match object.key() {
+                    Some(k) => k.to_string(),
+                    None => continue,
+                };
+                let last_modified = object
+                    .last_modified()
+                    .and_then(|t| DateTime::<Utc>::from_timestamp(t.secs(), t.subsec_nanos()));
+                output.push(S3ObjectEntry {
+                    key,
+                    size: object.size().unwrap_or(0),
+                    last_modified,
+                });
             }
         }
 

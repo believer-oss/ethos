@@ -2,7 +2,12 @@
 	import { Button, Card, Spinner, Checkbox, Select } from 'flowbite-svelte';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
-	import { CirclePlusOutline, RefreshOutline, FolderOpenOutline } from 'flowbite-svelte-icons';
+	import {
+		CirclePlusOutline,
+		RefreshOutline,
+		FolderOpenOutline,
+		ArchiveOutline
+	} from 'flowbite-svelte-icons';
 	import { get } from 'svelte/store';
 	import { appConfig, builds, dynamicConfig, selectedCommit } from '$lib/stores';
 	import type { ArtifactEntry, GameServerCluster, GameServerResult, Nullable } from '$lib/types';
@@ -14,6 +19,7 @@
 		openLogsFolder
 	} from '$lib/gameServers';
 	import ServerModal from '$lib/components/servers/ServerModal.svelte';
+	import ArchiveModal from '$lib/components/servers/ArchiveModal.svelte';
 	import { handleError } from '$lib/utils';
 	import { getBuilds } from '$lib/builds';
 
@@ -23,6 +29,7 @@
 
 	// create server modal
 	let showModal = false;
+	let showArchiveModal = false;
 	let selected: Nullable<ArtifactEntry> = get(selectedCommit);
 
 	// Multi-cluster state
@@ -160,6 +167,17 @@
 				/>
 			{/if}
 		{/if}
+		<Button
+			outline
+			class="!p-1.5"
+			size="xs"
+			on:click={() => {
+				showArchiveModal = true;
+			}}
+		>
+			<ArchiveOutline class="w-4 h-4 mr-1" />
+			Traces
+		</Button>
 		<Button outline class="!p-1.5" size="xs" on:click={openLogsFolder}>
 			<FolderOpenOutline class="w-4 h-4 mr-1" />
 			Open logs folder
@@ -179,3 +197,4 @@
 </Card>
 
 <ServerModal bind:showModal {handleServerCreate} />
+<ArchiveModal bind:showModal={showArchiveModal} />
