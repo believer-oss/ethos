@@ -19,6 +19,9 @@ use ethos_core::types::repo::{
     ChangeSet, CommitFileInfo, CommitInfo, FileHistoryResponse, PushRequest, RepoDirectoryListing,
     RepoStatus, Snapshot,
 };
+use ethos_core::types::utrace::{
+    DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
+};
 use friendshipper::builds::router::GetWorkflowsResponse;
 use friendshipper::repo::operations::{
     ImportZippedChangesRequest, RestoreFileToRevisionRequest, RestoreSnapshotRequest,
@@ -1475,6 +1478,105 @@ pub async fn open_url_for_path(
         .client
         .post(format!("{}/engine/open-url", state.server_url))
         .json(&OpenUrlForPathRequest { path })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+// Utrace
+#[tauri::command]
+pub async fn get_utrace_dates(state: tauri::State<'_, State>) -> Result<Vec<String>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/utrace/dates", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_recent_utraces(
+    state: tauri::State<'_, State>,
+    limit: Option<u32>,
+    before: Option<String>,
+) -> Result<RecentTracesResponse, TauriError> {
+    let mut req = state
+        .client
+        .get(format!("{}/utrace/recent", state.server_url));
+
+    if let Some(limit) = limit {
+        req = req.query(&[("limit", limit.to_string())]);
+    }
+    if let Some(before) = before {
+        req = req.query(&[("before", before)]);
+    }
+
+    let res = req.send().await?;
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_utraces_for_date(
+    state: tauri::State<'_, State>,
+    date: String,
+) -> Result<Vec<TraceEntry>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/utrace/by-date", state.server_url))
+        .query(&[("date", date)])
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn download_utrace(
+    state: tauri::State<'_, State>,
+    key: String,
+    dest_path: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/utrace/download", state.server_url))
+        .json(&DownloadTraceRequest { key, dest_path })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_utrace_in_insights(
+    state: tauri::State<'_, State>,
+    key: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/utrace/open", state.server_url))
+        .json(&OpenTraceRequest { key })
         .send()
         .await?;
 

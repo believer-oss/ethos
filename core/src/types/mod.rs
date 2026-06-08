@@ -11,3 +11,4 @@ pub mod logs;
 pub mod playtests;
 pub mod project;
 pub mod repo;
+pub mod utrace;

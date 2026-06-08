@@ -23,6 +23,7 @@ mod servers;
 pub mod state;
 pub mod storage;
 pub mod system;
+pub mod utrace;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -72,6 +73,7 @@ where
         .nest("/storage", storage::router())
         .nest("/system", system::router())
         .nest("/engine", engine::router())
+        .nest("/utrace", utrace::router::router())
         .route_layer(middleware::from_fn(move |headers, req, next| {
             nonce::nonce(headers, req, next, NONCE.as_str())
         })))
