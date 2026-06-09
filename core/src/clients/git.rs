@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, Utc};
+use futures::StreamExt;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
@@ -699,6 +700,7 @@ impl Git {
             }
         }
 
+        let mut paths_to_unstage: Vec<&str> = Vec::new();
         for modified_file in &currently_modified_files {
             let source_path = self.repo_path.join(&modified_file.path);
             if source_path.exists() {
@@ -707,15 +709,37 @@ impl Git {
                     .join(format!("{}.localcopy", modified_file.path));
                 std::fs::rename(&source_path, &localcopy_path)?;
                 renamed_files.push((modified_file.path.clone(), localcopy_path));
-
-                // Reset the file in Git to remove it from the index
-                self.run(
-                    &["reset", "HEAD", "--", &modified_file.path],
-                    Opts::default(),
-                )
-                .await
-                .ok();
+                paths_to_unstage.push(&modified_file.path);
             }
+        }
+
+        // Unstage every renamed file with one batched reset. Each `git reset`
+        // rewrites the full index regardless of how many paths it's given, so
+        // per-file resets cost O(files × index size) — the dominant cost of
+        // restore with hundreds of checked-out assets on an Unreal-sized
+        // index. Best-effort: a failed unstage surfaces downstream as a
+        // cherry-pick or reset error, with the user's content already safe
+        // in `.localcopy` files.
+        if !paths_to_unstage.is_empty() {
+            let unstage_path = {
+                let mut temp_file = NamedTempFile::new()?;
+                for path in &paths_to_unstage {
+                    writeln!(temp_file, "{path}")?;
+                }
+                temp_file.flush()?;
+                temp_file.into_temp_path()
+            };
+            self.run(
+                &[
+                    "reset",
+                    "HEAD",
+                    "--pathspec-from-file",
+                    unstage_path.to_str().expect("temp file path is non-UTF-8"),
+                ],
+                Opts::default(),
+            )
+            .await
+            .ok();
         }
 
         let cherry_pick_result = self
@@ -746,48 +770,63 @@ impl Git {
             )
             .await;
 
+        // Compare every renamed local copy against its restored counterpart
+        // before touching disk. The comparisons are independent, so they run
+        // with bounded concurrency — serially they were a per-asset cost on
+        // syncs with hundreds of checked-out files. `None` means the restore
+        // produced no file at that path (no conflict possible). The futures
+        // are collected eagerly rather than mapped lazily inside the stream:
+        // a closure returning an async block that borrows its argument trips
+        // rustc's "implementation of `FnOnce` is not general enough"
+        // limitation once callers wrap this future in `#[instrument]`.
+        let comparison_futures: Vec<_> = renamed_files
+            .iter()
+            .map(|(original_path, localcopy_path)| {
+                let target_path = self.repo_path.join(original_path);
+                async move {
+                    if target_path.exists() {
+                        Some(
+                            self.restored_file_matches_local(
+                                original_path,
+                                localcopy_path,
+                                &target_path,
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect();
+        let comparisons: Vec<Option<bool>> = futures::stream::iter(comparison_futures)
+            .buffered(8)
+            .collect()
+            .await;
+
         // Restore renamed files and track conflicts
         let mut conflicts = Vec::new();
 
-        for (original_path, localcopy_path) in renamed_files {
+        for ((original_path, localcopy_path), identical) in
+            renamed_files.into_iter().zip(comparisons)
+        {
             let target_path = self.repo_path.join(&original_path);
 
-            if target_path.exists() {
-                // Hash both files as if `git add` were staging them at
-                // `original_path` so the same clean filters
-                // (autocrlf, eol=, custom drivers, LFS) apply on both
-                // sides. Raw byte comparison here is unsafe because the
-                // cherry-pick already ran the smudge filter on its
-                // output while the .localcopy is the user's untouched
-                // pre-rename bytes — they can differ purely by EOL even
-                // when git considers them the same content.
-                let local_hash = self
-                    .hash_object_with_attrs(&original_path, &localcopy_path)
-                    .await;
-                let restored_hash = self
-                    .hash_object_with_attrs(&original_path, &target_path)
-                    .await;
-                let identical = match (local_hash, restored_hash) {
-                    (Ok(local), Ok(restored)) => local == restored,
-                    // If hash-object failed on either side we can't be
-                    // sure — preserve the local copy as `.snapshotcopy`
-                    // so the user can review rather than silently
-                    // dropping it.
-                    _ => false,
-                };
-
-                if !identical {
+            match identical {
+                Some(true) => {
+                    std::fs::remove_file(&localcopy_path)?;
+                }
+                Some(false) => {
                     let snapshot_copy_name = format!("{}.snapshotcopy", original_path);
                     let snapshot_copy_path = self.repo_path.join(&snapshot_copy_name);
                     std::fs::rename(&target_path, &snapshot_copy_path)?;
                     std::fs::rename(&localcopy_path, &target_path)?;
                     conflicts.push((original_path.clone(), snapshot_copy_name));
-                } else {
-                    std::fs::remove_file(&localcopy_path)?;
                 }
-            } else {
-                // No conflict, restore the file to its original name
-                std::fs::rename(&localcopy_path, &target_path)?;
+                None => {
+                    // No conflict, restore the file to its original name
+                    std::fs::rename(&localcopy_path, &target_path)?;
+                }
             }
         }
 
@@ -985,6 +1024,69 @@ impl Git {
             )
             .await?;
         Ok(out.trim().to_string())
+    }
+
+    /// Decide whether a file restored from a snapshot matches the user's
+    /// pre-restore `.localcopy` of the same path. Byte-equal files are
+    /// identical under any clean filter, and after an uneventful restore the
+    /// two are almost always byte-equal (LFS smudge reproduces the exact
+    /// bytes the snapshot captured) — so a raw comparison short-circuits the
+    /// common case without running the LFS clean filter, a full content
+    /// hash, over each side. Only on a byte mismatch do we fall back to
+    /// filter-aware hashing via `hash_object_with_attrs`, which keeps EOL
+    /// normalization (autocrlf, eol=, custom drivers) from registering as a
+    /// conflict. Any error on either side counts as "different" so the local
+    /// copy is preserved for review rather than silently dropped.
+    async fn restored_file_matches_local(
+        &self,
+        attr_path: &str,
+        local: &Path,
+        restored: &Path,
+    ) -> bool {
+        if let Ok(true) = Self::bytes_equal(local.to_path_buf(), restored.to_path_buf()).await {
+            return true;
+        }
+
+        let (local_hash, restored_hash) = tokio::join!(
+            self.hash_object_with_attrs(attr_path, local),
+            self.hash_object_with_attrs(attr_path, restored)
+        );
+        match (local_hash, restored_hash) {
+            (Ok(local), Ok(restored)) => local == restored,
+            _ => false,
+        }
+    }
+
+    /// Raw byte comparison of two files, run on a blocking thread since the
+    /// assets involved can be hundreds of megabytes. Bails out on the first
+    /// differing chunk (or immediately on a size mismatch).
+    async fn bytes_equal(a: PathBuf, b: PathBuf) -> anyhow::Result<bool> {
+        tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+
+            let len = std::fs::metadata(&a)?.len();
+            if len != std::fs::metadata(&b)?.len() {
+                return Ok(false);
+            }
+
+            const CHUNK: usize = 64 * 1024;
+            let mut file_a = std::fs::File::open(&a)?;
+            let mut file_b = std::fs::File::open(&b)?;
+            let mut buf_a = vec![0u8; CHUNK];
+            let mut buf_b = vec![0u8; CHUNK];
+            let mut remaining = len;
+            while remaining > 0 {
+                let n = remaining.min(CHUNK as u64) as usize;
+                file_a.read_exact(&mut buf_a[..n])?;
+                file_b.read_exact(&mut buf_b[..n])?;
+                if buf_a[..n] != buf_b[..n] {
+                    return Ok(false);
+                }
+                remaining -= n as u64;
+            }
+            Ok(true)
+        })
+        .await?
     }
 
     pub async fn get_untracked_files(&self) -> anyhow::Result<Vec<String>> {
