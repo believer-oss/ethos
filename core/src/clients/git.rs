@@ -1054,7 +1054,9 @@ impl Git {
                 return Ok(false);
             }
 
-            const CHUNK: usize = 64 * 1024;
+            // 1MB chunks: assets run to hundreds of MB, so smaller chunks
+            // turn a single compare into thousands of read syscalls per side.
+            const CHUNK: usize = 1024 * 1024;
             let mut file_a = std::fs::File::open(&a)?;
             let mut file_b = std::fs::File::open(&b)?;
             let mut buf_a = vec![0u8; CHUNK];
