@@ -1082,9 +1082,16 @@ impl Git {
         let untracked_files: Vec<String> = output
             .lines()
             .filter_map(|line| {
-                // Parse porcelain format: first two chars are status, rest is filename
+                // Parse porcelain format: first two chars are status, rest is
+                // filename. Porcelain wraps paths containing spaces in double
+                // quotes (even under core.quotepath=false), so strip them the
+                // same way File::from_status_line does — a quoted path would
+                // fail every exists()/rename() it feeds, which left
+                // space-named untracked files in place during snapshot restore
+                // and aborted the cherry-pick with "untracked working tree
+                // files would be overwritten".
                 if line.len() > 2 && line.starts_with("??") {
-                    Some(line[3..].to_string())
+                    Some(line[3..].trim_matches('"').to_string())
                 } else {
                     None
                 }
@@ -2506,6 +2513,50 @@ mod tests {
         assert_eq!(
             snapshotcopy, "print('snapshot edit')\n",
             "snapshotcopy must hold the snapshot's content"
+        );
+    }
+
+    // Untracked filenames containing spaces come back from `git status
+    // --porcelain` wrapped in double quotes (even with quotepath=false).
+    // `get_untracked_files` must strip them: a quoted path fails the
+    // exists() check in `restore_snapshot_via_cherry_pick`, the file never
+    // gets renamed aside, and the cherry-pick aborts with "untracked
+    // working tree files would be overwritten" — exactly what happened on
+    // a real sync with `foo - Copy.uasset` files in the worktree.
+    #[tokio::test]
+    async fn test_cherry_pick_restore_handles_space_named_untracked_files() {
+        let (git, _dir) = setup_repo();
+
+        std::fs::write(
+            git.repo_path.join("coho-test - Copy.txt"),
+            "untracked content",
+        )
+        .unwrap();
+
+        let snapshot = git
+            .save_snapshot_all("space test")
+            .await
+            .expect("save_snapshot_all");
+
+        // The file is still on disk untracked, as during a real pull. The
+        // restore must rename it aside before cherry-picking the snapshot
+        // (which contains it as an add) back on top.
+        let result = git
+            .restore_snapshot_via_cherry_pick(&snapshot.commit, vec![])
+            .await;
+        assert!(
+            result.is_ok(),
+            "cherry-pick restore failed on space-named untracked file: {:?}",
+            result.err()
+        );
+
+        let content = std::fs::read_to_string(git.repo_path.join("coho-test - Copy.txt")).unwrap();
+        assert_eq!(content, "untracked content");
+        assert!(
+            !git.repo_path
+                .join("coho-test - Copy.txt.localcopy")
+                .exists(),
+            "localcopy was not cleaned up after identical restore"
         );
     }
 }
