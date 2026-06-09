@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
 use sysinfo::{ProcessRefreshKind, System, UpdateKind};
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
@@ -495,14 +495,7 @@ impl Git {
                 paths.iter().partition(|p| !self.repo_path.join(p).exists());
 
             if !existing_paths.is_empty() {
-                let add_path = {
-                    let mut add_temp = NamedTempFile::new()?;
-                    for path in &existing_paths {
-                        writeln!(add_temp, "{path}")?;
-                    }
-                    add_temp.flush()?;
-                    add_temp.into_temp_path()
-                };
+                let add_path = Self::write_pathspec_file(&existing_paths)?;
                 self.run_with_index_file(
                     &[
                         "add",
@@ -515,14 +508,7 @@ impl Git {
             }
 
             if !deleted_paths.is_empty() {
-                let rm_path = {
-                    let mut rm_temp = NamedTempFile::new()?;
-                    for path in &deleted_paths {
-                        writeln!(rm_temp, "{path}")?;
-                    }
-                    rm_temp.flush()?;
-                    rm_temp.into_temp_path()
-                };
+                let rm_path = Self::write_pathspec_file(&deleted_paths)?;
                 self.run_with_index_file(
                     &[
                         "rm",
@@ -608,6 +594,26 @@ impl Git {
             bail!("git {:?} failed: {}", args, stderr.trim());
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Write one pathspec per line to a temp file for `--pathspec-from-file`.
+    /// Each line gets the `:(literal)` magic prefix: pathspecs are globs by
+    /// default, so a real filename containing `[`/`]` would otherwise act as
+    /// a character class and silently match sibling files (`a[bc]d.txt` also
+    /// matches `abd.txt` and `acd.txt`). The write handle is closed before
+    /// returning so the spawned git process is the file's only opener; the
+    /// returned `TempPath` must be kept alive until that process exits.
+    fn write_pathspec_file<I, S>(paths: I) -> anyhow::Result<TempPath>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut temp_file = NamedTempFile::new()?;
+        for path in paths {
+            writeln!(temp_file, ":(literal){}", path.as_ref())?;
+        }
+        temp_file.flush()?;
+        Ok(temp_file.into_temp_path())
     }
 
     pub async fn delete_snapshot(&self, commit: &str) -> anyhow::Result<()> {
@@ -721,14 +727,7 @@ impl Git {
         // cherry-pick or reset error, with the user's content already safe
         // in `.localcopy` files.
         if !paths_to_unstage.is_empty() {
-            let unstage_path = {
-                let mut temp_file = NamedTempFile::new()?;
-                for path in &paths_to_unstage {
-                    writeln!(temp_file, "{path}")?;
-                }
-                temp_file.flush()?;
-                temp_file.into_temp_path()
-            };
+            let unstage_path = Self::write_pathspec_file(&paths_to_unstage)?;
             self.run(
                 &[
                     "reset",
@@ -750,14 +749,7 @@ impl Git {
             .await;
 
         // reset so everything is unstaged
-        let reset_path = {
-            let mut temp_file = NamedTempFile::new()?;
-            for path in &snapshot_files {
-                writeln!(temp_file, "{path}")?;
-            }
-            temp_file.flush()?;
-            temp_file.into_temp_path()
-        };
+        let reset_path = Self::write_pathspec_file(&snapshot_files)?;
 
         let reset_result = self
             .run(
@@ -964,14 +956,7 @@ impl Git {
             self.run_with_index_file(&["read-tree", &head_sha], &temp_index_path)
                 .await?;
 
-            let pathspec_path = {
-                let mut pathspec = NamedTempFile::new()?;
-                for path in &to_extract {
-                    writeln!(pathspec, "{path}")?;
-                }
-                pathspec.flush()?;
-                pathspec.into_temp_path()
-            };
+            let pathspec_path = Self::write_pathspec_file(&to_extract)?;
 
             if let Err(e) = self
                 .run_with_index_file(
@@ -2207,6 +2192,122 @@ mod tests {
             !files.iter().any(|f| f == "b.txt"),
             "b.txt leaked into selective snapshot: {:?}",
             files
+        );
+    }
+
+    // Every `--pathspec-from-file` call site feeds through
+    // `write_pathspec_file`, which prefixes `:(literal)`. This pins the
+    // benign direction: the literal magic must keep matching a file whose
+    // name contains glob metacharacters (brackets are legal filenames on
+    // every platform we ship on), so a selective snapshot of `a[bc]d.txt`
+    // still captures it — and never its glob-siblings.
+    #[tokio::test]
+    async fn test_save_snapshot_bracketed_filename_does_not_glob_match() {
+        let (git, _dir) = setup_repo();
+
+        std::fs::write(git.repo_path.join("a[bc]d.txt"), "bracket-base").unwrap();
+        std::fs::write(git.repo_path.join("abd.txt"), "abd-base").unwrap();
+        let out = StdCommand::new("git")
+            .args(["--literal-pathspecs", "add", "a[bc]d.txt", "abd.txt"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "bracket files"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Dirty both; the snapshot asks for the bracketed file only.
+        std::fs::write(git.repo_path.join("a[bc]d.txt"), "bracket-dirty").unwrap();
+        std::fs::write(git.repo_path.join("abd.txt"), "abd-dirty").unwrap();
+
+        let snapshot = git
+            .save_snapshot("bracket only", vec!["a[bc]d.txt".to_string()])
+            .await
+            .expect("save_snapshot");
+
+        let files = git
+            .get_files_in_snapshot(&snapshot.commit)
+            .await
+            .expect("get_files_in_snapshot");
+
+        assert!(
+            files.iter().any(|f| f == "a[bc]d.txt"),
+            "a[bc]d.txt missing from selective snapshot: {:?}",
+            files
+        );
+        assert!(
+            !files.iter().any(|f| f == "abd.txt"),
+            "abd.txt glob-leaked into selective snapshot of a[bc]d.txt: {:?}",
+            files
+        );
+    }
+
+    // `git reset --pathspec-from-file` (unlike `git add`) wildmatch-expands
+    // each line against the index, so without `:(literal)` an entry of
+    // `a[bc]d.txt` also unstages `abd.txt` — `[bc]` acts as a character
+    // class (reproduced on git 2.47 for Windows). This pins the helper +
+    // reset combination used by the batched unstage in
+    // `restore_snapshot_via_cherry_pick`.
+    #[tokio::test]
+    async fn test_pathspec_file_reset_does_not_glob_match_siblings() {
+        let (git, _dir) = setup_repo();
+
+        std::fs::write(git.repo_path.join("a[bc]d.txt"), "bracket-base").unwrap();
+        std::fs::write(git.repo_path.join("abd.txt"), "abd-base").unwrap();
+        let out = StdCommand::new("git")
+            .args(["--literal-pathspecs", "add", "a[bc]d.txt", "abd.txt"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "bracket files"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        // Modify and stage both, then unstage only the bracketed file
+        // through the helper-driven reset.
+        std::fs::write(git.repo_path.join("a[bc]d.txt"), "bracket-dirty").unwrap();
+        std::fs::write(git.repo_path.join("abd.txt"), "abd-dirty").unwrap();
+        let out = StdCommand::new("git")
+            .args(["--literal-pathspecs", "add", "a[bc]d.txt", "abd.txt"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        let pathspec = Git::write_pathspec_file(["a[bc]d.txt"]).expect("write_pathspec_file");
+        git.run(
+            &[
+                "reset",
+                "HEAD",
+                "--pathspec-from-file",
+                pathspec.to_str().expect("temp file path is non-UTF-8"),
+            ],
+            Opts::default(),
+        )
+        .await
+        .expect("reset");
+
+        let out = StdCommand::new("git")
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(&git.repo_path)
+            .output()
+            .unwrap();
+        let staged = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !staged.contains("a[bc]d.txt"),
+            "bracketed file should have been unstaged; staged set: {staged}"
+        );
+        assert!(
+            staged.contains("abd.txt"),
+            "abd.txt was glob-unstaged by the bracketed pathspec entry; staged set: {staged}"
         );
     }
 
