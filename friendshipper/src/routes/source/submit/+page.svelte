@@ -136,6 +136,18 @@
 	// quick submit preview
 	let showQuickSubmitPreview = false;
 
+	// new files detected by the pre-submit refresh
+	let showNewFilesPrompt = false;
+	let newlyDetectedFiles: ModifiedFile[] = [];
+	let newFilesSelectedPaths: Set<string> = new Set();
+	$: newFilesSelectableTotal = newlyDetectedFiles.filter(
+		(file) => file.submitStatus === SubmitStatus.Ok
+	).length;
+	$: newFilesAllSelected =
+		newFilesSelectableTotal > 0 && newFilesSelectedPaths.size === newFilesSelectableTotal;
+	$: newFilesSomeSelected =
+		newFilesSelectedPaths.size > 0 && newFilesSelectedPaths.size < newFilesSelectableTotal;
+
 	// zip local changes
 	let showZipPreview = false;
 	let zipping = false;
@@ -266,13 +278,15 @@
 		await openUrl(fullPath);
 	};
 
-	const refreshFiles = async (triggerLoading: boolean) => {
+	const refreshFiles = async (triggerLoading: boolean): Promise<boolean> => {
 		if (triggerLoading) {
 			loading = true;
 		}
 
+		let succeeded = false;
 		try {
 			$repoStatus = await getRepoStatus();
+			succeeded = true;
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -280,6 +294,8 @@
 		if (triggerLoading) {
 			loading = false;
 		}
+
+		return succeeded;
 	};
 
 	const handleFileReverted = async () => {
@@ -508,6 +524,94 @@
 		loading = false;
 		showProgressModal = false;
 		syncing = false;
+	};
+
+	const handleQuickSubmitClicked = async () => {
+		// The modified file list can be stale (e.g. saving in Unreal and immediately
+		// hitting Quick Submit), so do one final refresh and surface anything new
+		// before showing the preview.
+		const knownPaths = new Set($allModifiedFiles.map((file) => file.path));
+
+		showProgressModal = true;
+		progressModalTitle = 'Preparing Quick Submit preview';
+
+		let refreshSucceeded = false;
+		try {
+			refreshSucceeded = await refreshFiles(true);
+		} finally {
+			showProgressModal = false;
+		}
+
+		// If the refresh failed we can't trust the file list, so don't open the
+		// preview — that would defeat the staleness check this exists for.
+		// refreshFiles already surfaced the underlying error; this explains why
+		// the submit didn't proceed.
+		if (!refreshSucceeded) {
+			await emit(
+				'error',
+				'Quick Submit was cancelled because the file list could not be refreshed. Please try again.'
+			);
+			return;
+		}
+
+		if ($selectedFiles.length === 0) {
+			await emit(
+				'error',
+				'The files you had selected are no longer modified. There is nothing to submit.'
+			);
+			return;
+		}
+
+		newlyDetectedFiles = $allModifiedFiles.filter((file) => !knownPaths.has(file.path));
+
+		if (newlyDetectedFiles.length > 0) {
+			newFilesSelectedPaths = new Set(
+				newlyDetectedFiles
+					.filter((file) => file.submitStatus === SubmitStatus.Ok)
+					.map((file) => file.path)
+			);
+			showNewFilesPrompt = true;
+			return;
+		}
+
+		showQuickSubmitPreview = true;
+	};
+
+	const toggleNewFile = (path: string) => {
+		if (newFilesSelectedPaths.has(path)) {
+			newFilesSelectedPaths.delete(path);
+		} else {
+			newFilesSelectedPaths.add(path);
+		}
+		newFilesSelectedPaths = new Set(newFilesSelectedPaths);
+	};
+
+	const setAllNewFiles = (checked: boolean) => {
+		newFilesSelectedPaths = checked
+			? new Set(
+					newlyDetectedFiles
+						.filter((file) => file.submitStatus === SubmitStatus.Ok)
+						.map((file) => file.path)
+			  )
+			: new Set();
+	};
+
+	const handleConfirmNewFiles = () => {
+		// Re-resolve against the current status by path: a background refresh may
+		// have fired while this prompt was open, making our snapshotted file
+		// objects (and their submitStatus) stale.
+		const selectedPaths = new Set($selectedFiles.map((file) => file.path));
+		const filesToAdd = $allModifiedFiles.filter(
+			(file) =>
+				newFilesSelectedPaths.has(file.path) &&
+				!selectedPaths.has(file.path) &&
+				file.submitStatus === SubmitStatus.Ok
+		);
+		if (filesToAdd.length > 0) {
+			$selectedFiles = [...$selectedFiles, ...filesToAdd];
+		}
+		showNewFilesPrompt = false;
+		showQuickSubmitPreview = true;
 	};
 
 	const handleQuickSubmit = async () => {
@@ -1405,9 +1509,9 @@
 						<Button
 							id="quick-submit"
 							color="primary"
-							disabled={!canSubmit}
-							on:click={() => {
-								showQuickSubmitPreview = true;
+							disabled={!canSubmit || loading}
+							on:click={async () => {
+								await handleQuickSubmitClicked();
 							}}
 							>Quick Submit
 							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
@@ -1632,6 +1736,83 @@
 		>
 		<Button size="xs" color="green" on:click={handleRevertUproject}>Revert</Button>
 		<Button size="xs" color="red" on:click={handleCloseRevertUproject}>Keep Changes</Button>
+	</div>
+</Modal>
+
+<Modal
+	open={showNewFilesPrompt}
+	dismissable={true}
+	on:close={() => {
+		showNewFilesPrompt = false;
+	}}
+	class="bg-secondary-700 dark:bg-space-900"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	size="md"
+>
+	<div class="flex flex-col gap-3">
+		<h3 class="text-lg font-semibold text-white">New Changes Detected</h3>
+		<p class="text-sm text-gray-300">
+			{newlyDetectedFiles.length} file{newlyDetectedFiles.length === 1 ? ' has' : 's have'} changed since
+			the file list was last refreshed and {newlyDetectedFiles.length === 1 ? 'is' : 'are'} not part
+			of your Quick Submit. Check any files you'd like to include.
+		</p>
+		{#if newFilesSelectableTotal > 0}
+			<div class="flex items-center gap-2">
+				<Checkbox
+					class="!p-1.5"
+					checked={newFilesAllSelected}
+					indeterminate={newFilesSomeSelected}
+					on:change={() => {
+						setAllNewFiles(!newFilesAllSelected);
+					}}>{newFilesAllSelected ? 'Deselect all' : 'Select all'}</Checkbox
+				>
+			</div>
+		{/if}
+		<div
+			class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
+		>
+			{#each newlyDetectedFiles as file}
+				<div class="flex gap-2 items-center" role="listitem">
+					<Checkbox
+						class="!p-1.5 shrink-0"
+						checked={newFilesSelectedPaths.has(file.path)}
+						disabled={file.submitStatus !== SubmitStatus.Ok}
+						on:change={() => {
+							toggleNewFile(file.path);
+						}}
+					/>
+					{#if file.state === ModifiedFileState.Added}
+						<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
+					{:else if file.state === ModifiedFileState.Modified}
+						<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
+					{:else if file.state === ModifiedFileState.Deleted}
+						<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
+					{:else if file.state === ModifiedFileState.Unmerged}
+						<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
+					{/if}
+					<span class="truncate {getFileTextClass(file)}" title={file.path}
+						>{getFileDisplayString(file)}</span
+					>
+				</div>
+			{/each}
+		</div>
+		<div class="flex justify-end gap-2">
+			<Button
+				size="sm"
+				color="alternative"
+				on:click={() => {
+					showNewFilesPrompt = false;
+				}}>Cancel</Button
+			>
+			<Button size="sm" color="primary" on:click={handleConfirmNewFiles}>
+				{#if newFilesSelectedPaths.size > 0}
+					Add {newFilesSelectedPaths.size} & Continue
+				{:else}
+					Continue Without Adding
+				{/if}
+			</Button>
+		</div>
 	</div>
 </Modal>
 
