@@ -139,14 +139,6 @@
 	// new files detected by the pre-submit refresh
 	let showNewFilesPrompt = false;
 	let newlyDetectedFiles: ModifiedFile[] = [];
-	let newFilesSelectedPaths: Set<string> = new Set();
-	$: newFilesSelectableTotal = newlyDetectedFiles.filter(
-		(file) => file.submitStatus === SubmitStatus.Ok
-	).length;
-	$: newFilesAllSelected =
-		newFilesSelectableTotal > 0 && newFilesSelectedPaths.size === newFilesSelectableTotal;
-	$: newFilesSomeSelected =
-		newFilesSelectedPaths.size > 0 && newFilesSelectedPaths.size < newFilesSelectableTotal;
 
 	// zip local changes
 	let showZipPreview = false;
@@ -564,53 +556,15 @@
 
 		newlyDetectedFiles = $allModifiedFiles.filter((file) => !knownPaths.has(file.path));
 
+		// The prompt is purely informational: new uasset changes need locks
+		// before they can be submitted, so files can't be added to the quick
+		// submit from here — the user either continues without them or cancels
+		// and selects them from the file list like any other change.
 		if (newlyDetectedFiles.length > 0) {
-			newFilesSelectedPaths = new Set(
-				newlyDetectedFiles
-					.filter((file) => file.submitStatus === SubmitStatus.Ok)
-					.map((file) => file.path)
-			);
 			showNewFilesPrompt = true;
 			return;
 		}
 
-		showQuickSubmitPreview = true;
-	};
-
-	const toggleNewFile = (path: string) => {
-		if (newFilesSelectedPaths.has(path)) {
-			newFilesSelectedPaths.delete(path);
-		} else {
-			newFilesSelectedPaths.add(path);
-		}
-		newFilesSelectedPaths = new Set(newFilesSelectedPaths);
-	};
-
-	const setAllNewFiles = (checked: boolean) => {
-		newFilesSelectedPaths = checked
-			? new Set(
-					newlyDetectedFiles
-						.filter((file) => file.submitStatus === SubmitStatus.Ok)
-						.map((file) => file.path)
-			  )
-			: new Set();
-	};
-
-	const handleConfirmNewFiles = () => {
-		// Re-resolve against the current status by path: a background refresh may
-		// have fired while this prompt was open, making our snapshotted file
-		// objects (and their submitStatus) stale.
-		const selectedPaths = new Set($selectedFiles.map((file) => file.path));
-		const filesToAdd = $allModifiedFiles.filter(
-			(file) =>
-				newFilesSelectedPaths.has(file.path) &&
-				!selectedPaths.has(file.path) &&
-				file.submitStatus === SubmitStatus.Ok
-		);
-		if (filesToAdd.length > 0) {
-			$selectedFiles = [...$selectedFiles, ...filesToAdd];
-		}
-		showNewFilesPrompt = false;
 		showQuickSubmitPreview = true;
 	};
 
@@ -1754,34 +1708,14 @@
 		<h3 class="text-lg font-semibold text-white">New Changes Detected</h3>
 		<p class="text-sm text-gray-300">
 			{newlyDetectedFiles.length} file{newlyDetectedFiles.length === 1 ? ' has' : 's have'} changed since
-			the file list was last refreshed and {newlyDetectedFiles.length === 1 ? 'is' : 'are'} not part
-			of your Quick Submit. Check any files you'd like to include.
+			the file list was last refreshed. {newlyDetectedFiles.length === 1 ? 'It' : 'They'} will not be
+			included in this Quick Submit.
 		</p>
-		{#if newFilesSelectableTotal > 0}
-			<div class="flex items-center gap-2">
-				<Checkbox
-					class="!p-1.5"
-					checked={newFilesAllSelected}
-					indeterminate={newFilesSomeSelected}
-					on:change={() => {
-						setAllNewFiles(!newFilesAllSelected);
-					}}>{newFilesAllSelected ? 'Deselect all' : 'Select all'}</Checkbox
-				>
-			</div>
-		{/if}
 		<div
 			class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
 		>
 			{#each newlyDetectedFiles as file}
 				<div class="flex gap-2 items-center" role="listitem">
-					<Checkbox
-						class="!p-1.5 shrink-0"
-						checked={newFilesSelectedPaths.has(file.path)}
-						disabled={file.submitStatus !== SubmitStatus.Ok}
-						on:change={() => {
-							toggleNewFile(file.path);
-						}}
-					/>
 					{#if file.state === ModifiedFileState.Added}
 						<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
 					{:else if file.state === ModifiedFileState.Modified}
@@ -1797,6 +1731,10 @@
 				</div>
 			{/each}
 		</div>
+		<p class="text-xs text-gray-400">
+			To include these files, cancel and select them from the file list — new assets may need to be
+			locked first.
+		</p>
 		<div class="flex justify-end gap-2">
 			<Button
 				size="sm"
@@ -1805,13 +1743,14 @@
 					showNewFilesPrompt = false;
 				}}>Cancel</Button
 			>
-			<Button size="sm" color="primary" on:click={handleConfirmNewFiles}>
-				{#if newFilesSelectedPaths.size > 0}
-					Add {newFilesSelectedPaths.size} & Continue
-				{:else}
-					Continue Without Adding
-				{/if}
-			</Button>
+			<Button
+				size="sm"
+				color="primary"
+				on:click={() => {
+					showNewFilesPrompt = false;
+					showQuickSubmitPreview = true;
+				}}>Continue Without New Files</Button
+			>
 		</div>
 	</div>
 </Modal>
