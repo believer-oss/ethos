@@ -57,7 +57,7 @@
 <Modal
 	size="sm"
 	color="none"
-	class="bg-secondary-700 dark:bg-space-900"
+	class="trace-deeplink-modal bg-secondary-700 dark:bg-space-900"
 	bodyClass="!border-t-0"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
@@ -107,3 +107,13 @@
 		</div>
 	{/if}
 </Modal>
+
+<style>
+	/* color="none" leaves the close button without a text color; restore visibility */
+	:global(.trace-deeplink-modal button[aria-label='Close modal']) {
+		color: rgb(156 163 175); /* tailwind gray-400 */
+	}
+	:global(.trace-deeplink-modal button[aria-label='Close modal']:hover) {
+		color: rgb(255 255 255);
+	}
+</style>

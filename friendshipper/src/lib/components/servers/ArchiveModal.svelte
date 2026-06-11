@@ -7,8 +7,9 @@
 		CalendarMonthOutline,
 		LinkOutline
 	} from 'flowbite-svelte-icons';
+	import { onDestroy, onMount } from 'svelte';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import {
 		downloadUtrace,
 		getRecentUtraces,
@@ -186,6 +187,18 @@
 		refreshBusy();
 		void loadRecent();
 	}
+
+	let unlistenDeepLink: UnlistenFn | null = null;
+
+	onMount(async () => {
+		unlistenDeepLink = await listen('trace-deeplink-received', () => {
+			showModal = false;
+		});
+	});
+
+	onDestroy(() => {
+		unlistenDeepLink?.();
+	});
 </script>
 
 <Modal

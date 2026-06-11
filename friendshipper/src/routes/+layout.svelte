@@ -1022,6 +1022,7 @@
 					filename,
 					key: `friendshipper/utrace/${date}/${serverName}/${filename}`
 				};
+				void emit('trace-deeplink-received');
 				traceDeepLinkOpen = true;
 			}
 		}
