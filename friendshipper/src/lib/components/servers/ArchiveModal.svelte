@@ -4,10 +4,12 @@
 		DownloadOutline,
 		PlayOutline,
 		ArrowLeftOutline,
-		CalendarMonthOutline
+		CalendarMonthOutline,
+		LinkOutline
 	} from 'flowbite-svelte-icons';
+	import { onDestroy, onMount } from 'svelte';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { emit } from '@tauri-apps/api/event';
+	import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 	import {
 		downloadUtrace,
 		getRecentUtraces,
@@ -123,6 +125,18 @@
 		traces = traces;
 	};
 
+	const handleCopyLink = async (trace: TraceEntry) => {
+		const link = `friendshipper://traces/${encodeURIComponent(trace.date)}/${encodeURIComponent(
+			trace.serverName
+		)}/${encodeURIComponent(trace.filename)}`;
+		try {
+			await navigator.clipboard.writeText(link);
+			await emit('success', 'Copied trace link');
+		} catch (e) {
+			await handleError(e);
+		}
+	};
+
 	const handleOpen = async (trace: TraceEntry) => {
 		busyOpen.add(trace.key);
 		traces = traces;
@@ -173,6 +187,18 @@
 		refreshBusy();
 		void loadRecent();
 	}
+
+	let unlistenDeepLink: UnlistenFn | null = null;
+
+	onMount(async () => {
+		unlistenDeepLink = await listen('trace-deeplink-received', () => {
+			showModal = false;
+		});
+	});
+
+	onDestroy(() => {
+		unlistenDeepLink?.();
+	});
 </script>
 
 <Modal
@@ -244,6 +270,14 @@
 					>
 						<div class="flex flex-col min-w-0 flex-1">
 							<div class="flex items-center gap-2 min-w-0">
+								<button
+									type="button"
+									class="shrink-0 text-gray-300 hover:text-primary-400 focus:outline-none"
+									title="Copy link to this trace"
+									on:click={() => handleCopyLink(trace)}
+								>
+									<LinkOutline class="w-3.5 h-3.5" />
+								</button>
 								<span class="text-sm text-white truncate" title={trace.filename}>
 									{trace.filename}
 								</span>
