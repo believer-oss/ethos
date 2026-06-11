@@ -69,6 +69,7 @@
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
 	import { refreshLogin, exitApp } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
+	import TraceDeepLinkModal from '$lib/components/servers/TraceDeepLinkModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import {
 		getAllCommits,
@@ -107,6 +108,15 @@
 	// Quick launch stuff
 	let quickLaunching = false;
 	let quickLaunchServerName = '';
+
+	// Trace deep link
+	let traceDeepLinkOpen = false;
+	let traceDeepLink: {
+		date: string;
+		serverName: string;
+		filename: string;
+		key: string;
+	} | null = null;
 
 	// Welcome modal
 	let showWelcomeModal = false;
@@ -1000,6 +1010,20 @@
 			setTimeout(() => {
 				void emit('build-deep-link', { group, commitSha, name });
 			}, 100);
+		} else if (payload.startsWith('traces/')) {
+			const [, rawDate, rawServer, rawFile] = payload.split('/');
+			if (rawDate && rawServer && rawFile) {
+				const date = decodeURIComponent(rawDate);
+				const serverName = decodeURIComponent(rawServer);
+				const filename = decodeURIComponent(rawFile);
+				traceDeepLink = {
+					date,
+					serverName,
+					filename,
+					key: `friendshipper/utrace/${date}/${serverName}/${filename}`
+				};
+				traceDeepLinkOpen = true;
+			}
 		}
 	});
 
@@ -1125,6 +1149,7 @@
 			class="flex bg-secondary-800 dark:bg-space-950 h-full overflow-y-hidden w-full overflow-x-hidden"
 		>
 			<QuickLaunchModal bind:showModal={quickLaunching} serverName={quickLaunchServerName} />
+			<TraceDeepLinkModal bind:open={traceDeepLinkOpen} trace={traceDeepLink} />
 			<Sidebar
 				asideClass="w-56 shadow-md sticky top-0 h-full"
 				activeClass="flex items-center p-2 text-base font-normal text-gray-900 bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
