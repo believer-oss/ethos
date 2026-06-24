@@ -57,7 +57,9 @@ impl GitMaintenanceRunner {
                     match git
                         .fetch(
                             ShouldPrune::Yes,
-                            Opts::default().with_skip_notify_frontend(),
+                            Opts::default()
+                                .with_skip_notify_frontend()
+                                .with_skip_interactive_auth(),
                         )
                         .await
                     {

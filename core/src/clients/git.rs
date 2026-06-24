@@ -124,6 +124,10 @@ pub struct Opts<'a> {
     pub return_complete_error: bool,
     pub lfs_mode: LfsMode,
     pub skip_notify_frontend: bool,
+    // When set, the git command runs with interactive credential prompts
+    // disabled. Use for background/non-user-initiated operations so a stale
+    // credential fails quietly instead of spawning a login window.
+    pub skip_interactive_auth: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -141,6 +145,7 @@ impl Default for Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 }
@@ -153,6 +158,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 
@@ -163,6 +169,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 
@@ -173,6 +180,7 @@ impl Opts<'_> {
             return_complete_error: true,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 
@@ -188,6 +196,11 @@ impl Opts<'_> {
 
     pub fn with_skip_notify_frontend(mut self) -> Self {
         self.skip_notify_frontend = true;
+        self
+    }
+
+    pub fn with_skip_interactive_auth(mut self) -> Self {
+        self.skip_interactive_auth = true;
         self
     }
 }
@@ -1544,8 +1557,13 @@ impl Git {
     }
 
     pub async fn run_maintenance(&self) -> anyhow::Result<()> {
-        self.run(&["maintenance", "run", "--auto"], Opts::default())
-            .await
+        // Runs on the background maintenance loop and may prefetch over the
+        // network, so it must not trigger an interactive credential prompt.
+        self.run(
+            &["maintenance", "run", "--auto"],
+            Opts::default().with_skip_interactive_auth(),
+        )
+        .await
     }
 
     pub async fn run_gc(&self) -> anyhow::Result<()> {
@@ -1654,6 +1672,7 @@ impl Git {
                     return_complete_error: true,
                     lfs_mode: LfsMode::Stubs,
                     skip_notify_frontend: false,
+                    skip_interactive_auth: false,
                 },
             )
             .await?;
@@ -1854,6 +1873,16 @@ impl Git {
 
         // disable clone protection
         cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+
+        // For background/non-user-initiated commands (e.g. the maintenance fetch
+        // loop), never allow an interactive credential prompt. If the cached
+        // credential is stale, the command fails quietly and the next
+        // user-initiated operation handles re-authentication, instead of a
+        // background loop spawning a GCM login window every few seconds.
+        if opts.skip_interactive_auth {
+            cmd.env("GIT_TERMINAL_PROMPT", "false");
+            cmd.env("GCM_INTERACTIVE", "never");
+        }
 
         if opts.lfs_mode == LfsMode::Stubs {
             cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
