@@ -33,6 +33,24 @@ lazy_static! {
     static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
     static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
     static ref GIT_FETCH_LOCK: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+
+    /// Process-wide serialization gate for *every* `git` subprocess this app
+    /// spawns. Two `git` processes running concurrently against the same repo
+    /// and credential store race destructively: Git Credential Manager stomps
+    /// the stored credential (surfacing as spurious re-auth prompts), and the
+    /// index / refs / packfiles can collide. Every subprocess spawn site holds
+    /// this guard for the lifetime of its child, so the app never has two `git`
+    /// processes in flight at once. External git processes (a user's terminal,
+    /// the engine) are out of scope — `wait_for_lock` mitigates index.lock
+    /// contention with those.
+    ///
+    /// INVARIANT — this lock is NOT re-entrant (tokio's Mutex deadlocks on a
+    /// second acquire from the same task). Every acquisition site is a leaf
+    /// that spawns exactly one subprocess and never calls another acquiring
+    /// function while holding the guard. `GIT_FETCH_LOCK` is always taken
+    /// *before* this lock (in `fetch`/`refetch`) and never after, so the two
+    /// have a consistent order and cannot deadlock against each other.
+    static ref GIT_PROCESS_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
 }
 
 #[cfg(windows)]
@@ -184,6 +202,14 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     bail!("Unable to parse string")
 }
 
+/// Acquire the process-wide git serialization guard. Hold the returned guard
+/// for the full lifetime of a `git` subprocess (spawn through wait). See
+/// [`GIT_PROCESS_LOCK`] for the invariant — never call this while already
+/// holding the guard.
+async fn acquire_git_process_lock() -> tokio::sync::OwnedMutexGuard<()> {
+    GIT_PROCESS_LOCK.clone().lock_owned().await
+}
+
 impl Git {
     pub fn new(repo_path: PathBuf, tx: std::sync::mpsc::Sender<String>) -> Git {
         Git { repo_path, tx }
@@ -206,6 +232,9 @@ impl Git {
         #[cfg(windows)]
         log.creation_flags(CREATE_NO_WINDOW);
 
+        // Reading FETCH_HEAD/HEAD races a concurrent fetch rewriting the same
+        // ref; serialize like every other git subprocess.
+        let _git_lock = acquire_git_process_lock().await;
         let output = log.output().await?;
 
         let stdout = std::str::from_utf8(&output.stdout)?;
@@ -588,6 +617,9 @@ impl Git {
             index_file.display()
         );
 
+        // Operates on a temp index but still writes loose objects into the real
+        // .git/objects — serialize against maintenance/gc and other git procs.
+        let _git_lock = acquire_git_process_lock().await;
         let output = cmd.output().await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1833,6 +1865,12 @@ impl Git {
         }
         info!("Running: {}", git_cmd_str);
 
+        // Serialize this subprocess against every other git process the app
+        // spawns. Held until the child exits and its stdout/stderr readers are
+        // joined below, guaranteeing no two app git processes overlap (which
+        // is what stomps GCM credentials and collides on the index/refs).
+        let _git_lock = acquire_git_process_lock().await;
+
         let out_pipe = Stdio::piped();
         let err_pipe = Stdio::piped();
 
@@ -1946,6 +1984,10 @@ pub async fn configure_global(key: &str, value: &str) -> Result<(), CoreError> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
+    // Rewrites ~/.gitconfig; a concurrent git reading global config can hit a
+    // transient access error on Windows (cf. the .git/config startup-order
+    // fix). Serialize against every other git subprocess.
+    let _git_lock = acquire_git_process_lock().await;
     let cmd_output = cmd.output().await?;
     if !cmd_output.status.success() {
         let err_output = String::from_utf8(cmd_output.stderr).unwrap_or_default();
