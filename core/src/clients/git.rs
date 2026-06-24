@@ -202,11 +202,24 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     bail!("Unable to parse string")
 }
 
+/// Wall-clock backstop for a single `git` subprocess. Because every git
+/// process now holds [`GIT_PROCESS_LOCK`] for its whole lifetime, a hung
+/// process — a stuck credential prompt, or a dead connection that never makes
+/// progress — would otherwise hold the lock forever and wedge *every* git
+/// operation in the app. The runner kills such a process so the lock is
+/// released and callers get an error. Set generously so it never trips a
+/// legitimately long op (large fetch, gc/repack). NOTE: a fresh full clone of
+/// a very large repo over a slow link can legitimately exceed this — bump it
+/// or special-case `clone` if that ever bites.
+const GIT_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
 /// Acquire the process-wide git serialization guard. Hold the returned guard
 /// for the full lifetime of a `git` subprocess (spawn through wait). See
 /// [`GIT_PROCESS_LOCK`] for the invariant — never call this while already
-/// holding the guard.
-async fn acquire_git_process_lock() -> tokio::sync::OwnedMutexGuard<()> {
+/// holding the guard. This applies to external callers in other crates too:
+/// hold it across a single spawn+wait and never call another git-spawning
+/// function while holding it.
+pub async fn acquire_git_process_lock() -> tokio::sync::OwnedMutexGuard<()> {
     GIT_PROCESS_LOCK.clone().lock_owned().await
 }
 
@@ -1922,7 +1935,23 @@ impl Git {
             }
         });
 
-        let status = git_proc.wait().await?;
+        let status = match tokio::time::timeout(GIT_PROCESS_TIMEOUT, git_proc.wait()).await {
+            Ok(wait_result) => wait_result?,
+            Err(_elapsed) => {
+                // Exceeded the generous ceiling — almost certainly hung (a stuck
+                // credential prompt, or a dead connection making no progress).
+                // Kill it so it can't hold GIT_PROCESS_LOCK forever and wedge
+                // every other git operation in the app.
+                warn!(
+                    "git command exceeded {:?}; killing hung process: {}",
+                    GIT_PROCESS_TIMEOUT, git_cmd_str
+                );
+                let _ = git_proc.kill().await;
+                let _ = out_handle.await;
+                let _ = err_handle.await;
+                bail!("Git command timed out. Check the log for details.");
+            }
+        };
 
         // The child has exited and closed its pipes, but the spawned readers may
         // not have flushed their final lines into out_lines/err_lines yet. Join
