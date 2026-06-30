@@ -401,9 +401,49 @@ impl Server {
                 }
             }
 
+            // Auto-repopulate the git credential if a background fetch later
+            // hits an auth error (a stomped or erased credential — e.g. after a
+            // transient 401, or a second process racing the credential store).
+            // The maintenance runner signals on this channel; we re-seed from
+            // the stored PAT so git recovers on the next fetch tick instead of
+            // only at restart. Capacity 1 collapses bursts into one re-seed.
+            let (reauth_tx, mut reauth_rx) = tokio::sync::mpsc::channel::<()>(1);
+            let reseed_state = shared_state.clone();
+            tokio::spawn(async move {
+                // Cooldown so that if the PAT itself is rejected (e.g. a lapsed
+                // SSO authorization), the every-tick failures don't churn the
+                // credential store with re-seeds that cannot help.
+                let cooldown = Duration::from_secs(120);
+                let mut last_reseed: Option<std::time::Instant> = None;
+                while reauth_rx.recv().await.is_some() {
+                    if let Some(t) = last_reseed {
+                        if t.elapsed() < cooldown {
+                            continue;
+                        }
+                    }
+                    let pat = match keyring::Entry::new(APP_NAME, KEYRING_USER)
+                        .and_then(|e| e.get_password())
+                    {
+                        Ok(p) if !p.is_empty() => p,
+                        _ => continue,
+                    };
+                    let username = reseed_state.github_username();
+                    info!("Background fetch hit an auth error; repopulating git credential from stored PAT");
+                    if let Err(e) = reseed_state
+                        .git()
+                        .store_credential("github.com", &username, &pat)
+                        .await
+                    {
+                        warn!("Failed to repopulate git credential after auth error: {e}");
+                    }
+                    last_reseed = Some(std::time::Instant::now());
+                }
+            });
+
             let maintenance_runner =
                 GitMaintenanceRunner::new(repo_path, pause_background_tasks.clone(), tx)
-                    .with_fetch_interval(Duration::from_secs(30));
+                    .with_fetch_interval(Duration::from_secs(30))
+                    .with_reauth_notifier(reauth_tx);
             tokio::spawn(async move {
                 match maintenance_runner.run().await {
                     Ok(_) => {}
