@@ -1353,10 +1353,20 @@ impl Git {
     }
 
     pub async fn verify_locks(&self) -> anyhow::Result<VerifyLocksResponse> {
+        // Runs `git lfs locks`, which contacts the LFS server and so can invoke
+        // the credential helper. This is only ever called from the ambient
+        // status refresh (see StatusOp), never from a deliberate user sync, so
+        // it must not launch an interactive credential prompt: a stale
+        // credential should fail quietly here (the caller degrades to the last
+        // known lock state) and re-auth happens on the next user-initiated
+        // pull/push. Without this, a background status refresh pops a GCM
+        // login window every few seconds once the stored credential expires.
         let output = match self
             .run_and_collect_output(
                 &["lfs", "locks", "--verify", "--json"],
-                Opts::new_without_logs().with_complete_error(),
+                Opts::new_without_logs()
+                    .with_complete_error()
+                    .with_skip_interactive_auth(),
             )
             .await
         {
@@ -1373,7 +1383,7 @@ impl Git {
                 // then try again
                 self.run_and_collect_output(
                     &["lfs", "locks", "--verify", "--json"],
-                    Opts::new_without_logs(),
+                    Opts::new_without_logs().with_skip_interactive_auth(),
                 )
                 .await?
             }
