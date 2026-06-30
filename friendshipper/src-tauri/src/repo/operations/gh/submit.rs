@@ -134,7 +134,7 @@ async fn filter_to_textlike_paths(
     // app git process (which is what stomps the GCM credential / collides on
     // .git). Scoped so the guard releases the instant the process exits.
     let output = {
-        let _git_lock = git::acquire_git_process_lock().await;
+        let _git_lock = git::acquire_git_process_lock("git check-attr (submit)").await;
         ethos_core::utils::process::run_with_stdin(cmd, input).await?
     };
     if !output.status.success() {
@@ -487,7 +487,8 @@ async fn run_git_with_index(
     // Serialize against every other app git process; this writes loose objects
     // via the temp index, exactly like core's locked `run_with_index_file`.
     // Held across the spawn+wait; released on return.
-    let _git_lock = git::acquire_git_process_lock().await;
+    let _git_lock =
+        git::acquire_git_process_lock(&format!("git {} (submit index)", args.join(" "))).await;
     Ok(cmd.output().await?)
 }
 

@@ -51,6 +51,16 @@ lazy_static! {
     /// *before* this lock (in `fetch`/`refetch`) and never after, so the two
     /// have a consistent order and cannot deadlock against each other.
     static ref GIT_PROCESS_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+
+    /// Who currently holds [`GIT_PROCESS_LOCK`], for observability only. Set when
+    /// the guard is acquired and cleared when it drops, so a waiting caller can
+    /// name the op it's queued behind (and how long that op has held the lock)
+    /// in the logs — turning "the app feels stuck on git" into a line that says
+    /// which command is holding things up. A plain (sync) parking_lot mutex: it's
+    /// a leaf, taken only briefly and never across an `.await`, so it adds no
+    /// ordering constraints against the locks above.
+    static ref GIT_LOCK_HOLDER: parking_lot::Mutex<Option<GitLockHolder>> =
+        parking_lot::Mutex::new(None);
 }
 
 #[cfg(windows)]
@@ -238,14 +248,79 @@ const GIT_PROCESS_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// negligible overhead.
 const GIT_PROCESS_IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// A caller holding [`GIT_PROCESS_LOCK`], tracked purely for log diagnostics.
+struct GitLockHolder {
+    /// Short description of the git op (typically the command line).
+    label: String,
+    /// When the lock was acquired, so waiters can report how long it's been held.
+    since: std::time::Instant,
+}
+
+/// If the lock is already held this long when a new caller arrives, that's a
+/// stall worth a warning (a slow sync, or an op on its way to the idle-timeout
+/// kill) rather than ordinary brief contention.
+const GIT_LOCK_SLOW_HOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// RAII guard for [`GIT_PROCESS_LOCK`] that also clears [`GIT_LOCK_HOLDER`] on
+/// drop. Returned by [`acquire_git_process_lock`]; hold it for the lifetime of
+/// a single git subprocess.
+pub struct GitLockGuard {
+    // Dropped after this struct's `Drop::drop` runs, so the holder is cleared
+    // just before the mutex is released.
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl Drop for GitLockGuard {
+    fn drop(&mut self) {
+        *GIT_LOCK_HOLDER.lock() = None;
+    }
+}
+
 /// Acquire the process-wide git serialization guard. Hold the returned guard
 /// for the full lifetime of a `git` subprocess (spawn through wait). See
 /// [`GIT_PROCESS_LOCK`] for the invariant — never call this while already
 /// holding the guard. This applies to external callers in other crates too:
 /// hold it across a single spawn+wait and never call another git-spawning
 /// function while holding it.
-pub async fn acquire_git_process_lock() -> tokio::sync::OwnedMutexGuard<()> {
-    GIT_PROCESS_LOCK.clone().lock_owned().await
+///
+/// `label` names the op for diagnostics (use the git command line where you
+/// have it). When the lock is contended, the wait is logged with the op that's
+/// holding it, so a stuck or slow git operation is visible in the logs.
+pub async fn acquire_git_process_lock(label: &str) -> GitLockGuard {
+    let guard = match GIT_PROCESS_LOCK.clone().try_lock_owned() {
+        Ok(g) => g,
+        Err(_) => {
+            // Contended — name who we're queued behind. Read + drop the holder
+            // lock before awaiting (never hold a sync mutex across `.await`).
+            let held = GIT_LOCK_HOLDER
+                .lock()
+                .as_ref()
+                .map(|h| (h.label.clone(), h.since.elapsed()));
+            match held {
+                Some((holder, held_for)) if held_for >= GIT_LOCK_SLOW_HOLD => {
+                    warn!(
+                        "git op {:?} blocked: lock held by {:?} for {:?} (slow op or stall)",
+                        label, holder, held_for
+                    );
+                }
+                Some((holder, held_for)) => {
+                    debug!(
+                        "git op {:?} waiting on lock held by {:?} (held {:?})",
+                        label, holder, held_for
+                    );
+                }
+                None => {}
+            }
+            GIT_PROCESS_LOCK.clone().lock_owned().await
+        }
+    };
+
+    *GIT_LOCK_HOLDER.lock() = Some(GitLockHolder {
+        label: label.to_string(),
+        since: std::time::Instant::now(),
+    });
+
+    GitLockGuard { _guard: guard }
 }
 
 impl Git {
@@ -272,7 +347,7 @@ impl Git {
 
         // Reading FETCH_HEAD/HEAD races a concurrent fetch rewriting the same
         // ref; serialize like every other git subprocess.
-        let _git_lock = acquire_git_process_lock().await;
+        let _git_lock = acquire_git_process_lock("git log -1 (head_commit)").await;
         let output = log.output().await?;
 
         let stdout = std::str::from_utf8(&output.stdout)?;
@@ -657,7 +732,8 @@ impl Git {
 
         // Operates on a temp index but still writes loose objects into the real
         // .git/objects — serialize against maintenance/gc and other git procs.
-        let _git_lock = acquire_git_process_lock().await;
+        let _git_lock =
+            acquire_git_process_lock(&format!("git {} (temp index)", args.join(" "))).await;
         let output = cmd.output().await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1792,7 +1868,7 @@ impl Git {
 
         // Spawns git processes (and the helper), so hold the process lock for
         // the whole reject + approve pair like every other spawn site.
-        let _git_lock = acquire_git_process_lock().await;
+        let _git_lock = acquire_git_process_lock("git credential (reject + approve)").await;
 
         // Step 1 — evict. Best-effort: `reject` is a no-op when nothing is
         // stored, and a hiccup here must not block re-seeding, so its result is
@@ -2029,7 +2105,7 @@ impl Git {
         // spawns. Held until the child exits and its stdout/stderr readers are
         // joined below, guaranteeing no two app git processes overlap (which
         // is what stomps GCM credentials and collides on the index/refs).
-        let _git_lock = acquire_git_process_lock().await;
+        let _git_lock = acquire_git_process_lock(&git_cmd_str).await;
 
         let out_pipe = Stdio::piped();
         let err_pipe = Stdio::piped();
@@ -2181,7 +2257,7 @@ pub async fn configure_global(key: &str, value: &str) -> Result<(), CoreError> {
     // Rewrites ~/.gitconfig; a concurrent git reading global config can hit a
     // transient access error on Windows (cf. the .git/config startup-order
     // fix). Serialize against every other git subprocess.
-    let _git_lock = acquire_git_process_lock().await;
+    let _git_lock = acquire_git_process_lock(&format!("git config --global {key}")).await;
     let cmd_output = cmd.output().await?;
     if !cmd_output.status.success() {
         let err_output = String::from_utf8(cmd_output.stderr).unwrap_or_default();
