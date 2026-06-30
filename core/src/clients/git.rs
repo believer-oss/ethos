@@ -215,16 +215,28 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     bail!("Unable to parse string")
 }
 
-/// Wall-clock backstop for a single `git` subprocess. Because every git
-/// process now holds [`GIT_PROCESS_LOCK`] for its whole lifetime, a hung
-/// process — a stuck credential prompt, or a dead connection that never makes
-/// progress — would otherwise hold the lock forever and wedge *every* git
-/// operation in the app. The runner kills such a process so the lock is
-/// released and callers get an error. Set generously so it never trips a
-/// legitimately long op (large fetch, gc/repack). NOTE: a fresh full clone of
-/// a very large repo over a slow link can legitimately exceed this — bump it
-/// or special-case `clone` if that ever bites.
-const GIT_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// Idle (no-progress) backstop for a single `git` subprocess. Because every git
+/// process now holds [`GIT_PROCESS_LOCK`] for its whole lifetime, a hung process
+/// — a stuck credential prompt, or a dead connection that never makes progress —
+/// would otherwise hold the lock forever and wedge *every* git operation in the
+/// app. The runner kills such a process so the lock is released and callers get
+/// an error.
+///
+/// This is deliberately an *idle* timeout, not a wall-clock one: a hung process
+/// is distinguished from a slow-but-healthy one (a large clone / fetch / LFS
+/// pull streaming progress over a slow link) by the *absence of output*, not by
+/// total elapsed time. We reset the clock on every line the child writes, so a
+/// command that keeps making progress is never killed no matter how long it
+/// runs, while one that goes completely silent for this long is treated as hung.
+/// Generous on purpose — only true silence should trip it; it can be lowered now
+/// that progressing ops are safe.
+const GIT_PROCESS_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// How often the idle watchdog wakes to compare now against the child's last
+/// output. Bounds how long past [`GIT_PROCESS_IDLE_TIMEOUT`] a hung process can
+/// linger before it's killed; small relative to the timeout, large enough to be
+/// negligible overhead.
+const GIT_PROCESS_IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Acquire the process-wide git serialization guard. Hold the returned guard
 /// for the full lifetime of a `git` subprocess (spawn through wait). See
@@ -2039,11 +2051,20 @@ impl Git {
         let out_lines: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(vec![]));
         let err_lines: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(vec![]));
 
+        // Tracks the last time the child produced any output, so the idle
+        // watchdog below can tell a hung process from a slow-but-progressing
+        // one. Both reader tasks bump it on every line.
+        let last_activity: Arc<RwLock<std::time::Instant>> =
+            Arc::new(RwLock::new(std::time::Instant::now()));
+
         let out_lines_thread = out_lines.clone();
+        let out_activity = last_activity.clone();
         let is_collecting_out_lines = output.is_some();
         let should_log_stdout = opts.should_log_stdout;
         let out_handle = tokio::spawn(async move {
             while let Some(line) = out_reader.next_line().await.unwrap() {
+                *out_activity.write() = std::time::Instant::now();
+
                 // Shorten any line starting with "Updating files". Git currently sends us a huge
                 // wall of text with all the individual percentage updates, instead of one line
                 // per update.
@@ -2063,28 +2084,37 @@ impl Git {
         });
 
         let err_lines_thread = err_lines.clone();
+        let err_activity = last_activity.clone();
         let err_handle = tokio::spawn(async move {
             while let Some(line) = err_reader.next_line().await.unwrap() {
+                *err_activity.write() = std::time::Instant::now();
                 err_lines_thread.write().push(line.clone());
                 info!("{}", line);
             }
         });
 
-        let status = match tokio::time::timeout(GIT_PROCESS_TIMEOUT, git_proc.wait()).await {
-            Ok(wait_result) => wait_result?,
-            Err(_elapsed) => {
-                // Exceeded the generous ceiling — almost certainly hung (a stuck
-                // credential prompt, or a dead connection making no progress).
-                // Kill it so it can't hold GIT_PROCESS_LOCK forever and wedge
-                // every other git operation in the app.
-                warn!(
-                    "git command exceeded {:?}; killing hung process: {}",
-                    GIT_PROCESS_TIMEOUT, git_cmd_str
-                );
-                let _ = git_proc.kill().await;
-                let _ = out_handle.await;
-                let _ = err_handle.await;
-                bail!("Git command timed out. Check the log for details.");
+        // Idle watchdog: wake periodically and kill the child only if it has
+        // produced no output for GIT_PROCESS_IDLE_TIMEOUT. A command that keeps
+        // streaming progress (a large clone/fetch/LFS pull) resets the clock on
+        // every line and is never killed for simply taking a long time; only a
+        // truly stalled process (stuck prompt, dead connection) trips it.
+        let status = loop {
+            match tokio::time::timeout(GIT_PROCESS_IDLE_CHECK, git_proc.wait()).await {
+                Ok(wait_result) => break wait_result?,
+                Err(_elapsed) => {
+                    let idle = last_activity.read().elapsed();
+                    if idle >= GIT_PROCESS_IDLE_TIMEOUT {
+                        warn!(
+                            "git command made no progress for {:?}; killing stalled process: {}",
+                            idle, git_cmd_str
+                        );
+                        let _ = git_proc.kill().await;
+                        let _ = out_handle.await;
+                        let _ = err_handle.await;
+                        bail!("Git command stalled with no progress. Check the log for details.");
+                    }
+                    // Still producing output recently — keep waiting.
+                }
             }
         };
 
