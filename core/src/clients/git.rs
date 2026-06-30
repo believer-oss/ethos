@@ -1712,16 +1712,41 @@ impl Git {
         self.run(&["config", key, value], Opts::default()).await
     }
 
-    /// Seed git's configured credential helper with an HTTPS credential for
+    /// Build a `git credential <action>` command wired with this client's repo
+    /// cwd and the standard env/creation flags. Shared by the reject + approve
+    /// steps of [`Self::store_credential`].
+    fn build_credential_command(&self, action: &str) -> anyhow::Result<Command> {
+        let mut cmd = Command::new("git");
+        cmd.args(["credential", action]);
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+        if !self.repo_path.as_os_str().is_empty() {
+            cmd.current_dir(&self.repo_path.canonicalize()?);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        Ok(cmd)
+    }
+
+    /// Refresh git's configured credential helper with an HTTPS credential for
     /// `host`, so subsequent network git operations authenticate
     /// non-interactively instead of the helper launching a login window.
     ///
-    /// The credential is fed to `git credential approve` over **stdin** — never
-    /// on the command line — so the secret never lands in process arguments,
-    /// our git-output channel, or the logs. Whatever helper the user has
-    /// configured (e.g. Git Credential Manager) performs the actual storage,
-    /// keyed by host; re-seeding overwrites whatever it had cached, including a
-    /// stale credential the helper erased after a prior 401.
+    /// Two steps, in order:
+    /// 1. **Evict** any existing host-level credential for `host`
+    ///    (`git credential reject` with no username). This is the crucial part:
+    ///    git-remote-https (fetch/pull/push) asks the helper for
+    ///    `https://<host>` with *no* username, and a stale entry sitting there —
+    ///    e.g. an expired GCM OAuth token — shadows whatever we store next, so
+    ///    the seed appears to land in the credential store yet fetches keep
+    ///    failing. Rejecting first mirrors clearing the credential by hand,
+    ///    which is what makes the new credential actually resolve for a
+    ///    bare-host fetch.
+    /// 2. **Seed** the new credential (`git credential approve`).
+    ///
+    /// The credential is fed over **stdin** — never on the command line — so the
+    /// secret never lands in process arguments, our git-output channel, or the
+    /// logs. Whatever helper the user has configured (e.g. Git Credential
+    /// Manager) performs the actual storage.
     ///
     /// This is how a non-expiring PAT held in the app keyring becomes *git's*
     /// credential (the in-app PAT otherwise only feeds the GitHub HTTP API,
@@ -1730,8 +1755,8 @@ impl Git {
     /// back to the conventional `x-access-token` rather than leaving git with
     /// an incomplete credential it would prompt to fill.
     ///
-    /// Best-effort: if no credential helper is configured, `git credential
-    /// approve` is a no-op and this returns `Ok`.
+    /// Best-effort: if no credential helper is configured, the underlying git
+    /// commands are no-ops and this returns `Ok`.
     pub async fn store_credential(
         &self,
         host: &str,
@@ -1744,32 +1769,42 @@ impl Git {
             username
         };
 
-        // git's credential protocol: key=value lines terminated by a blank
-        // line. The password line carries the secret; everything below treats
-        // `input` as sensitive (no logging, fed only via stdin).
+        // Narrate the action + its effect so the logs explain why a stored
+        // credential changed out from under the user. Host + username only —
+        // never the password.
+        info!(
+            "Refreshing git credential for {host} from the saved PAT (username: {username}): \
+             evicting any stale host-level entry, then re-seeding the credential helper so \
+             background fetch/pull/push/lfs authenticate without an interactive login."
+        );
+
+        // Spawns git processes (and the helper), so hold the process lock for
+        // the whole reject + approve pair like every other spawn site.
+        let _git_lock = acquire_git_process_lock().await;
+
+        // Step 1 — evict. Best-effort: `reject` is a no-op when nothing is
+        // stored, and a hiccup here must not block re-seeding, so its result is
+        // intentionally ignored. No secret involved — only protocol + host.
+        if let Ok(reject_cmd) = self.build_credential_command("reject") {
+            let reject_input = format!("protocol=https\nhost={host}\n\n");
+            let _ =
+                crate::utils::process::run_with_stdin(reject_cmd, reject_input.into_bytes()).await;
+        }
+
+        // Step 2 — seed. git's credential protocol: key=value lines terminated
+        // by a blank line. The password line carries the secret; `input` is
+        // sensitive (fed only via stdin, never logged). `run_with_stdin` does
+        // not log stdin.
         let input =
             format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n\n");
-
-        let mut cmd = Command::new("git");
-        cmd.args(["credential", "approve"]);
-        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
-        if !self.repo_path.as_os_str().is_empty() {
-            cmd.current_dir(&self.repo_path.canonicalize()?);
-        }
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-
-        // Note: host + username only — never the password.
-        info!("Seeding git credential for host {host} (username: {username})");
-
-        // Spawns a git process (and the helper), so hold the process lock like
-        // every other spawn site. `run_with_stdin` does not log stdin.
-        let _git_lock = acquire_git_process_lock().await;
-        let output = crate::utils::process::run_with_stdin(cmd, input.into_bytes()).await?;
+        let approve_cmd = self.build_credential_command("approve")?;
+        let output = crate::utils::process::run_with_stdin(approve_cmd, input.into_bytes()).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!("git credential approve failed: {}", stderr.trim());
         }
+
+        info!("Stored git credential for {host} refreshed (username: {username})");
         Ok(())
     }
 
@@ -2191,15 +2226,17 @@ mod tests {
         (git, dir)
     }
 
-    // store_credential must actually make the credential retrievable via git's
-    // own credential plumbing — that's the whole point of seeding the PAT so
-    // network git stops prompting. We point credential.helper at a throwaway
-    // file (never the user's real store), seed a token, then `git credential
-    // fill` and assert the seeded username/password come back. Also covers the
-    // empty-username fallback to `x-access-token`, so git never gets an
-    // incomplete credential it would prompt to complete.
+    // store_credential must (a) evict any stale host-level credential and
+    // (b) make the new one retrievable via git's own credential plumbing —
+    // that's the whole point of seeding the PAT so network git stops prompting.
+    // We point credential.helper at a throwaway file (never the user's real
+    // store), pre-seed a STALE credential, call store_credential, then
+    // `git credential fill` and assert the stale value is gone and the new
+    // username/password come back. Also covers the empty-username fallback to
+    // `x-access-token`, so git never gets an incomplete credential it would
+    // prompt to complete.
     #[tokio::test]
-    async fn test_store_credential_is_retrievable_via_fill() {
+    async fn test_store_credential_evicts_stale_then_seeds() {
         use std::io::Write;
         use std::process::Stdio;
 
@@ -2227,6 +2264,26 @@ mod tests {
                 .expect("set credential.helper");
             assert!(out.status.success());
         }
+
+        // Pre-seed a STALE credential for the host so we can prove
+        // store_credential evicts it (the reject step) before writing the new
+        // one — rather than leaving the stale value shadowing ours, which is the
+        // exact failure mode this hardening fixes.
+        let mut stale = StdCommand::new("git")
+            .args(["credential", "approve"])
+            .current_dir(&git.repo_path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("spawn pre-seed approve");
+        stale
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                b"protocol=https\nhost=github.com\nusername=staleuser\npassword=ghp_STALEvalue\n\n",
+            )
+            .unwrap();
+        assert!(stale.wait().expect("pre-seed approve").success());
 
         // Empty username must fall back to x-access-token.
         git.store_credential("github.com", "", "ghp_seededtoken")
@@ -2256,6 +2313,10 @@ mod tests {
         assert!(
             stdout.contains("username=x-access-token"),
             "fill did not return fallback username: {stdout}"
+        );
+        assert!(
+            !stdout.contains("ghp_STALEvalue"),
+            "stale credential was not evicted before seeding: {stdout}"
         );
     }
 
