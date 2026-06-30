@@ -1712,6 +1712,67 @@ impl Git {
         self.run(&["config", key, value], Opts::default()).await
     }
 
+    /// Seed git's configured credential helper with an HTTPS credential for
+    /// `host`, so subsequent network git operations authenticate
+    /// non-interactively instead of the helper launching a login window.
+    ///
+    /// The credential is fed to `git credential approve` over **stdin** — never
+    /// on the command line — so the secret never lands in process arguments,
+    /// our git-output channel, or the logs. Whatever helper the user has
+    /// configured (e.g. Git Credential Manager) performs the actual storage,
+    /// keyed by host; re-seeding overwrites whatever it had cached, including a
+    /// stale credential the helper erased after a prior 401.
+    ///
+    /// This is how a non-expiring PAT held in the app keyring becomes *git's*
+    /// credential (the in-app PAT otherwise only feeds the GitHub HTTP API,
+    /// never git). `username` should be the GitHub login when known; for a
+    /// classic PAT the value is ignored by GitHub, so an empty string falls
+    /// back to the conventional `x-access-token` rather than leaving git with
+    /// an incomplete credential it would prompt to fill.
+    ///
+    /// Best-effort: if no credential helper is configured, `git credential
+    /// approve` is a no-op and this returns `Ok`.
+    pub async fn store_credential(
+        &self,
+        host: &str,
+        username: &str,
+        password: &str,
+    ) -> anyhow::Result<()> {
+        let username = if username.is_empty() {
+            "x-access-token"
+        } else {
+            username
+        };
+
+        // git's credential protocol: key=value lines terminated by a blank
+        // line. The password line carries the secret; everything below treats
+        // `input` as sensitive (no logging, fed only via stdin).
+        let input =
+            format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n\n");
+
+        let mut cmd = Command::new("git");
+        cmd.args(["credential", "approve"]);
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+        if !self.repo_path.as_os_str().is_empty() {
+            cmd.current_dir(&self.repo_path.canonicalize()?);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        // Note: host + username only — never the password.
+        info!("Seeding git credential for host {host} (username: {username})");
+
+        // Spawns a git process (and the helper), so hold the process lock like
+        // every other spawn site. `run_with_stdin` does not log stdin.
+        let _git_lock = acquire_git_process_lock().await;
+        let output = crate::utils::process::run_with_stdin(cmd, input.into_bytes()).await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("git credential approve failed: {}", stderr.trim());
+        }
+        Ok(())
+    }
+
     #[instrument]
     pub async fn configure_untracked_cache(&self) -> anyhow::Result<()> {
         // get current setting for core.untrackedCache
@@ -2128,6 +2189,74 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let git = Git::new(path, tx);
         (git, dir)
+    }
+
+    // store_credential must actually make the credential retrievable via git's
+    // own credential plumbing — that's the whole point of seeding the PAT so
+    // network git stops prompting. We point credential.helper at a throwaway
+    // file (never the user's real store), seed a token, then `git credential
+    // fill` and assert the seeded username/password come back. Also covers the
+    // empty-username fallback to `x-access-token`, so git never gets an
+    // incomplete credential it would prompt to complete.
+    #[tokio::test]
+    async fn test_store_credential_is_retrievable_via_fill() {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let (git, dir) = setup_repo();
+
+        // Isolate from the developer's real credential helper (e.g. a global
+        // GCM): an empty `credential.helper` value resets the inherited helper
+        // list, so only the throwaway `store` helper added afterward runs for
+        // this repo. Without the reset, git consults the global helper too and
+        // both `approve` (touching the real store!) and `fill` (shadowing our
+        // seeded value with the real one) would leak across the test boundary.
+        let cred_file = dir.path().join("creds");
+        let helper = format!(
+            "store --file={}",
+            cred_file.to_string_lossy().replace('\\', "/")
+        );
+        for args in [
+            &["config", "--local", "credential.helper", ""][..],
+            &["config", "--local", "--add", "credential.helper", &helper][..],
+        ] {
+            let out = StdCommand::new("git")
+                .args(args)
+                .current_dir(&git.repo_path)
+                .output()
+                .expect("set credential.helper");
+            assert!(out.status.success());
+        }
+
+        // Empty username must fall back to x-access-token.
+        git.store_credential("github.com", "", "ghp_seededtoken")
+            .await
+            .expect("store_credential");
+
+        let mut child = StdCommand::new("git")
+            .args(["credential", "fill"])
+            .current_dir(&git.repo_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn git credential fill");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"protocol=https\nhost=github.com\n\n")
+            .unwrap();
+        let out = child.wait_with_output().expect("fill output");
+        assert!(out.status.success());
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("password=ghp_seededtoken"),
+            "fill did not return seeded password: {stdout}"
+        );
+        assert!(
+            stdout.contains("username=x-access-token"),
+            "fill did not return fallback username: {stdout}"
+        );
     }
 
     // Regression: startup maintenance expired reflogs with the expiry window

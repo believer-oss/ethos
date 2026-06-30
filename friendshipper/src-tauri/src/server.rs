@@ -380,6 +380,27 @@ impl Server {
         // fetch` reading the same .git/config — on Windows that surfaces as
         // "unable to access '.git/config': Permission denied".
         if !repo_path.is_empty() {
+            // Seed git's credential helper from the stored PAT before any
+            // background git runs, so fetch/maintenance/status authenticate via
+            // the (ideally non-expiring) token instead of popping an
+            // interactive login — and so a credential the helper erased after a
+            // prior 401 is restored on launch. Awaited inline so it's in place
+            // before the maintenance runner's first fetch. Best-effort.
+            if let Ok(entry) = keyring::Entry::new(APP_NAME, KEYRING_USER) {
+                if let Ok(pat) = entry.get_password() {
+                    if !pat.is_empty() {
+                        let username = shared_state.github_username();
+                        if let Err(e) = shared_state
+                            .git()
+                            .store_credential("github.com", &username, &pat)
+                            .await
+                        {
+                            warn!("Failed to seed git credential from PAT at startup: {e}");
+                        }
+                    }
+                }
+            }
+
             let maintenance_runner =
                 GitMaintenanceRunner::new(repo_path, pause_background_tasks.clone(), tx)
                     .with_fetch_interval(Duration::from_secs(30));

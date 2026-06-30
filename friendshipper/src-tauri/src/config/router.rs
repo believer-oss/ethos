@@ -5,7 +5,7 @@ use axum::extract::Query;
 use axum::{extract::State, routing::get, Json, Router};
 use ethos_core::AWSClient;
 use serde::Deserialize;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::clients::kube::ensure_kube_client;
@@ -262,6 +262,22 @@ where
                 // store pat in keyring
                 let entry = keyring::Entry::new(APP_NAME, KEYRING_USER)?;
                 entry.set_password(&pat.to_string())?;
+
+                // Seed git's credential helper with the PAT so network git
+                // operations (fetch/pull/push/lfs) authenticate via this token
+                // instead of the helper popping an interactive login. The
+                // GraphQL client was just created above, so github_username is
+                // populated. Best-effort: a failure here must not block saving
+                // config — it just means git auth falls back to its prior
+                // behavior.
+                let username = state.github_username();
+                if let Err(e) = state
+                    .git()
+                    .store_credential("github.com", &username, &pat.to_string())
+                    .await
+                {
+                    warn!("Failed to seed git credential from PAT: {e}");
+                }
             }
             None => {
                 // Only worry about this if we don't already have a Github Client
