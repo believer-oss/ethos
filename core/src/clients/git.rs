@@ -1819,17 +1819,15 @@ impl Git {
     /// `host`, so subsequent network git operations authenticate
     /// non-interactively instead of the helper launching a login window.
     ///
-    /// Two steps, in order:
-    /// 1. **Evict** any existing host-level credential for `host`
-    ///    (`git credential reject` with no username). This is the crucial part:
-    ///    git-remote-https (fetch/pull/push) asks the helper for
-    ///    `https://<host>` with *no* username, and a stale entry sitting there —
-    ///    e.g. an expired GCM OAuth token — shadows whatever we store next, so
-    ///    the seed appears to land in the credential store yet fetches keep
-    ///    failing. Rejecting first mirrors clearing the credential by hand,
-    ///    which is what makes the new credential actually resolve for a
-    ///    bare-host fetch.
-    /// 2. **Seed** the new credential (`git credential approve`).
+    /// First checks, non-interactively, whether the helper already serves this
+    /// exact credential for a bare `https://<host>` request (what fetch/pull/
+    /// push use). If it does, this is a no-op — we don't touch a credential
+    /// store we don't own. Only when the stored value is wrong or missing do we
+    /// replace it: evict the stale host-level entry (`git credential reject`
+    /// with no username), then seed the new one (`git credential approve`). The
+    /// evict is required because a stale entry (e.g. an expired GCM OAuth token)
+    /// otherwise shadows what we store, so a bare-host `git fetch` keeps failing
+    /// even though the seed appears to land.
     ///
     /// The credential is fed over **stdin** — never on the command line — so the
     /// secret never lands in process arguments, our git-output channel, or the
@@ -1857,18 +1855,27 @@ impl Git {
             username
         };
 
-        // Narrate the action + its effect so the logs explain why a stored
-        // credential changed out from under the user. Host + username only —
-        // never the password.
+        // Hold the process lock across the check and any replacement, like
+        // every other spawn site.
+        let _git_lock = acquire_git_process_lock("git credential (check + refresh)").await;
+
+        // If the helper already serves exactly this credential for a bare-host
+        // request, there's nothing to do. Skipping avoids churning a store we
+        // don't own — and the brief window where the reject below has removed
+        // the entry — so we mutate only when the stored value is wrong or
+        // missing.
+        if self.current_credential_password(host).await.as_deref() == Some(password) {
+            debug!("git credential for {host} already current; leaving it untouched");
+            return Ok(());
+        }
+
+        // Narrate the action + effect so the logs explain why a stored
+        // credential changed. Host + username only — never the password.
         info!(
             "Refreshing git credential for {host} from the saved PAT (username: {username}): \
-             evicting any stale host-level entry, then re-seeding the credential helper so \
+             evicting the stale host-level entry, then re-seeding the credential helper so \
              background fetch/pull/push/lfs authenticate without an interactive login."
         );
-
-        // Spawns git processes (and the helper), so hold the process lock for
-        // the whole reject + approve pair like every other spawn site.
-        let _git_lock = acquire_git_process_lock("git credential (reject + approve)").await;
 
         // Step 1 — evict. Best-effort: `reject` is a no-op when nothing is
         // stored, and a hiccup here must not block re-seeding, so its result is
@@ -1894,6 +1901,28 @@ impl Git {
 
         info!("Stored git credential for {host} refreshed (username: {username})");
         Ok(())
+    }
+
+    /// Password the configured credential helper currently serves for a bare
+    /// `https://<host>` request (what git-remote-https uses), or `None` if
+    /// nothing is stored. Runs non-interactively, so the check itself can never
+    /// launch a credential prompt. Used by [`Self::store_credential`] to skip
+    /// replacing a credential that already matches.
+    async fn current_credential_password(&self, host: &str) -> Option<String> {
+        let mut cmd = self.build_credential_command("fill").ok()?;
+        // Never prompt just to read the current value.
+        cmd.env("GIT_TERMINAL_PROMPT", "false");
+        cmd.env("GCM_INTERACTIVE", "never");
+        let input = format!("protocol=https\nhost={host}\n\n");
+        let output = crate::utils::process::run_with_stdin(cmd, input.into_bytes())
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|l| l.strip_prefix("password=").map(str::to_string))
     }
 
     #[instrument]
@@ -2423,6 +2452,32 @@ mod tests {
         assert!(
             !stdout.contains("ghp_STALEvalue"),
             "stale credential was not evicted before seeding: {stdout}"
+        );
+
+        // Seeding the SAME credential again hits the "already current" fast
+        // path (fill matches → no reject/approve) and must leave it intact.
+        git.store_credential("github.com", "", "ghp_seededtoken")
+            .await
+            .expect("store_credential (idempotent)");
+        let mut child = StdCommand::new("git")
+            .args(["credential", "fill"])
+            .current_dir(&git.repo_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn git credential fill");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"protocol=https\nhost=github.com\n\n")
+            .unwrap();
+        let out = child.wait_with_output().expect("fill output");
+        assert!(out.status.success());
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("password=ghp_seededtoken"),
+            "credential not intact after idempotent re-seed: {stdout}"
         );
     }
 
