@@ -1823,11 +1823,12 @@ impl Git {
     /// exact credential for a bare `https://<host>` request (what fetch/pull/
     /// push use). If it does, this is a no-op — we don't touch a credential
     /// store we don't own. Only when the stored value is wrong or missing do we
-    /// replace it: evict the stale host-level entry (`git credential reject`
-    /// with no username), then seed the new one (`git credential approve`). The
-    /// evict is required because a stale entry (e.g. an expired GCM OAuth token)
-    /// otherwise shadows what we store, so a bare-host `git fetch` keeps failing
-    /// even though the seed appears to land.
+    /// replace it: evict our existing entry (`git credential reject`, targeting
+    /// the seeded username so we clear only the credential we manage and don't
+    /// disturb another github.com account the user may also have), then seed
+    /// the new one (`git credential approve`). The evict is required because a
+    /// stale entry (e.g. an expired token) otherwise shadows what we store, so a
+    /// bare-host `git fetch` keeps failing even though the seed appears to land.
     ///
     /// The credential is fed over **stdin** — never on the command line — so the
     /// secret never lands in process arguments, our git-output channel, or the
@@ -1873,15 +1874,18 @@ impl Git {
         // credential changed. Host + username only — never the password.
         info!(
             "Refreshing git credential for {host} from the saved PAT (username: {username}): \
-             evicting the stale host-level entry, then re-seeding the credential helper so \
-             background fetch/pull/push/lfs authenticate without an interactive login."
+             evicting our stale entry, then re-seeding the credential helper so background \
+             fetch/pull/push/lfs authenticate without an interactive login."
         );
 
-        // Step 1 — evict. Best-effort: `reject` is a no-op when nothing is
-        // stored, and a hiccup here must not block re-seeding, so its result is
-        // intentionally ignored. No secret involved — only protocol + host.
+        // Step 1 — evict our entry. Target the specific username so we clear
+        // only the credential we manage, not another github.com account the
+        // user may also have stored. Best-effort: `reject` is a no-op when
+        // nothing matches, and a hiccup here must not block re-seeding, so its
+        // result is intentionally ignored. No secret involved (protocol + host
+        // + username only).
         if let Ok(reject_cmd) = self.build_credential_command("reject") {
-            let reject_input = format!("protocol=https\nhost={host}\n\n");
+            let reject_input = format!("protocol=https\nhost={host}\nusername={username}\n\n");
             let _ =
                 crate::utils::process::run_with_stdin(reject_cmd, reject_input.into_bytes()).await;
         }
@@ -2400,10 +2404,10 @@ mod tests {
             assert!(out.status.success());
         }
 
-        // Pre-seed a STALE credential for the host so we can prove
-        // store_credential evicts it (the reject step) before writing the new
-        // one — rather than leaving the stale value shadowing ours, which is the
-        // exact failure mode this hardening fixes.
+        // Pre-seed a STALE credential under the same username we manage
+        // (x-access-token, the empty-username fallback) but an old password, so
+        // we can prove store_credential's targeted reject evicts it before
+        // writing the new one rather than leaving the stale value shadowing ours.
         let mut stale = StdCommand::new("git")
             .args(["credential", "approve"])
             .current_dir(&git.repo_path)
@@ -2415,7 +2419,7 @@ mod tests {
             .take()
             .unwrap()
             .write_all(
-                b"protocol=https\nhost=github.com\nusername=staleuser\npassword=ghp_STALEvalue\n\n",
+                b"protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghp_STALEvalue\n\n",
             )
             .unwrap();
         assert!(stale.wait().expect("pre-seed approve").success());
