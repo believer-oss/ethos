@@ -121,6 +121,13 @@ pub struct AppConfig {
     #[serde(default, rename = "githubPAT", skip_serializing_if = "Option::is_none")]
     pub github_pat: Option<RedactedString>,
 
+    /// When true (the default), the PAT is also seeded into git's configured
+    /// credential helper so background fetch/pull/push authenticate without an
+    /// interactive login. Off means Friendshipper never touches git's
+    /// credential store and the PAT stays API-only.
+    #[serde(default = "default_true", rename = "seedGitCredentials")]
+    pub seed_git_credentials: bool,
+
     #[serde(default, rename = "engineType")]
     pub engine_type: EngineType,
 
@@ -189,6 +196,10 @@ fn default_playtest_region() -> String {
     AWS_REGION.to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl AppConfig {
     pub fn new(app_name: &str) -> Self {
         #[cfg(target_os = "windows")]
@@ -217,6 +228,7 @@ impl AppConfig {
             editor_download_symbols: false,
             open_uproject_after_sync: true,
             github_pat: Default::default(),
+            seed_git_credentials: true,
             engine_type: Default::default(),
             engine_prebuilt_path: engine_prebuilt_path.to_string_lossy().to_string(),
             engine_source_path: Default::default(),
@@ -652,7 +664,17 @@ pub struct UnrealVerSelDiagResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::config::CUSTOM_ENGINE_ASSOCIATION_REGEX;
+    use crate::types::config::{AppConfig, CUSTOM_ENGINE_ASSOCIATION_REGEX};
+
+    // Users upgrading from a build without the toggle have no
+    // `seedGitCredentials` key in their saved config — seeding must stay ON
+    // for them, not silently flip off.
+    #[test]
+    fn seed_git_credentials_defaults_on_when_absent() {
+        let cfg: AppConfig = serde_yaml::from_str("repoPath: foo").expect("parse minimal config");
+        assert!(cfg.seed_git_credentials);
+        assert!(AppConfig::new("test").seed_git_credentials);
+    }
 
     #[test]
     fn test_engine_association_regex() {

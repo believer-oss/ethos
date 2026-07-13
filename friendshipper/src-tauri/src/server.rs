@@ -386,7 +386,19 @@ impl Server {
             // interactive login — and so a credential the helper erased after a
             // prior 401 is restored on launch. Awaited inline so it's in place
             // before the maintenance runner's first fetch. Best-effort.
-            if let Ok(entry) = keyring::Entry::new(APP_NAME, KEYRING_USER) {
+            // Gated on the user preference: with seeding off, Friendshipper
+            // never touches git's credential store. It does remove its own
+            // username pin (a persistent .git/config write from an earlier
+            // seed) if one is still present — restoring whatever value the
+            // user had — so opting out really does hand git auth back to them
+            // even if the disable happened by editing the config file or via a
+            // save that never reached the unpin. No-op when we never pinned.
+            if !shared_state.app_config.read().seed_git_credentials {
+                info!("Git credential seeding is disabled in preferences; leaving git auth alone");
+                if let Err(e) = shared_state.git().remove_credential_pin("github.com").await {
+                    warn!("Failed to remove leftover git credential username pin: {e}");
+                }
+            } else if let Ok(entry) = keyring::Entry::new(APP_NAME, KEYRING_USER) {
                 if let Ok(pat) = entry.get_password() {
                     if !pat.is_empty() {
                         let username = shared_state.github_username();
@@ -416,6 +428,11 @@ impl Server {
                 let cooldown = Duration::from_secs(120);
                 let mut last_reseed: Option<std::time::Instant> = None;
                 while reauth_rx.recv().await.is_some() {
+                    // Re-read the preference each signal so turning seeding
+                    // off in Preferences takes effect without a restart.
+                    if !reseed_state.app_config.read().seed_git_credentials {
+                        continue;
+                    }
                     if let Some(t) = last_reseed {
                         if t.elapsed() < cooldown {
                             continue;
