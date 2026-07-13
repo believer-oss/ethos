@@ -278,9 +278,19 @@ mod tests {
         // renamed comm, not the process's — a harness quirk, not something
         // `check_for_process` relies on in production, where nothing
         // renames the main thread.
+        // Threads park on `stop` rather than sleeping a fixed duration: a
+        // fixed sleep raced sysinfo's refresh on loaded CI runners (a slow
+        // enough refresh could see the thread already exited), so pin their
+        // lifetime to the test's own instead of guessing a duration.
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let handles: Vec<_> = (0..8)
             .map(|_| {
-                std::thread::spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)))
+                let stop = std::sync::Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                })
             })
             .collect();
         // Give the kernel a moment to expose the new tasks under /proc.
@@ -313,6 +323,7 @@ mod tests {
             );
         }
 
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
         for handle in handles {
             let _ = handle.join();
         }
