@@ -248,6 +248,41 @@ const GIT_PROCESS_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_
 /// negligible overhead.
 const GIT_PROCESS_IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long to wait, after the git child has exited or been killed, for the
+/// pipe reader tasks to reach EOF before giving up on them. EOF requires every
+/// process holding the pipe write ends to be gone — an orphaned child of git
+/// (git-remote-https, a GCM prompt) can hold them open indefinitely.
+const GIT_READER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Join the stdout/stderr reader tasks, but never wedge on them: if the pipes
+/// haven't reached EOF within [`GIT_READER_DRAIN_TIMEOUT`] (an orphaned child
+/// of the git process still holds the write ends), abort the readers and move
+/// on. Without this bound the caller — which holds the git process lock —
+/// blocks forever and every subsequent git operation in the app queues behind
+/// a lock that never releases.
+async fn drain_reader_tasks(
+    mut out_handle: tokio::task::JoinHandle<()>,
+    mut err_handle: tokio::task::JoinHandle<()>,
+    context: &str,
+) {
+    let drain = async {
+        let _ = (&mut out_handle).await;
+        let _ = (&mut err_handle).await;
+    };
+    if tokio::time::timeout(GIT_READER_DRAIN_TIMEOUT, drain)
+        .await
+        .is_err()
+    {
+        warn!(
+            "git output readers did not reach EOF within {:?} (an orphaned child process is \
+             likely still holding the pipes); aborting them: {}",
+            GIT_READER_DRAIN_TIMEOUT, context
+        );
+        out_handle.abort();
+        err_handle.abort();
+    }
+}
+
 /// A caller holding [`GIT_PROCESS_LOCK`], tracked purely for log diagnostics.
 struct GitLockHolder {
     /// Short description of the git op (typically the command line).
@@ -1817,12 +1852,6 @@ impl Git {
         Ok(cmd)
     }
 
-    /// Build a `git credential <action>` command. Shared by the check, reject,
-    /// and approve steps of [`Self::store_credential`].
-    fn build_credential_command(&self, action: &str) -> anyhow::Result<Command> {
-        self.build_raw_command(&["credential", action])
-    }
-
     /// Read a single value from the repo's **local** git config; `None` when
     /// the key is unset (or unreadable). Caller must hold the git process lock.
     async fn local_config_get(&self, key: &str) -> Option<String> {
@@ -1992,7 +2021,7 @@ impl Git {
             }
         }
         for user in &evict {
-            if let Ok(reject_cmd) = self.build_credential_command("reject") {
+            if let Ok(reject_cmd) = self.build_raw_command(&["credential", "reject"]) {
                 let reject_input = format!("protocol=https\nhost={host}\nusername={user}\n\n");
                 let _ =
                     crate::utils::process::run_with_stdin(reject_cmd, reject_input.into_bytes())
@@ -2006,7 +2035,7 @@ impl Git {
         // not log stdin.
         let input =
             format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n\n");
-        let approve_cmd = self.build_credential_command("approve")?;
+        let approve_cmd = self.build_raw_command(&["credential", "approve"])?;
         let approve_result =
             match crate::utils::process::run_with_stdin(approve_cmd, input.into_bytes()).await {
                 Ok(out) if out.status.success() => Ok(()),
@@ -2153,7 +2182,7 @@ impl Git {
     /// [`Self::store_credential`] to skip replacing a credential that already
     /// matches.
     async fn current_credential_password(&self, host: &str, username: &str) -> Option<String> {
-        let mut cmd = self.build_credential_command("fill").ok()?;
+        let mut cmd = self.build_raw_command(&["credential", "fill"]).ok()?;
         // Never prompt just to read the current value.
         cmd.env("GIT_TERMINAL_PROMPT", "false");
         cmd.env("GCM_INTERACTIVE", "never");
@@ -2391,6 +2420,16 @@ impl Git {
             }
         };
 
+        // Wrap the child in a kill-on-close Job Object so the watchdog below
+        // can take down git's whole process tree. Plain kill() terminates only
+        // git.exe: its children (git-remote-https, a GCM credential prompt)
+        // survive holding the pipe write ends, the reader tasks never see EOF,
+        // and the post-kill joins would wedge the process lock forever.
+        // Best-effort — None degrades to single-process kill, bounded by
+        // drain_reader_tasks.
+        #[cfg(windows)]
+        let job = crate::utils::process::ProcessTreeJob::assign(&git_proc);
+
         let stdout = git_proc.stdout.take().expect("Failed to get stdout");
         let stderr = git_proc.stderr.take().expect("Failed to get stderr");
 
@@ -2457,9 +2496,14 @@ impl Git {
                             "git command made no progress for {:?}; killing stalled process: {}",
                             idle, git_cmd_str
                         );
+                        // Kill the whole tree where we can — see the Job
+                        // Object comment at the spawn site.
+                        #[cfg(windows)]
+                        if let Some(job) = &job {
+                            job.terminate();
+                        }
                         let _ = git_proc.kill().await;
-                        let _ = out_handle.await;
-                        let _ = err_handle.await;
+                        drain_reader_tasks(out_handle, err_handle, &git_cmd_str).await;
                         bail!("Git command stalled with no progress. Check the log for details.");
                     }
                     // Still producing output recently — keep waiting.
@@ -2467,14 +2511,19 @@ impl Git {
             }
         };
 
+        // The child has exited, but a straggler it spawned could still hold
+        // the pipe write ends; closing the job (KILL_ON_JOB_CLOSE) reaps any
+        // such orphan so the drain below sees EOF instead of timing out.
+        #[cfg(windows)]
+        drop(job);
+
         // The child has exited and closed its pipes, but the spawned readers may
         // not have flushed their final lines into out_lines/err_lines yet. Join
         // them before reading the collected output below — otherwise a command
         // that succeeded (e.g. `commit-tree` printing a single SHA) can
         // intermittently yield empty captured output under load, which then
         // corrupts callers like build_snapshot_commit (`commit-tree -p ""`).
-        let _ = out_handle.await;
-        let _ = err_handle.await;
+        drain_reader_tasks(out_handle, err_handle, &git_cmd_str).await;
 
         if !status.success() {
             // git config --get <blah> has empty output with a bad exit code if the variable is
