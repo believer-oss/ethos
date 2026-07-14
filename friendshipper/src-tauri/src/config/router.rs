@@ -5,7 +5,7 @@ use axum::extract::Query;
 use axum::{extract::State, routing::get, Json, Router};
 use ethos_core::AWSClient;
 use serde::Deserialize;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use ethos_core::clients::github::GraphQLClient;
 use ethos_core::clients::kube::ensure_kube_client;
@@ -275,10 +275,41 @@ where
         }
     }
 
+    // Captured before `payload` is moved into state below; the credential
+    // work runs after that write on purpose (see comment there).
+    let seed_git_credentials = payload.seed_git_credentials;
+    let pat_to_seed = payload.github_pat.clone();
+
     {
         let mut lock = state.app_config.write();
         *lock = payload;
         lock.initialized = true;
+    }
+
+    // Git credential seeding runs AFTER the state write so `state.git()`
+    // targets the repo the user just selected, not the previous one — the
+    // username pin is a persistent .git/config write, and landing it in an
+    // abandoned repo both misconfigures that repo and leaves the new one
+    // unpinned. Best-effort: a failure must not block saving config. Gated on
+    // the preference being saved right now, so unchecking the box stops
+    // credential writes with this save; disabling also removes our username
+    // pin (restoring any value the user had before we overwrote it), handing
+    // git auth fully back to them.
+    if !state.app_config.read().repo_path.is_empty() {
+        if seed_git_credentials {
+            if let Some(pat) = pat_to_seed {
+                let username = state.github_username();
+                if let Err(e) = state
+                    .git()
+                    .store_credential("github.com", &username, &pat.to_string())
+                    .await
+                {
+                    warn!("Failed to seed git credential from PAT: {e}");
+                }
+            }
+        } else if let Err(e) = state.git().remove_credential_pin("github.com").await {
+            warn!("Failed to remove git credential username pin: {e}");
+        }
     }
 
     save_config_to_file(state, "Preferences successfully saved!")?;

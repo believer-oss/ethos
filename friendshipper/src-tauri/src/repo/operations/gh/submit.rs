@@ -129,7 +129,14 @@ async fn filter_to_textlike_paths(
     // `run_with_stdin` feeds the (potentially >1 MB) path list to check-attr
     // from a dedicated task while draining stdout, so a large submit can't
     // deadlock on the pipe buffers. See its docs for the gory details.
-    let output = ethos_core::utils::process::run_with_stdin(cmd, input).await?;
+    //
+    // Hold GIT_PROCESS_LOCK across the spawn+wait so this never overlaps another
+    // app git process (which is what stomps the GCM credential / collides on
+    // .git). Scoped so the guard releases the instant the process exits.
+    let output = {
+        let _git_lock = git::acquire_git_process_lock("git check-attr (submit)").await;
+        ethos_core::utils::process::run_with_stdin(cmd, input).await?
+    };
     if !output.status.success() {
         bail!(
             "git check-attr failed: {}",
@@ -477,6 +484,11 @@ async fn run_git_with_index(
     }
     #[cfg(windows)]
     cmd.creation_flags(crate::repo::CREATE_NO_WINDOW);
+    // Serialize against every other app git process; this writes loose objects
+    // via the temp index, exactly like core's locked `run_with_index_file`.
+    // Held across the spawn+wait; released on return.
+    let _git_lock =
+        git::acquire_git_process_lock(&format!("git {} (submit index)", args.join(" "))).await;
     Ok(cmd.output().await?)
 }
 

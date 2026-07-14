@@ -72,6 +72,7 @@ export interface AppConfig {
 	primaryBranch?: string;
 	contentBranch?: string;
 	githubPAT: string;
+	seedGitCredentials: boolean;
 	engineType: string;
 	enginePrebuiltPath: string;
 	engineSourcePath: string;

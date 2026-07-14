@@ -762,6 +762,20 @@
 					<Tooltip class="text-sm" placement="bottom">
 						Copy and paste your GitHub Personal Access Token (PAT) here.
 					</Tooltip>
+
+					<div class="flex flex-row gap-2 pt-1">
+						<Checkbox
+							bind:checked={localAppConfig.seedGitCredentials}
+							class="w-8 h-8 text-4xl mb-2 bg-secondary-800 dark:bg-space-950"
+						/>
+						<Label class="text-white">Use PAT for git sign-in</Label>
+					</div>
+					<Tooltip class="text-sm" placement="bottom">
+						Friendshipper keeps git's stored credential for github.com in sync with this PAT so
+						background syncs never pop a login window. Disable if you manage git credentials
+						yourself: Friendshipper removes its username pin from the project's git config and stops
+						touching git credentials entirely.
+					</Tooltip>
 				</div>
 			</div>
 		</div>

@@ -33,6 +33,34 @@ lazy_static! {
     static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
     static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
     static ref GIT_FETCH_LOCK: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+
+    /// Process-wide serialization gate for *every* `git` subprocess this app
+    /// spawns. Two `git` processes running concurrently against the same repo
+    /// and credential store race destructively: Git Credential Manager stomps
+    /// the stored credential (surfacing as spurious re-auth prompts), and the
+    /// index / refs / packfiles can collide. Every subprocess spawn site holds
+    /// this guard for the lifetime of its child, so the app never has two `git`
+    /// processes in flight at once. External git processes (a user's terminal,
+    /// the engine) are out of scope — `wait_for_lock` mitigates index.lock
+    /// contention with those.
+    ///
+    /// INVARIANT — this lock is NOT re-entrant (tokio's Mutex deadlocks on a
+    /// second acquire from the same task). Every acquisition site is a leaf
+    /// that spawns exactly one subprocess and never calls another acquiring
+    /// function while holding the guard. `GIT_FETCH_LOCK` is always taken
+    /// *before* this lock (in `fetch`/`refetch`) and never after, so the two
+    /// have a consistent order and cannot deadlock against each other.
+    static ref GIT_PROCESS_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+
+    /// Who currently holds [`GIT_PROCESS_LOCK`], for observability only. Set when
+    /// the guard is acquired and cleared when it drops, so a waiting caller can
+    /// name the op it's queued behind (and how long that op has held the lock)
+    /// in the logs — turning "the app feels stuck on git" into a line that says
+    /// which command is holding things up. A plain (sync) parking_lot mutex: it's
+    /// a leaf, taken only briefly and never across an `.await`, so it adds no
+    /// ordering constraints against the locks above.
+    static ref GIT_LOCK_HOLDER: parking_lot::Mutex<Option<GitLockHolder>> =
+        parking_lot::Mutex::new(None);
 }
 
 #[cfg(windows)]
@@ -106,6 +134,10 @@ pub struct Opts<'a> {
     pub return_complete_error: bool,
     pub lfs_mode: LfsMode,
     pub skip_notify_frontend: bool,
+    // When set, the git command runs with interactive credential prompts
+    // disabled. Use for background/non-user-initiated operations so a stale
+    // credential fails quietly instead of spawning a login window.
+    pub skip_interactive_auth: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -123,6 +155,7 @@ impl Default for Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 }
@@ -135,6 +168,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 
@@ -145,6 +179,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 
@@ -155,6 +190,7 @@ impl Opts<'_> {
             return_complete_error: true,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            skip_interactive_auth: false,
         }
     }
 
@@ -172,6 +208,11 @@ impl Opts<'_> {
         self.skip_notify_frontend = true;
         self
     }
+
+    pub fn with_skip_interactive_auth(mut self) -> Self {
+        self.skip_interactive_auth = true;
+        self
+    }
 }
 
 pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
@@ -182,6 +223,139 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     }
 
     bail!("Unable to parse string")
+}
+
+/// Idle (no-progress) backstop for a single `git` subprocess. Because every git
+/// process now holds [`GIT_PROCESS_LOCK`] for its whole lifetime, a hung process
+/// — a stuck credential prompt, or a dead connection that never makes progress —
+/// would otherwise hold the lock forever and wedge *every* git operation in the
+/// app. The runner kills such a process so the lock is released and callers get
+/// an error.
+///
+/// This is deliberately an *idle* timeout, not a wall-clock one: a hung process
+/// is distinguished from a slow-but-healthy one (a large clone / fetch / LFS
+/// pull streaming progress over a slow link) by the *absence of output*, not by
+/// total elapsed time. We reset the clock on every line the child writes, so a
+/// command that keeps making progress is never killed no matter how long it
+/// runs, while one that goes completely silent for this long is treated as hung.
+/// Generous on purpose — only true silence should trip it; it can be lowered now
+/// that progressing ops are safe.
+const GIT_PROCESS_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// How often the idle watchdog wakes to compare now against the child's last
+/// output. Bounds how long past [`GIT_PROCESS_IDLE_TIMEOUT`] a hung process can
+/// linger before it's killed; small relative to the timeout, large enough to be
+/// negligible overhead.
+const GIT_PROCESS_IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long to wait, after the git child has exited or been killed, for the
+/// pipe reader tasks to reach EOF before giving up on them. EOF requires every
+/// process holding the pipe write ends to be gone — an orphaned child of git
+/// (git-remote-https, a GCM prompt) can hold them open indefinitely.
+const GIT_READER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Join the stdout/stderr reader tasks, but never wedge on them: if the pipes
+/// haven't reached EOF within [`GIT_READER_DRAIN_TIMEOUT`] (an orphaned child
+/// of the git process still holds the write ends), abort the readers and move
+/// on. Without this bound the caller — which holds the git process lock —
+/// blocks forever and every subsequent git operation in the app queues behind
+/// a lock that never releases.
+async fn drain_reader_tasks(
+    mut out_handle: tokio::task::JoinHandle<()>,
+    mut err_handle: tokio::task::JoinHandle<()>,
+    context: &str,
+) {
+    let drain = async {
+        let _ = (&mut out_handle).await;
+        let _ = (&mut err_handle).await;
+    };
+    if tokio::time::timeout(GIT_READER_DRAIN_TIMEOUT, drain)
+        .await
+        .is_err()
+    {
+        warn!(
+            "git output readers did not reach EOF within {:?} (an orphaned child process is \
+             likely still holding the pipes); aborting them: {}",
+            GIT_READER_DRAIN_TIMEOUT, context
+        );
+        out_handle.abort();
+        err_handle.abort();
+    }
+}
+
+/// A caller holding [`GIT_PROCESS_LOCK`], tracked purely for log diagnostics.
+struct GitLockHolder {
+    /// Short description of the git op (typically the command line).
+    label: String,
+    /// When the lock was acquired, so waiters can report how long it's been held.
+    since: std::time::Instant,
+}
+
+/// If the lock is already held this long when a new caller arrives, that's a
+/// stall worth a warning (a slow sync, or an op on its way to the idle-timeout
+/// kill) rather than ordinary brief contention.
+const GIT_LOCK_SLOW_HOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// RAII guard for [`GIT_PROCESS_LOCK`] that also clears [`GIT_LOCK_HOLDER`] on
+/// drop. Returned by [`acquire_git_process_lock`]; hold it for the lifetime of
+/// a single git subprocess.
+pub struct GitLockGuard {
+    // Dropped after this struct's `Drop::drop` runs, so the holder is cleared
+    // just before the mutex is released.
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl Drop for GitLockGuard {
+    fn drop(&mut self) {
+        *GIT_LOCK_HOLDER.lock() = None;
+    }
+}
+
+/// Acquire the process-wide git serialization guard. Hold the returned guard
+/// for the full lifetime of a `git` subprocess (spawn through wait). See
+/// [`GIT_PROCESS_LOCK`] for the invariant — never call this while already
+/// holding the guard. This applies to external callers in other crates too:
+/// hold it across a single spawn+wait and never call another git-spawning
+/// function while holding it.
+///
+/// `label` names the op for diagnostics (use the git command line where you
+/// have it). When the lock is contended, the wait is logged with the op that's
+/// holding it, so a stuck or slow git operation is visible in the logs.
+pub async fn acquire_git_process_lock(label: &str) -> GitLockGuard {
+    let guard = match GIT_PROCESS_LOCK.clone().try_lock_owned() {
+        Ok(g) => g,
+        Err(_) => {
+            // Contended — name who we're queued behind. Read + drop the holder
+            // lock before awaiting (never hold a sync mutex across `.await`).
+            let held = GIT_LOCK_HOLDER
+                .lock()
+                .as_ref()
+                .map(|h| (h.label.clone(), h.since.elapsed()));
+            match held {
+                Some((holder, held_for)) if held_for >= GIT_LOCK_SLOW_HOLD => {
+                    warn!(
+                        "git op {:?} blocked: lock held by {:?} for {:?} (slow op or stall)",
+                        label, holder, held_for
+                    );
+                }
+                Some((holder, held_for)) => {
+                    debug!(
+                        "git op {:?} waiting on lock held by {:?} (held {:?})",
+                        label, holder, held_for
+                    );
+                }
+                None => {}
+            }
+            GIT_PROCESS_LOCK.clone().lock_owned().await
+        }
+    };
+
+    *GIT_LOCK_HOLDER.lock() = Some(GitLockHolder {
+        label: label.to_string(),
+        since: std::time::Instant::now(),
+    });
+
+    GitLockGuard { _guard: guard }
 }
 
 impl Git {
@@ -206,6 +380,9 @@ impl Git {
         #[cfg(windows)]
         log.creation_flags(CREATE_NO_WINDOW);
 
+        // Reading FETCH_HEAD/HEAD races a concurrent fetch rewriting the same
+        // ref; serialize like every other git subprocess.
+        let _git_lock = acquire_git_process_lock("git log -1 (head_commit)").await;
         let output = log.output().await?;
 
         let stdout = std::str::from_utf8(&output.stdout)?;
@@ -588,6 +765,10 @@ impl Git {
             index_file.display()
         );
 
+        // Operates on a temp index but still writes loose objects into the real
+        // .git/objects — serialize against maintenance/gc and other git procs.
+        let _git_lock =
+            acquire_git_process_lock(&format!("git {} (temp index)", args.join(" "))).await;
         let output = cmd.output().await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1295,10 +1476,20 @@ impl Git {
     }
 
     pub async fn verify_locks(&self) -> anyhow::Result<VerifyLocksResponse> {
+        // Runs `git lfs locks`, which contacts the LFS server and so can invoke
+        // the credential helper. This is only ever called from the ambient
+        // status refresh (see StatusOp), never from a deliberate user sync, so
+        // it must not launch an interactive credential prompt: a stale
+        // credential should fail quietly here (the caller degrades to the last
+        // known lock state) and re-auth happens on the next user-initiated
+        // pull/push. Without this, a background status refresh pops a GCM
+        // login window every few seconds once the stored credential expires.
         let output = match self
             .run_and_collect_output(
                 &["lfs", "locks", "--verify", "--json"],
-                Opts::new_without_logs().with_complete_error(),
+                Opts::new_without_logs()
+                    .with_complete_error()
+                    .with_skip_interactive_auth(),
             )
             .await
         {
@@ -1315,7 +1506,7 @@ impl Git {
                 // then try again
                 self.run_and_collect_output(
                     &["lfs", "locks", "--verify", "--json"],
-                    Opts::new_without_logs(),
+                    Opts::new_without_logs().with_skip_interactive_auth(),
                 )
                 .await?
             }
@@ -1499,8 +1690,13 @@ impl Git {
     }
 
     pub async fn run_maintenance(&self) -> anyhow::Result<()> {
-        self.run(&["maintenance", "run", "--auto"], Opts::default())
-            .await
+        // Runs on the background maintenance loop and may prefetch over the
+        // network, so it must not trigger an interactive credential prompt.
+        self.run(
+            &["maintenance", "run", "--auto"],
+            Opts::default().with_skip_interactive_auth(),
+        )
+        .await
     }
 
     pub async fn run_gc(&self) -> anyhow::Result<()> {
@@ -1609,6 +1805,7 @@ impl Git {
                     return_complete_error: true,
                     lfs_mode: LfsMode::Stubs,
                     skip_notify_frontend: false,
+                    skip_interactive_auth: false,
                 },
             )
             .await?;
@@ -1636,6 +1833,369 @@ impl Git {
 
     pub async fn set_config(&self, key: &str, value: &str) -> anyhow::Result<()> {
         self.run(&["config", key, value], Opts::default()).await
+    }
+
+    /// Build a raw `git <args…>` command wired with this client's repo cwd and
+    /// the standard env/creation flags, bypassing [`Self::run`]. For use by
+    /// code that already holds the git process lock (`run` would re-acquire it
+    /// and deadlock); the caller spawns the child and must hold the lock for
+    /// its lifetime.
+    fn build_raw_command(&self, args: &[&str]) -> anyhow::Result<Command> {
+        let mut cmd = Command::new("git");
+        cmd.args(args);
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+        if !self.repo_path.as_os_str().is_empty() {
+            cmd.current_dir(self.repo_path.canonicalize()?);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        Ok(cmd)
+    }
+
+    /// Read a single value from the repo's **local** git config; `None` when
+    /// the key is unset (or unreadable). Caller must hold the git process lock.
+    async fn local_config_get(&self, key: &str) -> Option<String> {
+        let out = self
+            .build_raw_command(&["config", "--local", "--get", key])
+            .ok()?
+            .output()
+            .await
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Write a single value into the repo's local git config. Caller must hold
+    /// the git process lock.
+    async fn local_config_set(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let out = self
+            .build_raw_command(&["config", "--local", key, value])?
+            .output()
+            .await?;
+        if !out.status.success() {
+            bail!(
+                "git config {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    }
+
+    /// Remove a key from the repo's local git config; succeeds when the key is
+    /// already absent. Caller must hold the git process lock.
+    async fn local_config_unset(&self, key: &str) -> anyhow::Result<()> {
+        let out = self
+            .build_raw_command(&["config", "--local", "--unset", key])?
+            .output()
+            .await?;
+        // Exit code 5 = "key was not set" — already the state we want.
+        if !out.status.success() && out.status.code() != Some(5) {
+            bail!(
+                "git config --unset {key} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    }
+
+    /// `credential.https://<host>.username` — the standard git config key that
+    /// makes git attach a username to every credential request for that URL.
+    fn credential_pin_key(host: &str) -> String {
+        format!("credential.https://{host}.username")
+    }
+
+    /// Local-config key recording the username we last seeded for `host`.
+    /// Presence marks the pin as ours (vs. one the user set themselves); the
+    /// value lets a username change evict the previously seeded entry.
+    fn seeded_username_key(host: &str) -> String {
+        format!("friendshipper.https://{host}.seededusername")
+    }
+
+    /// Local-config key preserving a user-set pin value we displaced, so
+    /// [`Self::remove_credential_pin`] can restore it.
+    fn original_username_key(host: &str) -> String {
+        format!("friendshipper.https://{host}.originalusername")
+    }
+
+    /// Refresh git's configured credential helper with an HTTPS credential for
+    /// `host`, so subsequent network git operations authenticate
+    /// non-interactively instead of the helper launching a login window.
+    ///
+    /// First checks, non-interactively, whether the helper already serves this
+    /// exact username+password. If it does, the store is left untouched and we
+    /// only make sure the username pin (below) is in place. Otherwise we evict
+    /// the entries we manage (`git credential reject` — the current username,
+    /// plus the previously seeded username when it changed, e.g. the
+    /// `x-access-token` fallback from an offline launch after the real login
+    /// becomes known; never any other account the user has stored), then seed
+    /// the new credential (`git credential approve`). The evict is required
+    /// because a stale entry (e.g. an expired token) otherwise shadows what we
+    /// store, so a `git fetch` keeps failing even though the seed appears to
+    /// land.
+    ///
+    /// Only after a successful approve do we pin
+    /// `credential.https://<host>.username` in the repo's local config. Git
+    /// injects that username into every credential request made from this repo
+    /// (background fetch/pull/push), so those requests target exactly the
+    /// entry we seed rather than whatever same-host entry the helper answers a
+    /// host-only lookup with — the wrong account, or a GCM account picker,
+    /// when the user also stores a personal login for the same host. Pinning
+    /// only after approve — and rolling the pin back if approve fails — means
+    /// the pin never points at a username with no stored credential. A
+    /// pre-existing pin the user set themselves is remembered and restored by
+    /// [`Self::remove_credential_pin`] when seeding is turned off.
+    ///
+    /// The credential is fed over **stdin** — never on the command line — so the
+    /// secret never lands in process arguments, our git-output channel, or the
+    /// logs. Whatever helper the user has configured (e.g. Git Credential
+    /// Manager) performs the actual storage.
+    ///
+    /// This is how a non-expiring PAT held in the app keyring becomes *git's*
+    /// credential (the in-app PAT otherwise only feeds the GitHub HTTP API,
+    /// never git). `username` should be the GitHub login when known; for a
+    /// classic PAT the value is ignored by GitHub, so an empty string falls
+    /// back to the conventional `x-access-token` rather than leaving git with
+    /// an incomplete credential it would prompt to fill.
+    ///
+    /// Best-effort: if no credential helper is configured, the underlying git
+    /// commands are no-ops and this returns `Ok`.
+    pub async fn store_credential(
+        &self,
+        host: &str,
+        username: &str,
+        password: &str,
+    ) -> anyhow::Result<()> {
+        let username = if username.is_empty() {
+            "x-access-token"
+        } else {
+            username
+        };
+
+        // Hold the process lock across the check and any replacement, like
+        // every other spawn site.
+        let _git_lock = acquire_git_process_lock("git credential (check + refresh)").await;
+
+        // Fast path: the helper already serves exactly this credential for
+        // this username. Leave the store alone — just make sure the pin is in
+        // place (it can be missing after an upgrade from a build that seeded
+        // without pinning).
+        if self
+            .current_credential_password(host, username)
+            .await
+            .as_deref()
+            == Some(password)
+        {
+            debug!("git credential for {host} already current; leaving it untouched");
+            if let Err(e) = self.ensure_credential_username_pin(host, username).await {
+                warn!("Failed to pin credential username for {host}: {e}");
+            }
+            return Ok(());
+        }
+
+        // Narrate the action + effect so the logs explain why a stored
+        // credential changed. Host + username only — never the password.
+        info!(
+            "Refreshing git credential for {host} from the saved PAT (username: {username}): \
+             evicting our stale entry, then re-seeding the credential helper so background \
+             fetch/pull/push/lfs authenticate without an interactive login."
+        );
+
+        // Step 1 — evict the entries we manage. Target specific usernames so
+        // we never clear another account the user has stored: the current
+        // username, plus the one we seeded previously (recorded in local
+        // config) when it differs — otherwise a username flip (x-access-token
+        // fallback ↔ real login) strands the old PAT-bearing entry in the
+        // store forever. Best-effort: `reject` is a no-op when nothing
+        // matches, and a hiccup here must not block re-seeding, so its result
+        // is intentionally ignored. No secret involved (protocol + host +
+        // username only).
+        let mut evict = vec![username.to_string()];
+        if let Some(prev) = self
+            .local_config_get(&Self::seeded_username_key(host))
+            .await
+        {
+            if prev != username && !prev.is_empty() {
+                evict.push(prev);
+            }
+        }
+        for user in &evict {
+            if let Ok(reject_cmd) = self.build_raw_command(&["credential", "reject"]) {
+                let reject_input = format!("protocol=https\nhost={host}\nusername={user}\n\n");
+                let _ =
+                    crate::utils::process::run_with_stdin(reject_cmd, reject_input.into_bytes())
+                        .await;
+            }
+        }
+
+        // Step 2 — seed. git's credential protocol: key=value lines terminated
+        // by a blank line. The password line carries the secret; `input` is
+        // sensitive (fed only via stdin, never logged). `run_with_stdin` does
+        // not log stdin.
+        let input =
+            format!("protocol=https\nhost={host}\nusername={username}\npassword={password}\n\n");
+        let approve_cmd = self.build_raw_command(&["credential", "approve"])?;
+        let approve_result =
+            match crate::utils::process::run_with_stdin(approve_cmd, input.into_bytes()).await {
+                Ok(out) if out.status.success() => Ok(()),
+                Ok(out) => Err(anyhow::anyhow!(
+                    "git credential approve failed: {}",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )),
+                Err(e) => Err(e),
+            };
+        if let Err(e) = approve_result {
+            // The eviction above may have removed the only entry the pin
+            // points at; roll the pin back so git isn't left steering every
+            // request at a username with no stored credential.
+            if let Err(unpin_err) = self.remove_credential_pin_locked(host).await {
+                warn!("Failed to roll back credential pin for {host}: {unpin_err}");
+            }
+            return Err(e);
+        }
+
+        // Step 3 — pin the username, now that a matching credential is known
+        // to be stored. Best-effort: with the pin missing, behavior degrades
+        // to the pre-pin host-only lookup, which still works for the common
+        // single-account store.
+        if let Err(e) = self.ensure_credential_username_pin(host, username).await {
+            warn!("Failed to pin credential username for {host}: {e}");
+        }
+
+        info!("Stored git credential for {host} refreshed (username: {username})");
+        Ok(())
+    }
+
+    /// Pin `credential.https://<host>.username` in the repo's local config so
+    /// git attaches `username` to every credential request it makes from this
+    /// repo (fetch/pull/push and `git credential fill` alike). This is what
+    /// disambiguates our seeded entry from any other account the user has
+    /// stored for the same host. Standard git config — honored by every
+    /// credential helper, not just GCM.
+    ///
+    /// Alongside the pin, the seeded username is recorded under a
+    /// `friendshipper.*` key so later calls can tell our pin from one the user
+    /// set themselves: a
+    /// foreign value is preserved (once) under a second key and restored by
+    /// [`Self::remove_credential_pin`], and a username change lets
+    /// [`Self::store_credential`] evict the previously seeded entry.
+    ///
+    /// Read-compares before writing so repeat calls don't rewrite .git/config.
+    /// No-op when this client has no repo path (nowhere to pin). Caller must
+    /// hold the git process lock; runs raw commands rather than [`Self::run`]
+    /// because `run` would re-acquire that lock and deadlock.
+    async fn ensure_credential_username_pin(
+        &self,
+        host: &str,
+        username: &str,
+    ) -> anyhow::Result<()> {
+        if self.repo_path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let pin_key = Self::credential_pin_key(host);
+        let marker_key = Self::seeded_username_key(host);
+
+        let current_pin = self.local_config_get(&pin_key).await;
+        let marker = self.local_config_get(&marker_key).await;
+
+        if current_pin.as_deref() == Some(username) {
+            // Pin already correct; just make sure ownership is recorded.
+            if marker.as_deref() != Some(username) {
+                self.local_config_set(&marker_key, username).await?;
+            }
+            return Ok(());
+        }
+
+        if let Some(existing) = current_pin {
+            // A pin that isn't the one we last wrote is the user's own config
+            // (e.g. their multi-account disambiguation). Remember it — once —
+            // so remove_credential_pin can put it back.
+            if marker.as_deref() != Some(existing.as_str())
+                && self
+                    .local_config_get(&Self::original_username_key(host))
+                    .await
+                    .is_none()
+            {
+                self.local_config_set(&Self::original_username_key(host), &existing)
+                    .await?;
+            }
+        }
+
+        self.local_config_set(&pin_key, username).await?;
+        self.local_config_set(&marker_key, username).await?;
+        info!("Pinned {pin_key}={username} in local git config");
+        Ok(())
+    }
+
+    /// Undo [`Self::store_credential`]'s username pin: if the current pin is
+    /// the one we wrote, restore the value the user had before we first
+    /// overwrote it (or drop the key when there was none), then clear our
+    /// bookkeeping. A pin the user has since changed themselves is left alone.
+    /// The seeded credential itself stays in the helper's store — from here on
+    /// git's credential machinery is simply not touched. Safe to call when
+    /// nothing was ever pinned. Used when the user turns credential seeding
+    /// off.
+    pub async fn remove_credential_pin(&self, host: &str) -> anyhow::Result<()> {
+        if self.repo_path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let _git_lock = acquire_git_process_lock("git config (remove credential pin)").await;
+        self.remove_credential_pin_locked(host).await
+    }
+
+    /// Body of [`Self::remove_credential_pin`] for callers that already hold
+    /// the git process lock (also used by [`Self::store_credential`] to roll
+    /// back after a failed approve).
+    async fn remove_credential_pin_locked(&self, host: &str) -> anyhow::Result<()> {
+        if self.repo_path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let marker_key = Self::seeded_username_key(host);
+        let Some(marker) = self.local_config_get(&marker_key).await else {
+            // We never pinned this repo — nothing to undo.
+            return Ok(());
+        };
+        let pin_key = Self::credential_pin_key(host);
+        let original_key = Self::original_username_key(host);
+
+        if self.local_config_get(&pin_key).await.as_deref() == Some(marker.as_str()) {
+            match self.local_config_get(&original_key).await {
+                Some(original) => self.local_config_set(&pin_key, &original).await?,
+                None => self.local_config_unset(&pin_key).await?,
+            }
+        }
+        // A pin that no longer matches the marker was changed by the user
+        // after we wrote it — theirs to keep. Either way our bookkeeping goes.
+        self.local_config_unset(&marker_key).await?;
+        self.local_config_unset(&original_key).await?;
+        info!("Removed seeded credential username pin for {host}");
+        Ok(())
+    }
+
+    /// Password the configured credential helper currently serves for
+    /// `username` at `https://<host>`, or `None` if nothing is stored. The
+    /// username is passed explicitly rather than relying on the config pin, so
+    /// the check is meaningful even before the pin lands (the pin is written
+    /// only after a successful seed). Runs non-interactively, so the check
+    /// itself can never launch a credential prompt. Used by
+    /// [`Self::store_credential`] to skip replacing a credential that already
+    /// matches.
+    async fn current_credential_password(&self, host: &str, username: &str) -> Option<String> {
+        let mut cmd = self.build_raw_command(&["credential", "fill"]).ok()?;
+        // Never prompt just to read the current value.
+        cmd.env("GIT_TERMINAL_PROMPT", "false");
+        cmd.env("GCM_INTERACTIVE", "never");
+        let input = format!("protocol=https\nhost={host}\nusername={username}\n\n");
+        let output = crate::utils::process::run_with_stdin(cmd, input.into_bytes())
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|l| l.strip_prefix("password=").map(str::to_string))
     }
 
     #[instrument]
@@ -1810,6 +2370,16 @@ impl Git {
         // disable clone protection
         cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
 
+        // For background/non-user-initiated commands (e.g. the maintenance fetch
+        // loop), never allow an interactive credential prompt. If the cached
+        // credential is stale, the command fails quietly and the next
+        // user-initiated operation handles re-authentication, instead of a
+        // background loop spawning a GCM login window every few seconds.
+        if opts.skip_interactive_auth {
+            cmd.env("GIT_TERMINAL_PROMPT", "false");
+            cmd.env("GCM_INTERACTIVE", "never");
+        }
+
         if opts.lfs_mode == LfsMode::Stubs {
             cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
         }
@@ -1833,6 +2403,12 @@ impl Git {
         }
         info!("Running: {}", git_cmd_str);
 
+        // Serialize this subprocess against every other git process the app
+        // spawns. Held until the child exits and its stdout/stderr readers are
+        // joined below, guaranteeing no two app git processes overlap (which
+        // is what stomps GCM credentials and collides on the index/refs).
+        let _git_lock = acquire_git_process_lock(&git_cmd_str).await;
+
         let out_pipe = Stdio::piped();
         let err_pipe = Stdio::piped();
 
@@ -1844,6 +2420,16 @@ impl Git {
             }
         };
 
+        // Wrap the child in a kill-on-close Job Object so the watchdog below
+        // can take down git's whole process tree. Plain kill() terminates only
+        // git.exe: its children (git-remote-https, a GCM credential prompt)
+        // survive holding the pipe write ends, the reader tasks never see EOF,
+        // and the post-kill joins would wedge the process lock forever.
+        // Best-effort — None degrades to single-process kill, bounded by
+        // drain_reader_tasks.
+        #[cfg(windows)]
+        let job = crate::utils::process::ProcessTreeJob::assign(&git_proc);
+
         let stdout = git_proc.stdout.take().expect("Failed to get stdout");
         let stderr = git_proc.stderr.take().expect("Failed to get stderr");
 
@@ -1853,11 +2439,20 @@ impl Git {
         let out_lines: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(vec![]));
         let err_lines: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(vec![]));
 
+        // Tracks the last time the child produced any output, so the idle
+        // watchdog below can tell a hung process from a slow-but-progressing
+        // one. Both reader tasks bump it on every line.
+        let last_activity: Arc<RwLock<std::time::Instant>> =
+            Arc::new(RwLock::new(std::time::Instant::now()));
+
         let out_lines_thread = out_lines.clone();
+        let out_activity = last_activity.clone();
         let is_collecting_out_lines = output.is_some();
         let should_log_stdout = opts.should_log_stdout;
         let out_handle = tokio::spawn(async move {
             while let Some(line) = out_reader.next_line().await.unwrap() {
+                *out_activity.write() = std::time::Instant::now();
+
                 // Shorten any line starting with "Updating files". Git currently sends us a huge
                 // wall of text with all the individual percentage updates, instead of one line
                 // per update.
@@ -1877,14 +2472,50 @@ impl Git {
         });
 
         let err_lines_thread = err_lines.clone();
+        let err_activity = last_activity.clone();
         let err_handle = tokio::spawn(async move {
             while let Some(line) = err_reader.next_line().await.unwrap() {
+                *err_activity.write() = std::time::Instant::now();
                 err_lines_thread.write().push(line.clone());
                 info!("{}", line);
             }
         });
 
-        let status = git_proc.wait().await?;
+        // Idle watchdog: wake periodically and kill the child only if it has
+        // produced no output for GIT_PROCESS_IDLE_TIMEOUT. A command that keeps
+        // streaming progress (a large clone/fetch/LFS pull) resets the clock on
+        // every line and is never killed for simply taking a long time; only a
+        // truly stalled process (stuck prompt, dead connection) trips it.
+        let status = loop {
+            match tokio::time::timeout(GIT_PROCESS_IDLE_CHECK, git_proc.wait()).await {
+                Ok(wait_result) => break wait_result?,
+                Err(_elapsed) => {
+                    let idle = last_activity.read().elapsed();
+                    if idle >= GIT_PROCESS_IDLE_TIMEOUT {
+                        warn!(
+                            "git command made no progress for {:?}; killing stalled process: {}",
+                            idle, git_cmd_str
+                        );
+                        // Kill the whole tree where we can — see the Job
+                        // Object comment at the spawn site.
+                        #[cfg(windows)]
+                        if let Some(job) = &job {
+                            job.terminate();
+                        }
+                        let _ = git_proc.kill().await;
+                        drain_reader_tasks(out_handle, err_handle, &git_cmd_str).await;
+                        bail!("Git command stalled with no progress. Check the log for details.");
+                    }
+                    // Still producing output recently — keep waiting.
+                }
+            }
+        };
+
+        // The child has exited, but a straggler it spawned could still hold
+        // the pipe write ends; closing the job (KILL_ON_JOB_CLOSE) reaps any
+        // such orphan so the drain below sees EOF instead of timing out.
+        #[cfg(windows)]
+        drop(job);
 
         // The child has exited and closed its pipes, but the spawned readers may
         // not have flushed their final lines into out_lines/err_lines yet. Join
@@ -1892,8 +2523,7 @@ impl Git {
         // that succeeded (e.g. `commit-tree` printing a single SHA) can
         // intermittently yield empty captured output under load, which then
         // corrupts callers like build_snapshot_commit (`commit-tree -p ""`).
-        let _ = out_handle.await;
-        let _ = err_handle.await;
+        drain_reader_tasks(out_handle, err_handle, &git_cmd_str).await;
 
         if !status.success() {
             // git config --get <blah> has empty output with a bad exit code if the variable is
@@ -1946,6 +2576,10 @@ pub async fn configure_global(key: &str, value: &str) -> Result<(), CoreError> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
+    // Rewrites ~/.gitconfig; a concurrent git reading global config can hit a
+    // transient access error on Windows (cf. the .git/config startup-order
+    // fix). Serialize against every other git subprocess.
+    let _git_lock = acquire_git_process_lock(&format!("git config --global {key}")).await;
     let cmd_output = cmd.output().await?;
     if !cmd_output.status.success() {
         let err_output = String::from_utf8(cmd_output.stderr).unwrap_or_default();
@@ -2018,6 +2652,343 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let git = Git::new(path, tx);
         (git, dir)
+    }
+
+    /// Point the repo's credential.helper at a throwaway `store` file so
+    /// credential tests never touch the developer's real helper (e.g. a global
+    /// GCM): an empty `credential.helper` value resets the inherited helper
+    /// list, so only the throwaway `store` helper added afterward runs for
+    /// this repo. Without the reset, git consults the global helper too and
+    /// both `approve` (touching the real store!) and `fill` (shadowing our
+    /// seeded value with the real one) would leak across the test boundary.
+    /// Returns the path of the credential file backing the `store` helper.
+    fn isolate_credential_helper(git: &Git, dir: &std::path::Path) -> std::path::PathBuf {
+        let cred_file = dir.join("creds");
+        let helper = format!(
+            "store --file={}",
+            cred_file.to_string_lossy().replace('\\', "/")
+        );
+        for args in [
+            &["config", "--local", "credential.helper", ""][..],
+            &["config", "--local", "--add", "credential.helper", &helper][..],
+        ] {
+            let out = StdCommand::new("git")
+                .args(args)
+                .current_dir(&git.repo_path)
+                .output()
+                .expect("set credential.helper");
+            assert!(out.status.success());
+        }
+        cred_file
+    }
+
+    /// Read a key from the repo's local git config; `None` when unset.
+    fn local_config(git: &Git, key: &str) -> Option<String> {
+        let out = StdCommand::new("git")
+            .args(["config", "--local", "--get", key])
+            .current_dir(&git.repo_path)
+            .output()
+            .expect("git config --get");
+        if out.status.success() {
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Set a key in the repo's local git config.
+    fn set_local_config(git: &Git, key: &str, value: &str) {
+        let out = StdCommand::new("git")
+            .args(["config", "--local", key, value])
+            .current_dir(&git.repo_path)
+            .output()
+            .expect("git config set");
+        assert!(out.status.success(), "git config {key} failed");
+    }
+
+    /// Run `git credential <action>` in the repo with `input` on stdin and
+    /// return stdout. Asserts the command succeeds.
+    fn run_credential(git: &Git, action: &str, input: &[u8]) -> String {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let mut child = StdCommand::new("git")
+            .args(["credential", action])
+            .current_dir(&git.repo_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("spawn git credential {action}: {e}"));
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        let out = child.wait_with_output().expect("credential output");
+        assert!(out.status.success(), "git credential {action} failed");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    // store_credential must (a) evict any stale host-level credential and
+    // (b) make the new one retrievable via git's own credential plumbing —
+    // that's the whole point of seeding the PAT so network git stops prompting.
+    // We point credential.helper at a throwaway file (never the user's real
+    // store), pre-seed a STALE credential, call store_credential, then
+    // `git credential fill` and assert the stale value is gone and the new
+    // username/password come back. Also covers the empty-username fallback to
+    // `x-access-token`, so git never gets an incomplete credential it would
+    // prompt to complete.
+    #[tokio::test]
+    async fn test_store_credential_evicts_stale_then_seeds() {
+        let (git, dir) = setup_repo();
+        isolate_credential_helper(&git, dir.path());
+
+        // Pre-seed a STALE credential under the same username we manage
+        // (x-access-token, the empty-username fallback) but an old password, so
+        // we can prove store_credential's targeted reject evicts it before
+        // writing the new one rather than leaving the stale value shadowing ours.
+        run_credential(
+            &git,
+            "approve",
+            b"protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghp_STALEvalue\n\n",
+        );
+
+        // Empty username must fall back to x-access-token.
+        git.store_credential("github.com", "", "ghp_seededtoken")
+            .await
+            .expect("store_credential");
+
+        let stdout = run_credential(&git, "fill", b"protocol=https\nhost=github.com\n\n");
+        assert!(
+            stdout.contains("password=ghp_seededtoken"),
+            "fill did not return seeded password: {stdout}"
+        );
+        assert!(
+            stdout.contains("username=x-access-token"),
+            "fill did not return fallback username: {stdout}"
+        );
+        assert!(
+            !stdout.contains("ghp_STALEvalue"),
+            "stale credential was not evicted before seeding: {stdout}"
+        );
+
+        // Seeding the SAME credential again hits the "already current" fast
+        // path (fill matches → no reject/approve) and must leave it intact.
+        git.store_credential("github.com", "", "ghp_seededtoken")
+            .await
+            .expect("store_credential (idempotent)");
+        let stdout = run_credential(&git, "fill", b"protocol=https\nhost=github.com\n\n");
+        assert!(
+            stdout.contains("password=ghp_seededtoken"),
+            "credential not intact after idempotent re-seed: {stdout}"
+        );
+    }
+
+    // Regression for the check/set key mismatch flagged in review of the
+    // credential seeding: `approve` writes a username-qualified entry, but a
+    // fetch (and the pre-check inside store_credential) ask the helper with
+    // host only. With a SECOND account stored for the same host, the host-only
+    // answer can be the other account — the pre-check then never matches
+    // (reject/approve churn on every call) and a real fetch can authenticate
+    // as the wrong user. store_credential now pins
+    // `credential.https://<host>.username` in the repo's local config, making
+    // git attach our username to every credential request from this repo.
+    #[tokio::test]
+    async fn test_store_credential_two_accounts_pins_username() {
+        let (git, dir) = setup_repo();
+        let cred_file = isolate_credential_helper(&git, dir.path());
+
+        // The user's own account, stored FIRST: the `store` helper answers a
+        // host-only lookup with the first file match, so without the username
+        // pin this entry would shadow ours.
+        run_credential(
+            &git,
+            "approve",
+            b"protocol=https\nhost=github.com\nusername=personal-user\npassword=ghp_personalsecret\n\n",
+        );
+
+        git.store_credential("github.com", "f11r-bot", "ghp_botsecret")
+            .await
+            .expect("store_credential");
+
+        // The pin must land in local config.
+        let out = StdCommand::new("git")
+            .args([
+                "config",
+                "--local",
+                "--get",
+                "credential.https://github.com.username",
+            ])
+            .current_dir(&git.repo_path)
+            .output()
+            .expect("git config --get");
+        assert!(out.status.success(), "credential username was not pinned");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "f11r-bot");
+
+        // A host-only fill — exactly what git-remote-https issues during a
+        // fetch — must resolve to OUR account via the pinned username, even
+        // though the personal account sits first in the store.
+        let stdout = run_credential(&git, "fill", b"protocol=https\nhost=github.com\n\n");
+        assert!(
+            stdout.contains("username=f11r-bot") && stdout.contains("password=ghp_botsecret"),
+            "host-only fill did not resolve to the pinned account: {stdout}"
+        );
+        assert!(
+            !stdout.contains("ghp_personalsecret"),
+            "host-only fill leaked the other account's credential: {stdout}"
+        );
+
+        // The user's own account must survive untouched — the reject inside
+        // store_credential targets only the username we manage.
+        let stdout = run_credential(
+            &git,
+            "fill",
+            b"protocol=https\nhost=github.com\nusername=personal-user\n\n",
+        );
+        assert!(
+            stdout.contains("password=ghp_personalsecret"),
+            "the user's own credential was disturbed: {stdout}"
+        );
+
+        // A repeat call must hit the "already current" fast path even with the
+        // second account present — this is the churn the pin exists to stop.
+        // No reject/approve ran iff the backing store file is byte-identical.
+        let before = std::fs::read(&cred_file).expect("read creds before");
+        git.store_credential("github.com", "f11r-bot", "ghp_botsecret")
+            .await
+            .expect("store_credential (repeat)");
+        let after = std::fs::read(&cred_file).expect("read creds after");
+        assert_eq!(
+            before, after,
+            "repeat store_credential churned the credential store instead of no-opping"
+        );
+    }
+
+    // A seeded-username flip (the x-access-token fallback from an offline
+    // launch → the real login once GitHub is reachable) must not strand the
+    // previously seeded PAT-bearing entry in the store: store_credential
+    // records the username it seeded in local config and evicts that entry
+    // when the username changes.
+    #[tokio::test]
+    async fn test_store_credential_username_change_evicts_old_entry() {
+        let (git, dir) = setup_repo();
+        let cred_file = isolate_credential_helper(&git, dir.path());
+
+        // Offline launch: empty username falls back to x-access-token.
+        git.store_credential("github.com", "", "ghp_token")
+            .await
+            .expect("first seed");
+        let creds = std::fs::read_to_string(&cred_file).expect("read creds");
+        assert!(
+            creds.contains("x-access-token"),
+            "fallback entry missing: {creds}"
+        );
+
+        // Same PAT, real login now known.
+        git.store_credential("github.com", "real-login", "ghp_token")
+            .await
+            .expect("second seed");
+
+        let creds = std::fs::read_to_string(&cred_file).expect("read creds");
+        assert!(creds.contains("real-login"), "new entry missing: {creds}");
+        assert!(
+            !creds.contains("x-access-token"),
+            "old seeded entry was stranded in the store: {creds}"
+        );
+
+        // Pin follows the new username.
+        let stdout = run_credential(&git, "fill", b"protocol=https\nhost=github.com\n\n");
+        assert!(
+            stdout.contains("username=real-login"),
+            "pin did not move to the new username: {stdout}"
+        );
+    }
+
+    // Turning seeding off must hand git auth back to the user:
+    // remove_credential_pin restores a pin the user had set themselves before
+    // we displaced it, drops the pin entirely when there was none, leaves a
+    // pin the user changed after our seed alone, and touches nothing when we
+    // never pinned.
+    #[tokio::test]
+    async fn test_remove_credential_pin_restores_user_config() {
+        const PIN: &str = "credential.https://github.com.username";
+        const MARKER: &str = "friendshipper.https://github.com.seededusername";
+        const ORIGINAL: &str = "friendshipper.https://github.com.originalusername";
+
+        // Case 1: the user had their own pin — seeding displaces it (recording
+        // the original), unpinning restores it.
+        {
+            let (git, dir) = setup_repo();
+            isolate_credential_helper(&git, dir.path());
+            set_local_config(&git, PIN, "personal-user");
+            git.store_credential("github.com", "f11r-bot", "ghp_tok")
+                .await
+                .expect("seed");
+            assert_eq!(local_config(&git, PIN).as_deref(), Some("f11r-bot"));
+            assert_eq!(
+                local_config(&git, ORIGINAL).as_deref(),
+                Some("personal-user")
+            );
+            git.remove_credential_pin("github.com")
+                .await
+                .expect("unpin");
+            assert_eq!(
+                local_config(&git, PIN).as_deref(),
+                Some("personal-user"),
+                "user's own pin was not restored"
+            );
+            assert!(
+                local_config(&git, MARKER).is_none() && local_config(&git, ORIGINAL).is_none(),
+                "seeded-username bookkeeping survived the unpin"
+            );
+        }
+
+        // Case 2: no pre-existing pin — unpinning drops the key entirely.
+        {
+            let (git, dir) = setup_repo();
+            isolate_credential_helper(&git, dir.path());
+            git.store_credential("github.com", "f11r-bot", "ghp_tok")
+                .await
+                .expect("seed");
+            assert_eq!(local_config(&git, PIN).as_deref(), Some("f11r-bot"));
+            git.remove_credential_pin("github.com")
+                .await
+                .expect("unpin");
+            assert!(local_config(&git, PIN).is_none(), "our pin was not removed");
+        }
+
+        // Case 3: the user changed the pin after our seed — theirs to keep.
+        {
+            let (git, dir) = setup_repo();
+            isolate_credential_helper(&git, dir.path());
+            git.store_credential("github.com", "f11r-bot", "ghp_tok")
+                .await
+                .expect("seed");
+            set_local_config(&git, PIN, "changed-later");
+            git.remove_credential_pin("github.com")
+                .await
+                .expect("unpin");
+            assert_eq!(
+                local_config(&git, PIN).as_deref(),
+                Some("changed-later"),
+                "unpin clobbered a pin the user changed after our seed"
+            );
+            assert!(
+                local_config(&git, MARKER).is_none(),
+                "seeded-username bookkeeping survived the unpin"
+            );
+        }
+
+        // Case 4: we never pinned — a user-set pin must be left untouched.
+        {
+            let (git, dir) = setup_repo();
+            isolate_credential_helper(&git, dir.path());
+            set_local_config(&git, PIN, "personal-user");
+            git.remove_credential_pin("github.com")
+                .await
+                .expect("unpin (no-op)");
+            assert_eq!(
+                local_config(&git, PIN).as_deref(),
+                Some("personal-user"),
+                "unpin touched a pin we never wrote"
+            );
+        }
     }
 
     // Regression: startup maintenance expired reflogs with the expiry window

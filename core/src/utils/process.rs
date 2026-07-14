@@ -54,6 +54,99 @@ pub async fn run_with_stdin(mut cmd: Command, stdin: Vec<u8>) -> Result<Output> 
     Ok(output)
 }
 
+/// A Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` wrapping one
+/// spawned child: terminating the job — or merely dropping this guard — kills
+/// the child's entire process tree, not just the child. Exists because
+/// `Child::kill` is `TerminateProcess` on the direct child only: git's helpers
+/// (`git-remote-https`, a GCM credential prompt) survive it, keep the
+/// inherited stdout/stderr pipe write ends open, and starve the pipe readers
+/// of EOF. Job membership is inherited by every descendant, so closing the job
+/// takes the stragglers down and the pipes actually close.
+///
+/// Best-effort by design: `assign` returning `None` (already-exited child, job
+/// API failure) must degrade at the call site to a plain kill, never to an
+/// error.
+#[cfg(windows)]
+pub struct ProcessTreeJob {
+    handle: windows::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl ProcessTreeJob {
+    /// Create the job and put `child` — and, transitively, its future
+    /// descendants — in it. Anything the child spawned *before* this call
+    /// lands outside the job; assign immediately after spawn to keep that
+    /// window negligible.
+    pub fn assign(child: &tokio::process::Child) -> Option<Self> {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        // None once the child has been reaped — nothing left to assign.
+        let raw = child.raw_handle()?;
+
+        // Wrapped in Self immediately so an early return below still closes
+        // the job handle via Drop.
+        let job = match unsafe { CreateJobObjectW(None, PCWSTR::null()) } {
+            Ok(handle) => Self { handle },
+            Err(e) => {
+                warn!("CreateJobObjectW failed: {e}");
+                return None;
+            }
+        };
+
+        let info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        if let Err(e) = unsafe {
+            SetInformationJobObject(
+                job.handle,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&info).cast(),
+                std::mem::size_of_val(&info) as u32,
+            )
+        } {
+            warn!("SetInformationJobObject failed: {e}");
+            return None;
+        }
+
+        if let Err(e) = unsafe { AssignProcessToJobObject(job.handle, HANDLE(raw as isize)) } {
+            // E.g. a sandbox/launcher job that forbids nesting
+            // (pre-Windows-8 semantics).
+            warn!("AssignProcessToJobObject failed: {e}");
+            return None;
+        }
+
+        Some(job)
+    }
+
+    /// Kill every process still in the job, immediately.
+    pub fn terminate(&self) {
+        if let Err(e) =
+            unsafe { windows::Win32::System::JobObjects::TerminateJobObject(self.handle, 1) }
+        {
+            warn!("TerminateJobObject failed: {e}");
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTreeJob {
+    fn drop(&mut self) {
+        // KILL_ON_JOB_CLOSE fires when the last handle closes, so plain drop
+        // also kills anything still alive in the job.
+        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.handle) };
+    }
+}
+
 pub fn wait_for_port(port: u16) -> Result<()> {
     let result = retry_with_index(
         Fixed::from_millis(1000).take(STARTUP_RETRY_ATTEMPTS),
@@ -361,6 +454,42 @@ mod tests {
 
         let out = run_with_stdin(cmd, Vec::new()).await.expect("spawned");
         assert!(!out.status.success());
+    }
+
+    // ProcessTreeJob must kill the WHOLE tree: cmd spawns ping as a grandchild
+    // sharing our stdout pipe; after terminate(), read_to_end must hit EOF
+    // promptly, which can only happen once every process holding the pipe's
+    // write end (cmd AND ping) is dead. This mirrors the production hazard:
+    // git.exe's orphaned children keeping the pipes open past kill() and
+    // wedging the reader joins behind the git process lock.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn process_tree_job_terminate_kills_grandchildren_and_closes_pipes() {
+        use tokio::io::AsyncReadExt;
+
+        let mut cmd = Command::new("cmd");
+        // ~30s of pings; the test only finishes quickly if they're killed.
+        cmd.args(["/c", "ping -n 30 127.0.0.1"]);
+        cmd.stdout(Stdio::piped());
+        let mut child = cmd.spawn().expect("spawn cmd");
+        let mut stdout = child.stdout.take().expect("stdout piped");
+        let job = ProcessTreeJob::assign(&child).expect("assign job");
+
+        // Give cmd a beat to spawn ping, so the grandchild exists (and holds
+        // the pipe) before the kill.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        job.terminate();
+
+        let mut buf = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stdout.read_to_end(&mut buf),
+        )
+        .await
+        .expect("pipe never reached EOF — a process in the job survived terminate()")
+        .expect("read stdout");
+        let _ = child.wait().await;
     }
 
     #[cfg(unix)]

@@ -380,9 +380,87 @@ impl Server {
         // fetch` reading the same .git/config — on Windows that surfaces as
         // "unable to access '.git/config': Permission denied".
         if !repo_path.is_empty() {
+            // Seed git's credential helper from the stored PAT before any
+            // background git runs, so fetch/maintenance/status authenticate via
+            // the (ideally non-expiring) token instead of popping an
+            // interactive login — and so a credential the helper erased after a
+            // prior 401 is restored on launch. Awaited inline so it's in place
+            // before the maintenance runner's first fetch. Best-effort.
+            // Gated on the user preference: with seeding off, Friendshipper
+            // never touches git's credential store. It does remove its own
+            // username pin (a persistent .git/config write from an earlier
+            // seed) if one is still present — restoring whatever value the
+            // user had — so opting out really does hand git auth back to them
+            // even if the disable happened by editing the config file or via a
+            // save that never reached the unpin. No-op when we never pinned.
+            if !shared_state.app_config.read().seed_git_credentials {
+                info!("Git credential seeding is disabled in preferences; leaving git auth alone");
+                if let Err(e) = shared_state.git().remove_credential_pin("github.com").await {
+                    warn!("Failed to remove leftover git credential username pin: {e}");
+                }
+            } else if let Ok(entry) = keyring::Entry::new(APP_NAME, KEYRING_USER) {
+                if let Ok(pat) = entry.get_password() {
+                    if !pat.is_empty() {
+                        let username = shared_state.github_username();
+                        if let Err(e) = shared_state
+                            .git()
+                            .store_credential("github.com", &username, &pat)
+                            .await
+                        {
+                            warn!("Failed to seed git credential from PAT at startup: {e}");
+                        }
+                    }
+                }
+            }
+
+            // Auto-repopulate the git credential if a background fetch later
+            // hits an auth error (a stomped or erased credential — e.g. after a
+            // transient 401, or a second process racing the credential store).
+            // The maintenance runner signals on this channel; we re-seed from
+            // the stored PAT so git recovers on the next fetch tick instead of
+            // only at restart. Capacity 1 collapses bursts into one re-seed.
+            let (reauth_tx, mut reauth_rx) = tokio::sync::mpsc::channel::<()>(1);
+            let reseed_state = shared_state.clone();
+            tokio::spawn(async move {
+                // Cooldown so that if the PAT itself is rejected (e.g. a lapsed
+                // SSO authorization), the every-tick failures don't churn the
+                // credential store with re-seeds that cannot help.
+                let cooldown = Duration::from_secs(120);
+                let mut last_reseed: Option<std::time::Instant> = None;
+                while reauth_rx.recv().await.is_some() {
+                    // Re-read the preference each signal so turning seeding
+                    // off in Preferences takes effect without a restart.
+                    if !reseed_state.app_config.read().seed_git_credentials {
+                        continue;
+                    }
+                    if let Some(t) = last_reseed {
+                        if t.elapsed() < cooldown {
+                            continue;
+                        }
+                    }
+                    let pat = match keyring::Entry::new(APP_NAME, KEYRING_USER)
+                        .and_then(|e| e.get_password())
+                    {
+                        Ok(p) if !p.is_empty() => p,
+                        _ => continue,
+                    };
+                    let username = reseed_state.github_username();
+                    info!("Background fetch hit an auth error; repopulating git credential from stored PAT");
+                    if let Err(e) = reseed_state
+                        .git()
+                        .store_credential("github.com", &username, &pat)
+                        .await
+                    {
+                        warn!("Failed to repopulate git credential after auth error: {e}");
+                    }
+                    last_reseed = Some(std::time::Instant::now());
+                }
+            });
+
             let maintenance_runner =
                 GitMaintenanceRunner::new(repo_path, pause_background_tasks.clone(), tx)
-                    .with_fetch_interval(Duration::from_secs(5));
+                    .with_fetch_interval(Duration::from_secs(30))
+                    .with_reauth_notifier(reauth_tx);
             tokio::spawn(async move {
                 match maintenance_runner.run().await {
                     Ok(_) => {}

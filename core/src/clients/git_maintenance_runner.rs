@@ -12,6 +12,22 @@ pub struct GitMaintenanceRunner {
     git: Git,
     config: MaintenanceConfig,
     pause: Arc<AtomicBool>,
+    reauth_tx: Option<tokio::sync::mpsc::Sender<()>>,
+}
+
+/// Does this fetch error look like a missing/rejected credential (as opposed to
+/// a network blip)? These markers are git/HTTP-generic, not GitHub-specific.
+/// Used to decide whether a background fetch failure is worth asking the app to
+/// repopulate the credential.
+fn is_auth_error(msg: &str) -> bool {
+    const MARKERS: [&str; 5] = [
+        "could not read Username",
+        "Authentication failed",
+        "terminal prompts disabled",
+        "Cannot prompt",
+        "HTTP 401",
+    ];
+    MARKERS.iter().any(|m| msg.contains(m))
 }
 
 struct MaintenanceConfig {
@@ -34,7 +50,12 @@ impl GitMaintenanceRunner {
 
         let config = MaintenanceConfig::default();
 
-        GitMaintenanceRunner { git, pause, config }
+        GitMaintenanceRunner {
+            git,
+            pause,
+            config,
+            reauth_tx: None,
+        }
     }
 
     pub fn with_fetch_interval(mut self, interval: Duration) -> Self {
@@ -47,23 +68,48 @@ impl GitMaintenanceRunner {
         self
     }
 
+    /// Register a notifier that fires (best-effort) when a background fetch
+    /// fails with an auth error, so the app can repopulate a stomped/erased
+    /// credential without waiting for a restart. Use a small channel
+    /// (capacity 1): a full channel just means a re-seed is already pending.
+    pub fn with_reauth_notifier(mut self, tx: tokio::sync::mpsc::Sender<()>) -> Self {
+        self.reauth_tx = Some(tx);
+        self
+    }
+
     pub async fn run(&self) -> anyhow::Result<()> {
         let git = self.git.clone();
         let fetch_interval = self.config.fetch_interval;
         let pause = self.pause.clone();
+        let reauth_tx = self.reauth_tx.clone();
         let fetch_task = tokio::task::spawn(async move {
             loop {
                 if !pause.clone().load(std::sync::atomic::Ordering::Relaxed) {
                     match git
                         .fetch(
                             ShouldPrune::Yes,
-                            Opts::default().with_skip_notify_frontend(),
+                            // with_complete_error so the failure carries git's
+                            // stderr (e.g. "could not read Username", "HTTP 401")
+                            // and we can tell an auth failure from a network blip.
+                            Opts::default()
+                                .with_skip_notify_frontend()
+                                .with_skip_interactive_auth()
+                                .with_complete_error(),
                         )
                         .await
                     {
                         Ok(_) => {}
                         Err(e) => {
-                            warn!("Error fetching: {:?}", e);
+                            let msg = e.to_string();
+                            warn!("Error fetching: {}", msg);
+                            // A stomped/erased credential surfaces here. Ask the
+                            // app to repopulate it from the stored PAT so git
+                            // recovers on the next tick instead of at restart.
+                            if is_auth_error(&msg) {
+                                if let Some(tx) = &reauth_tx {
+                                    let _ = tx.try_send(());
+                                }
+                            }
                         }
                     }
                 }
@@ -95,5 +141,35 @@ impl GitMaintenanceRunner {
         tokio::try_join!(fetch_task, maintenance_task)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_auth_error;
+
+    #[test]
+    fn auth_errors_trigger_reseed_but_network_errors_do_not() {
+        // Missing/erased or rejected credential → re-seed.
+        assert!(is_auth_error(
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+        ));
+        assert!(is_auth_error("error: RPC failed; HTTP 401 curl 22"));
+        assert!(is_auth_error(
+            "fatal: Authentication failed for 'https://github.com'"
+        ));
+        assert!(is_auth_error(
+            "fatal: Cannot prompt because user interactivity has been disabled"
+        ));
+
+        // Network / non-auth failures must NOT trigger a re-seed — re-seeding
+        // can't fix them and would just churn the credential store.
+        assert!(!is_auth_error(
+            "fatal: unable to access 'https://github.com/': Could not resolve host: github.com"
+        ));
+        assert!(!is_auth_error(
+            "Git command failed. Check the log for details."
+        ));
+        assert!(!is_auth_error("error: RPC failed; HTTP 500"));
     }
 }

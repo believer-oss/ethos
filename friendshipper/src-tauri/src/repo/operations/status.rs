@@ -107,7 +107,6 @@ where
         let status_future = self.git_client.status(vec![]);
 
         let (locks, status_output) = futures::join!(locks_future, status_future);
-        let locks = locks?;
         let status_output = status_output?;
 
         let status_lines = status_output.lines().collect::<Vec<_>>();
@@ -178,8 +177,25 @@ where
 
         {
             status.lock_user.clone_from(&self.github_username);
-            status.locks_ours = locks.ours;
-            status.locks_theirs = locks.theirs;
+            match locks {
+                Ok(locks) => {
+                    status.locks_ours = locks.ours;
+                    status.locks_theirs = locks.theirs;
+                }
+                Err(e) => {
+                    // verify_locks runs non-interactively (it must not pop a
+                    // credential prompt from a background status refresh), so a
+                    // stale credential surfaces here as an error rather than a
+                    // GCM window. Preserve the last-known lock state instead of
+                    // failing the entire status refresh; the next user-initiated
+                    // pull/push re-authenticates and the following refresh
+                    // repopulates locks.
+                    warn!("verify_locks failed; preserving previous lock state: {e}");
+                    let current_status = self.repo_status.read();
+                    status.locks_ours.clone_from(&current_status.locks_ours);
+                    status.locks_theirs.clone_from(&current_status.locks_theirs);
+                }
+            }
 
             info!(
                 %status.lock_user,
@@ -394,11 +410,16 @@ where
     }
 
     async fn get_modified_upstream(&self, branch: &str) -> Result<Vec<String>, anyhow::Error> {
+        // This `ls-remote` runs as part of the ambient status refresh, so it
+        // must not pop an interactive credential prompt. Run it
+        // non-interactively: a stale credential makes this fail quietly,
+        // `upstream_exists` becomes false, and we skip the upstream-modified
+        // check until the next user-initiated sync re-authenticates.
         let upstream_exists = self
             .git_client
             .run_and_collect_output(
                 &["ls-remote", "--exit-code", "--heads", "origin", branch],
-                git::Opts::default(),
+                git::Opts::default().with_skip_interactive_auth(),
             )
             .await
             .is_ok();

@@ -84,7 +84,13 @@ obws = "0.11.5"
 futures = "0.3.29"
 toml = "0.8.8"
 async-trait = "0.1"
-windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows = { version = "0.56.0", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 walkdir = "2.5.0"
 octocrab = "0.39.0"
 bytes = "1.7.2"
