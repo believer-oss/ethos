@@ -1,7 +1,7 @@
 use axum::Router;
 use clap::Parser;
 use ethos_core::types::config::{FriendshipperConfig, OktaConfig};
-use friendshipper_server::{ServerConfig, APP_NAME, VERSION};
+use friendshipper_server::{GithubAppAuthConfig, ServerConfig, APP_NAME, VERSION};
 #[allow(unused_imports)]
 use jwt_authorizer::{Authorizer, IntoLayer, JwtAuthorizer, Refresh, RefreshStrategy};
 use opentelemetry::global;
@@ -86,11 +86,33 @@ async fn main() -> anyhow::Result<()> {
     let friendshipper_config: FriendshipperConfig =
         serde_yaml::from_reader(config_file).expect("Failed to parse config file");
 
+    // GitHub App auth is optional so the server can run before the app is
+    // provisioned. Both vars must be set together.
+    let github_app_auth = match (
+        env::var("GITHUB_APP_CLIENT_ID"),
+        env::var("GITHUB_APP_CLIENT_SECRET"),
+    ) {
+        (Ok(client_id), Ok(client_secret)) => Some(GithubAppAuthConfig {
+            client_id,
+            client_secret,
+        }),
+        (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
+            panic!("GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET must be set together")
+        }
+        _ => {
+            tracing::warn!(
+                "GITHUB_APP_CLIENT_ID/GITHUB_APP_CLIENT_SECRET not set; /github routes disabled"
+            );
+            None
+        }
+    };
+
     // Update ServerConfig to include FriendshipperConfig
     let server_config = ServerConfig {
         role_to_assume: env::var("ROLE_TO_ASSUME").expect("ROLE_TO_ASSUME must be set"),
         friendshipper_config,
         okta_config,
+        github_app_auth,
     };
 
     // Build our application with a route

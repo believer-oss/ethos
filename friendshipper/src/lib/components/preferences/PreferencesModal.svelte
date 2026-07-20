@@ -57,6 +57,7 @@
 		resetEngine
 	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
+	import { connectGithub, getGithubAuthStatus, type GithubAuthStatus } from '$lib/auth';
 	import { regions } from '$lib/regions';
 	import type { AppConfig, Nullable } from '$lib/types';
 	import { goto } from '$app/navigation';
@@ -71,6 +72,53 @@
 
 	let checkForUpdatesInFlight: boolean = false;
 	let localAppConfig: AppConfig = {};
+	let githubAuthStatus: Nullable<GithubAuthStatus> = null;
+	let githubConnectInFlight: boolean = false;
+	let githubConnectPollTimer: Nullable<ReturnType<typeof setInterval>> = null;
+
+	const refreshGithubAuthStatus = async () => {
+		try {
+			githubAuthStatus = await getGithubAuthStatus();
+		} catch (_e) {
+			githubAuthStatus = null;
+		}
+	};
+
+	const stopGithubConnectPoll = () => {
+		if (githubConnectPollTimer) {
+			clearInterval(githubConnectPollTimer);
+			githubConnectPollTimer = null;
+		}
+		githubConnectInFlight = false;
+	};
+
+	const handleConnectGithub = async () => {
+		const accessToken = $oktaAuth?.getAccessToken();
+		if (!accessToken) {
+			await emit('error', 'Please log in before connecting GitHub.');
+			return;
+		}
+
+		try {
+			githubConnectInFlight = true;
+			await connectGithub(accessToken);
+
+			// The rest of the flow happens in the user's browser; poll until
+			// the backend reports tokens, then stop. Give up after 2 minutes.
+			const startedAt = Date.now();
+			githubConnectPollTimer = setInterval(() => {
+				void (async () => {
+					await refreshGithubAuthStatus();
+					if (githubAuthStatus?.connected || Date.now() - startedAt > 120_000) {
+						stopGithubConnectPoll();
+					}
+				})();
+			}, 2000);
+		} catch (e) {
+			stopGithubConnectPoll();
+			await emit('error', e);
+		}
+	};
 	let isEngineTypePrebuilt: boolean = false;
 	let isEngineTypeSource: boolean = false;
 	let configuringNewRepo: boolean = false;
@@ -100,6 +148,8 @@
 		}, 1000);
 		localAppConfig = structuredClone($appConfig);
 
+		void refreshGithubAuthStatus();
+
 		// reset error
 		configError = '';
 
@@ -115,10 +165,12 @@
 
 	const OnClose = () => {
 		configuringNewRepo = false;
+		stopGithubConnectPoll();
 	};
 
 	onDestroy(() => {
 		clearInterval(uptimeInterval);
+		stopGithubConnectPoll();
 	});
 
 	const onNewProjectClicked = () => {
@@ -753,15 +805,42 @@
 						launch it manually.
 					</Tooltip>
 
-					<Label class="text-white">Github PAT</Label>
-					<Input
-						class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
-						bind:value={localAppConfig.githubPAT}
-						type="password"
-					/>
-					<Tooltip class="text-sm" placement="bottom">
-						Copy and paste your GitHub Personal Access Token (PAT) here.
-					</Tooltip>
+					<Label class="text-white">GitHub Account</Label>
+					{#if githubAuthStatus?.connected}
+						<div class="flex flex-row items-center gap-2">
+							<span class="text-sm text-green-400">
+								Connected{githubAuthStatus.username ? ` as ${githubAuthStatus.username}` : ''}
+							</span>
+						</div>
+					{:else}
+						<div class="flex flex-row items-center gap-2">
+							<Button
+								size="xs"
+								disabled={githubConnectInFlight}
+								on:click={async () => handleConnectGithub()}
+							>
+								{#if githubConnectInFlight}
+									<Spinner size="4" class="me-2" />Waiting for browser...
+								{:else}
+									Connect GitHub
+								{/if}
+							</Button>
+						</div>
+						<Tooltip class="text-sm" placement="bottom">
+							Opens your browser to authorize Friendshipper with GitHub. No tokens to copy or
+							manage.
+						</Tooltip>
+
+						<Label class="text-white">GitHub PAT (legacy)</Label>
+						<Input
+							class="h-8 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+							bind:value={localAppConfig.githubPAT}
+							type="password"
+						/>
+						<Tooltip class="text-sm" placement="bottom">
+							Fallback for setups without GitHub App access. Prefer Connect GitHub above.
+						</Tooltip>
+					{/if}
 				</div>
 			</div>
 		</div>

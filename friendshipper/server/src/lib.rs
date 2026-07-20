@@ -7,8 +7,27 @@ use tracing::info;
 pub mod aws;
 pub mod config;
 pub mod discovery;
+pub mod github;
 pub const APP_NAME: &str = "friendshipper-server";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// GitHub App credentials used to mint user-to-server tokens. The client
+// secret never leaves the server; desktop clients exchange authorization
+// codes through the Okta-gated /github routes.
+#[derive(Clone)]
+pub struct GithubAppAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+impl std::fmt::Debug for GithubAppAuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GithubAppAuthConfig")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"********")
+            .finish()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -16,6 +35,7 @@ pub struct ServerConfig {
 
     pub friendshipper_config: FriendshipperConfig,
     pub okta_config: OktaConfig,
+    pub github_app_auth: Option<GithubAppAuthConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -47,6 +67,7 @@ pub async fn router(oidc_endpoint: String) -> Result<Router<ServerConfig>> {
     let authed_router = Router::new()
         .nest("/aws", aws::router::create_router())
         .nest("/config", config::router::create_router())
+        .nest("/github", github::router::create_router())
         .layer(jwt_authorizer.into_layer());
 
     Ok(Router::new()

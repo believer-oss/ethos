@@ -15,6 +15,7 @@ config = "0.13.3"
 ethos-core = { path = "../../core" }
 jwt-authorizer = "0.15.0"
 log = "0.4.20"
+reqwest = { workspace = true }
 opentelemetry = "0.21.0"
 opentelemetry-otlp = { version = "0.14.0", features = ["http-proto", "reqwest-client"] }
 opentelemetry_sdk = { version = "0.21.1", features = ["rt-tokio"] }

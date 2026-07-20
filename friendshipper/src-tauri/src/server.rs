@@ -269,6 +269,15 @@ impl Server {
         )
         .await?;
 
+        // If GitHub OAuth tokens were loaded from the keyring, they take
+        // precedence over any legacy PAT: point the GitHub client and the
+        // github_pat plumbing at the current access token.
+        if let Some(token) = shared_state.github_token_manager.access_token() {
+            if let Err(e) = shared_state.apply_github_access_token(token).await {
+                warn!("Failed to apply stored GitHub OAuth token: {}", e);
+            }
+        }
+
         // Resolve the repo path and clear any stale index.lock. The background
         // fetch/maintenance runner is started later, after the initial git config
         // is written, so its `git fetch` / `git maintenance run --auto` don't race
@@ -318,6 +327,25 @@ impl Server {
                 git.set_config("lfs.setlockablereadonly", "false").await?;
                 git.set_config("http.postBuffer", "524288000").await?;
                 git.configure_untracked_cache().await?;
+
+                // Take over git credential handling from GCM when we hold a
+                // GitHub credential (OAuth tokens or legacy PAT) and the
+                // helper binary shipped alongside our exe.
+                if shared_state.app_config.read().github_pat.is_some() {
+                    match crate::credential_helper_path() {
+                        Some(helper_path) => {
+                            if let Err(e) = git
+                                .configure_credential_helper(&helper_path.to_string_lossy())
+                                .await
+                            {
+                                warn!("Failed to configure credential helper: {}", e);
+                            }
+                        }
+                        None => {
+                            info!("Credential helper binary not found; leaving git credential config unchanged");
+                        }
+                    }
+                }
 
                 // Check for and fix partial clone filters that may prevent full history access
                 startup_tx.send("Checking repository configuration".to_string())?;

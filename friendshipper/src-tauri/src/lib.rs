@@ -27,6 +27,15 @@ pub mod utrace;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Locate the credential helper binary shipped next to the Friendshipper exe
+/// (cargo places both in the same target dir during development).
+pub fn credential_helper_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let path = exe.parent()?.join("friendshipper-credential-helper.exe");
+
+    path.exists().then_some(path)
+}
+
 // Build artifacts written by the build system
 pub const APP_NAME: &str = "Friendshipper";
 pub static KEYRING_USER: &str = "github_pat";
@@ -76,5 +85,12 @@ where
         .nest("/utrace", utrace::router::router())
         .route_layer(middleware::from_fn(move |headers, req, next| {
             nonce::nonce(headers, req, next, NONCE.as_str())
-        })))
+        }))
+        // The GitHub OAuth redirect target is hit by the user's browser, which
+        // can't send the nonce header, so it's mounted after the nonce layer.
+        .route(
+            "/auth/github/callback",
+            axum::routing::get(auth::github_oauth_callback::<T>),
+        )
+        .layer(axum::Extension(auth::router::LocalPort(port))))
 }
