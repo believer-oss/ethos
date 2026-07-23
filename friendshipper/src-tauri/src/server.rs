@@ -328,10 +328,13 @@ impl Server {
                 git.set_config("http.postBuffer", "524288000").await?;
                 git.configure_untracked_cache().await?;
 
-                // Take over git credential handling from GCM when we hold a
-                // GitHub credential (OAuth tokens or legacy PAT) and the
-                // helper binary shipped alongside our exe.
-                if shared_state.app_config.read().github_pat.is_some() {
+                // Take over git credential handling from GCM only when the
+                // user has explicitly connected GitHub via OAuth. PAT-only
+                // users keep their existing credential setup (GCM or
+                // otherwise) untouched -- shadowing it with a possibly
+                // stale/differently-scoped PAT breaks git transport for
+                // setups that were working fine.
+                if shared_state.github_token_manager.tokens().is_some() {
                     match crate::credential_helper_path() {
                         Some(helper_path) => {
                             if let Err(e) = git
