@@ -34,11 +34,14 @@ back to the `github_pat` keyring entry when no OAuth tokens exist.
 Create a GitHub App on the org (Settings -> Developer settings -> GitHub
 Apps):
 
-- **Callback URLs**: register `http://127.0.0.1:8484/auth/github/callback`
-  through `http://127.0.0.1:8494/auth/github/callback` (the backend probes
-  ports 8484-8494).
+- **Callback URL**: register exactly one, with no port:
+  `http://127.0.0.1/auth/github/callback`. GitHub's form rejects loopback
+  URLs with explicit ports, and it doesn't matter: for loopback addresses
+  GitHub ignores the port when matching `redirect_uri`, so this one entry
+  covers the backend's whole 8484-8494 probe range.
 - **Permissions**: Repository -> Contents (read/write), Pull requests
-  (read/write), Metadata (read, mandatory).
+  (read/write), Commit statuses (read), Checks (read), Metadata (read,
+  mandatory).
 - **Token expiration**: leave "Expire user authorization tokens" enabled.
   The flow requires refresh tokens.
 - **Request user authorization (OAuth) during installation**: not required.
