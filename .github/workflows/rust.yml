@@ -15,7 +15,6 @@ env:
 
 jobs:
   frontend-checks:
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     strategy:
       matrix:
         app: ["core/ui", "friendshipper"]
@@ -39,7 +38,6 @@ jobs:
           yarn lint
 
   build-linux:
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     runs-on:
       group: ethos-linux
     strategy:
@@ -123,7 +121,6 @@ jobs:
             ${{ matrix.app }}-linux-amd64
 
   build-windows:
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
     runs-on:
       group: ethos-windows
     strategy:
@@ -192,44 +189,3 @@ jobs:
           files: |
             ${{ matrix.app }}.exe
 
-  build-f11r-server:
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'release' || github.event_name == 'workflow_dispatch') || github.event_name == 'push' }}
-    env:
-      REGISTRY: ghcr.io
-      IMAGE_NAME: believer-oss/f11r-server
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Check out
-        uses: actions/checkout@v4
-
-      - name: Install ubuntu dependencies
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-          build-essential \
-          libssl-dev \
-          pkg-config
-
-      - name: set up rust toolchain
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        uses: believer-oss/setup-rust-toolchain@87cb4b395294936a824ba840af04318e5e6eb8f6
-        with:
-          components: rustfmt, clippy
-
-      - name: Check format and linting
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        run: |
-          cargo fmt -p ethos-types -- --check
-          cargo fmt -p friendshipper-server -- --check
-          cargo clippy --all-features -p ethos-types -- -D warnings
-          cargo clippy --all-features -p friendshipper-server -- -D warnings
-
-      - name: Run unit tests
-        if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
-        run: |
-          cargo test --verbose --release -p ethos-types
-          cargo test --verbose --release -p friendshipper-server

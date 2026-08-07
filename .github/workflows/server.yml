@@ -1,0 +1,64 @@
+name: Server
+
+# Scoped to the server's full source closure. friendshipper-server depends only on
+# ethos-types, so core/ and friendshipper/src-tauri/ cannot affect this build.
+# Keep the two path lists below in sync - GitHub Actions does not support YAML anchors.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "friendshipper/server/**"
+      - "types/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/server.yml"
+  pull_request:
+    branches: ["main"]
+    types: ["labeled", "opened", "reopened", "synchronize"]
+    paths:
+      - "friendshipper/server/**"
+      - "types/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/server.yml"
+  release:
+    types: ["published"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-f11r-server:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: set up rust toolchain
+        uses: believer-oss/setup-rust-toolchain@87cb4b395294936a824ba840af04318e5e6eb8f6
+        with:
+          components: rustfmt, clippy
+
+      - name: Check format and linting
+        run: |
+          cargo fmt -p ethos-types -- --check
+          cargo fmt -p friendshipper-server -- --check
+          cargo clippy --all-features -p ethos-types -- -D warnings
+          cargo clippy --all-features -p friendshipper-server -- -D warnings
+
+      - name: Run unit tests
+        run: cargo test --verbose -p ethos-types -p friendshipper-server
+
+      # Also the assertion that the server has not regained a tauri dependency:
+      # the Dockerfile no longer installs any GUI system libraries, so a
+      # reintroduced ethos-core dependency fails here rather than at release.
+      - name: Build container image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4
+        with:
+          context: .
+          file: friendshipper/server/Dockerfile
+          push: false
