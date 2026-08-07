@@ -5,6 +5,8 @@ pub fn create_router() -> Router<ServerConfig> {
     Router::new().route("/", get(get_okta_config))
 }
 
-async fn get_okta_config(State(config): State<ServerConfig>) -> Json<crate::OktaConfig> {
+async fn get_okta_config(
+    State(config): State<ServerConfig>,
+) -> Json<ethos_types::config::OktaConfig> {
     Json(config.okta_config)
 }

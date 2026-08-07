@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
-default-members = ["core", "friendshipper/src-tauri", "friendshipper/server"]
+default-members = ["core", "types", "friendshipper/src-tauri", "friendshipper/server"]
 members = [
     "core",
+    "types",
     "friendshipper/server",
     "friendshipper/src-tauri",
 ]
@@ -49,6 +50,7 @@ tracing-subscriber = { version = "0.3.17", features = [
 urlencoding = "2.1.3"
 
 ethos-core = { path = "core" }
+ethos-types = { path = "types" }
 
 [profile.release]
 opt-level = 2 # fast and small wasm

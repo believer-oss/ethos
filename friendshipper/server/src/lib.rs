@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::Router;
-use ethos_core::types::config::{FriendshipperConfig, OktaConfig};
+use ethos_types::config::{FriendshipperConfig, OktaConfig};
 use jwt_authorizer::{Authorizer, IntoLayer, JwtAuthorizer, Refresh, RefreshStrategy, Validation};
 use serde::Deserialize;
 use tracing::info;

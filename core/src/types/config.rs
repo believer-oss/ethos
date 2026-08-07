@@ -18,6 +18,8 @@ use parking_lot::RwLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+pub use ethos_types::config::{FriendshipperConfig, OktaConfig};
+
 lazy_static! {
     // Attempts to match the format <branch>-<short sha>. See test_engine_association_regex() for examples.
     static ref CUSTOM_ENGINE_ASSOCIATION_REGEX: Regex =
@@ -35,13 +37,6 @@ pub enum EngineType {
 }
 
 pub type AppConfigRef = Arc<RwLock<AppConfig>>;
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OktaConfig {
-    pub client_id: String,
-    pub issuer: String,
-}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RedactedString(String);
@@ -583,13 +578,6 @@ impl UProject {
         let commit_sha_short: &str = &captures[2];
         Ok(commit_sha_short.to_string())
     }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FriendshipperConfig {
-    pub artifact_bucket_name: String,
-    pub promoted_artifact_bucket_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

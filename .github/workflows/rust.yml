@@ -210,16 +210,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-          libwebkit2gtk-4.1-dev \
           build-essential \
-          curl \
-          wget \
-          file \
           libssl-dev \
-          libxdo-dev \
-          libgtk-3-dev \
-          libayatana-appindicator3-dev \
-          librsvg2-dev
+          pkg-config
 
       - name: set up rust toolchain
         if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
@@ -230,10 +223,13 @@ jobs:
       - name: Check format and linting
         if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
+          cargo fmt -p ethos-types -- --check
           cargo fmt -p friendshipper-server -- --check
+          cargo clippy --all-features -p ethos-types -- -D warnings
           cargo clippy --all-features -p friendshipper-server -- -D warnings
 
       - name: Run unit tests
         if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
+          cargo test --verbose --release -p ethos-types
           cargo test --verbose --release -p friendshipper-server
