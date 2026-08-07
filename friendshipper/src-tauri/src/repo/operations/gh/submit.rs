@@ -146,10 +146,7 @@ async fn filter_to_textlike_paths(
         .split(|&b| b == 0)
         .filter(|s| !s.is_empty())
         .collect();
-    for record in fields.chunks_exact(3) {
-        let [path, attr, value] = record else {
-            unreachable!("chunks_exact(3) yields 3-element slices");
-        };
+    for [path, attr, value] in fields.as_chunks::<3>().0 {
         let attr = std::str::from_utf8(attr).unwrap_or("");
         let value = std::str::from_utf8(value).unwrap_or("");
         let exclude = (attr == "filter" && value == "lfs") || (attr == "text" && value == "unset");
