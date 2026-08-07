@@ -26,4 +26,10 @@ node_modules
 .DS_Store
 
 Claude.md
-.claude
+
+# claude code: shared agent tooling is tracked, per-user state is not
+.claude/*
+!.claude/README.md
+!.claude/instructions/
+!.claude/scripts/
+!.claude/skills/
