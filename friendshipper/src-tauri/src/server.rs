@@ -382,7 +382,7 @@ impl Server {
         if !repo_path.is_empty() {
             let maintenance_runner =
                 GitMaintenanceRunner::new(repo_path, pause_background_tasks.clone(), tx)
-                    .with_fetch_interval(Duration::from_secs(5));
+                    .with_fetch_interval(Duration::from_secs(30));
             tokio::spawn(async move {
                 match maintenance_runner.run().await {
                     Ok(_) => {}
