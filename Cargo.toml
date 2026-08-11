@@ -14,6 +14,7 @@ axum = { version = "0.7.5", features = ["macros"] }
 chrono = { version = "0.4.26", features = ["serde"] }
 config = "0.13.3"
 directories-next = "2.0.0"
+globset = "0.4"
 keyring = "2"
 lazy_static = { version = "1.4.0", features = [] }
 log = "0.4.20"

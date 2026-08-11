@@ -11,7 +11,9 @@ export enum SubmitStatus {
 	CheckoutRequired = 'CheckoutRequired',
 	CheckedOutByOtherUser = 'CheckedOutByOtherUser',
 	Unmerged = 'Unmerged',
-	Conflicted = 'Conflicted'
+	Conflicted = 'Conflicted',
+	Blocked = 'Blocked',
+	Unknown = 'Unknown'
 }
 
 export enum SortKey {

@@ -361,6 +361,25 @@
 			tooltip = ': Unable to submit - unmerged file requires a revert';
 		} else if (file.submitStatus === SubmitStatus.Conflicted) {
 			tooltip = ': Unable to submit - conflicted file requires a revert';
+		} else if (file.submitStatus === SubmitStatus.Blocked) {
+			tooltip =
+				': Unable to submit - this file type is blocked from being submitted to the current target branch';
+			// `Blocked` takes precedence over every other submit status on the
+			// backend (see update_files_submit_status in status.rs), so a file
+			// that is simultaneously unmerged loses that information once
+			// submitStatus collapses to a single value - the user would see
+			// only "this file type is blocked" with no hint that reverting
+			// would also fix an unmerged state out from under it. `file.state`
+			// is a separate field that survives that collapse, so the
+			// unmerged case is still detectable here and worth surfacing
+			// additively. The analogous "this file is also upstream-
+			// conflicted" case is not: RepoStatus.conflicts (the list an
+			// upstream conflict is derived from) is never sent to this
+			// component - only individual ModifiedFile entries are - so there
+			// is no client-side signal to detect it from.
+			if (file.state === ModifiedFileState.Unmerged) {
+				tooltip += '; this file is also unmerged - reverting it will resolve both issues';
+			}
 		}
 
 		return file.state + tooltip;

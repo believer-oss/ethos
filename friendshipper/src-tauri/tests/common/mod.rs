@@ -375,8 +375,34 @@ async fn initialize_test_repo() {
     }
 }
 
+/// The `RepoConfig` used by `setup()` when a test has no opinion about it.
+fn default_test_repo_config() -> RepoConfig {
+    let remote_path: PathBuf = TEST_DIR.join("test-remote");
+    RepoConfig {
+        uproject_path: build_uproject_path(&remote_path)
+            .into_os_string()
+            .into_string()
+            .unwrap(),
+        trunk_branch: "main".to_string(),
+        git_hooks_path: None,
+        ..Default::default()
+    }
+}
+
 pub async fn setup(
     schema_version: StorageSchemaVersion,
+) -> anyhow::Result<TestServer<UnrealEngineProvider>> {
+    setup_with_repo_config(schema_version, default_test_repo_config()).await
+}
+
+/// Same as `setup()`, but lets a test supply its own `RepoConfig` — for
+/// example one with `blockedFileGlobs` set on a `TargetBranchConfig`, to
+/// cross-validate the config-to-wire path for blocked-file submit status
+/// through the real HTTP status endpoint rather than only in-process.
+#[allow(dead_code)]
+pub async fn setup_with_repo_config(
+    schema_version: StorageSchemaVersion,
+    repo_config: RepoConfig,
 ) -> anyhow::Result<TestServer<UnrealEngineProvider>> {
     info!("Setting up test server");
     initialize_test_repo().await;
@@ -453,16 +479,7 @@ pub async fn setup(
     });
 
     info!("Created longtail logger. Creating repo config.");
-    let remote_path: PathBuf = TEST_DIR.join("test-remote");
-    let repo_config = Arc::new(RwLock::new(RepoConfig {
-        uproject_path: build_uproject_path(&remote_path)
-            .into_os_string()
-            .into_string()
-            .unwrap(),
-        trunk_branch: "main".to_string(),
-        git_hooks_path: None,
-        ..Default::default()
-    }));
+    let repo_config = Arc::new(RwLock::new(repo_config));
 
     info!("Created app state. Creating artifact storage.");
     let dynamic_config = Arc::new(RwLock::new(DynamicConfig {
