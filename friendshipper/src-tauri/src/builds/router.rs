@@ -465,11 +465,47 @@ pub struct CommitWorkflowInfo {
 pub struct GetWorkflowsParams {
     #[serde(default)]
     pub engine: bool,
+    pub project: Option<String>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct GetWorkflowsResponse {
     pub commits: Vec<CommitWorkflowInfo>,
+}
+
+fn resolve_workflow_project(
+    params_project: Option<String>,
+    selected_artifact_project: Option<String>,
+    engine: bool,
+    engine_repo_url: &str,
+) -> anyhow::Result<String> {
+    let mut project = if let Some(project) = params_project {
+        project
+    } else {
+        selected_artifact_project
+            .context("Project not configured. Repo may still be initializing.")?
+    };
+
+    if engine && !engine_repo_url.is_empty() {
+        // `engine_repo_url` is free-form config, so walk from the right and skip empty segments
+        // rather than indexing: a trailing slash still resolves, and a value with no '/' falls
+        // through to the param/config project instead of panicking on an underflowed index.
+        let mut segments = engine_repo_url.rsplit('/').filter(|s| !s.is_empty());
+
+        let repo_name = segments
+            .next()
+            .map(|name| name.trim_end_matches(".git"))
+            .filter(|name| !name.is_empty());
+        let repo_owner = segments.next();
+
+        if let (Some(owner), Some(name)) = (repo_owner, repo_name) {
+            let owner = owner.to_lowercase();
+            let name = name.to_lowercase();
+            project = format!("{owner}-{name}");
+        }
+    }
+
+    Ok(project)
 }
 
 async fn get_workflows<T>(
@@ -482,21 +518,13 @@ where
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
     let config = state.app_config.read().clone();
-    let mut selected_artifact_project = config
-        .selected_artifact_project
-        .context("Project not configured. Repo may still be initializing.")?;
 
-    if params.engine && !config.engine_repo_url.is_empty() {
-        let parts = config.engine_repo_url.split('/').collect::<Vec<&str>>();
-        let repo_owner = parts.get(parts.len() - 2).unwrap().to_lowercase();
-        let repo_name = parts
-            .last()
-            .unwrap()
-            .trim_end_matches(".git")
-            .to_lowercase();
-
-        selected_artifact_project = format!("{repo_owner}-{repo_name}");
-    }
+    let selected_artifact_project = resolve_workflow_project(
+        params.project.clone(),
+        config.selected_artifact_project.clone(),
+        params.engine,
+        &config.engine_repo_url,
+    )?;
 
     let workflows = kube_client
         .get_workflows(&selected_artifact_project)
@@ -778,4 +806,81 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn param_project_wins_over_config() {
+        let result = resolve_workflow_project(
+            Some("param-project".to_string()),
+            Some("config-project".to_string()),
+            false,
+            "",
+        )
+        .unwrap();
+        assert_eq!(result, "param-project");
+    }
+
+    #[test]
+    fn falls_back_to_config_project() {
+        let result =
+            resolve_workflow_project(None, Some("config-project".to_string()), false, "").unwrap();
+        assert_eq!(result, "config-project");
+    }
+
+    #[test]
+    fn errors_when_no_project_available() {
+        assert!(resolve_workflow_project(None, None, false, "").is_err());
+    }
+
+    #[test]
+    fn engine_repo_overrides_everything() {
+        let result = resolve_workflow_project(
+            Some("param-project".to_string()),
+            Some("config-project".to_string()),
+            true,
+            "https://github.com/BelieverCo/GamePrototypeMP.git",
+        )
+        .unwrap();
+        assert_eq!(result, "believerco-gameprototypemp");
+    }
+
+    #[test]
+    fn engine_flag_without_repo_url_does_not_override() {
+        let result = resolve_workflow_project(
+            Some("param-project".to_string()),
+            Some("config-project".to_string()),
+            true,
+            "",
+        )
+        .unwrap();
+        assert_eq!(result, "param-project");
+    }
+
+    #[test]
+    fn engine_repo_url_without_any_slash_falls_through_instead_of_panicking() {
+        let result = resolve_workflow_project(
+            Some("param-project".to_string()),
+            Some("config-project".to_string()),
+            true,
+            "GamePrototypeMP",
+        )
+        .unwrap();
+        assert_eq!(result, "param-project");
+    }
+
+    #[test]
+    fn engine_repo_url_with_trailing_slash_still_resolves() {
+        let result = resolve_workflow_project(
+            Some("param-project".to_string()),
+            Some("config-project".to_string()),
+            true,
+            "https://github.com/BelieverCo/GamePrototypeMP/",
+        )
+        .unwrap();
+        assert_eq!(result, "believerco-gameprototypemp");
+    }
 }

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { Button, Checkbox, Input, Label, Modal, Select, Tooltip, Helper } from 'flowbite-svelte';
-	import { EditOutline, ExclamationCircleOutline, UndoOutline } from 'flowbite-svelte-icons';
+	import { ExclamationCircleOutline, UndoOutline } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import type {
 		ArtifactEntry,
+		CommitWorkflowInfo,
 		Nullable,
 		Playtest,
 		PlaytestSpec,
@@ -18,8 +19,10 @@
 		workflowMap,
 		builds
 	} from '$lib/stores';
-	import { getBuild, getBuilds } from '$lib/builds';
+	import { getBuild, getBuilds, getWorkflows } from '$lib/builds';
 	import { getServerArgsDisplayString } from '$lib/gameServers';
+	import { resolveTrunkBranch, isTrunkBuild } from '$lib/utils';
+	import BuildPicker from './BuildPicker.svelte';
 
 	export let versions: ArtifactEntry[];
 	export let showModal: boolean;
@@ -30,12 +33,22 @@
 	let prevProject: string | null = null;
 	let showConfirmation: boolean = false;
 
-	let commits: { name: string; value: string }[] = [];
+	// Full entries rather than {name,value} pairs — BuildPicker needs `lastModified` and `key` too.
+	let pickerVersions: ArtifactEntry[] = [];
+	// Component-local: the global `workflows` store has readers on other routes and no restore path.
+	let projWorkflowMap: Map<string, CommitWorkflowInfo> = new Map();
+	// Re-entrancy guard for getProjectValues — see the reactive block below.
+	let getProjectValuesRunId = 0;
 	let maps: { value: string; name: string }[] = [];
 	let profiles: { value: PlaytestProfile; name: string }[] = [];
 	let submitting = false;
 	let deleting = false;
 	let project: string = '';
+
+	// Controlled selection: replaces the `<Select>`'s one-way `value` and the FormData read.
+	let selectedVersion: string = '';
+	// The sha the playtest is saved with (Editing only) — drives BuildPicker's "Current" row.
+	let originalSha: string | null = null;
 
 	let playtestError: string | null = null;
 	let nameError: boolean = false;
@@ -47,8 +60,10 @@
 
 	let commitSelectMode: CommitSelectMode = CommitSelectMode.Default;
 
-	const getCommitPhase = (commit: string): string => {
-		const commitWorkflow = $workflowMap.get(commit);
+	// Takes the map explicitly: the global store is written once at app start, for the default
+	// project only, so reading it here filtered nothing for other projects and went stale for this one.
+	const getCommitPhase = (commit: string, wfMap: Map<string, CommitWorkflowInfo>): string => {
+		const commitWorkflow = wfMap.get(commit);
 		if (!commitWorkflow) return 'unknown';
 
 		// if any workflow is running, return "Running"
@@ -70,39 +85,48 @@
 		return 'unknown';
 	};
 
-	const getBranchInfo = (commit: string): { branch: string | null; isMain: boolean } => {
-		const commitWorkflow = $workflowMap.get(commit);
-		if (!commitWorkflow || !commitWorkflow.branch) {
-			return { branch: null, isMain: false };
-		}
-
-		const cleanBranchName = commitWorkflow.branch.replace('refs/heads/', '');
-		const isMain = cleanBranchName.toLowerCase() === 'main';
-
-		return { branch: cleanBranchName, isMain };
-	};
-
+	// `_item` is unused — it only keeps `playtest` in the reactive block's dependency set.
 	const getProjectValues = async (
-		item: Nullable<Playtest>,
+		_item: Nullable<Playtest>,
 		entries: ArtifactEntry[],
-		proj: Nullable<string>
+		proj: Nullable<string>,
+		runId: number
 	) => {
 		let projVersions = Array<ArtifactEntry>();
+		let workflowsResult: CommitWorkflowInfo[] = [];
 
 		if (proj) {
-			try {
-				projVersions = await getBuilds(250, proj).then((res) => res.entries);
-			} catch (getBuildsError) {
-				await emit('error', getBuildsError);
+			// Settled, not all: a workflows failure should cost branch attribution, not the build list.
+			const [buildsRes, workflowsRes] = await Promise.allSettled([
+				getBuilds(250, proj),
+				getWorkflows(false, proj)
+			]);
+
+			if (buildsRes.status === 'fulfilled') {
+				projVersions = buildsRes.value.entries;
+			} else {
+				await emit('error', buildsRes.reason);
 			}
 
+			if (workflowsRes.status === 'fulfilled') {
+				workflowsResult = workflowsRes.value.commits;
+			} else {
+				await emit('error', workflowsRes.reason);
+			}
+		} else {
+			projVersions = entries;
+			workflowsResult = $workflowMap.size > 0 ? Array.from($workflowMap.values()) : [];
+		}
+
+		// Every await is above this line and every write below it, so a superseded run touches nothing.
+		if (runId !== getProjectValuesRunId) return;
+
+		if (proj) {
 			// This is purposefully not being set in the global state. We want to update the maps for this Modal only.
 			if (prevProject === null) {
 				prevProject = $appConfig.selectedArtifactProject;
 			}
 			$appConfig.selectedArtifactProject = proj;
-		} else {
-			projVersions = entries;
 		}
 
 		maps = $activeProjectConfig?.maps.map((m) => ({ value: m, name: m })) ?? [];
@@ -112,32 +136,42 @@
 			value: p
 		}));
 
-		// Filter out failed builds from the available commits
-		const filteredVersions = projVersions.filter((v) => {
-			const phase = getCommitPhase(v.commit);
-			return phase !== 'Failed';
-		});
+		projWorkflowMap = new Map(workflowsResult.map((w) => [w.commit, w]));
 
-		commits = filteredVersions.map((v) => ({
-			value: v.commit,
-			name: v.commit
-		}));
+		// Drop failed builds, and sha-less ones: `commit` is `Option<String>` in Rust but `string` in
+		// types.ts, and a malformed S3 key would throw inside BuildPicker's keyed `{#each}`.
+		pickerVersions = projVersions.filter(
+			(v) => !!v.commit && getCommitPhase(v.commit, projWorkflowMap) !== 'Failed'
+		);
 
-		// If we have a version selected already, and it's older than the entire commit list,
-		// let's add it to the list to avoid confusion.
-		if (item != null && !commits.find((c) => c.value === item?.spec.version)) {
-			commits.push({
-				value: item.spec.version,
-				name: item.spec.version
-			});
+		// Only defaults in Creating mode; Editing seeds `selectedVersion` in handleOpen first.
+		// `pickerVersions` is newest-first across *every* branch, so `[0]` is often a feature-branch
+		// build — take the newest trunk build instead, falling back only if there is none.
+		if (selectedVersion === '') {
+			const trunk = resolveTrunkBranch($appConfig?.primaryBranch, $repoConfig?.targetBranches);
+			const newestTrunkBuild = pickerVersions.find((v) =>
+				isTrunkBuild(projWorkflowMap.get(v.commit)?.branch, trunk)
+			);
+			selectedVersion = newestTrunkBuild?.commit ?? pickerVersions[0]?.commit ?? '';
 		}
 	};
 
-	$: (async () => {
-		await getProjectValues(playtest, versions, project);
-	})().catch((e) => {
-		void emit('error', e);
-	});
+	// Via a helper so the reactive block does not take a dependency on the counter it writes.
+	const nextGetProjectValuesRunId = (): number => {
+		getProjectValuesRunId += 1;
+		return getProjectValuesRunId;
+	};
+
+	// Carries two network calls, so the run id is captured here and rechecked past the awaits:
+	// only the last-fired run writes state. In-flight requests are not cancelled, just discarded.
+	$: void (async () => {
+		const runId = nextGetProjectValuesRunId();
+		try {
+			await getProjectValues(playtest, versions, project, runId);
+		} catch (e) {
+			await emit('error', e);
+		}
+	})();
 
 	const projects = $allProjects?.map((p) => ({
 		value: p,
@@ -147,7 +181,8 @@
 	const getPlaytestProject = (item: Nullable<Playtest>): string => {
 		if (item === null) return projects?.[0]?.value ?? '';
 
-		if (item.metadata.annotations === null) return '';
+		// `== null`: kube omits the annotations key entirely, so it arrives `undefined`, not `null`.
+		if (item.metadata.annotations == null) return '';
 
 		return item.metadata.annotations['believer.dev/project'] ?? '';
 	};
@@ -169,6 +204,14 @@
 		submitting = true;
 		playtestError = '';
 
+		// Captured before the first await: Escape stays live during submit, and `handleClose` blanking
+		// `project` mid-flight would write an empty `believer.dev/project` annotation.
+		const submitMode = mode;
+		const submitPlaytest = playtest;
+		const submitProject = project;
+		const submitVersion = selectedVersion;
+		const knownVersions = pickerVersions;
+
 		const formData = new FormData(e.target as HTMLFormElement);
 		const data: Record<string, string> = {};
 		for (const field of formData) {
@@ -183,6 +226,16 @@
 			return;
 		}
 
+		if (!submitVersion) {
+			playtestError = 'A build version is required.';
+			submitting = false;
+			return;
+		}
+
+		// Keyed off the value, not the mode: a hand-typed sha survives the Undo back to Default, and
+		// nothing validates it server-side. Anything absent from the list gets the pre-flight.
+		const needsBuildPreflight = !knownVersions.some((v) => v.commit === submitVersion);
+
 		let gameServerCmdArgs: string[] = [];
 		if (data.profile !== undefined) {
 			const selectedProfileName = data.profile;
@@ -192,40 +245,42 @@
 			}
 		}
 
-		if (mode === ModalState.Editing && playtest != null) {
+		if (submitMode === ModalState.Editing && submitPlaytest != null) {
 			const doNotPrune = !('autoCleanup' in data);
 			const spec: PlaytestSpec = {
-				displayName: playtest.spec.displayName,
-				version: data.version,
+				displayName: submitPlaytest.spec.displayName,
+				version: submitVersion,
 				map: data.map,
 				minGroups: parseInt(data.minGroups, 10),
 				playersPerGroup: parseInt(data.maxPlayersPerGroup, 10),
 				startTime: new Date(`${data.startDate} ${data.startTime}`).toISOString(),
-				groups: playtest.spec.groups,
+				groups: submitPlaytest.spec.groups,
 				feedbackURL: data.feedbackURL,
-				includeReadinessProbe: playtest?.spec.includeReadinessProbe ?? false,
+				includeReadinessProbe: submitPlaytest.spec.includeReadinessProbe ?? false,
 				gameServerCmdArgs,
-				disableGameServers: playtest?.spec.disableGameServers ?? false
+				disableGameServers: submitPlaytest.spec.disableGameServers ?? false
 			};
 
 			try {
-				if (commitSelectMode === CommitSelectMode.Custom) {
-					await getBuild(data.version, data.project);
+				if (needsBuildPreflight) {
+					// `|| undefined`: '' would arrive as `Some("")` and defeat the backend's fallback.
+					// (`data.project` is undefined in Editing mode — the Project <Select> is disabled.)
+					await getBuild(submitVersion, submitProject || undefined);
 				}
 
-				await updatePlaytest(playtest?.metadata.name, project, doNotPrune, spec);
+				await updatePlaytest(submitPlaytest.metadata.name, submitProject, doNotPrune, spec);
 			} catch (updateError) {
 				playtestError = (updateError as Error).message;
 				submitting = false;
 				return;
 			}
-		} else if (mode === ModalState.Creating) {
+		} else if (submitMode === ModalState.Creating) {
 			const doNotPrune = !('autoCleanup' in data);
 			const includeReadinessProbe = 'includeReadinessProbe' in data;
 			const disableGameServers = 'disableGameServers' in data;
 			const spec: PlaytestSpec = {
 				displayName: data.name,
-				version: data.version,
+				version: submitVersion,
 				map: data.map,
 				minGroups: parseInt(data.minGroups, 10),
 				playersPerGroup: parseInt(data.maxPlayersPerGroup, 10),
@@ -240,8 +295,10 @@
 			const name = data.name.toLowerCase().replace(/[_\s/]/g, '-');
 
 			try {
-				if (commitSelectMode === CommitSelectMode.Custom) {
-					await getBuild(data.version, data.project);
+				if (needsBuildPreflight) {
+					// `data.project` is the authority in Creating mode - the Project <Select> is enabled and
+					// only one-way bound, so `project` does not track the user's choice.
+					await getBuild(submitVersion, data.project || undefined);
 				}
 				await createPlaytest(name, data.project, doNotPrune, spec);
 			} catch (createError) {
@@ -253,9 +310,6 @@
 
 		submitting = false;
 		showModal = false;
-
-		// Put the real project back in the global state.
-		$appConfig.selectedArtifactProject = prevProject ?? '';
 
 		onSubmit();
 	};
@@ -288,7 +342,25 @@
 			commitSelectMode = CommitSelectMode.Default;
 		}
 
+		// Order matters: assigning `project` fires the reactive block, and `selectedVersion` must
+		// already be set in Editing mode so the auto-default no-ops.
+		selectedVersion = playtest?.spec.version ?? '';
+		originalSha = playtest?.spec.version ?? null;
 		project = getPlaytestProject(playtest);
+	};
+
+	// Runs on every close path — submit, delete, close-X and Escape. The null check matters: with
+	// nothing captured there is nothing to restore, and writing '' would re-point activeProjectConfig.
+	const handleClose = () => {
+		if (prevProject !== null) {
+			$appConfig.selectedArtifactProject = prevProject;
+			prevProject = null;
+		}
+
+		// Keeps the restore above from being undone: the component stays mounted, so a refreshed
+		// `versions` re-fires the reactive block on a closed modal, which would re-point the global
+		// value again. Also bumps the run id, discarding any fetch still in flight.
+		project = '';
 	};
 
 	const getPlaytestDate = (item: Nullable<Playtest>): string => {
@@ -314,6 +386,7 @@
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	bind:open={showModal}
 	on:open={handleOpen}
+	on:close={handleClose}
 >
 	<form class="flex flex-col space-y-4" action="#" on:submit|preventDefault={handleSubmit}>
 		<h4 class="flex items-center gap-3 text-lg font-semibold text-primary-400">
@@ -366,90 +439,66 @@
 				required
 			/>
 		</Label>
-		<div class="flex flex-row gap-2">
-			<Label class="space-y-2 text-xs text-white w-1/2">
-				<span>Version</span>
-				<div class="flex flex-row gap-2 w-full">
-					{#if commitSelectMode === CommitSelectMode.Default}
-						<Select
-							size="sm"
-							name="version"
-							class={inputClass}
-							value={playtest ? playtest.spec.version : commits[0]?.value ?? ''}
-							required
-						>
-							{#each commits as commit}
-								{@const branchInfo = getBranchInfo(commit.value)}
-								<option
-									value={commit.value}
-									class={branchInfo.isMain ? 'text-green-400' : 'text-blue-400'}
-								>
-									{commit.name.substring(0, 8)}
-									{branchInfo.branch && !branchInfo.isMain ? ` (${branchInfo.branch})` : ''}
-									{$workflowMap.get(commit.name)?.message || ''}
-								</option>
-							{/each}
-						</Select>
-						<Button
-							size="xs"
-							on:click={() => {
-								commitSelectMode = CommitSelectMode.Custom;
-							}}
-						>
-							<EditOutline />
-						</Button>
-						<Tooltip
-							placement="bottom"
-							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-						>
-							Enter commit manually
-						</Tooltip>
-					{:else}
-						<Input
-							type="text"
-							class={inputClass}
-							size="sm"
-							name="version"
-							value={playtest ? playtest.spec.version : commits[0]?.value ?? ''}
-							required
-						/>
-						<Button
-							size="xs"
-							on:click={() => {
-								commitSelectMode = CommitSelectMode.Default;
-							}}
-						>
-							<UndoOutline />
-						</Button>
-						<Tooltip
-							placement="bottom"
-							class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
-						>
-							Use commit from recent commits list
-						</Tooltip>
-					{/if}
-				</div>
-			</Label>
-			<Label class="space-y-2 text-xs text-white w-1/2">
-				<span>Map</span>
-				<Select
-					size="sm"
-					name="map"
-					class={inputClass}
-					value={playtest ? playtest.spec.map : maps[0]?.value ?? ''}
-					required
-				>
-					{#each maps as map}
-						<option value={map.value}>{map.name}</option>
-					{/each}
-				</Select>
-			</Label>
+		<!-- Not a flowbite <Label>: it renders a <label> with no `for`, which implicitly targets
+		     BuildPicker's summary <button>, so clicks on the open panel's dead space collapsed it.
+		     The classes below are what <Label class="space-y-2 text-xs text-white"> resolves to. -->
+		<div class="space-y-2 text-xs font-medium text-white rtl:text-right dark:text-gray-300">
+			<span>Version</span>
+			<!-- items-start: without it, align-items:stretch grows the toggle button to the open
+			     panel's height. -->
+			<div class="flex w-full flex-row items-start gap-2">
+				{#if commitSelectMode === CommitSelectMode.Default}
+					<BuildPicker
+						versions={pickerVersions}
+						bind:selectedSha={selectedVersion}
+						workflowMap={projWorkflowMap}
+						trunkBranch={resolveTrunkBranch($appConfig?.primaryBranch, $repoConfig?.targetBranches)}
+						currentUserDisplayName={$appConfig?.userDisplayName ?? ''}
+						{originalSha}
+						onManualEntry={() => {
+							commitSelectMode = CommitSelectMode.Custom;
+						}}
+					/>
+				{:else}
+					<Input type="text" class={inputClass} size="sm" bind:value={selectedVersion} required />
+					<Button
+						type="button"
+						size="xs"
+						class="shrink-0"
+						on:click={() => {
+							commitSelectMode = CommitSelectMode.Default;
+						}}
+					>
+						<UndoOutline />
+					</Button>
+					<Tooltip
+						placement="bottom"
+						class="w-auto text-xs text-primary-400 bg-secondary-600 dark:bg-space-800"
+					>
+						Use commit from recent commits list
+					</Tooltip>
+				{/if}
+			</div>
 		</div>
 		{#if commitSelectMode === CommitSelectMode.Custom}
 			<span class="text-xs bg-red-700 text-white p-2 rounded-md">
 				Warning: The map list for manually entered commits may not be up to date.
 			</span>
 		{/if}
+		<Label class="space-y-2 text-xs text-white">
+			<span>Map</span>
+			<Select
+				size="sm"
+				name="map"
+				class={inputClass}
+				value={playtest ? playtest.spec.map : maps[0]?.value ?? ''}
+				required
+			>
+				{#each maps as map}
+					<option value={map.value}>{map.name}</option>
+				{/each}
+			</Select>
+		</Label>
 		<div class="flex flex-row gap-2">
 			<Label class="space-y-2 text-xs text-white w-full">
 				<span>Number of groups</span>

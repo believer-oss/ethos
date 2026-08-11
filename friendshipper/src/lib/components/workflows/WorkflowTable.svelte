@@ -14,6 +14,7 @@
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
 	import { stopWorkflow, getWorkflowNodes } from '$lib/builds';
 	import { appConfig, repoConfig } from '$lib/stores';
+	import { resolveTrunkBranch } from '$lib/utils';
 
 	export let selectedCommit = '';
 	export let showWorkflowLogsModal = false;
@@ -146,15 +147,10 @@
 	const isPrimaryBranch = (branch: string | null): boolean => {
 		if (!branch) return false;
 		const cleanBranchName = formatBranchName(branch).toLowerCase();
-
-		// Get primary branch from config, with fallback to first target branch, then "main"
-		let primaryBranch = $appConfig?.primaryBranch;
-		if (!primaryBranch && $repoConfig?.targetBranches?.length > 0) {
-			primaryBranch = $repoConfig.targetBranches[0].name;
-		}
-		if (!primaryBranch) {
-			primaryBranch = 'main';
-		}
+		const primaryBranch = resolveTrunkBranch(
+			$appConfig?.primaryBranch,
+			$repoConfig?.targetBranches
+		);
 
 		return cleanBranchName === primaryBranch.toLowerCase();
 	};

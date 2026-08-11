@@ -509,15 +509,18 @@ pub async fn reset_repo_to_commit(
 pub async fn get_workflows(
     state: tauri::State<'_, State>,
     engine: bool,
+    project: Option<String>,
 ) -> Result<GetWorkflowsResponse, TauriError> {
-    let res = state
+    let mut req = state
         .client
-        .get(format!(
-            "{}/builds/workflows?engine={}",
-            state.server_url, engine
-        ))
-        .send()
-        .await?;
+        .get(format!("{}/builds/workflows", state.server_url))
+        .query(&[("engine", engine)]);
+
+    if let Some(project) = project {
+        req = req.query(&[("project", project)]);
+    }
+
+    let res = req.send().await?;
 
     if is_error_status(res.status()) {
         return Err(create_tauri_error(res).await);
