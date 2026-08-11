@@ -3,7 +3,9 @@ use tokio::{fs, io::AsyncWriteExt};
 use tracing::info;
 
 use ethos_core::middleware::nonce::{NONCE, NONCE_HEADER};
+use ethos_core::types::config::{RepoConfig, TargetBranchConfig};
 use ethos_core::types::repo::FileState;
+use ethos_core::types::repo::SubmitStatus;
 use ethos_core::types::repo::{PushRequest, RepoStatus};
 
 mod common;
@@ -139,6 +141,57 @@ async fn test_new_file_workflow() -> Result<(), Box<dyn std::error::Error>> {
     assert!(status.untracked_files.is_empty());
     assert!(status.modified_files.contains("test.txt"));
     assert_eq!(status.commits_ahead, 0);
+
+    server.shutdown().await;
+
+    common::teardown().await;
+
+    Ok(())
+}
+
+// Cross-validates the blocked-file-globs feature through the real HTTP
+// status endpoint — config load -> `StatusOp` -> JSON wire format -- rather
+// than only in-process, complementing the in-crate unit tests in
+// `src/repo/operations/status.rs`.
+#[test(tokio::test(flavor = "multi_thread"))]
+async fn test_status_endpoint_reports_blocked_files() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting test_status_endpoint_reports_blocked_files");
+    let repo_config = RepoConfig {
+        trunk_branch: "main".to_string(),
+        target_branches: vec![TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: false,
+            blocked_file_globs: vec!["**/*.uasset".to_string()],
+        }],
+        ..Default::default()
+    };
+    let mut server = common::setup_with_repo_config("v1".parse().unwrap(), repo_config).await?;
+
+    let content_dir = common::TEST_DIR.join("test-local").join("Content");
+    fs::create_dir_all(&content_dir).await?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(content_dir.join("Blocked.uasset"))
+        .await?;
+    file.write_all(b"blocked content").await?;
+    file.sync_all().await?;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("http://localhost:8585/repo/status")
+        .header(NONCE_HEADER, NONCE.to_string())
+        .send()
+        .await?;
+
+    let status = resp.json::<RepoStatus>().await?;
+    let file_info = status
+        .untracked_files
+        .into_iter()
+        .find(|f| f.path == "Content/Blocked.uasset")
+        .expect("blocked file present in status response");
+    assert_eq!(file_info.submit_status, SubmitStatus::Blocked);
 
     server.shutdown().await;
 

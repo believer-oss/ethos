@@ -282,6 +282,53 @@ impl AppConfig {
             None => repo_config.playtest_profiles = Some(vec![default_profile]),
         };
 
+        // Validate blocked-file globs for every target branch. This never fails
+        // the load — `friendshipper.yaml` is committed to the project repo, so
+        // a bad glob failing the load would brick app startup for every user of
+        // the project, not just the author who made the typo. This is the ONLY
+        // place these diagnostics are emitted; the on-demand compile at use
+        // sites (e.g. StatusOp) must stay silent, since status recomputes on
+        // every refresh and would otherwise spam the log continuously.
+        //
+        // The per-branch count is logged at INFO regardless of whether any
+        // patterns are configured: `#[serde(default)]` on `blocked_file_globs`
+        // means a misspelled key (e.g. `blockedFilesGlobs`) deserializes
+        // cleanly to an empty list rather than an error, so without this log
+        // an author who typos the key has no way to notice the field they set
+        // was never read.
+        for branch in &repo_config.target_branches {
+            let result =
+                crate::blocked_files::BlockedFileMatcher::compile(&branch.blocked_file_globs);
+
+            tracing::info!(
+                branch = %branch.name,
+                count = branch.blocked_file_globs.len(),
+                "loaded {} blockedFileGlobs pattern(s) for branch '{}'",
+                branch.blocked_file_globs.len(),
+                branch.name
+            );
+
+            for (pattern, message) in &result.invalid {
+                tracing::error!(
+                    branch = %branch.name,
+                    pattern = %pattern,
+                    "invalid blockedFileGlobs pattern for branch '{}': {}",
+                    branch.name,
+                    message
+                );
+            }
+
+            for (pattern, message) in &result.warnings {
+                tracing::warn!(
+                    branch = %branch.name,
+                    pattern = %pattern,
+                    "blockedFileGlobs pattern for branch '{}' may silently under-match: {}",
+                    branch.name,
+                    message
+                );
+            }
+        }
+
         Ok(repo_config)
     }
 
@@ -405,12 +452,25 @@ pub struct PlaytestProfile {
     args: String,
 }
 
+/// Serde default for `TargetBranchConfig::uses_merge_queue`. A plain
+/// `#[serde(default)]` would fall back to `bool::default()` (`false`), which
+/// contradicts `TargetBranchConfig::default()` below (`true`) — a config
+/// entry that omits `usesMergeQueue` would silently disable the merge-queue
+/// submit path and hide the merge-queue UI instead of matching the struct's
+/// own default.
+fn default_uses_merge_queue() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetBranchConfig {
     pub name: String,
 
-    #[serde(rename = "usesMergeQueue")]
+    #[serde(default = "default_uses_merge_queue", rename = "usesMergeQueue")]
     pub uses_merge_queue: bool,
+
+    #[serde(default, rename = "blockedFileGlobs")]
+    pub blocked_file_globs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -434,6 +494,7 @@ impl Default for TargetBranchConfig {
         TargetBranchConfig {
             name: "main".to_string(),
             uses_merge_queue: true,
+            blocked_file_globs: Vec::new(),
         }
     }
 }
@@ -539,6 +600,23 @@ impl RepoConfig {
             .map(|url| url.trim_end_matches('/').to_string());
         Ok(config)
     }
+
+    /// Blocked globs for the named branch. Returns an empty slice when the
+    /// branch is not present in `target_branches` — callers must treat that
+    /// as "nothing blocked" rather than an error. `StatusOp` runs constantly
+    /// to keep the UI live, so a `target_branch` that doesn't (yet, or no
+    /// longer) match an entry in `target_branches` must degrade gracefully
+    /// instead of hard-failing status computation for the whole app; this
+    /// method returning an empty slice for an unknown branch IS that
+    /// degrade-to-nothing-blocked behavior, so no separate guard is needed at
+    /// call sites.
+    pub fn blocked_globs_for_branch(&self, branch: &str) -> &[String] {
+        self.target_branches
+            .iter()
+            .find(|b| b.name == branch)
+            .map(|b| b.blocked_file_globs.as_slice())
+            .unwrap_or(&[])
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -641,6 +719,184 @@ pub struct UnrealVerSelDiagResponse {
 #[cfg(test)]
 mod tests {
     use crate::types::config::CUSTOM_ENGINE_ASSOCIATION_REGEX;
+    use crate::types::config::{AppConfig, ProjectRepoConfig, RepoConfig, TargetBranchConfig};
+    use tempfile::TempDir;
+
+    /// Writes `yaml` to `<tempdir>/friendshipper.yaml` and runs it through the
+    /// real `AppConfig::initialize_repo_config` path. Returns the tempdir guard
+    /// alongside the result so the directory isn't dropped (and deleted) before
+    /// the caller is done with it.
+    fn load_repo_config_from_yaml(yaml: &str) -> (TempDir, Result<RepoConfig, anyhow::Error>) {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        std::fs::write(dir.path().join("friendshipper.yaml"), yaml)
+            .expect("write friendshipper.yaml");
+
+        let mut app_config = AppConfig::new("test");
+        app_config.selected_artifact_project = Some("test-project".to_string());
+        app_config.projects.insert(
+            "test-project".to_string(),
+            ProjectRepoConfig {
+                repo_path: dir.path().to_string_lossy().to_string(),
+                repo_url: String::new(),
+            },
+        );
+
+        let result = app_config.initialize_repo_config();
+        (dir, result)
+    }
+
+    #[test]
+    fn test_repo_config_without_blocked_file_globs_still_loads() {
+        let yaml = r#"
+uprojectPath: "Game.uproject"
+targetBranches:
+  - name: main
+    usesMergeQueue: true
+"#;
+
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        let repo_config = result.expect("config with no blockedFileGlobs must still deserialize");
+
+        assert_eq!(repo_config.target_branches.len(), 1);
+        assert!(repo_config.target_branches[0].blocked_file_globs.is_empty());
+    }
+
+    #[test]
+    fn test_target_branch_without_uses_merge_queue_defaults_to_true() {
+        // The serde default for `uses_merge_queue` must match
+        // `TargetBranchConfig::default()` (`true`). Before this test's fix,
+        // `#[serde(default)]` fell back to `bool::default()` (`false`)
+        // instead, so a `targetBranches` entry that simply omits
+        // `usesMergeQueue` — which every project's config validly could —
+        // would silently flip the merge-queue submit path and hide the
+        // merge-queue UI, in a way that previously failed loudly (a missing
+        // field failed the deserialize entirely) but now would not.
+        let yaml = r#"
+targetBranches:
+  - name: content-main
+"#;
+
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        let repo_config =
+            result.expect("targetBranches entry omitting usesMergeQueue must deserialize");
+
+        assert_eq!(repo_config.target_branches.len(), 1);
+        assert_eq!(repo_config.target_branches[0].name, "content-main");
+        assert!(
+            repo_config.target_branches[0].uses_merge_queue,
+            "uses_merge_queue must default to true, matching TargetBranchConfig::default()"
+        );
+    }
+
+    #[test]
+    fn test_camel_case_blocked_file_globs_populates_field() {
+        let yaml = r#"
+targetBranches:
+  - name: main
+    usesMergeQueue: true
+    blockedFileGlobs:
+      - "**/*.uasset"
+      - "**/*.umap"
+  - name: content-main
+    usesMergeQueue: false
+"#;
+
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        let repo_config = result.expect("config with blockedFileGlobs must deserialize");
+
+        assert_eq!(repo_config.target_branches.len(), 2);
+
+        let main_branch = repo_config
+            .target_branches
+            .iter()
+            .find(|b| b.name == "main")
+            .expect("main branch present");
+        assert_eq!(
+            main_branch.blocked_file_globs,
+            vec!["**/*.uasset".to_string(), "**/*.umap".to_string()]
+        );
+
+        let content_branch = repo_config
+            .target_branches
+            .iter()
+            .find(|b| b.name == "content-main")
+            .expect("content-main branch present");
+        assert!(content_branch.blocked_file_globs.is_empty());
+    }
+
+    #[test]
+    fn test_target_branch_config_serializes_camel_case() {
+        let branch = TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: true,
+            blocked_file_globs: vec!["**/*.uasset".to_string()],
+        };
+
+        let json = serde_json::to_string(&branch).expect("serialize");
+        assert!(json.contains("\"usesMergeQueue\":true"));
+        assert!(json.contains("\"blockedFileGlobs\":[\"**/*.uasset\"]"));
+        assert!(!json.contains("uses_merge_queue"));
+        assert!(!json.contains("blocked_file_globs"));
+    }
+
+    #[test]
+    fn test_blocked_globs_for_branch_unknown_branch_returns_empty() {
+        let repo_config = RepoConfig {
+            target_branches: vec![TargetBranchConfig {
+                name: "main".to_string(),
+                uses_merge_queue: true,
+                blocked_file_globs: vec!["**/*.uasset".to_string()],
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            repo_config.blocked_globs_for_branch("main"),
+            &["**/*.uasset".to_string()]
+        );
+        assert!(repo_config
+            .blocked_globs_for_branch("some-branch-not-in-config")
+            .is_empty());
+    }
+
+    #[test]
+    fn test_malformed_glob_does_not_fail_config_load() {
+        // Use the same invalid-pattern example as core/src/blocked_files.rs's
+        // own test suite for consistency. An unterminated character class is
+        // a reliable example of a pattern globset's GlobBuilder rejects.
+        let yaml = r#"
+targetBranches:
+  - name: main
+    usesMergeQueue: true
+    blockedFileGlobs:
+      - "Content/[unterminated"
+"#;
+
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+
+        // Half 1: load must succeed despite the malformed pattern — a bad
+        // glob must never brick app startup, since friendshipper.yaml is
+        // committed to the project repo and a typo would otherwise take down
+        // the tool for every user of the project, not just its author.
+        let repo_config = result.expect("a malformed glob must not fail config load");
+        assert_eq!(
+            repo_config.target_branches[0].blocked_file_globs,
+            vec!["Content/[unterminated".to_string()],
+            "the raw pattern list is preserved as-is; validation only logs, it does not filter"
+        );
+
+        // Half 2: the same pattern, run through the same validation primitive
+        // initialize_repo_config uses internally, is in fact flagged invalid —
+        // this is what would have been logged at ERROR during the load above.
+        let validation = crate::blocked_files::BlockedFileMatcher::compile(
+            &repo_config.target_branches[0].blocked_file_globs,
+        );
+        assert_eq!(
+            validation.invalid.len(),
+            1,
+            "expected the malformed pattern to be caught by BlockedFileMatcher::compile"
+        );
+    }
 
     #[test]
     fn test_engine_association_regex() {

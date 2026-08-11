@@ -16,6 +16,7 @@ use crate::engine;
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::state::AppState;
+use ethos_core::blocked_files::BlockedFileMatcher;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::storage::ArtifactStorage;
@@ -349,9 +350,39 @@ where
         }
 
         {
+            // Compiled once, outside the closure below, since that closure is
+            // invoked twice (once for untracked files, once for modified
+            // files). Warnings and invalid-pattern diagnostics are handled
+            // once at config load (`initialize_repo_config`) and are
+            // deliberately discarded here — this closure runs on every
+            // status refresh (constantly, to keep the UI live) and must stay
+            // silent, or logging would spam continuously.
+            let blocked_matcher = {
+                let globs = self
+                    .repo_config
+                    .read()
+                    .blocked_globs_for_branch(&target_branch)
+                    .to_vec();
+                BlockedFileMatcher::compile(&globs).matcher
+            };
+
             let update_files_submit_status = |files: &mut [File]| {
                 for file in files.iter_mut() {
-                    if file.state == FileState::Unmerged {
+                    // `!blocked_matcher.is_empty()` is checked first because
+                    // `GlobSet::is_match` (behind `is_blocked`) builds a
+                    // `Candidate` — path normalization plus an allocation —
+                    // before its own internal empty-set short-circuit. Most
+                    // target branches configure no blocked globs at all, and
+                    // this closure runs on every file on every status
+                    // refresh, so skipping straight past that allocation
+                    // when there is nothing to match against is worth doing
+                    // explicitly rather than relying on GlobSet to notice.
+                    if !blocked_matcher.is_empty()
+                        && file.state != FileState::Deleted
+                        && blocked_matcher.is_blocked(&file.path)
+                    {
+                        file.submit_status = SubmitStatus::Blocked;
+                    } else if file.state == FileState::Unmerged {
                         file.submit_status = SubmitStatus::Unmerged;
                     } else if status.conflicts.iter().any(|x| x == &file.path) {
                         file.submit_status = SubmitStatus::Conflicted;
@@ -707,9 +738,443 @@ where
 #[cfg(test)]
 mod tests {
 
+    use std::fs;
+    use std::sync::mpsc;
+
     use ethos_core::storage::ArtifactEntry;
+    use ethos_core::types::config::{AppConfig, RepoConfig, TargetBranchConfig};
 
     use super::*;
+
+    /// Initialize a local git repo with a real (also-local) `origin` remote,
+    /// carrying both `main` and `content-main` branches — the two branches
+    /// `blocked_globs_for_branch` tests below key off. `StatusOp::run()`
+    /// unconditionally diffs against `origin/<name>` for every configured
+    /// `target_branches` entry (see `get_modified_upstream`), so every
+    /// branch name a test's `RepoConfig` mentions must exist on this remote
+    /// or `run()` fails outright — this fixture exists to make that always
+    /// true regardless of which of the two branches an individual test uses.
+    async fn make_test_repo_with_remote() -> (tempfile::TempDir, tempfile::TempDir, git::Git) {
+        let local_dir = tempfile::tempdir().expect("create local tempdir");
+        let remote_dir = tempfile::tempdir().expect("create remote tempdir");
+        let (tx, _rx) = mpsc::channel::<String>();
+        let local_git = git::Git::new(local_dir.path().to_path_buf(), tx.clone());
+        let remote_git = git::Git::new(remote_dir.path().to_path_buf(), tx);
+
+        remote_git
+            .run(&["init", "-q"], git::Opts::default())
+            .await
+            .expect("git init remote");
+        remote_git
+            .run(
+                &["config", "user.email", "test@example.com"],
+                git::Opts::default(),
+            )
+            .await
+            .expect("set remote user.email");
+        remote_git
+            .run(&["config", "user.name", "Test"], git::Opts::default())
+            .await
+            .expect("set remote user.name");
+        // Keep the remote's checked-out HEAD off of `main`/`content-main` so
+        // pushing either from local doesn't trip git's "refusing to update
+        // checked out branch" guard.
+        remote_git
+            .run(&["checkout", "-q", "-b", "temp"], git::Opts::default())
+            .await
+            .expect("create remote temp branch");
+
+        local_git
+            .run(&["init", "-q"], git::Opts::default())
+            .await
+            .expect("git init local");
+        local_git
+            .run(
+                &["config", "user.email", "test@example.com"],
+                git::Opts::default(),
+            )
+            .await
+            .expect("set local user.email");
+        local_git
+            .run(&["config", "user.name", "Test"], git::Opts::default())
+            .await
+            .expect("set local user.name");
+        local_git
+            .run(
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    remote_dir.path().to_str().expect("utf8 remote path"),
+                ],
+                git::Opts::default(),
+            )
+            .await
+            .expect("add origin remote");
+        local_git
+            .run(&["checkout", "-q", "-b", "main"], git::Opts::default())
+            .await
+            .expect("checkout main");
+
+        fs::write(local_dir.path().join("seed.txt"), "seed\n").expect("write seed");
+        local_git
+            .run(&["add", "seed.txt"], git::Opts::default())
+            .await
+            .expect("git add seed");
+        local_git
+            .run(&["commit", "-qm", "seed"], git::Opts::default())
+            .await
+            .expect("initial commit");
+        local_git
+            .run(
+                &["push", "-q", "-u", "origin", "main"],
+                git::Opts::default(),
+            )
+            .await
+            .expect("push main");
+
+        local_git
+            .run(
+                &["checkout", "-q", "-b", "content-main"],
+                git::Opts::default(),
+            )
+            .await
+            .expect("checkout content-main");
+        local_git
+            .run(
+                &["push", "-q", "-u", "origin", "content-main"],
+                git::Opts::default(),
+            )
+            .await
+            .expect("push content-main");
+        local_git
+            .run(&["checkout", "-q", "main"], git::Opts::default())
+            .await
+            .expect("back to main");
+
+        (local_dir, remote_dir, local_git)
+    }
+
+    /// Build a `StatusOp<UnrealEngineProvider>` against a real repo fixture.
+    /// `skip_display_names`/`skip_engine_update` are both `true` so no
+    /// network or IPC calls are attempted — this is a fully hermetic,
+    /// offline exercise of the exact code path production uses.
+    fn build_status_op(
+        git_client: git::Git,
+        repo_path: &std::path::Path,
+        target_branch: &str,
+        target_branches: Vec<TargetBranchConfig>,
+    ) -> (StatusOp<crate::engine::UnrealEngineProvider>, RepoStatusRef) {
+        let mut app_config = AppConfig::new(crate::APP_NAME);
+        app_config.repo_path = repo_path.to_str().expect("utf8 repo path").to_string();
+        app_config.target_branch = target_branch.to_string();
+        let app_config: AppConfigRef = Arc::new(RwLock::new(app_config));
+
+        let repo_config = RepoConfig {
+            target_branches,
+            ..Default::default()
+        };
+        let repo_config: RepoConfigRef = Arc::new(RwLock::new(repo_config));
+
+        let engine = crate::engine::UnrealEngineProvider::new_from_config(
+            app_config.read().clone(),
+            repo_config.read().clone(),
+        );
+
+        let repo_status: RepoStatusRef = Arc::new(RwLock::new(RepoStatus::new()));
+
+        let status_op = StatusOp {
+            git_client,
+            github_username: "test_user".to_string(),
+            repo_status: repo_status.clone(),
+            app_config,
+            repo_config,
+            engine,
+            aws_client: None,
+            storage: None,
+            allow_offline_communication: false,
+            skip_display_names: true,
+            skip_engine_update: true,
+        };
+
+        (status_op, repo_status)
+    }
+
+    #[tokio::test]
+    async fn blocked_path_gets_blocked_status() {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join("Content/Foo.uasset"), "v1\n").unwrap();
+
+        let target_branches = vec![
+            TargetBranchConfig {
+                name: "main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec!["**/*.uasset".to_string()],
+            },
+            TargetBranchConfig {
+                name: "content-main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec![],
+            },
+        ];
+        let (status_op, _repo_status) = build_status_op(git, dir.path(), "main", target_branches);
+
+        let status = status_op.run().await.expect("status run");
+        let file = status
+            .untracked_files
+            .get("Content/Foo.uasset")
+            .expect("file present in untracked files");
+        assert_eq!(file.submit_status, SubmitStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn deleted_blocked_path_is_not_blocked() {
+        // A blocked pattern that also covers a non-lockable extension, so a
+        // deleted match falls all the way through the chain to `Ok` rather
+        // than being intercepted by the (unrelated, pre-existing) lockable
+        // asset-checkout branch — keeping this test's assertion about
+        // exactly one thing: deletions are exempt from blocking.
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let path = "Content/Removed.dat";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "doomed\n").unwrap();
+        git.run(&["add", path], git::Opts::default()).await.unwrap();
+        git.run(&["commit", "-qm", "add doomed file"], git::Opts::default())
+            .await
+            .unwrap();
+        fs::remove_file(dir.path().join(path)).unwrap();
+
+        let target_branches = vec![TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: false,
+            blocked_file_globs: vec!["**/*.uasset".to_string(), "**/*.dat".to_string()],
+        }];
+        let (status_op, _repo_status) = build_status_op(git, dir.path(), "main", target_branches);
+
+        let status = status_op.run().await.expect("status run");
+        let file = status
+            .modified_files
+            .get(path)
+            .expect("deleted file present in modified files");
+        assert_eq!(file.state, FileState::Deleted, "fixture sanity check");
+        assert_eq!(
+            file.submit_status,
+            SubmitStatus::Ok,
+            "a deleted file matching a blocked glob must remain submittable"
+        );
+    }
+
+    #[tokio::test]
+    async fn blocked_wins_over_unmerged() {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let path = "Content/mm.uasset";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "base\n").unwrap();
+        git.run(&["add", path], git::Opts::default()).await.unwrap();
+        git.run(&["commit", "-qm", "add base"], git::Opts::default())
+            .await
+            .unwrap();
+
+        git.run(&["checkout", "-q", "-b", "feature-a"], git::Opts::default())
+            .await
+            .unwrap();
+        fs::write(dir.path().join(path), "a-version\n").unwrap();
+        git.run(&["commit", "-aqm", "feature a edit"], git::Opts::default())
+            .await
+            .unwrap();
+
+        git.run(&["checkout", "-q", "main"], git::Opts::default())
+            .await
+            .unwrap();
+        git.run(&["checkout", "-q", "-b", "feature-b"], git::Opts::default())
+            .await
+            .unwrap();
+        fs::write(dir.path().join(path), "b-version\n").unwrap();
+        git.run(&["commit", "-aqm", "feature b edit"], git::Opts::default())
+            .await
+            .unwrap();
+
+        git.run(&["checkout", "-q", "feature-a"], git::Opts::default())
+            .await
+            .unwrap();
+        // Expected to fail with a real conflict — we want the resulting
+        // conflicted working tree, not a successful merge.
+        let _ = git
+            .run(&["merge", "feature-b", "--no-edit"], git::Opts::default())
+            .await;
+
+        let target_branches = vec![TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: false,
+            blocked_file_globs: vec!["**/*.uasset".to_string()],
+        }];
+        let (status_op, _repo_status) = build_status_op(git, dir.path(), "main", target_branches);
+
+        let status = status_op.run().await.expect("status run");
+        let file = status
+            .modified_files
+            .get(path)
+            .expect("conflicted file present in modified files");
+        assert_eq!(
+            file.state,
+            FileState::Unmerged,
+            "fixture sanity check: file must actually be unmerged"
+        );
+        assert_eq!(file.submit_status, SubmitStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn blocked_wins_over_conflicted() {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let path = "Content/Foo.uasset";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "v1\n").unwrap();
+        git.run(&["add", path], git::Opts::default()).await.unwrap();
+        git.run(&["commit", "-qm", "add foo v1"], git::Opts::default())
+            .await
+            .unwrap();
+        git.run(&["push", "-q", "origin", "main"], git::Opts::default())
+            .await
+            .unwrap();
+
+        // Move local `main` back a commit so the file diverges from
+        // `origin/main`, then recreate it locally with different content as
+        // an untracked file — the shape `get_upstream_conflicts` looks for
+        // (a path that's both modified upstream and present locally).
+        git.run(&["reset", "-q", "--hard", "HEAD~1"], git::Opts::default())
+            .await
+            .unwrap();
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "v2\n").unwrap();
+
+        let target_branches = vec![TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: false,
+            blocked_file_globs: vec!["**/*.uasset".to_string()],
+        }];
+        let (status_op, _repo_status) = build_status_op(git, dir.path(), "main", target_branches);
+
+        let status = status_op.run().await.expect("status run");
+        assert!(
+            status.conflicts.iter().any(|p| p == path),
+            "fixture sanity check: file must actually be an upstream conflict, got {:?}",
+            status.conflicts
+        );
+        let file = status
+            .untracked_files
+            .get(path)
+            .expect("file present in untracked files");
+        assert_eq!(file.submit_status, SubmitStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn blocked_wins_over_checkout_required() {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let path = "Content/NeedsCheckout.uasset";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "v1\n").unwrap();
+
+        let target_branches = vec![TargetBranchConfig {
+            name: "main".to_string(),
+            uses_merge_queue: false,
+            blocked_file_globs: vec!["**/*.uasset".to_string()],
+        }];
+        let (status_op, _repo_status) = build_status_op(git, dir.path(), "main", target_branches);
+
+        let status = status_op.run().await.expect("status run");
+        let file = status
+            .untracked_files
+            .get(path)
+            .expect("file present in untracked files");
+        assert_eq!(file.submit_status, SubmitStatus::Blocked);
+        assert_ne!(file.submit_status, SubmitStatus::CheckoutRequired);
+    }
+
+    #[tokio::test]
+    async fn blocked_only_on_configured_branch() {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let path = "Content/Foo.uasset";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "v1\n").unwrap();
+
+        let target_branches = vec![
+            TargetBranchConfig {
+                name: "main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec!["**/*.uasset".to_string()],
+            },
+            TargetBranchConfig {
+                name: "content-main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec![],
+            },
+        ];
+
+        let (status_op, _repo_status) =
+            build_status_op(git.clone(), dir.path(), "main", target_branches.clone());
+        let status = status_op.run().await.expect("status run on main");
+        let file = status
+            .untracked_files
+            .get(path)
+            .expect("file present on main");
+        assert_eq!(file.submit_status, SubmitStatus::Blocked);
+
+        git.run(&["checkout", "-q", "content-main"], git::Opts::default())
+            .await
+            .unwrap();
+        let (status_op, _repo_status) =
+            build_status_op(git, dir.path(), "content-main", target_branches);
+        let status = status_op.run().await.expect("status run on content-main");
+        let file = status
+            .untracked_files
+            .get(path)
+            .expect("file present on content-main");
+        assert_ne!(file.submit_status, SubmitStatus::Blocked);
+    }
+
+    #[tokio::test]
+    async fn unknown_target_branch_degrades_to_nothing_blocked() {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let path = "Content/Foo.uasset";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "v1\n").unwrap();
+
+        // Check out a branch whose name mirrors the (unconfigured) target
+        // branch, so the ahead/behind lookup — which only runs when the
+        // checked-out branch differs from the target branch — doesn't need
+        // a matching remote ref. This test is only about
+        // `blocked_globs_for_branch` degrading safely for an unknown
+        // branch, not about ahead/behind accounting.
+        git.run(&["checkout", "-q", "-b", "release"], git::Opts::default())
+            .await
+            .unwrap();
+
+        let target_branches = vec![
+            TargetBranchConfig {
+                name: "main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec!["**/*.uasset".to_string()],
+            },
+            TargetBranchConfig {
+                name: "content-main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec![],
+            },
+        ];
+        let (status_op, _repo_status) =
+            build_status_op(git, dir.path(), "release", target_branches);
+
+        let status = status_op
+            .run()
+            .await
+            .expect("status run must not error for an unconfigured target branch");
+        let file = status
+            .untracked_files
+            .get(path)
+            .expect("file present in untracked files");
+        assert_ne!(file.submit_status, SubmitStatus::Blocked);
+    }
 
     #[test]
     fn test_find_dll_commit() {

@@ -28,7 +28,7 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
 use ethos_core::types::locks::LockOperation;
 use ethos_core::types::repo::SubmitStatus;
-use ethos_core::types::repo::{File, PushRequest};
+use ethos_core::types::repo::{File, PushRequest, RepoStatus};
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
@@ -326,6 +326,120 @@ async fn find_files_with_conflict_markers(
     }
     let diff = String::from_utf8_lossy(&diff_out.stdout);
     Ok(confirm_paired_markers(&diff, &candidates, marker_size))
+}
+
+/// Checks the current repo status for files that cannot be submitted —
+/// checkout-required, checked-out-by-another-user, unmerged, conflicted, or
+/// blocked by `blockedFileGlobs` — and returns a descriptive error naming
+/// them grouped by reason. Returns `Ok(())` if every requested file is
+/// submittable.
+///
+/// Deliberately takes no `GraphQLClient`: this function is called before any
+/// GitHub interaction, and keeping it free of that dependency lets it be
+/// exercised in tests without a live, authenticated GitHub client (which
+/// `GraphQLClient::new` requires — see `core/src/clients/github.rs`).
+async fn reject_unsubmittable_files<T: EngineProvider>(
+    requested_files: &[String],
+    repo_status: &RepoStatus,
+    app_config: &AppConfigRef,
+    repo_config: &RepoConfigRef,
+    engine: &T,
+) -> Result<(), CoreError> {
+    let mut unsubmittable_files: Vec<File> = vec![];
+
+    for file in requested_files.iter() {
+        let mut all_modified_iter = repo_status
+            .modified_files
+            .0
+            .iter()
+            .chain(repo_status.untracked_files.0.iter());
+        if let Some(file) = all_modified_iter.find(|x| x.path == *file) {
+            match file.submit_status {
+                // `Unknown` only ever arises from deserializing a submit
+                // status this build doesn't recognize (e.g. changesets.json
+                // written by a newer build, then loaded after a rollback);
+                // `StatusOp` runs immediately before this gate and recomputes
+                // every status from scratch, so a value it actually produced
+                // is never `Unknown` in practice. Treat it like `Ok` here so
+                // the backend agrees with the frontend gating in
+                // `+page.svelte`'s `hasUnsubmittableFiles` — failing closed
+                // on it would reject a submit for no defensible reason.
+                SubmitStatus::Ok | SubmitStatus::Unknown => {}
+                _ => unsubmittable_files.push(file.clone()),
+            }
+        }
+    }
+
+    if unsubmittable_files.is_empty() {
+        return Ok(());
+    }
+
+    let engine_path = app_config
+        .read()
+        .load_engine_path_from_repo(&repo_config.read())
+        .unwrap_or_default();
+    let unsubmittable_file_paths: Vec<String> =
+        unsubmittable_files.iter().map(|x| x.path.clone()).collect();
+
+    let unsubmittable_display_names = engine
+        .get_asset_display_names(
+            CommunicationType::None,
+            &engine_path,
+            &unsubmittable_file_paths,
+        )
+        .await;
+
+    // Group by reason so the toast reads as "here are your N blocked files"
+    // rather than N separate lines repeating the same explanation.
+    let mut by_reason: Vec<(&'static str, Vec<String>)> = vec![];
+
+    for (file, display_name) in unsubmittable_files
+        .iter()
+        .zip(unsubmittable_display_names.iter())
+    {
+        let name_formatted: String = if display_name.is_empty() {
+            file.path.clone()
+        } else {
+            format!("{} ({})", display_name, file.path)
+        };
+        let reason = match file.submit_status {
+            // Both variants are filtered out of `unsubmittable_files` above,
+            // so neither can reach this match — combined into one arm rather
+            // than giving `Unknown` its own (dead) reason string, which would
+            // misleadingly imply it is still rejected here.
+            SubmitStatus::Ok | SubmitStatus::Unknown => {
+                panic!("should have been filtered out by above code")
+            }
+            SubmitStatus::CheckoutRequired => "This file is an asset and must be checked out (locked) before submitting",
+            SubmitStatus::CheckedOutByOtherUser => "This file is an asset and must be checked out (locked) before submitting, but it is locked by another user",
+            SubmitStatus::Unmerged => "This file is unmerged and must be reverted to continue",
+            SubmitStatus::Conflicted => "A newer version of this file exists; this file must be reverted to continue",
+            SubmitStatus::Blocked => "This file matches a blocked-file-glob pattern configured for this target branch and cannot be submitted",
+        };
+        tracing::error!("{}: {}", reason, name_formatted);
+
+        match by_reason.iter_mut().find(|(r, _)| *r == reason) {
+            Some((_, paths)) => paths.push(name_formatted),
+            None => by_reason.push((reason, vec![name_formatted])),
+        }
+    }
+
+    const MAX_PATHS_PER_REASON: usize = 10;
+    let mut message = String::from("Some files are not allowed to be submitted:\n");
+    for (reason, paths) in &by_reason {
+        message.push_str(&format!("\n{reason}:\n"));
+        for path in paths.iter().take(MAX_PATHS_PER_REASON) {
+            message.push_str(&format!("  - {path}\n"));
+        }
+        if paths.len() > MAX_PATHS_PER_REASON {
+            message.push_str(&format!(
+                "  ...and {} more\n",
+                paths.len() - MAX_PATHS_PER_REASON
+            ));
+        }
+    }
+
+    Err(CoreError::Input(anyhow!(message)))
 }
 
 /// Count the leading run of byte `c` at the start of `s`. Used to recognize a
@@ -695,60 +809,14 @@ where
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {
             let repo_status = self.repo_status.read().clone();
-            let mut unsubmittable_files: Vec<File> = vec![];
-
-            for file in self.files.iter() {
-                let mut all_modified_iter = repo_status
-                    .modified_files
-                    .0
-                    .iter()
-                    .chain(repo_status.untracked_files.0.iter());
-                if let Some(file) = all_modified_iter.find(|x| x.path == *file) {
-                    match file.submit_status {
-                        SubmitStatus::Ok => {}
-                        _ => unsubmittable_files.push(file.clone()),
-                    }
-                }
-            }
-
-            if !unsubmittable_files.is_empty() {
-                let engine_path = self
-                    .app_config
-                    .read()
-                    .load_engine_path_from_repo(&self.repo_config.read())
-                    .unwrap_or_default();
-                let unsubmittable_file_paths: Vec<String> =
-                    unsubmittable_files.iter().map(|x| x.path.clone()).collect();
-
-                let unsubmittable_display_names = self
-                    .engine
-                    .get_asset_display_names(
-                        CommunicationType::None,
-                        &engine_path,
-                        &unsubmittable_file_paths,
-                    )
-                    .await;
-
-                for (file, display_name) in unsubmittable_files
-                    .iter()
-                    .zip(unsubmittable_display_names.iter())
-                {
-                    let name_formatted: String = if display_name.is_empty() {
-                        file.path.clone()
-                    } else {
-                        format!("{} ({})", display_name, file.path)
-                    };
-                    let reason = match file.submit_status {
-                        SubmitStatus::Ok => panic!("should have been filtered out by above code"),
-                        SubmitStatus::CheckoutRequired => "This file is an asset and must be checked out (locked) before submitting",
-                        SubmitStatus::CheckedOutByOtherUser => "This file is an asset and must be checked out (locked) before submitting, but it is locked by another user",
-                        SubmitStatus::Unmerged => "This file is unmerged and must be reverted to continue",
-                        SubmitStatus::Conflicted => "A newer version of this file exists; this file must be reverted to continue",
-                    };
-                    tracing::error!("{}: {}", reason, name_formatted);
-                }
-                return Err(CoreError::Input(anyhow!("Some files are not allowed to be submitted. Check the log for specific errors.")));
-            }
+            reject_unsubmittable_files(
+                &self.files,
+                &repo_status,
+                &self.app_config,
+                &self.repo_config,
+                &self.engine,
+            )
+            .await?;
         }
 
         // Refuse to ship files with unresolved git conflict markers. We
@@ -1437,6 +1505,11 @@ mod tests {
     use super::*;
     use std::fs;
     use std::sync::mpsc;
+    use std::sync::Arc;
+
+    use ethos_core::types::config::{AppConfig, RepoConfig};
+    use ethos_core::types::repo::FileList;
+    use parking_lot::RwLock;
 
     /// Initialize an empty git repo with one initial commit so HEAD resolves.
     /// Returns the temp dir guard (drop = cleanup) and a `Git` client pointed
@@ -1471,6 +1544,239 @@ mod tests {
             .expect("initial commit");
 
         (dir, git)
+    }
+
+    /// A real `UnrealEngineProvider`, built without any I/O
+    /// (`new_from_config` is a pure field-mapping constructor — see
+    /// `engine/unreal/provider.rs`). Used to exercise the exact
+    /// `get_asset_display_names` call `reject_unsubmittable_files` makes,
+    /// rather than a mock.
+    fn test_engine() -> crate::engine::UnrealEngineProvider {
+        crate::engine::UnrealEngineProvider::new_from_config(
+            AppConfig::new(crate::APP_NAME),
+            RepoConfig::default(),
+        )
+    }
+
+    fn test_app_and_repo_config() -> (AppConfigRef, RepoConfigRef) {
+        (
+            Arc::new(RwLock::new(AppConfig::new(crate::APP_NAME))),
+            Arc::new(RwLock::new(RepoConfig::default())),
+        )
+    }
+
+    #[tokio::test]
+    async fn rejects_with_message_naming_the_blocked_file() {
+        // Two files, two different reasons — proves the message both names
+        // the blocked file and groups by reason rather than interleaving.
+        let repo_status = RepoStatus {
+            modified_files: FileList(vec![
+                File {
+                    path: "Content/Blocked.uasset".to_string(),
+                    submit_status: SubmitStatus::Blocked,
+                    ..Default::default()
+                },
+                File {
+                    path: "Content/NeedsCheckout.uasset".to_string(),
+                    submit_status: SubmitStatus::CheckoutRequired,
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+        let requested_files = vec![
+            "Content/Blocked.uasset".to_string(),
+            "Content/NeedsCheckout.uasset".to_string(),
+        ];
+        let (app_config, repo_config) = test_app_and_repo_config();
+        let engine = test_engine();
+
+        let result = reject_unsubmittable_files(
+            &requested_files,
+            &repo_status,
+            &app_config,
+            &repo_config,
+            &engine,
+        )
+        .await;
+
+        let err = match result {
+            Err(CoreError::Input(e)) => e,
+            other => panic!("expected CoreError::Input, got {other:?}"),
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("Content/Blocked.uasset"),
+            "message missing blocked path: {message}"
+        );
+        assert!(
+            message.contains("Content/NeedsCheckout.uasset"),
+            "message missing checkout-required path: {message}"
+        );
+        assert!(
+            message.contains("blocked-file-glob"),
+            "message missing the blocked-specific reason text: {message}"
+        );
+        assert!(
+            message.contains("checked out (locked)"),
+            "message missing the checkout-required reason text: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn truncates_long_file_lists() {
+        let mut files = Vec::new();
+        let mut requested = Vec::new();
+        for i in 0..15 {
+            let path = format!("Content/Blocked{i}.uasset");
+            files.push(File {
+                path: path.clone(),
+                submit_status: SubmitStatus::Blocked,
+                ..Default::default()
+            });
+            requested.push(path);
+        }
+        let repo_status = RepoStatus {
+            modified_files: FileList(files),
+            ..Default::default()
+        };
+        let (app_config, repo_config) = test_app_and_repo_config();
+        let engine = test_engine();
+
+        let err = reject_unsubmittable_files(
+            &requested,
+            &repo_status,
+            &app_config,
+            &repo_config,
+            &engine,
+        )
+        .await
+        .expect_err("must reject");
+        let message = err.to_string();
+
+        for i in 0..10 {
+            assert!(
+                message.contains(&format!("Content/Blocked{i}.uasset")),
+                "message missing path {i}: {message}"
+            );
+        }
+        for i in 10..15 {
+            assert!(
+                !message.contains(&format!("Content/Blocked{i}.uasset")),
+                "message should have truncated path {i}: {message}"
+            );
+        }
+        assert!(
+            message.contains("...and 5 more"),
+            "message missing truncation suffix: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_status_is_treated_as_submittable() {
+        // `Unknown` is a deserialization fallback for a submit status this
+        // build doesn't recognize (e.g. changesets.json written by a newer
+        // build, then loaded after a rollback). `StatusOp` runs immediately
+        // before this gate and recomputes every status from scratch, so a
+        // value it actually produces is never `Unknown` in practice — but if
+        // it somehow does reach here, it must be treated exactly like `Ok`
+        // (matching the frontend's `hasUnsubmittableFiles` gating), not
+        // rejected. This also guards against a `panic!` regression: if
+        // `Unknown` were ever removed from the collection loop's `Ok |
+        // Unknown` arm above without also removing it from the exhaustive
+        // reason match, it would hit the `panic!("should have been filtered
+        // out...")` arm instead of returning a clean value.
+        let repo_status = RepoStatus {
+            modified_files: FileList(vec![File {
+                path: "Content/Mystery.uasset".to_string(),
+                submit_status: SubmitStatus::Unknown,
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        let requested_files = vec!["Content/Mystery.uasset".to_string()];
+        let (app_config, repo_config) = test_app_and_repo_config();
+        let engine = test_engine();
+
+        let result = reject_unsubmittable_files(
+            &requested_files,
+            &repo_status,
+            &app_config,
+            &repo_config,
+            &engine,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "an Unknown submit status must be treated as submittable, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_git_state_mutated_on_rejection() {
+        let (dir, git) = make_test_repo().await;
+        let path = "Content/Blocked.uasset";
+        fs::create_dir_all(dir.path().join("Content")).unwrap();
+        fs::write(dir.path().join(path), "v1\n").unwrap();
+
+        async fn snapshot(git: &git::Git) -> (String, Vec<String>, String, String) {
+            let head = git
+                .run_and_collect_output(&["rev-parse", "HEAD"], git::Opts::default())
+                .await
+                .expect("rev-parse HEAD");
+            let mut branches: Vec<String> = git
+                .run_and_collect_output(
+                    &["for-each-ref", "--format=%(refname)", "refs/heads"],
+                    git::Opts::default(),
+                )
+                .await
+                .expect("for-each-ref")
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
+            branches.sort();
+            let stash = git
+                .run_and_collect_output(&["stash", "list"], git::Opts::default())
+                .await
+                .expect("stash list");
+            let status = git.status(vec![]).await.expect("status");
+            (head, branches, stash, status)
+        }
+
+        let before = snapshot(&git).await;
+
+        let repo_status = RepoStatus {
+            untracked_files: FileList(vec![File {
+                path: path.to_string(),
+                submit_status: SubmitStatus::Blocked,
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        let requested_files = vec![path.to_string()];
+        let (app_config, repo_config) = test_app_and_repo_config();
+        let engine = test_engine();
+
+        let result = reject_unsubmittable_files(
+            &requested_files,
+            &repo_status,
+            &app_config,
+            &repo_config,
+            &engine,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(CoreError::Input(_))),
+            "expected the blocked file to be rejected, got {result:?}"
+        );
+
+        let after = snapshot(&git).await;
+        assert_eq!(
+            before, after,
+            "reject_unsubmittable_files must not mutate any git state — no stash, \
+             no new branch, no index/HEAD change"
+        );
     }
 
     #[tokio::test]

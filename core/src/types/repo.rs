@@ -10,6 +10,9 @@ pub enum SubmitStatus {
     CheckedOutByOtherUser,
     Unmerged,
     Conflicted,
+    Blocked,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -505,6 +508,92 @@ mod tests {
         assert_eq!(status.remote_branch, "");
         assert_eq!(status.commits_ahead, 0);
         assert_eq!(status.commits_behind, 0);
+    }
+
+    #[test]
+    fn test_submit_status_round_trips_known_variants() {
+        let cases = [
+            (SubmitStatus::Ok, "\"Ok\""),
+            (SubmitStatus::CheckoutRequired, "\"CheckoutRequired\""),
+            (
+                SubmitStatus::CheckedOutByOtherUser,
+                "\"CheckedOutByOtherUser\"",
+            ),
+            (SubmitStatus::Unmerged, "\"Unmerged\""),
+            (SubmitStatus::Conflicted, "\"Conflicted\""),
+            (SubmitStatus::Blocked, "\"Blocked\""),
+            (SubmitStatus::Unknown, "\"Unknown\""),
+        ];
+
+        for (variant, expected_json) in cases {
+            let serialized = serde_json::to_string(&variant).expect("serialize");
+            assert_eq!(
+                serialized, expected_json,
+                "serialization changed for {variant:?}"
+            );
+
+            let deserialized: SubmitStatus =
+                serde_json::from_str(&serialized).expect("deserialize");
+            assert_eq!(
+                deserialized, variant,
+                "round trip did not return the same variant for {variant:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_submit_status_unrecognized_string_becomes_unknown() {
+        let result: SubmitStatus = serde_json::from_str("\"SomeFutureVariantThatDoesNotExistYet\"")
+            .expect("an unrecognized submitStatus string must deserialize successfully, not error");
+        assert_eq!(result, SubmitStatus::Unknown);
+    }
+
+    #[test]
+    fn test_submit_status_malformed_json_still_errors() {
+        // Sanity check: tolerance is for unrecognized *variant names*, not for
+        // malformed JSON in general. A non-string value must still fail.
+        let result = serde_json::from_str::<SubmitStatus>("42");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_changeset_payload_with_unknown_submit_status_loads() {
+        let json = r#"[
+            {
+                "name": "default",
+                "files": [
+                    {
+                        "path": "Content/Foo.uasset",
+                        "displayName": "Foo.uasset",
+                        "state": "Modified",
+                        "isStaged": false,
+                        "lockedBy": "",
+                        "submitStatus": "SomeFutureVariantFromANewerBuild"
+                    },
+                    {
+                        "path": "Source/Bar.cpp",
+                        "displayName": "Bar.cpp",
+                        "state": "Modified",
+                        "isStaged": false,
+                        "lockedBy": "",
+                        "submitStatus": "Ok"
+                    }
+                ],
+                "open": true,
+                "checked": false,
+                "indeterminate": false
+            }
+        ]"#;
+
+        // This is the exact call made by `load_changeset` in
+        // friendshipper/src-tauri/src/repo/operations/changeset.rs:162-168.
+        let changesets: Vec<ChangeSet> = serde_json::from_str(json)
+            .expect("changesets.json with an unknown variant must still load");
+
+        assert_eq!(changesets.len(), 1);
+        assert_eq!(changesets[0].files.len(), 2);
+        assert_eq!(changesets[0].files[0].submit_status, SubmitStatus::Unknown);
+        assert_eq!(changesets[0].files[1].submit_status, SubmitStatus::Ok);
     }
 
     #[test]

@@ -255,7 +255,9 @@
 		typeof $commitMessage === 'string'
 			? $commitMessage
 			: `${$commitMessage.type}(${$commitMessage.scope}): ${$commitMessage.message}`;
-	$: hasUnsubmittableFiles = $selectedFiles.some((file) => file.submitStatus !== SubmitStatus.Ok);
+	$: hasUnsubmittableFiles = $selectedFiles.some(
+		(file) => file.submitStatus !== SubmitStatus.Ok && file.submitStatus !== SubmitStatus.Unknown
+	);
 	$: canSubmit =
 		$selectedFiles.length > 0 &&
 		get(commitMessage) !== '' &&

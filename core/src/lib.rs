@@ -1,6 +1,7 @@
 pub use clients::aws::AWSClient;
 
 pub mod auth;
+pub mod blocked_files;
 pub mod clients;
 pub mod fs;
 pub mod longtail;

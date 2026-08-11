@@ -99,6 +99,7 @@ export interface PlaytestProfile {
 export interface TargetBranchConfig {
 	name: string;
 	usesMergeQueue: boolean;
+	blockedFileGlobs: string[];
 }
 
 export interface PromoteBuildShard {
