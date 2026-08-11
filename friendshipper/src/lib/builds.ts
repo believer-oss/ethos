@@ -23,8 +23,10 @@ export const wipeClientData = async (): Promise<void> => invoke('wipe_client_dat
 
 export const resetLongtail = async (): Promise<void> => invoke('reset_longtail');
 
-export const getWorkflows = async (engine: boolean = false): Promise<GetWorkflowsResponse> =>
-	invoke('get_workflows', { engine });
+export const getWorkflows = async (
+	engine: boolean = false,
+	project?: string
+): Promise<GetWorkflowsResponse> => invoke('get_workflows', { engine, project });
 
 export const getWorkflowNodes = async (name: string): Promise<Workflow> =>
 	invoke('get_workflow_nodes', { name });
