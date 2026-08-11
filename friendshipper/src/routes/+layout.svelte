@@ -945,7 +945,6 @@
 				lastProcessedToken = token;
 
 				await logInfo('Received access-token-set event, calling backend refreshLogin');
-				await logInfo(`Token: ${token.substring(0, 50)}...`);
 				await refreshLogin(token);
 				hasValidTokens = true;
 				loginScreenVisible = false;
