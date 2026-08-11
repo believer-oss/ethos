@@ -1,0 +1,11 @@
+[package]
+name = "friendshipper-credential-helper"
+version = "0.1.0"
+edition = "2021"
+
+# Deliberately standalone (no ethos-core dependency): git spawns this binary
+# on every network operation, so it must build small and start fast.
+[dependencies]
+chrono = { workspace = true }
+keyring = { workspace = true }
+serde_json = { workspace = true }

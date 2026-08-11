@@ -9,6 +9,7 @@ use tokio::sync::mpsc::Sender as MPSCSender;
 use tokio::sync::{oneshot, RwLock as TokioRwLock};
 use tracing::{debug, error, info, instrument, warn};
 
+use crate::auth::github::GithubTokenManager;
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
 use crate::repo::RepoStatusRef;
@@ -57,6 +58,7 @@ pub struct AppState<T> {
     pub additional_kube_clients: Arc<RwLock<HashMap<String, KubeClient>>>,
 
     pub github_client: Arc<RwLock<Option<github::GraphQLClient>>>,
+    pub github_token_manager: Arc<GithubTokenManager>,
 
     pub version: String,
     pub log_path: PathBuf,
@@ -198,6 +200,7 @@ where
             kube_client,
             additional_kube_clients: Arc::new(RwLock::new(HashMap::new())),
             github_client,
+            github_token_manager: Arc::new(GithubTokenManager::new_from_keyring()),
             version,
             log_path,
             otel_reload_handle,
@@ -226,6 +229,20 @@ where
         self.git_tx
             .send(message.to_string())
             .expect("error forwarding git log");
+    }
+
+    /// Point all GitHub consumers (GraphQL client, LFS lock bearer auth,
+    /// submit flow) at a new access token. The existing github_pat plumbing
+    /// is reused as the runtime container for whichever credential is live.
+    pub async fn apply_github_access_token(&self, access_token: String) -> Result<(), CoreError> {
+        let client = github::GraphQLClient::new(access_token.clone())
+            .await
+            .map_err(|e| CoreError::Internal(anyhow!("Failed to create GitHub client: {}", e)))?;
+
+        self.github_client.write().replace(client);
+        self.app_config.write().github_pat = Some(access_token.into());
+
+        Ok(())
     }
 
     pub fn github_username(&self) -> String {

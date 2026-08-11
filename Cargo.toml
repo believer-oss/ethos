@@ -1,8 +1,14 @@
 [workspace]
 resolver = "2"
-default-members = ["core", "friendshipper/src-tauri", "friendshipper/server"]
+default-members = [
+    "core",
+    "friendshipper/src-tauri",
+    "friendshipper/server",
+    "friendshipper/credential-helper",
+]
 members = [
     "core",
+    "friendshipper/credential-helper",
     "friendshipper/server",
     "friendshipper/src-tauri",
 ]

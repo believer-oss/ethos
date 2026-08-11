@@ -269,6 +269,15 @@ impl Server {
         )
         .await?;
 
+        // If GitHub OAuth tokens were loaded from the keyring, they take
+        // precedence over any legacy PAT: point the GitHub client and the
+        // github_pat plumbing at the current access token.
+        if let Some(token) = shared_state.github_token_manager.access_token() {
+            if let Err(e) = shared_state.apply_github_access_token(token).await {
+                warn!("Failed to apply stored GitHub OAuth token: {}", e);
+            }
+        }
+
         // Resolve the repo path and clear any stale index.lock. The background
         // fetch/maintenance runner is started later, after the initial git config
         // is written, so its `git fetch` / `git maintenance run --auto` don't race
@@ -318,6 +327,28 @@ impl Server {
                 git.set_config("lfs.setlockablereadonly", "false").await?;
                 git.set_config("http.postBuffer", "524288000").await?;
                 git.configure_untracked_cache().await?;
+
+                // Take over git credential handling from GCM only when the
+                // user has explicitly connected GitHub via OAuth. PAT-only
+                // users keep their existing credential setup (GCM or
+                // otherwise) untouched -- shadowing it with a possibly
+                // stale/differently-scoped PAT breaks git transport for
+                // setups that were working fine.
+                if shared_state.github_token_manager.tokens().is_some() {
+                    match crate::credential_helper_path() {
+                        Some(helper_path) => {
+                            if let Err(e) = git
+                                .configure_credential_helper(&helper_path.to_string_lossy())
+                                .await
+                            {
+                                warn!("Failed to configure credential helper: {}", e);
+                            }
+                        }
+                        None => {
+                            info!("Credential helper binary not found; leaving git credential config unchanged");
+                        }
+                    }
+                }
 
                 // Check for and fix partial clone filters that may prevent full history access
                 startup_tx.send("Checking repository configuration".to_string())?;

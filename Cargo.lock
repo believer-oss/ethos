@@ -2848,6 +2848,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "parking_lot",
+ "rand 0.8.6",
  "regex",
  "reqwest 0.11.27",
  "retry",
@@ -2888,6 +2889,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "friendshipper-credential-helper"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "keyring",
+ "serde_json",
+]
+
+[[package]]
 name = "friendshipper-server"
 version = "4.8.1"
 dependencies = [
@@ -2905,6 +2915,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "reqwest 0.11.27",
  "serde",
  "serde_json",
  "serde_yaml",

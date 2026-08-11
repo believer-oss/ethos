@@ -120,6 +120,11 @@ pub fn check_for_process(name: &str, port: u16) -> Result<()> {
 
     let my_pid: u32 = std::process::id();
     let appimage_env = std::env::var("APPIMAGE").ok();
+    // Exact names only: sibling binaries (friendshipper-server,
+    // friendshipper-credential-helper) contain the app name as a substring
+    // and must never be treated as duplicate app instances. The credential
+    // helper in particular runs on user machines during any git operation.
+    let expected_names = [name.to_lowercase(), format!("{}.exe", name.to_lowercase())];
     let result = retry_with_index(
         Fixed::from_millis(1000).take(STARTUP_RETRY_ATTEMPTS),
         |attempt| {
@@ -142,7 +147,7 @@ pub fn check_for_process(name: &str, port: u16) -> Result<()> {
                     && process.thread_kind().is_none()
                     && !excluded_pids.contains(&pid.as_u32())
                     && !is_own_appimage_runtime(process.exe(), appimage_env.as_deref())
-                    && proc_name.contains(&name.to_lowercase())
+                    && expected_names.contains(&proc_name)
                     && !proc_path_dev.is_some_and(|p| p)
                 {
                     warn!("Found existing process {} but couldn't reach its API. Attempting to kill it.", pid);

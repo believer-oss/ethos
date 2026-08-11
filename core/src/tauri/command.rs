@@ -211,6 +211,76 @@ pub async fn refresh_login(
     Ok(())
 }
 
+// GitHub auth
+#[tauri::command]
+pub async fn get_github_auth_status(
+    state: tauri::State<'_, State>,
+) -> Result<serde_json::Value, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/auth/github/status", state.server_url))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() || res.status().is_server_error() {
+        let status_code = res.status().as_u16();
+        let body = res.text().await?;
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn connect_github(
+    state: tauri::State<'_, State>,
+    token: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/auth/github/connect?token={}",
+            state.server_url, token
+        ))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn refresh_github_token(
+    state: tauri::State<'_, State>,
+    token: String,
+) -> Result<bool, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/auth/github/refresh?token={}",
+            state.server_url, token
+        ))
+        .send()
+        .await?;
+
+    if res.status().is_client_error() || res.status().is_server_error() {
+        let status_code = res.status().as_u16();
+        let body = res.text().await?;
+        return Err(TauriError {
+            message: body,
+            status_code,
+        });
+    }
+
+    Ok(res.json().await?)
+}
+
 // Git
 #[tauri::command]
 

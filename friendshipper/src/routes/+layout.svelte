@@ -67,7 +67,7 @@
 	} from '$lib/stores';
 	import { getPlaytests } from '$lib/playtests';
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
-	import { refreshLogin, exitApp } from '$lib/auth';
+	import { refreshLogin, refreshGithubToken, exitApp } from '$lib/auth';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import TraceDeepLinkModal from '$lib/components/servers/TraceDeepLinkModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
@@ -952,6 +952,19 @@
 				await logInfo(
 					'Backend refreshLogin succeeded from access-token-set event - hasValidTokens set to TRUE'
 				);
+
+				// Piggyback GitHub token maintenance on the Okta token cadence:
+				// the backend only refreshes when inside its expiry margin, so
+				// this is a cheap no-op most of the time. Failures are
+				// non-fatal; the next Okta renewal retries.
+				try {
+					const refreshed = await refreshGithubToken(token);
+					if (refreshed) {
+						await logInfo('GitHub access token refreshed');
+					}
+				} catch (githubError) {
+					await logError('GitHub token refresh failed', githubError);
+				}
 
 				// Now that authentication is complete, load the app data
 				await loadAppData();

@@ -1638,6 +1638,25 @@ impl Git {
         self.run(&["config", key, value], Opts::default()).await
     }
 
+    /// Install a credential helper as the repo's only helper, shadowing any
+    /// global/system helper (e.g. Git Credential Manager). The empty first
+    /// entry resets the inherited helper list; both writes are idempotent.
+    pub async fn configure_credential_helper(&self, helper_path: &str) -> anyhow::Result<()> {
+        // The `!` shell form keeps paths with spaces working on Windows.
+        let helper_value = format!("!'{}'", helper_path.replace('\\', "/"));
+
+        self.run(
+            &["config", "--replace-all", "credential.helper", ""],
+            Opts::default(),
+        )
+        .await?;
+        self.run(
+            &["config", "--add", "credential.helper", &helper_value],
+            Opts::default(),
+        )
+        .await
+    }
+
     #[instrument]
     pub async fn configure_untracked_cache(&self) -> anyhow::Result<()> {
         // get current setting for core.untrackedCache

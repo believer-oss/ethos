@@ -38,9 +38,13 @@ where
 {
     let mut config = state.app_config.read().clone();
 
-    // get github PAT from keyring
-    if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password() {
-        config.github_pat = Some(pat.into());
+    // Fall back to the legacy PAT keyring entry only if nothing is live in
+    // memory. When GitHub OAuth is connected, github_pat holds the current
+    // access token and must not be clobbered by a stale PAT.
+    if config.github_pat.is_none() {
+        if let Ok(pat) = keyring::Entry::new(APP_NAME, KEYRING_USER)?.get_password() {
+            config.github_pat = Some(pat.into());
+        }
     }
 
     Ok(Json(config))
@@ -247,21 +251,32 @@ where
 
         match payload.github_pat.clone() {
             Some(pat) => {
-                match GraphQLClient::new(pat.clone().to_string()).await {
-                    Ok(client) => {
-                        state.github_client.write().replace(client);
-                    }
-                    Err(e) => {
-                        return Err(anyhow!(ConfigValidationError(format!(
-                            "Error creating GitHub client: {e}"
-                        )))
-                        .into());
-                    }
-                }
+                // When GitHub OAuth is connected, github_pat holds the managed
+                // access token; it must not be written into the legacy PAT
+                // keyring entry or it would resurface later as a stale
+                // fallback credential.
+                let is_managed_token = state
+                    .github_token_manager
+                    .access_token()
+                    .is_some_and(|token| token == pat.to_string());
 
-                // store pat in keyring
-                let entry = keyring::Entry::new(APP_NAME, KEYRING_USER)?;
-                entry.set_password(&pat.to_string())?;
+                if !is_managed_token {
+                    match GraphQLClient::new(pat.clone().to_string()).await {
+                        Ok(client) => {
+                            state.github_client.write().replace(client);
+                        }
+                        Err(e) => {
+                            return Err(anyhow!(ConfigValidationError(format!(
+                                "Error creating GitHub client: {e}"
+                            )))
+                            .into());
+                        }
+                    }
+
+                    // store pat in keyring
+                    let entry = keyring::Entry::new(APP_NAME, KEYRING_USER)?;
+                    entry.set_password(&pat.to_string())?;
+                }
             }
             None => {
                 // Only worry about this if we don't already have a Github Client
