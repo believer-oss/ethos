@@ -2,7 +2,7 @@ use aws_config::load_from_env;
 use aws_sdk_sts::Client as StsClient;
 use aws_smithy_types_convert::date_time::DateTimeExt;
 use axum::{extract::State, routing::get, Json, Router};
-use ethos_core::types::{aws::AWSStaticCredentials, errors::CoreError};
+use ethos_types::{aws::AWSStaticCredentials, errors::CoreError};
 use tracing::error;
 
 use crate::ServerConfig;

@@ -1,21 +1,14 @@
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.96-trixie AS builder
 WORKDIR /app
 COPY . .
 RUN apt-get update && apt-get install -y \
     ca-certificates \
-    libwebkit2gtk-4.1-dev \
     build-essential \
-    curl \
-    wget \
-    file \
     libssl-dev \
-    libxdo-dev \
-    libgtk-3-dev \
-    libayatana-appindicator3-dev \
-    librsvg2-dev
+    pkg-config
 RUN cargo build --release --bin friendshipper-server
 
-FROM debian:bookworm AS runner
+FROM debian:trixie AS runner
 WORKDIR /app
 RUN apt-get update && apt-get install -y \
     ca-certificates \

@@ -7,6 +7,6 @@ pub fn create_router() -> Router<ServerConfig> {
 
 async fn get_friendshipper_config(
     State(config): State<ServerConfig>,
-) -> Json<crate::FriendshipperConfig> {
+) -> Json<ethos_types::config::FriendshipperConfig> {
     Json(config.friendshipper_config)
 }

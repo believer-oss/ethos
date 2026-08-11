@@ -271,41 +271,53 @@ mod tests {
         // killed itself outright — confirmed against a packaged build, not
         // just in theory.
         //
-        // We identify our own threads by TID (read straight from
-        // `/proc/<pid>/task`) rather than by name: the test harness renames
-        // each test's own worker thread (visible in a panic as `thread
-        // '<test name>' panicked`), and threads we spawn inherit that
+        // We identify our own threads by TID rather than by name: the test
+        // harness renames each test's own worker thread (visible in a panic as
+        // `thread '<test name>' panicked`), and threads we spawn inherit that
         // renamed comm, not the process's — a harness quirk, not something
-        // `check_for_process` relies on in production, where nothing
-        // renames the main thread.
-        // Threads park on `stop` rather than sleeping a fixed duration: a
-        // fixed sleep raced sysinfo's refresh on loaded CI runners (a slow
-        // enough refresh could see the thread already exited), so pin their
-        // lifetime to the test's own instead of guessing a duration.
+        // `check_for_process` relies on in production, where nothing renames
+        // the main thread.
+        //
+        // Each thread reports its own TID via `/proc/thread-self`
+        // (`<pid>/task/<tid>`) instead of the test scanning `/proc/<pid>/task`.
+        // That directory holds *every* thread in the test binary, including
+        // tokio workers belonging to other tests running in parallel; those
+        // come and go independently of this test, and asserting on one that
+        // exited between the scan and sysinfo's refresh is what made this test
+        // flaky on loaded CI runners.
+        //
+        // Threads park on `stop` rather than sleeping a fixed duration, pinning
+        // their lifetime to the test's own instead of racing sysinfo's refresh
+        // against a guessed sleep.
+        const THREAD_COUNT: usize = 8;
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let handles: Vec<_> = (0..8)
+        let (tid_tx, tid_rx) = std::sync::mpsc::channel();
+        let handles: Vec<_> = (0..THREAD_COUNT)
             .map(|_| {
                 let stop = std::sync::Arc::clone(&stop);
+                let tid_tx = tid_tx.clone();
                 std::thread::spawn(move || {
+                    let tid: u32 = std::fs::read_link("/proc/thread-self")
+                        .ok()
+                        .and_then(|path| path.file_name()?.to_str()?.parse().ok())
+                        .expect("/proc/thread-self should resolve to <pid>/task/<tid>");
+                    tid_tx.send(tid).expect("receiver outlives the send");
                     while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                         std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                 })
             })
             .collect();
-        // Give the kernel a moment to expose the new tasks under /proc.
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let my_pid = std::process::id();
-        let task_ids: std::collections::HashSet<u32> =
-            std::fs::read_dir(format!("/proc/{my_pid}/task"))
-                .expect("our own /proc/<pid>/task should be readable")
-                .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
-                .filter(|tid| *tid != my_pid)
-                .collect();
-        assert!(
-            !task_ids.is_empty(),
-            "expected our own spawned threads to show up under /proc/{my_pid}/task"
+        drop(tid_tx);
+        // Receive exactly THREAD_COUNT rather than draining to channel close —
+        // the senders live in threads that stay parked until `stop`.
+        let task_ids: std::collections::HashSet<u32> = (0..THREAD_COUNT)
+            .map(|_| tid_rx.recv().expect("each spawned thread reports its TID"))
+            .collect();
+        assert_eq!(
+            task_ids.len(),
+            THREAD_COUNT,
+            "every spawned thread should have reported a distinct TID"
         );
 
         let mut system = sysinfo::System::new();
@@ -313,14 +325,34 @@ mod tests {
             sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet);
         system.refresh_processes_specifics(refresh_kind);
 
+        // Those threads are all still parked, so sysinfo must have seen at
+        // least one of them. Without this the loop below could pass vacuously —
+        // and a failure here means sysinfo stopped listing tasks at all, which
+        // is the premise `check_for_process`'s filter rests on.
+        let listed = task_ids
+            .iter()
+            .filter(|tid| system.process(Pid::from_u32(**tid)).is_some())
+            .count();
+        assert!(
+            listed > 0,
+            "sysinfo listed none of our {THREAD_COUNT} live threads; the check below would be vacuous"
+        );
+
         for tid in &task_ids {
-            let thread_kind = system
-                .process(Pid::from_u32(*tid))
-                .and_then(|p| p.thread_kind());
-            assert!(
-                thread_kind.is_some(),
-                "TID {tid} is one of our own threads; sysinfo should report it as a thread, not a process"
-            );
+            // Absence is acceptable: `check_for_process` only inspects entries
+            // sysinfo actually lists, so a TID it never reports cannot be
+            // mistaken for another instance. The invariant that matters is the
+            // narrower one — anything it *does* list for one of our threads
+            // must be marked as a thread, because `check_for_process` kills
+            // entries whose `thread_kind()` is None.
+            if let Some(process) = system.process(Pid::from_u32(*tid)) {
+                assert!(
+                    process.thread_kind().is_some(),
+                    "TID {tid} is one of our own threads but sysinfo reported it as a \
+                     process (thread_kind() == None) — exactly the condition that makes \
+                     check_for_process kill its own instance"
+                );
+            }
         }
 
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
