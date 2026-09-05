@@ -474,12 +474,15 @@ pub struct TargetBranchConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromoteBuildShard {
+pub struct PromoteBuildDestination {
     #[serde(rename = "displayName")]
     pub display_name: String,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shard: Option<String>,
+    /// The backend environment this destination deploys to. The serde name
+    /// stays `shard` because it is a live dynamic-config key; renaming it
+    /// would break existing config and older clients.
+    #[serde(default, rename = "shard", skip_serializing_if = "Option::is_none")]
+    pub backend_environment: Option<String>,
 
     #[serde(
         default,
@@ -487,6 +490,34 @@ pub struct PromoteBuildShard {
         skip_serializing_if = "Option::is_none"
     )]
     pub metadata_path: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<String>,
+
+    #[serde(
+        default,
+        rename = "gameConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub game_config: Option<String>,
+
+    #[serde(
+        default,
+        rename = "steamBranches",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub steam_branches: Option<Vec<String>>,
+
+    /// Override that forces the backend deploy off for this destination. When
+    /// true the promote UI sends an empty backend environment, suppressing the
+    /// deploy, and
+    /// the operator cannot re-enable it.
+    #[serde(
+        default,
+        rename = "disableBackendDeploy",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disable_backend_deploy: Option<bool>,
 }
 
 impl Default for TargetBranchConfig {
@@ -701,8 +732,10 @@ pub struct DynamicConfig {
     #[serde(default, rename = "mobileURLScheme")]
     pub mobile_url_scheme: String,
 
+    /// Serde name stays `promotableBuildShards`: it is a live dynamic-config
+    /// key that older clients also read.
     #[serde(default, rename = "promotableBuildShards")]
-    pub promotable_build_shards: Option<Vec<PromoteBuildShard>>,
+    pub promotable_build_destinations: Option<Vec<PromoteBuildDestination>>,
 
     #[serde(default, rename = "gameServerClusters")]
     pub game_server_clusters: Option<Vec<GameServerCluster>>,

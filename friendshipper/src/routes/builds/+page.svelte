@@ -109,6 +109,6 @@
 	<WorkflowLogsModal workflow={selectedWorkflow} bind:showModal={showWorkflowLogsModal} />
 {/if}
 
-<PromoteBuildModal bind:showModal={showPromoteBuildModal} commit={promoteBuildCommit} />
+<PromoteBuildModal bind:showModal={showPromoteBuildModal} bind:commit={promoteBuildCommit} />
 
 <CommitInfoModal bind:open={commitInfoModalOpen} sha={commitInfoSha} />
