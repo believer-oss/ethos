@@ -32,7 +32,7 @@ export interface DynamicConfig {
 	playtestRegions: string[];
 	profileDataPath: string;
 	mobileURLScheme: string;
-	promotableBuildShards?: PromoteBuildShard[];
+	promotableBuildShards?: PromoteBuildDestination[];
 	gameServerClusters?: GameServerCluster[];
 }
 
@@ -102,10 +102,15 @@ export interface TargetBranchConfig {
 	blockedFileGlobs: string[];
 }
 
-export interface PromoteBuildShard {
+export interface PromoteBuildDestination {
 	displayName: string;
+	// Backend environment. Key stays `shard`: it is a live dynamic-config key.
 	shard?: string;
 	metadataPath?: string;
+	distribution?: string;
+	gameConfig?: string;
+	steamBranches?: string[];
+	disableBackendDeploy?: boolean;
 }
 
 export interface RepoConfig {

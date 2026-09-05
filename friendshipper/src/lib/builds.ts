@@ -44,9 +44,14 @@ export const stopWorkflow = async (workflow: string): Promise<string> =>
 
 export interface CreatePromoteBuildWorkflowRequest {
 	commit: string; // required
+	// Backend environment. Key stays `shard`: it is the Argo template's
+	// parameter name and the wire field shared with friendshipper-server.
 	shard?: string; // optional, from repo config
 	metadata_path?: string; // optional, from repo config
 	pusher?: string; // optional, github username or playtest username
+	distribution?: string; // optional, e.g. "steam"
+	steam_branch?: string; // optional, Steam branch name
+	game_config?: string; // optional, defaults to "development" server-side
 }
 
 export const createPromoteBuildWorkflow = async (
