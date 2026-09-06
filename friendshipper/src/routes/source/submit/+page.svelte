@@ -38,6 +38,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/plugin-shell';
+	import { type as osType } from '@tauri-apps/plugin-os';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { sendNotification } from '@tauri-apps/plugin-notification';
 	import {
@@ -80,6 +81,7 @@
 		previewSnapshot,
 		quickSubmit,
 		reinstallGitHooks,
+		installBuildTools,
 		restoreSnapshot,
 		revertFiles,
 		saveChangeSet,
@@ -791,6 +793,21 @@
 		showProgressModal = false;
 	};
 
+	const handleInstallBuildToolsClicked = async () => {
+		try {
+			loading = true;
+			showProgressModal = true;
+			progressModalTitle = 'Installing Build Tools';
+			await installBuildTools();
+			await emit('success', 'Build tools installed successfully.');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		loading = false;
+		showProgressModal = false;
+	};
+
 	const handleZipLocalChanges = async () => {
 		if ($selectedFiles.length === 0) return;
 
@@ -1311,6 +1328,14 @@
 		<Tooltip class="text-xs w-[22rem]" placement="left"
 			>For engineers. Helps iterate on the git hooks workflow.</Tooltip
 		>
+		{#if osType() === 'windows'}
+			<DropdownItem class="text-xs" on:click={handleInstallBuildToolsClicked}>
+                Install Build Tools
+			</DropdownItem>
+			<Tooltip class="text-xs w-[22rem]" placement="left">
+                Installs Visual Studio and Windows SDK using winget. Installs Visual C++ redistributables from the engine directory.
+            </Tooltip>
+		{/if}
 	</Dropdown>
 </div>
 <div class="flex flex-row flex-1 min-h-[20rem] gap-2 overflow-auto">

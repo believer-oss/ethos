@@ -254,6 +254,7 @@ fn main() -> Result<(), CoreError> {
                 get_merge_queue,
                 open_url_for_path,
                 reinstall_git_hooks,
+                install_build_tools,
                 save_snapshot,
                 save_changeset,
                 load_changeset,

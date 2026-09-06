@@ -10,6 +10,7 @@
 	} from 'flowbite-svelte';
 	import { ChevronDownOutline, RefreshOutline, FileCodeSolid } from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
+	import { type as osType } from '@tauri-apps/plugin-os';
 	import { CommitTable, ProgressModal } from '@ethos/core';
 	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
 	import {
@@ -21,6 +22,7 @@
 		forceDownloadDlls,
 		forceDownloadEngine,
 		reinstallGitHooks,
+		installBuildTools,
 		syncEngineCommitWithUproject,
 		syncUprojectWithEngineCommit,
 		getRepoStatus,
@@ -180,6 +182,19 @@
 		}
 	};
 
+	const handleInstallBuildToolsClicked = async () => {
+		try {
+			inAsyncOperation = true;
+			asyncModalText = 'Installing Build Tools...';
+			await installBuildTools();
+			await emit('success', 'Build tools installed successfully.');
+		} catch (e) {
+			await emit('error', e);
+		}
+
+		inAsyncOperation = false;
+	};
+
 	const refreshAndWait = async () => {
 		await refresh();
 	};
@@ -324,6 +339,14 @@
 		<Tooltip class="text-xs w-[22rem]" placement="left"
 			>For engineers. Helps iterate on the git hooks workflow.
 		</Tooltip>
+		{#if osType() === 'windows'}
+			<DropdownItem class="text-xs" on:click={handleInstallBuildToolsClicked}>
+                Install Build Tools
+			</DropdownItem>
+			<Tooltip class="text-xs w-[22rem]" placement="left">
+                Installs Visual Studio and Windows SDK using winget. Installs Visual C++ redistributables from the engine directory.
+			</Tooltip>
+		{/if}
 	</Dropdown>
 </div>
 <Card

@@ -1357,6 +1357,24 @@ pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), T
 }
 
 #[tauri::command]
+pub async fn install_build_tools(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/project/install-build-tools",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn sync_engine_commit_with_uproject(
     state: tauri::State<'_, State>,
 ) -> Result<String, TauriError> {
