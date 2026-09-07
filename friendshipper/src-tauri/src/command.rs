@@ -1360,10 +1360,7 @@ pub async fn reinstall_git_hooks(state: tauri::State<'_, State>) -> Result<(), T
 pub async fn install_build_tools(state: tauri::State<'_, State>) -> Result<(), TauriError> {
     let res = state
         .client
-        .post(format!(
-            "{}/project/install-build-tools",
-            state.server_url
-        ))
+        .post(format!("{}/project/install-build-tools", state.server_url))
         .send()
         .await?;
 

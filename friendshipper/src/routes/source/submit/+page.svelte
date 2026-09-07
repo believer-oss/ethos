@@ -1330,11 +1330,12 @@
 		>
 		{#if osType() === 'windows'}
 			<DropdownItem class="text-xs" on:click={handleInstallBuildToolsClicked}>
-                Install Build Tools
+				Install Build Tools
 			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left">
-                Installs Visual Studio and Windows SDK using winget. Installs Visual C++ redistributables from the engine directory.
-            </Tooltip>
+				Installs Visual Studio and Windows SDK using winget. Installs Visual C++ redistributables
+				from the engine directory.
+			</Tooltip>
 		{/if}
 	</Dropdown>
 </div>
