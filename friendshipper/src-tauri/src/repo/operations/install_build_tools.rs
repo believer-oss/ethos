@@ -90,6 +90,10 @@ impl Drop for InstallGuard {
 #[cfg(windows)]
 const EXIT_CODE_REBOOT_REQUIRED: i32 = 3010;
 
+/// VC Redist exit code indicating it or a newer version is already installed
+#[cfg(windows)]
+const VC_REDIST_EXIT_CODE_INSTALLED: i32 = 1638;
+
 #[cfg(windows)]
 const WINGET_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
@@ -266,7 +270,7 @@ where
                     }
                 }
 
-                let override_arg = format!("\"{}\"", override_parts.join(" "));
+                let override_arg = override_parts.join(" ");
 
                 info!(
                     "Installing Visual Studio Community {} (minimum: {}) with components",
@@ -277,8 +281,8 @@ where
                     "install",
                     "--id",
                     "Microsoft.VisualStudio.Community",
+                    "--force",
                     "--exact",
-                    "--silent",
                     "--accept-source-agreements",
                     "--accept-package-agreements",
                     "--version",
@@ -355,7 +359,7 @@ where
             );
 
             let mut cmd = Command::new(&vcredist_path);
-            cmd.args(["/install", "/quiet", "/norestart"]);
+            cmd.args(["/install", "/norestart"]);
             cmd.creation_flags(CREATE_NO_WINDOW);
 
             match cmd.output().await {
@@ -363,6 +367,8 @@ where
                     let exit_code = output.status.code();
                     if output.status.success() {
                         info!("Successfully installed VC++ Redistributable");
+                    } else if exit_code == Some(VC_REDIST_EXIT_CODE_INSTALLED) {
+                        info!("VC++ Redistributable is already installed");
                     } else if exit_code == Some(EXIT_CODE_REBOOT_REQUIRED) {
                         info!("VC++ Redistributable installed (reboot required)");
                         reboot_required = true;
