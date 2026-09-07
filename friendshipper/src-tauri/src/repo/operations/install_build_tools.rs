@@ -90,9 +90,13 @@ impl Drop for InstallGuard {
 #[cfg(windows)]
 const EXIT_CODE_REBOOT_REQUIRED: i32 = 3010;
 
-/// VC Redist exit code indicating it or a newer version is already installed
+/// Installer exit code indicating the same or a newer version is already installed.
 #[cfg(windows)]
-const VC_REDIST_EXIT_CODE_INSTALLED: i32 = 1638;
+const EXIT_CODE_ALREADY_INSTALLED: i32 = 1638;
+
+/// Winget exit code when a package is already installed and no upgrade is available.
+#[cfg(windows)]
+const EXIT_CODE_NO_UPGRADE_FOUND: i32 = -1978335189;
 
 #[cfg(windows)]
 const WINGET_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -178,7 +182,6 @@ where
 {
     use std::sync::atomic::Ordering;
 
-    use crate::repo::CREATE_NO_WINDOW;
     use tokio::process::Command;
 
     if INSTALLING_BUILD_TOOLS
@@ -235,7 +238,53 @@ where
     let mut errors: Vec<String> = Vec::new();
     let mut reboot_required = false;
 
-    // 1. Install Visual Studio Community with components from the SDK config.
+    // 1. Install .NET runtimes via winget.
+    for dotnet_package in [
+        "Microsoft.DotNet.DesktopRuntime.10",
+        "Microsoft.DotNet.Runtime.10",
+    ] {
+        info!("Installing {}", dotnet_package);
+
+        let mut cmd = Command::new("winget");
+        cmd.args([
+            "install",
+            "--id",
+            dotnet_package,
+            "--silent",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ]);
+
+        match cmd.output().await {
+            Ok(output) => {
+                let exit_code = output.status.code();
+                if output.status.success() {
+                    info!("Successfully installed {}", dotnet_package);
+                } else if exit_code == Some(EXIT_CODE_ALREADY_INSTALLED)
+                    || exit_code == Some(EXIT_CODE_NO_UPGRADE_FOUND)
+                {
+                    info!("{} is already installed", dotnet_package);
+                } else if exit_code == Some(EXIT_CODE_REBOOT_REQUIRED) {
+                    info!("{} installed (reboot required)", dotnet_package);
+                    reboot_required = true;
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    error!(
+                        "{} install failed (exit {:?}): stdout={}, stderr={}",
+                        dotnet_package, exit_code, stdout, stderr
+                    );
+                    errors.push(format!("{}: exit code {:?}", dotnet_package, exit_code));
+                }
+            }
+            Err(e) => {
+                error!("Failed to execute winget for {}: {}", dotnet_package, e);
+                errors.push(format!("{}: {}", dotnet_package, e));
+            }
+        }
+    }
+
+    // 2. Install Visual Studio Community with components from the SDK config.
     //    Queries winget for available versions and picks the latest at or above
     //    MinimumVisualStudio2026Version. Combines all suggested components into
     //    the --override argument.
@@ -295,7 +344,6 @@ where
 
                 let mut cmd = Command::new("winget");
                 cmd.args(args);
-                cmd.creation_flags(CREATE_NO_WINDOW);
 
                 match cmd.output().await {
                     Ok(output) => {
@@ -334,7 +382,7 @@ where
         }
     }
 
-    // 2. Install Visual C++ Redistributable from the engine's bundled installer.
+    // 3. Install Visual C++ Redistributable from the engine's bundled installer.
     {
         let vcredist_path = engine_path
             .join("Engine")
@@ -359,15 +407,14 @@ where
             );
 
             let mut cmd = Command::new(&vcredist_path);
-            cmd.args(["/install", "/norestart"]);
-            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.args(["/install", "/quiet", "/norestart"]);
 
             match cmd.output().await {
                 Ok(output) => {
                     let exit_code = output.status.code();
                     if output.status.success() {
                         info!("Successfully installed VC++ Redistributable");
-                    } else if exit_code == Some(VC_REDIST_EXIT_CODE_INSTALLED) {
+                    } else if exit_code == Some(EXIT_CODE_ALREADY_INSTALLED) {
                         info!("VC++ Redistributable is already installed");
                     } else if exit_code == Some(EXIT_CODE_REBOOT_REQUIRED) {
                         info!("VC++ Redistributable installed (reboot required)");
