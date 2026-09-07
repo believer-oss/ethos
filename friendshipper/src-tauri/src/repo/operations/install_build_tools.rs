@@ -1,6 +1,8 @@
 use anyhow::anyhow;
 use axum::extract::State;
+#[cfg(windows)]
 use serde::Deserialize;
+#[cfg(windows)]
 use tracing::{error, info, warn};
 
 use ethos_core::types::errors::CoreError;
@@ -8,6 +10,7 @@ use ethos_core::types::errors::CoreError;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
+#[cfg(windows)]
 #[derive(Debug, Deserialize)]
 struct WindowsSdk {
     #[serde(rename = "VisualStudioSuggestedComponents")]
@@ -20,6 +23,7 @@ struct WindowsSdk {
     minimum_visual_studio_2026_version: String,
 }
 
+#[cfg(windows)]
 impl WindowsSdk {
     /// Returns an iterator over all suggested Visual Studio components.
     fn all_components(&self) -> impl Iterator<Item = &String> {
@@ -58,9 +62,9 @@ where
     #[cfg(not(windows))]
     {
         let _ = state;
-        return Err(CoreError::Internal(anyhow!(
+        Err(CoreError::Internal(anyhow!(
             "Install Build Tools is only supported on Windows."
-        )));
+        )))
     }
 
     #[cfg(windows)]
