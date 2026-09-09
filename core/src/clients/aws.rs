@@ -61,12 +61,14 @@ pub struct StoredDeviceClientInfo {
     pub registration_expires_at: DateTime<Utc>,
 }
 
-/// Parses the body of a promoted-build metadata object, which is plain text whose entire
-/// content is a commit SHA. Trims surrounding whitespace and rejects an empty body, since an
-/// empty object is a broken deploy marker rather than a valid SHA. Does not validate that the
-/// result looks like a SHA — that is the producer's contract, not this layer's.
+/// Parses a promoted-build metadata object: plain text whose entire content is a
+/// commit SHA. An empty body is a broken deploy marker, not a valid SHA. The SHA's
+/// format is the producer's contract, so it is not validated here.
 fn parse_metadata_body(body: &str) -> Result<String, CoreError> {
-    let trimmed = body.trim();
+    // First whitespace-delimited token, not the whole trimmed body: an object with a
+    // trailing comment or second line would otherwise yield a "sha" that breaks the
+    // GitHub link while still looking plausible in the UI.
+    let trimmed = body.split_whitespace().next().unwrap_or_default();
     if trimmed.is_empty() {
         return Err(CoreError::Internal(anyhow!(
             "Promoted build metadata object was empty"
@@ -214,23 +216,19 @@ impl AWSClient {
         }
     }
 
-    /// Reads a plain-text object and returns its trimmed body along with the object's
-    /// last-modified time. Used for promoted-build metadata objects, whose entire body
-    /// is the deployed commit SHA — they are not JSON.
+    /// Reads a plain-text object, returning its trimmed body and last-modified time.
     ///
-    /// The bucket is passed explicitly rather than taken from `self` because the promoted
-    /// bucket has three possible sources (dynamic config, the Friendshipper server config,
-    /// and the build-time constant) and resolving that precedence belongs to the caller.
+    /// The bucket is a parameter rather than a field: it has three possible sources
+    /// and resolving that precedence belongs to the caller.
     #[instrument(skip(self), err)]
     pub async fn read_object_to_string(
         &self,
         bucket: &str,
         key: &str,
     ) -> Result<(String, Option<DateTime<Utc>>), CoreError> {
-        // A blank bucket is reachable in normal operation: the server config field is an
-        // Option and the build-time constant defaults to empty. Fail here rather than in
-        // the SDK, whose error for a blank bucket is an opaque ConstructionFailure /
-        // MissingField that says nothing about how to fix it.
+        // A blank bucket is reachable: the server config field is an Option and the
+        // build-time constant defaults to empty. The SDK's own error for this is an
+        // opaque ConstructionFailure, so fail here instead.
         if bucket.is_empty() {
             return Err(CoreError::Internal(anyhow!(
                 "No promoted artifact bucket configured. Set promotedArtifactBucketName in \
@@ -583,10 +581,21 @@ pub fn create_hyper_client() -> aws_sdk_ssooidc::config::SharedHttpClient {
 mod tests {
     use super::parse_metadata_body;
 
-    // Synthetic placeholder only — not a real commit SHA. See the Public Repository
-    // Constraint in the active-builds-modal proposal: this repo is public.
+    // Synthetic, not a real SHA: this repo is public.
     fn fake_sha() -> String {
         "a".repeat(40)
+    }
+
+    /// A trailing comment or second line must not end up inside the sha.
+    #[test]
+    fn parse_metadata_body_takes_only_the_first_token() {
+        let body = format!(
+            "{}
+# promoted by pipeline
+",
+            fake_sha()
+        );
+        assert_eq!(parse_metadata_body(&body).unwrap(), fake_sha());
     }
 
     #[test]
@@ -619,8 +628,7 @@ mod tests {
 
     #[test]
     fn parse_metadata_body_does_not_validate_shape() {
-        // The parser must not reject a body just because it doesn't look like a SHA — that
-        // format is owned by the producer, not this layer.
+        // SHA format is the producer's contract, not this layer's.
         assert_eq!(parse_metadata_body("not-a-sha").unwrap(), "not-a-sha");
     }
 }

@@ -16,6 +16,7 @@
 	let deployBackend: boolean = true;
 	let selectedSteamBranch: string = '';
 	let lastDestinationName: string = '';
+	let wasOpen: boolean = false;
 
 	$: destinations = $dynamicConfig?.promotableBuildShards ?? [];
 	$: hasDestinations = destinations.length > 0;
@@ -34,6 +35,21 @@
 	$: showSteamBranch = isSteam && steamBranches.length > 0;
 	$: if (hasDestinations && !selectedDestinationName) {
 		selectedDestinationName = destinations[0].displayName;
+	}
+
+	// Reset on open, not on close: `outsideclose` dismisses the modal without running
+	// any handler, which would otherwise carry an unchecked backend deploy, a stale
+	// confirmation screen, or the previous success message into the next promotion.
+	// Clearing lastDestinationName re-arms the destination block below.
+	$: if (showModal !== wasOpen) {
+		wasOpen = showModal;
+		if (showModal) {
+			error = '';
+			showConfirmation = false;
+			showSuccess = false;
+			successWorkflowName = '';
+			lastDestinationName = '';
+		}
 	}
 
 	// Reset the backend deploy toggle and Steam branch whenever the destination
@@ -141,13 +157,7 @@
 	};
 
 	const handleCancel = () => {
-		// Reset form. Clearing lastDestinationName re-arms the reset block so the
-		// backend deploy toggle returns to its default instead of persisting an
-		// uncheck into the next promotion of the same destination.
-		error = '';
-		showConfirmation = false;
-		showSuccess = false;
-		lastDestinationName = '';
+		// State is reset on open, so closing only has to close.
 		showModal = false;
 	};
 

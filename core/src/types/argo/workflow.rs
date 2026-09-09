@@ -44,9 +44,8 @@ pub struct WorkflowTemplateRef {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 pub struct CreatePromoteBuildWorkflowRequest {
     pub commit: String,
-    /// Backend environment for the deploy. The serde name stays `shard`
-    /// because it is the Argo template's parameter name and the wire field
-    /// shared with friendshipper-server.
+    /// Backend environment for the deploy. Serde name stays `shard`: it is the
+    /// Argo template's parameter name and the wire field shared with the server.
     #[serde(rename = "shard")]
     pub backend_environment: Option<String>,
     pub metadata_path: Option<String>,
@@ -72,9 +71,12 @@ impl CreatePromoteBuildWorkflowRequest {
             },
             WorkflowParameter {
                 name: "game_config".to_string(),
+                // An empty configured value falls back to the default rather than
+                // submitting an empty parameter.
                 value: self
                     .game_config
                     .clone()
+                    .filter(|config| !config.is_empty())
                     .unwrap_or_else(|| "development".to_string()),
             },
         ];
@@ -164,10 +166,9 @@ pub struct S3Artifact {
 
 #[cfg(test)]
 mod tests {
-    //! Fixtures 1 and 2 reproduce two workflows that were hand-written and
-    //! submitted directly to Argo because the promote UI could not express
-    //! them: a launcher promotion with no backend deploy, and a Steam promotion
-    //! to a named branch. Fixtures 3-5 guard existing behavior.
+    //! Fixtures 1 and 2 cover promotions the UI previously could not express: a
+    //! launcher promotion with no backend deploy, and a Steam branch promotion.
+    //! Fixtures 3-5 guard existing behavior.
 
     use super::*;
 
@@ -191,8 +192,7 @@ mod tests {
             .as_str()
     }
 
-    /// Reproduces a hand-written launcher promotion with the backend deploy
-    /// suppressed.
+    /// Launcher promotion with the backend deploy suppressed.
     #[test]
     fn launcher_with_backend_deploy_off() {
         let params = CreatePromoteBuildWorkflowRequest {
@@ -210,7 +210,7 @@ mod tests {
         assert!(find(&params, "steam_branch").is_none());
     }
 
-    /// Reproduces a hand-written Steam branch promotion.
+    /// Steam branch promotion.
     #[test]
     fn steam_branch_promotion() {
         let params = CreatePromoteBuildWorkflowRequest {
@@ -248,11 +248,9 @@ mod tests {
         assert!(find(&params, "steam_branch").is_none());
     }
 
-    /// A destination that configures no backend environment relies on the Argo
-    /// template default today. Emitting an empty value here would silently
-    /// suppress that
-    /// default. Absence is the correct behavior - do not "fix" this test to
-    /// expect an empty string.
+    /// A destination with no backend environment relies on the Argo template
+    /// default. Emitting an empty value would silently suppress it, so absence is
+    /// correct - do not "fix" this test to expect an empty string.
     #[test]
     fn backend_deploy_on_with_no_configured_environment_omits_the_parameter() {
         let params = request().to_workflow_parameters();
@@ -266,10 +264,9 @@ mod tests {
         assert_eq!(params.len(), 2);
     }
 
-    /// New capability: suppress a template-default backend deploy. Differs from
-    /// the fixture above only in backend_environment being Some("") rather than
-    /// None, and
-    /// must produce observably different output.
+    /// Suppressing a template-default backend deploy. Differs from the fixture
+    /// above only in backend_environment being Some("") rather than None, and must
+    /// produce observably different output.
     #[test]
     fn backend_deploy_off_with_no_configured_environment_emits_empty() {
         let params = CreatePromoteBuildWorkflowRequest {

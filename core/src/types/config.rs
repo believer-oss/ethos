@@ -478,9 +478,8 @@ pub struct PromoteBuildDestination {
     #[serde(rename = "displayName")]
     pub display_name: String,
 
-    /// The backend environment this destination deploys to. The serde name
-    /// stays `shard` because it is a live dynamic-config key; renaming it
-    /// would break existing config and older clients.
+    /// Backend environment this destination deploys to. Serde name stays `shard`:
+    /// it is a live dynamic-config key that older clients also read.
     #[serde(default, rename = "shard", skip_serializing_if = "Option::is_none")]
     pub backend_environment: Option<String>,
 
@@ -491,13 +490,10 @@ pub struct PromoteBuildDestination {
     )]
     pub metadata_path: Option<String>,
 
-    /// S3 key of the object holding this destination's currently-deployed SHA,
-    /// e.g. `metadata/<name>`. Deliberately separate from `metadata_path`, which
-    /// is the Argo workflow parameter: the two differ (the template composes the
-    /// key from its parameter), and a destination may legitimately have one and
-    /// not the other. Reusing `metadata_path` here would force operators to set
-    /// it on destinations that deliberately omit it, silently changing what is
-    /// sent to Argo on promotion.
+    /// S3 key of the object holding this destination's deployed SHA, e.g.
+    /// `metadata/<name>`. Separate from `metadata_path`, which is the Argo
+    /// workflow parameter the template composes this key from; a destination may
+    /// set either without the other.
     #[serde(
         default,
         rename = "metadataObjectKey",
@@ -524,8 +520,7 @@ pub struct PromoteBuildDestination {
 
     /// Override that forces the backend deploy off for this destination. When
     /// true the promote UI sends an empty backend environment, suppressing the
-    /// deploy, and
-    /// the operator cannot re-enable it.
+    /// deploy, and the operator cannot re-enable it.
     #[serde(
         default,
         rename = "disableBackendDeploy",
@@ -754,12 +749,9 @@ pub struct DynamicConfig {
     #[serde(default, rename = "gameServerClusters")]
     pub game_server_clusters: Option<Vec<GameServerCluster>>,
 
-    /// Bucket holding promoted-build metadata objects. Optional override that
-    /// takes precedence over `FriendshipperConfig::promoted_artifact_bucket_name`
-    /// and the `PROMOTED_ARTIFACT_BUCKET_NAME` build-time constant, both of which
-    /// can legitimately be absent — the server config field is an `Option` and the
-    /// constant defaults to empty. Configuring it here means a new bucket needs no
-    /// Friendshipper release.
+    /// Bucket holding promoted-build metadata objects. Takes precedence over
+    /// `FriendshipperConfig::promoted_artifact_bucket_name` and the
+    /// `PROMOTED_ARTIFACT_BUCKET_NAME` constant, either of which may be absent.
     #[serde(default, rename = "promotedArtifactBucketName")]
     pub promoted_artifact_bucket_name: Option<String>,
 }

@@ -115,9 +115,8 @@ where
     Ok(Json(artifact_entry))
 }
 
-/// The outcome of reading one metadata object: the deployed sha plus the object's
-/// last-modified time, or the message from a failed read. Aliased so the map type
-/// below stays readable (and under clippy's type-complexity threshold).
+/// Outcome of reading one metadata object: the deployed sha and its last-modified
+/// time, or the message from a failed read.
 type MetadataReadResult = Result<(String, Option<DateTime<Utc>>), String>;
 
 /// Metadata path -> read outcome. Keyed by path rather than by destination because
@@ -127,6 +126,8 @@ type ResolvedMetadata = HashMap<String, MetadataReadResult>;
 const NO_METADATA_PATH: &str = "no metadataObjectKey configured";
 const NO_STEAM_BRANCHES: &str = "no steam branches configured";
 const METADATA_READ_NOT_ATTEMPTED: &str = "metadata read was not attempted";
+const NO_PROMOTED_BUCKET: &str =
+    "no promoted artifact bucket configured; set promotedArtifactBucketName in dynamic config";
 
 /// One row in the active builds modal: a launcher destination, or a single Steam
 /// branch of a Steam destination.
@@ -134,10 +135,14 @@ const METADATA_READ_NOT_ATTEMPTED: &str = "metadata read was not attempted";
 #[serde(rename_all = "camelCase")]
 pub struct ActiveBuild {
     pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub steam_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deployed_at: Option<DateTime<Utc>>,
     pub status: ActiveBuildStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -162,15 +167,11 @@ impl ActiveBuild {
     }
 }
 
-/// Resolves which bucket holds the promoted-build metadata objects. Pure.
+/// Resolves the bucket holding promoted-build metadata objects. Pure.
 ///
-/// Dynamic config wins so the bucket can change without a Friendshipper release; the
-/// fallback is whatever the AWS client was constructed with, which is the Friendshipper
-/// server config's `promotedArtifactBucketName` or, failing that, the
-/// `PROMOTED_ARTIFACT_BUCKET_NAME` build-time constant. A blank or whitespace-only
-/// dynamic-config value is treated as unset rather than as an override, so a stray empty
-/// string in config cannot mask a working fallback. The result may still be empty when
-/// nothing is configured anywhere; the caller reports that as a configuration error.
+/// Dynamic config wins over whatever the AWS client was built with. A blank value is
+/// treated as unset so it cannot mask a working fallback. The result may still be
+/// empty, which the caller reports as a configuration error.
 fn resolve_promoted_bucket(from_dynamic_config: Option<&str>, fallback: &str) -> String {
     match from_dynamic_config.map(str::trim) {
         Some(bucket) if !bucket.is_empty() => bucket.to_string(),
@@ -197,45 +198,53 @@ fn build_rows(
 ) -> Vec<ActiveBuild> {
     let mut rows: Vec<ActiveBuild> = Vec::with_capacity(destinations.len());
 
-    for destination in destinations {
-        // A destination with a metadata path is a launcher destination: exactly one row.
-        if let Some(metadata_path) = destination.metadata_object_key.as_deref() {
-            let mut row = ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Error);
-            match resolved.get(metadata_path) {
-                Some(Ok((sha, deployed_at))) => {
-                    row.status = ActiveBuildStatus::Resolved;
-                    row.sha = Some(sha.clone());
-                    row.deployed_at = *deployed_at;
-                }
-                Some(Err(message)) => {
-                    row.error = Some(message.clone());
-                }
-                // Unreachable: every metadata path present in `destinations` is fetched.
-                // Made visible rather than silent in case that ever stops being true.
-                None => {
-                    row.error = Some(METADATA_READ_NOT_ATTEMPTED.to_string());
-                }
-            }
-            rows.push(row);
-            continue;
+    // Applies a resolved read to a row, or marks why it has no sha.
+    let apply_read = |row: &mut ActiveBuild, key: Option<&str>| match key.map(|k| resolved.get(k)) {
+        Some(Some(Ok((sha, deployed_at)))) => {
+            row.status = ActiveBuildStatus::Resolved;
+            row.sha = Some(sha.clone());
+            row.deployed_at = *deployed_at;
         }
+        Some(Some(Err(message))) => {
+            row.status = ActiveBuildStatus::Error;
+            row.error = Some(message.clone());
+        }
+        // Unreachable today; surfaced rather than hidden if that changes.
+        Some(None) => {
+            row.status = ActiveBuildStatus::Error;
+            row.error = Some(METADATA_READ_NOT_ATTEMPTED.to_string());
+        }
+        None => {}
+    };
 
-        // Steam destinations get one row per configured branch, and still one row
-        // when no branches are configured.
+    for destination in destinations {
+        let key = destination.metadata_object_key.as_deref();
+
+        // Steam is checked before the metadata key so a Steam destination that gains a
+        // key still expands to one row per branch rather than collapsing into one.
         if is_steam_destination(destination) {
             let branches = destination.steam_branches.as_deref().unwrap_or_default();
             if branches.is_empty() {
                 let mut row = ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Tbd);
                 row.error = Some(NO_STEAM_BRANCHES.to_string());
+                apply_read(&mut row, key);
                 rows.push(row);
             } else {
                 for branch in branches {
                     let mut row =
                         ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Tbd);
                     row.steam_branch = Some(branch.clone());
+                    apply_read(&mut row, key);
                     rows.push(row);
                 }
             }
+            continue;
+        }
+
+        if key.is_some() {
+            let mut row = ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Error);
+            apply_read(&mut row, key);
+            rows.push(row);
             continue;
         }
 
@@ -255,10 +264,8 @@ pub async fn get_active_builds<T>(
 where
     T: EngineProvider,
 {
-    // `state.dynamic_config` is a parking_lot RwLock whose guard is !Send. Clone the
-    // destinations inside their own scope so the guard drops before any `.await`
-    // below — holding it across one makes this future !Send and axum rejects the
-    // handler at compile time.
+    // `state.dynamic_config`'s guard is !Send. Clone inside a scope so it drops
+    // before any `.await` below, or the handler fails to compile.
     let (destinations, configured_bucket): (Vec<PromoteBuildDestination>, Option<String>) = {
         let dynamic_config = state.dynamic_config.read();
         (
@@ -279,14 +286,23 @@ where
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
     aws_client.check_expiration().await?;
 
-    // Dynamic config wins so a bucket change needs no Friendshipper release; otherwise
-    // fall back to whatever the client was built with (server config, else the
-    // build-time constant). Both fallbacks can be empty, which read_object_to_string
-    // reports as a configuration error rather than an opaque SDK failure.
+    // Dynamic config first, else whatever the client was built with. Both can be
+    // empty; read_object_to_string reports that as a configuration error.
     let bucket = resolve_promoted_bucket(
         configured_bucket.as_deref(),
         &aws_client.get_promoted_artifacts_bucket(),
     );
+
+    // Resolve the bucket once. Without this every metadata path would issue its own
+    // doomed read and log its own error on each poll, all reporting the same thing.
+    if bucket.is_empty() {
+        let resolved: ResolvedMetadata = destinations
+            .iter()
+            .filter_map(|destination| destination.metadata_object_key.clone())
+            .map(|path| (path, Err(NO_PROMOTED_BUCKET.to_string())))
+            .collect();
+        return Ok(Json(build_rows(&destinations, &resolved)));
+    }
 
     // Distinct paths only: two destinations sharing a path must not cause two fetches.
     let mut metadata_paths: Vec<String> = destinations
@@ -1093,10 +1109,7 @@ mod tests {
         assert_eq!(result, "believerco-gameprototypemp");
     }
 
-    // --- build_rows ---
-    //
-    // Every value below is synthetic. `believer-oss/ethos` is public, so no real
-    // destination label, metadata key, Steam branch, or commit sha appears here.
+    // Fixture values are synthetic: this repo is public.
 
     const SHA_ONE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SHA_TWO: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -1346,7 +1359,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_path_takes_precedence_over_steam_distribution() {
+    fn steam_destination_with_a_metadata_key_keeps_one_row_per_branch() {
         let mut dest = destination("Destination One");
         dest.metadata_object_key = Some("meta/path-one".to_string());
         dest.distribution = Some("steam".to_string());
@@ -1361,9 +1374,14 @@ mod tests {
 
         let rows = build_rows(&destinations, &resolved);
 
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].status, ActiveBuildStatus::Resolved);
-        assert!(rows[0].steam_branch.is_none());
+        // Branches must not collapse into a single row once Steam gains a metadata key.
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].steam_branch.as_deref(), Some("branch-one"));
+        assert_eq!(rows[1].steam_branch.as_deref(), Some("branch-two"));
+        for row in &rows {
+            assert_eq!(row.status, ActiveBuildStatus::Resolved);
+            assert_eq!(row.sha.as_deref(), Some(SHA_ONE));
+        }
     }
 
     #[test]
@@ -1391,8 +1409,10 @@ mod tests {
         let json = serde_json::to_string(&row).unwrap();
 
         assert!(json.contains("\"displayName\""));
-        assert!(json.contains("\"steamBranch\""));
         assert!(json.contains("\"deployedAt\""));
+        // Unset optionals are omitted, not null: types.ts declares them optional.
+        assert!(!json.contains("\"steamBranch\""));
+        assert!(!json.contains("null"));
     }
 
     #[test]
@@ -1424,9 +1444,8 @@ mod tests {
         );
     }
 
-    /// Reproduces the live failure that prompted this resolver: nothing configured
-    /// anywhere yields an empty bucket, which the caller must report as a configuration
-    /// error rather than handing to the SDK.
+    /// Nothing configured anywhere yields an empty bucket, which the caller must
+    /// report rather than hand to the SDK.
     #[test]
     fn nothing_configured_anywhere_yields_empty() {
         assert!(resolve_promoted_bucket(None, "").is_empty());
