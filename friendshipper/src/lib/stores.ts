@@ -34,7 +34,7 @@ export const selectedFiles = writable(<ModifiedFile[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const workflows = writable(<CommitWorkflowInfo[]>[]);
 export const engineWorkflows = writable(<CommitWorkflowInfo[]>[]);
-// Currently-deployed build per destination, shared by the builds page and modal.
+// Currently-deployed build per shard, shared by the builds page and modal.
 export const activeBuilds = writable(<ActiveBuild[]>[]);
 export const onboardingInProgress = writable(false);
 export const changeSets = writable(<ChangeSet[]>[]);

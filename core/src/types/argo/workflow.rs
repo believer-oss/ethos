@@ -44,10 +44,7 @@ pub struct WorkflowTemplateRef {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 pub struct CreatePromoteBuildWorkflowRequest {
     pub commit: String,
-    /// Backend environment for the deploy. Serde name stays `shard`: it is the
-    /// Argo template's parameter name and the wire field shared with the server.
-    #[serde(rename = "shard")]
-    pub backend_environment: Option<String>,
+    pub shard: Option<String>,
     pub metadata_path: Option<String>,
     pub pusher: Option<String>,
     pub distribution: Option<String>,
@@ -58,11 +55,8 @@ pub struct CreatePromoteBuildWorkflowRequest {
 impl CreatePromoteBuildWorkflowRequest {
     /// Assemble the Argo workflow parameters for this promotion request.
     ///
-    /// `backend_environment` is deliberately three-state and the distinction is
-    /// load-bearing: `None` omits the parameter entirely so the workflow
-    /// template's own default applies, `Some("")` emits it empty to suppress the
-    /// backend deploy, and `Some(v)` emits the configured environment. Never
-    /// normalize `None` into `Some("")`.
+    /// The template defaults `shard` to `""` and branches on emptiness, so `None`
+    /// and `Some("")` both suppress the deploy. Only `Some(v)` deploys.
     pub fn to_workflow_parameters(&self) -> Vec<WorkflowParameter> {
         let mut params = vec![
             WorkflowParameter {
@@ -87,11 +81,10 @@ impl CreatePromoteBuildWorkflowRequest {
                 value: metadata_path.clone(),
             });
         }
-        if let Some(backend_environment) = &self.backend_environment {
+        if let Some(shard) = &self.shard {
             params.push(WorkflowParameter {
-                // Argo template parameter name; not renamed with the Rust field.
                 name: "shard".to_string(),
-                value: backend_environment.clone(),
+                value: shard.clone(),
             });
         }
         if let Some(distribution) = &self.distribution {
@@ -167,7 +160,7 @@ pub struct S3Artifact {
 #[cfg(test)]
 mod tests {
     //! Fixtures 1 and 2 cover promotions the UI previously could not express: a
-    //! launcher promotion with no backend deploy, and a Steam branch promotion.
+    //! launcher promotion with no shard deploy, and a Steam branch promotion.
     //! Fixtures 3-5 guard existing behavior.
 
     use super::*;
@@ -192,12 +185,12 @@ mod tests {
             .as_str()
     }
 
-    /// Launcher promotion with the backend deploy suppressed.
+    /// Launcher promotion with the shard deploy suppressed.
     #[test]
-    fn launcher_with_backend_deploy_off() {
+    fn launcher_with_shard_deploy_off() {
         let params = CreatePromoteBuildWorkflowRequest {
             metadata_path: Some("meta/path-one".to_string()),
-            backend_environment: Some(String::new()),
+            shard: Some(String::new()),
             ..request()
         }
         .to_workflow_parameters();
@@ -214,7 +207,7 @@ mod tests {
     #[test]
     fn steam_branch_promotion() {
         let params = CreatePromoteBuildWorkflowRequest {
-            backend_environment: Some(String::new()),
+            shard: Some(String::new()),
             distribution: Some("steam".to_string()),
             steam_branch: Some("branch-one".to_string()),
             game_config: Some("Test".to_string()),
@@ -233,26 +226,24 @@ mod tests {
 
     /// Today's launcher behavior; must not change.
     #[test]
-    fn launcher_with_backend_deploy_on() {
+    fn launcher_with_shard_deploy_on() {
         let params = CreatePromoteBuildWorkflowRequest {
             metadata_path: Some("meta/path-one".to_string()),
-            backend_environment: Some("backend-env-one".to_string()),
+            shard: Some("shard-one".to_string()),
             ..request()
         }
         .to_workflow_parameters();
 
         assert_eq!(value(&params, "game_config"), "development");
         assert_eq!(value(&params, "metadata_path"), "meta/path-one");
-        assert_eq!(value(&params, "shard"), "backend-env-one");
+        assert_eq!(value(&params, "shard"), "shard-one");
         assert!(find(&params, "distribution").is_none());
         assert!(find(&params, "steam_branch").is_none());
     }
 
-    /// A destination with no backend environment relies on the Argo template
-    /// default. Emitting an empty value would silently suppress it, so absence is
-    /// correct - do not "fix" this test to expect an empty string.
+    /// No configured shard omits the parameter, equivalent to sending it empty.
     #[test]
-    fn backend_deploy_on_with_no_configured_environment_omits_the_parameter() {
+    fn no_configured_shard_omits_the_parameter() {
         let params = request().to_workflow_parameters();
 
         assert_eq!(value(&params, "commit"), SHA);
@@ -264,13 +255,12 @@ mod tests {
         assert_eq!(params.len(), 2);
     }
 
-    /// Suppressing a template-default backend deploy. Differs from the fixture
-    /// above only in backend_environment being Some("") rather than None, and must
-    /// produce observably different output.
+    /// Same effect as omitting it; asserted separately because the parameter list
+    /// differs.
     #[test]
-    fn backend_deploy_off_with_no_configured_environment_emits_empty() {
+    fn empty_shard_is_emitted_when_set_explicitly() {
         let params = CreatePromoteBuildWorkflowRequest {
-            backend_environment: Some(String::new()),
+            shard: Some(String::new()),
             ..request()
         }
         .to_workflow_parameters();

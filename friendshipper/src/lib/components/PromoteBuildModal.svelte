@@ -12,35 +12,35 @@
 	let showConfirmation: boolean = false;
 	let showSuccess: boolean = false;
 	let successWorkflowName: string = '';
-	let selectedDestinationName: string = '';
-	let deployBackend: boolean = true;
+	let selectedShardName: string = '';
+	let deployShard: boolean = true;
 	let selectedSteamBranch: string = '';
-	let lastDestinationName: string = '';
+	let lastShardName: string = '';
 	let wasOpen: boolean = false;
 
-	$: destinations = $dynamicConfig?.promotableBuildShards ?? [];
-	$: hasDestinations = destinations.length > 0;
-	$: destinationItems = destinations.map((d) => ({ value: d.displayName, name: d.displayName }));
-	$: selectedDestination = destinations.find((d) => d.displayName === selectedDestinationName);
-	$: steamBranches = selectedDestination?.steamBranches ?? [];
+	$: shards = $dynamicConfig?.promotableBuildShards ?? [];
+	$: hasShards = shards.length > 0;
+	$: shardItems = shards.map((d) => ({ value: d.displayName, name: d.displayName }));
+	$: selectedShard = shards.find((d) => d.displayName === selectedShardName);
+	$: steamBranches = selectedShard?.steamBranches ?? [];
 	$: steamBranchItems = steamBranches.map((b) => ({ value: b, name: b }));
 
 	// Two independent concerns, deliberately not conflated:
 	//   isSteam              - drives Steam-specific UI and wording only.
-	//   backendDeployDisabled - a config override that forces the backend deploy
-	//                          off for this destination. Any destination can set
+	//   shardDeployDisabled - a config override that forces the shard deploy
+	//                          off for this shard. Any shard can set
 	//                          it; it is not a property of being Steam.
-	$: isSteam = (selectedDestination?.distribution ?? '').toLowerCase() === 'steam';
-	$: backendDeployDisabled = selectedDestination?.disableBackendDeploy === true;
+	$: isSteam = (selectedShard?.distribution ?? '').toLowerCase() === 'steam';
+	$: shardDeployDisabled = selectedShard?.disableShardDeploy === true;
 	$: showSteamBranch = isSteam && steamBranches.length > 0;
-	$: if (hasDestinations && !selectedDestinationName) {
-		selectedDestinationName = destinations[0].displayName;
+	$: if (hasShards && !selectedShardName) {
+		selectedShardName = shards[0].displayName;
 	}
 
 	// Reset on open, not on close: `outsideclose` dismisses the modal without running
-	// any handler, which would otherwise carry an unchecked backend deploy, a stale
+	// any handler, which would otherwise carry an unchecked shard deploy, a stale
 	// confirmation screen, or the previous success message into the next promotion.
-	// Clearing lastDestinationName re-arms the destination block below.
+	// Clearing lastShardName re-arms the shard block below.
 	$: if (showModal !== wasOpen) {
 		wasOpen = showModal;
 		if (showModal) {
@@ -48,68 +48,56 @@
 			showConfirmation = false;
 			showSuccess = false;
 			successWorkflowName = '';
-			lastDestinationName = '';
+			lastShardName = '';
 		}
 	}
 
-	// Reset the backend deploy toggle and Steam branch whenever the destination
+	// Reset the shard deploy toggle and Steam branch whenever the shard
 	// changes. Guarded on the previous name so toggling the checkbox does not
 	// re-trigger this block and immediately revert the user's choice.
-	$: if (selectedDestinationName !== lastDestinationName) {
-		lastDestinationName = selectedDestinationName;
-		deployBackend = !backendDeployDisabled;
+	$: if (selectedShardName !== lastShardName) {
+		lastShardName = selectedShardName;
+		deployShard = !shardDeployDisabled;
 		selectedSteamBranch = steamBranches[0] ?? '';
 	}
 
-	// The backend environment is deliberately three-state:
-	//   undefined -> omitted, so the Argo workflow template's default applies
-	//   ''        -> present and empty, suppressing the backend deploy
-	//   value     -> present with the destination's configured environment
-	// Never collapse undefined into '' - a destination that configures no
-	// backend environment relies on the template default. The wire key stays
-	// `shard`, matching the Argo template parameter.
-	const computeEffectiveBackendEnvironment = (
+	// The template defaults `shard` to '' and branches on emptiness, so undefined and
+	// '' both suppress the deploy. Only a real value deploys.
+	const computeEffectiveShard = (
 		disabled: boolean,
 		deploy: boolean,
-		configuredEnvironment: string | undefined
+		configuredShard: string | undefined
 	): string | undefined => {
 		if (disabled) return '';
 		if (!deploy) return '';
-		return configuredEnvironment;
+		return configuredShard;
 	};
 
-	const computeBackendDeployLabel = (
+	const computeShardDeployLabel = (
 		disabled: boolean,
-		configuredEnvironment: string | undefined
+		configuredShard: string | undefined
 	): string => {
-		if (disabled) return 'Backend deploy (disabled for this destination)';
-		if (configuredEnvironment) return `Backend deploy (${configuredEnvironment})`;
-		return 'Backend deploy (workflow default)';
+		if (disabled) return 'Shard deploy (disabled for this shard)';
+		if (configuredShard) return `Shard deploy (${configuredShard})`;
+		return 'Shard deploy (workflow default)';
 	};
 
-	const computeBackendDeploySummary = (
+	const computeShardDeploySummary = (
 		disabled: boolean,
 		deploy: boolean,
-		configuredEnvironment: string | undefined
+		configuredShard: string | undefined
 	): string => {
-		if (disabled) return 'none - disabled for this destination';
-		if (!deploy) return 'none - no backend deploy';
-		return configuredEnvironment ?? 'workflow default';
+		if (disabled) return 'none - disabled for this shard';
+		if (!deploy) return 'none - no shard deploy';
+		return configuredShard ?? 'workflow default';
 	};
 
-	$: effectiveBackendEnvironment = computeEffectiveBackendEnvironment(
-		backendDeployDisabled,
-		deployBackend,
-		selectedDestination?.shard
-	);
-	$: backendDeployLabel = computeBackendDeployLabel(
-		backendDeployDisabled,
-		selectedDestination?.shard
-	);
-	$: backendDeploySummary = computeBackendDeploySummary(
-		backendDeployDisabled,
-		deployBackend,
-		selectedDestination?.shard
+	$: effectiveShard = computeEffectiveShard(shardDeployDisabled, deployShard, selectedShard?.shard);
+	$: shardDeployLabel = computeShardDeployLabel(shardDeployDisabled, selectedShard?.shard);
+	$: shardDeploySummary = computeShardDeploySummary(
+		shardDeployDisabled,
+		deployShard,
+		selectedShard?.shard
 	);
 
 	const handleInitialSubmit = () => {
@@ -129,10 +117,10 @@
 		try {
 			const request: CreatePromoteBuildWorkflowRequest = {
 				commit,
-				shard: effectiveBackendEnvironment,
-				metadata_path: selectedDestination?.metadataPath,
-				distribution: selectedDestination?.distribution,
-				game_config: selectedDestination?.gameConfig,
+				shard: effectiveShard,
+				metadata_path: selectedShard?.metadataPath,
+				distribution: selectedShard?.distribution,
+				game_config: selectedShard?.gameConfig,
 				steam_branch: showSteamBranch ? selectedSteamBranch : undefined
 			};
 
@@ -168,9 +156,9 @@
 		showConfirmation = false;
 		showSuccess = false;
 		successWorkflowName = '';
-		selectedDestinationName = hasDestinations ? destinations[0].displayName : '';
-		lastDestinationName = '';
-		deployBackend = true;
+		selectedShardName = hasShards ? shards[0].displayName : '';
+		lastShardName = '';
+		deployShard = true;
 		selectedSteamBranch = '';
 		showModal = false;
 	};
@@ -192,13 +180,13 @@
 		</div>
 
 		{#if !showSuccess}
-			{#if hasDestinations}
+			{#if hasShards}
 				<div>
-					<Label for="destination" class="text-primary-400 mb-2">Destination</Label>
+					<Label for="shard" class="text-primary-400 mb-2">Target Shard</Label>
 					<Select
-						id="destination"
-						bind:value={selectedDestinationName}
-						items={destinationItems}
+						id="shard"
+						bind:value={selectedShardName}
+						items={shardItems}
 						class="bg-secondary-600 dark:bg-space-800 text-white border-gray-500"
 						disabled={loading}
 					/>
@@ -207,14 +195,14 @@
 				<div class="flex flex-row gap-2">
 					<Label class="flex flex-row text-xs text-white">
 						<Checkbox
-							name="deployBackend"
-							bind:checked={deployBackend}
-							disabled={backendDeployDisabled || loading}
+							name="deployShard"
+							bind:checked={deployShard}
+							disabled={shardDeployDisabled || loading}
 						/>
-						<span>{backendDeployLabel}</span>
+						<span>{shardDeployLabel}</span>
 						<Tooltip>
-							When unchecked, the build ships without redeploying the backend - use this for
-							client/server bug fixes on a long-lived backend environment.
+							When unchecked, the build ships without redeploying the shard - use this for
+							client/server bug fixes on a long-lived shard.
 						</Tooltip>
 					</Label>
 				</div>
@@ -275,9 +263,9 @@
 							</p>
 							<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
 								<div><strong>SHA to be promoted:</strong> {commit}</div>
-								{#if selectedDestination}
-									<div><strong>Destination:</strong> {selectedDestination.displayName}</div>
-									<div><strong>Backend deploy:</strong> {backendDeploySummary}</div>
+								{#if selectedShard}
+									<div><strong>Target Shard:</strong> {selectedShard.displayName}</div>
+									<div><strong>Shard deploy:</strong> {shardDeploySummary}</div>
 									{#if showSteamBranch}
 										<div><strong>Steam branch:</strong> {selectedSteamBranch}</div>
 									{/if}
@@ -346,11 +334,11 @@
 							Are you sure you want to promote this build?
 						</h3>
 						<div class="text-sm text-gray-300 space-y-2">
-							{#if selectedDestination}
+							{#if selectedShard}
 								<p>
 									<strong>Warning:</strong> This action will deploy a new build to the
-									<strong class="text-yellow-400">{selectedDestination.displayName}</strong> destination
-									that users will download and use.
+									<strong class="text-yellow-400">{selectedShard.displayName}</strong> shard that users
+									will download and use.
 								</p>
 								<p class="text-yellow-300">
 									<strong>Impact:</strong>
@@ -358,13 +346,13 @@
 										This build will be published to the <strong>{selectedSteamBranch}</strong> branch
 										on Steam.
 									{:else}
-										All users on the <strong>{selectedDestination.displayName}</strong> destination will
-										be prompted to download this build when they next launch the game.
+										All users on the <strong>{selectedShard.displayName}</strong> shard will be prompted
+										to download this build when they next launch the game.
 									{/if}
 								</p>
 								<div class="bg-secondary-600 dark:bg-space-800 p-3 rounded font-mono text-xs">
-									<div><strong>Destination:</strong> {selectedDestination.displayName}</div>
-									<div><strong>Backend deploy:</strong> {backendDeploySummary}</div>
+									<div><strong>Target Shard:</strong> {selectedShard.displayName}</div>
+									<div><strong>Shard deploy:</strong> {shardDeploySummary}</div>
 									{#if showSteamBranch}
 										<div><strong>Steam branch:</strong> {selectedSteamBranch}</div>
 									{/if}

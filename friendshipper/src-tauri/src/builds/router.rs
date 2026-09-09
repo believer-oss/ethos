@@ -30,7 +30,7 @@ use ethos_core::types::argo::workflow::{
     CreatePromoteBuildWorkflowRequest, Workflow, WorkflowStatus,
 };
 use ethos_core::types::builds::{LaunchMode, SyncClientRequest};
-use ethos_core::types::config::PromoteBuildDestination;
+use ethos_core::types::config::PromoteBuildShard;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::GameServerResults;
 
@@ -119,8 +119,8 @@ where
 /// time, or the message from a failed read.
 type MetadataReadResult = Result<(String, Option<DateTime<Utc>>), String>;
 
-/// Metadata path -> read outcome. Keyed by path rather than by destination because
-/// the path is what is actually fetched, and two destinations may share one.
+/// Metadata path -> read outcome. Keyed by path rather than by shard because
+/// the path is what is actually fetched, and two shards may share one.
 type ResolvedMetadata = HashMap<String, MetadataReadResult>;
 
 const NO_METADATA_PATH: &str = "no metadataObjectKey configured";
@@ -129,8 +129,8 @@ const METADATA_READ_NOT_ATTEMPTED: &str = "metadata read was not attempted";
 const NO_PROMOTED_BUCKET: &str =
     "no promoted artifact bucket configured; set promotedArtifactBucketName in dynamic config";
 
-/// One row in the active builds modal: a launcher destination, or a single Steam
-/// branch of a Steam destination.
+/// One row in the active builds modal: a launcher shard, or a single Steam
+/// branch of a Steam shard.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveBuild {
@@ -180,23 +180,20 @@ fn resolve_promoted_bucket(from_dynamic_config: Option<&str>, fallback: &str) ->
 }
 
 /// Matches `PromoteBuildModal.svelte`, which lowercases before comparing.
-fn is_steam_destination(destination: &PromoteBuildDestination) -> bool {
-    destination
+fn is_steam_shard(shard: &PromoteBuildShard) -> bool {
+    shard
         .distribution
         .as_deref()
         .is_some_and(|distribution| distribution.eq_ignore_ascii_case("steam"))
 }
 
-/// Expands configured destinations into modal rows. Pure: no locks, no I/O, no async.
+/// Expands configured shards into modal rows. Pure: no locks, no I/O, no async.
 ///
-/// Every destination produces at least one row, including misconfigured ones. A
-/// destination that silently vanishes is worse than one showing an error, because
+/// Every shard produces at least one row, including misconfigured ones. A
+/// shard that silently vanishes is worse than one showing an error, because
 /// the operator cannot tell "not deployed" from "not displayed".
-fn build_rows(
-    destinations: &[PromoteBuildDestination],
-    resolved: &ResolvedMetadata,
-) -> Vec<ActiveBuild> {
-    let mut rows: Vec<ActiveBuild> = Vec::with_capacity(destinations.len());
+fn build_rows(shards: &[PromoteBuildShard], resolved: &ResolvedMetadata) -> Vec<ActiveBuild> {
+    let mut rows: Vec<ActiveBuild> = Vec::with_capacity(shards.len());
 
     // Applies a resolved read to a row, or marks why it has no sha.
     let apply_read = |row: &mut ActiveBuild, key: Option<&str>| match key.map(|k| resolved.get(k)) {
@@ -217,22 +214,21 @@ fn build_rows(
         None => {}
     };
 
-    for destination in destinations {
-        let key = destination.metadata_object_key.as_deref();
+    for shard in shards {
+        let key = shard.metadata_object_key.as_deref();
 
-        // Steam is checked before the metadata key so a Steam destination that gains a
+        // Steam is checked before the metadata key so a Steam shard that gains a
         // key still expands to one row per branch rather than collapsing into one.
-        if is_steam_destination(destination) {
-            let branches = destination.steam_branches.as_deref().unwrap_or_default();
+        if is_steam_shard(shard) {
+            let branches = shard.steam_branches.as_deref().unwrap_or_default();
             if branches.is_empty() {
-                let mut row = ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Tbd);
+                let mut row = ActiveBuild::new(&shard.display_name, ActiveBuildStatus::Tbd);
                 row.error = Some(NO_STEAM_BRANCHES.to_string());
                 apply_read(&mut row, key);
                 rows.push(row);
             } else {
                 for branch in branches {
-                    let mut row =
-                        ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Tbd);
+                    let mut row = ActiveBuild::new(&shard.display_name, ActiveBuildStatus::Tbd);
                     row.steam_branch = Some(branch.clone());
                     apply_read(&mut row, key);
                     rows.push(row);
@@ -242,14 +238,14 @@ fn build_rows(
         }
 
         if key.is_some() {
-            let mut row = ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Error);
+            let mut row = ActiveBuild::new(&shard.display_name, ActiveBuildStatus::Error);
             apply_read(&mut row, key);
             rows.push(row);
             continue;
         }
 
         // Neither a metadata path nor Steam: still listed, so the gap is visible.
-        let mut row = ActiveBuild::new(&destination.display_name, ActiveBuildStatus::Tbd);
+        let mut row = ActiveBuild::new(&shard.display_name, ActiveBuildStatus::Tbd);
         row.error = Some(NO_METADATA_PATH.to_string());
         rows.push(row);
     }
@@ -257,7 +253,7 @@ fn build_rows(
     rows
 }
 
-/// Lists every promotion destination with the commit currently deployed to it.
+/// Lists every promotion shard with the commit currently deployed to it.
 pub async fn get_active_builds<T>(
     State(state): State<AppState<T>>,
 ) -> Result<Json<Vec<ActiveBuild>>, CoreError>
@@ -266,20 +262,20 @@ where
 {
     // `state.dynamic_config`'s guard is !Send. Clone inside a scope so it drops
     // before any `.await` below, or the handler fails to compile.
-    let (destinations, configured_bucket): (Vec<PromoteBuildDestination>, Option<String>) = {
+    let (shards, configured_bucket): (Vec<PromoteBuildShard>, Option<String>) = {
         let dynamic_config = state.dynamic_config.read();
         (
             dynamic_config
-                .promotable_build_destinations
+                .promotable_build_shards
                 .clone()
                 .unwrap_or_default(),
             dynamic_config.promoted_artifact_bucket_name.clone(),
         )
     };
 
-    // Short-circuit before touching AWS: a config with no destinations must render an
+    // Short-circuit before touching AWS: a config with no shards must render an
     // empty modal, not a credentials error.
-    if destinations.is_empty() {
+    if shards.is_empty() {
         return Ok(Json(vec![]));
     }
 
@@ -296,18 +292,18 @@ where
     // Resolve the bucket once. Without this every metadata path would issue its own
     // doomed read and log its own error on each poll, all reporting the same thing.
     if bucket.is_empty() {
-        let resolved: ResolvedMetadata = destinations
+        let resolved: ResolvedMetadata = shards
             .iter()
-            .filter_map(|destination| destination.metadata_object_key.clone())
+            .filter_map(|shard| shard.metadata_object_key.clone())
             .map(|path| (path, Err(NO_PROMOTED_BUCKET.to_string())))
             .collect();
-        return Ok(Json(build_rows(&destinations, &resolved)));
+        return Ok(Json(build_rows(&shards, &resolved)));
     }
 
-    // Distinct paths only: two destinations sharing a path must not cause two fetches.
-    let mut metadata_paths: Vec<String> = destinations
+    // Distinct paths only: two shards sharing a path must not cause two fetches.
+    let mut metadata_paths: Vec<String> = shards
         .iter()
-        .filter_map(|destination| destination.metadata_object_key.clone())
+        .filter_map(|shard| shard.metadata_object_key.clone())
         .collect();
     metadata_paths.sort();
     metadata_paths.dedup();
@@ -317,7 +313,7 @@ where
         let bucket = bucket.clone();
         async move {
             // The read result is carried inside the tuple rather than propagated: one
-            // unreachable destination must not blank the whole modal.
+            // unreachable shard must not blank the whole modal.
             let result = aws_client
                 .read_object_to_string(&bucket, &path)
                 .await
@@ -333,7 +329,7 @@ where
 
     let resolved: ResolvedMetadata = results.into_iter().collect();
 
-    Ok(Json(build_rows(&destinations, &resolved)))
+    Ok(Json(build_rows(&shards, &resolved)))
 }
 
 #[derive(Default, Deserialize)]
@@ -1114,18 +1110,18 @@ mod tests {
     const SHA_ONE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SHA_TWO: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-    /// A destination with every optional unset, so each fixture sets only the
+    /// A shard with every optional unset, so each fixture sets only the
     /// fields it actually cares about.
-    fn destination(display_name: &str) -> PromoteBuildDestination {
-        PromoteBuildDestination {
+    fn shard(display_name: &str) -> PromoteBuildShard {
+        PromoteBuildShard {
             display_name: display_name.to_string(),
-            backend_environment: None,
+            shard: None,
             metadata_path: None,
             metadata_object_key: None,
             distribution: None,
             game_config: None,
             steam_branches: None,
-            disable_backend_deploy: None,
+            disable_shard_deploy: None,
         }
     }
 
@@ -1133,25 +1129,22 @@ mod tests {
         DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("valid timestamp")
     }
 
-    /// No destination may ever silently disappear, so the row count can never be
-    /// lower than the destination count.
-    fn assert_no_destination_dropped(
-        destinations: &[PromoteBuildDestination],
-        rows: &[ActiveBuild],
-    ) {
+    /// No shard may ever silently disappear, so the row count can never be
+    /// lower than the shard count.
+    fn assert_no_shard_dropped(shards: &[PromoteBuildShard], rows: &[ActiveBuild]) {
         assert!(
-            rows.len() >= destinations.len(),
-            "expected at least one row per destination, got {} rows for {} destinations",
+            rows.len() >= shards.len(),
+            "expected at least one row per shard, got {} rows for {} shards",
             rows.len(),
-            destinations.len()
+            shards.len()
         );
     }
 
     #[test]
-    fn launcher_destination_with_successful_read_is_resolved() {
-        let mut dest = destination("Destination One");
-        dest.metadata_object_key = Some("meta/path-one".to_string());
-        let destinations = [dest];
+    fn launcher_shard_with_successful_read_is_resolved() {
+        let mut entry = shard("Shard One");
+        entry.metadata_object_key = Some("meta/path-one".to_string());
+        let shards = [entry];
 
         let mut resolved = ResolvedMetadata::new();
         resolved.insert(
@@ -1159,11 +1152,11 @@ mod tests {
             Ok((SHA_ONE.to_string(), Some(timestamp()))),
         );
 
-        let rows = build_rows(&destinations, &resolved);
+        let rows = build_rows(&shards, &resolved);
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].display_name, "Destination One");
+        assert_eq!(rows[0].display_name, "Shard One");
         assert_eq!(rows[0].status, ActiveBuildStatus::Resolved);
         assert_eq!(rows[0].sha, Some(SHA_ONE.to_string()));
         assert_eq!(rows[0].deployed_at, Some(timestamp()));
@@ -1172,17 +1165,17 @@ mod tests {
     }
 
     #[test]
-    fn launcher_destination_with_failed_read_becomes_an_error_row() {
-        let mut dest = destination("Destination One");
-        dest.metadata_object_key = Some("meta/path-one".to_string());
-        let destinations = [dest];
+    fn launcher_shard_with_failed_read_becomes_an_error_row() {
+        let mut entry = shard("Shard One");
+        entry.metadata_object_key = Some("meta/path-one".to_string());
+        let shards = [entry];
 
         let mut resolved = ResolvedMetadata::new();
         resolved.insert("meta/path-one".to_string(), Err("read failed".to_string()));
 
-        let rows = build_rows(&destinations, &resolved);
+        let rows = build_rows(&shards, &resolved);
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, ActiveBuildStatus::Error);
         assert_eq!(rows[0].error, Some("read failed".to_string()));
@@ -1190,17 +1183,17 @@ mod tests {
     }
 
     #[test]
-    fn launcher_destination_absent_from_resolved_map_becomes_an_error_row() {
-        let mut dest = destination("Destination One");
-        dest.metadata_object_key = Some("meta/path-one".to_string());
-        let destinations = [dest];
+    fn launcher_shard_absent_from_resolved_map_becomes_an_error_row() {
+        let mut entry = shard("Shard One");
+        entry.metadata_object_key = Some("meta/path-one".to_string());
+        let shards = [entry];
 
         // Deliberately empty: guards the branch that should be unreachable.
         let resolved = ResolvedMetadata::new();
 
-        let rows = build_rows(&destinations, &resolved);
+        let rows = build_rows(&shards, &resolved);
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, ActiveBuildStatus::Error);
         assert!(rows[0].error.is_some());
@@ -1208,19 +1201,19 @@ mod tests {
     }
 
     #[test]
-    fn steam_destination_expands_to_one_row_per_branch() {
-        let mut dest = destination("Destination One");
-        dest.distribution = Some("steam".to_string());
-        dest.steam_branches = Some(vec![
+    fn steam_shard_expands_to_one_row_per_branch() {
+        let mut entry = shard("Shard One");
+        entry.distribution = Some("steam".to_string());
+        entry.steam_branches = Some(vec![
             "branch-one".to_string(),
             "branch-two".to_string(),
             "branch-three".to_string(),
         ]);
-        let destinations = [dest];
+        let shards = [entry];
 
-        let rows = build_rows(&destinations, &ResolvedMetadata::new());
+        let rows = build_rows(&shards, &ResolvedMetadata::new());
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 3);
         let branches: Vec<Option<String>> = rows.iter().map(|r| r.steam_branch.clone()).collect();
         assert_eq!(
@@ -1233,23 +1226,23 @@ mod tests {
         );
         for row in &rows {
             assert_eq!(row.status, ActiveBuildStatus::Tbd);
-            assert_eq!(row.display_name, "Destination One");
+            assert_eq!(row.display_name, "Shard One");
             assert!(row.sha.is_none());
         }
     }
 
     /// Silent-disappearance guard: an empty branch list must not collapse the
-    /// destination to zero rows.
+    /// shard to zero rows.
     #[test]
-    fn steam_destination_with_empty_branch_list_still_produces_a_row() {
-        let mut dest = destination("Destination One");
-        dest.distribution = Some("steam".to_string());
-        dest.steam_branches = Some(vec![]);
-        let destinations = [dest];
+    fn steam_shard_with_empty_branch_list_still_produces_a_row() {
+        let mut entry = shard("Shard One");
+        entry.distribution = Some("steam".to_string());
+        entry.steam_branches = Some(vec![]);
+        let shards = [entry];
 
-        let rows = build_rows(&destinations, &ResolvedMetadata::new());
+        let rows = build_rows(&shards, &ResolvedMetadata::new());
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, ActiveBuildStatus::Tbd);
         assert!(rows[0].steam_branch.is_none());
@@ -1257,31 +1250,31 @@ mod tests {
     }
 
     /// Silent-disappearance guard: an absent branch list must not collapse the
-    /// destination to zero rows.
+    /// shard to zero rows.
     #[test]
-    fn steam_destination_with_no_branches_still_produces_a_row() {
-        let mut dest = destination("Destination One");
-        dest.distribution = Some("steam".to_string());
-        let destinations = [dest];
+    fn steam_shard_with_no_branches_still_produces_a_row() {
+        let mut entry = shard("Shard One");
+        entry.distribution = Some("steam".to_string());
+        let shards = [entry];
 
-        let rows = build_rows(&destinations, &ResolvedMetadata::new());
+        let rows = build_rows(&shards, &ResolvedMetadata::new());
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, ActiveBuildStatus::Tbd);
         assert!(rows[0].steam_branch.is_none());
         assert!(rows[0].error.is_some());
     }
 
-    /// Silent-disappearance guard: a destination configured with neither a
+    /// Silent-disappearance guard: a shard configured with neither a
     /// metadata path nor Steam distribution must still be listed.
     #[test]
-    fn destination_with_neither_metadata_path_nor_steam_still_produces_a_row() {
-        let destinations = [destination("Destination One")];
+    fn shard_with_neither_metadata_path_nor_steam_still_produces_a_row() {
+        let shards = [shard("Shard One")];
 
-        let rows = build_rows(&destinations, &ResolvedMetadata::new());
+        let rows = build_rows(&shards, &ResolvedMetadata::new());
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, ActiveBuildStatus::Tbd);
         assert!(rows[0].error.is_some());
@@ -1290,33 +1283,33 @@ mod tests {
     }
 
     #[test]
-    fn empty_destination_list_produces_no_rows() {
+    fn empty_shard_list_produces_no_rows() {
         let rows = build_rows(&[], &ResolvedMetadata::new());
         assert!(rows.is_empty());
     }
 
     #[test]
     fn steam_distribution_match_is_case_insensitive() {
-        let mut dest = destination("Destination One");
-        dest.distribution = Some("StEaM".to_string());
-        dest.steam_branches = Some(vec!["branch-one".to_string()]);
-        let destinations = [dest];
+        let mut entry = shard("Shard One");
+        entry.distribution = Some("StEaM".to_string());
+        entry.steam_branches = Some(vec!["branch-one".to_string()]);
+        let shards = [entry];
 
-        let rows = build_rows(&destinations, &ResolvedMetadata::new());
+        let rows = build_rows(&shards, &ResolvedMetadata::new());
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, ActiveBuildStatus::Tbd);
         assert_eq!(rows[0].steam_branch, Some("branch-one".to_string()));
     }
 
     #[test]
-    fn two_destinations_sharing_a_metadata_path_both_resolve() {
-        let mut first = destination("Destination One");
+    fn two_shards_sharing_a_metadata_path_both_resolve() {
+        let mut first = shard("Shard One");
         first.metadata_object_key = Some("meta/path-one".to_string());
-        let mut second = destination("Destination Two");
+        let mut second = shard("Shard Two");
         second.metadata_object_key = Some("meta/path-one".to_string());
-        let destinations = [first, second];
+        let shards = [first, second];
 
         let mut resolved = ResolvedMetadata::new();
         resolved.insert(
@@ -1324,12 +1317,12 @@ mod tests {
             Ok((SHA_ONE.to_string(), Some(timestamp()))),
         );
 
-        let rows = build_rows(&destinations, &resolved);
+        let rows = build_rows(&shards, &resolved);
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].display_name, "Destination One");
-        assert_eq!(rows[1].display_name, "Destination Two");
+        assert_eq!(rows[0].display_name, "Shard One");
+        assert_eq!(rows[1].display_name, "Shard Two");
         for row in &rows {
             assert_eq!(row.status, ActiveBuildStatus::Resolved);
             assert_eq!(row.sha, Some(SHA_ONE.to_string()));
@@ -1337,20 +1330,20 @@ mod tests {
     }
 
     #[test]
-    fn one_failing_destination_does_not_affect_the_others() {
-        let mut first = destination("Destination One");
+    fn one_failing_shard_does_not_affect_the_others() {
+        let mut first = shard("Shard One");
         first.metadata_object_key = Some("meta/path-one".to_string());
-        let mut second = destination("Destination Two");
+        let mut second = shard("Shard Two");
         second.metadata_object_key = Some("meta/path-two".to_string());
-        let destinations = [first, second];
+        let shards = [first, second];
 
         let mut resolved = ResolvedMetadata::new();
         resolved.insert("meta/path-one".to_string(), Err("read failed".to_string()));
         resolved.insert("meta/path-two".to_string(), Ok((SHA_TWO.to_string(), None)));
 
-        let rows = build_rows(&destinations, &resolved);
+        let rows = build_rows(&shards, &resolved);
 
-        assert_no_destination_dropped(&destinations, &rows);
+        assert_no_shard_dropped(&shards, &rows);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].status, ActiveBuildStatus::Error);
         assert_eq!(rows[1].status, ActiveBuildStatus::Resolved);
@@ -1359,12 +1352,12 @@ mod tests {
     }
 
     #[test]
-    fn steam_destination_with_a_metadata_key_keeps_one_row_per_branch() {
-        let mut dest = destination("Destination One");
-        dest.metadata_object_key = Some("meta/path-one".to_string());
-        dest.distribution = Some("steam".to_string());
-        dest.steam_branches = Some(vec!["branch-one".to_string(), "branch-two".to_string()]);
-        let destinations = [dest];
+    fn steam_shard_with_a_metadata_key_keeps_one_row_per_branch() {
+        let mut entry = shard("Shard One");
+        entry.metadata_object_key = Some("meta/path-one".to_string());
+        entry.distribution = Some("steam".to_string());
+        entry.steam_branches = Some(vec!["branch-one".to_string(), "branch-two".to_string()]);
+        let shards = [entry];
 
         let mut resolved = ResolvedMetadata::new();
         resolved.insert(
@@ -1372,7 +1365,7 @@ mod tests {
             Ok((SHA_ONE.to_string(), Some(timestamp()))),
         );
 
-        let rows = build_rows(&destinations, &resolved);
+        let rows = build_rows(&shards, &resolved);
 
         // Branches must not collapse into a single row once Steam gains a metadata key.
         assert_eq!(rows.len(), 2);
@@ -1402,7 +1395,7 @@ mod tests {
 
     #[test]
     fn active_build_serializes_camel_case() {
-        let mut row = ActiveBuild::new("Destination One", ActiveBuildStatus::Resolved);
+        let mut row = ActiveBuild::new("Shard One", ActiveBuildStatus::Resolved);
         row.sha = Some(SHA_ONE.to_string());
         row.deployed_at = Some(timestamp());
 
