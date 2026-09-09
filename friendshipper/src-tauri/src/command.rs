@@ -22,7 +22,7 @@ use ethos_core::types::repo::{
 use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
 };
-use friendshipper::builds::router::GetWorkflowsResponse;
+use friendshipper::builds::router::{ActiveBuild, GetWorkflowsResponse};
 use friendshipper::repo::operations::{
     ImportZippedChangesRequest, RestoreFileToRevisionRequest, RestoreSnapshotRequest,
     SaveChangeSetRequest, SaveSnapshotRequest, ZipLocalChangesRequest,
@@ -178,6 +178,35 @@ pub async fn get_build(
                 Err(create_tauri_error(res).await)
             } else {
                 match res.json::<ArtifactEntry>().await {
+                    Ok(res) => Ok(res),
+                    Err(err) => Err(TauriError {
+                        message: err.to_string(),
+                        status_code: 0,
+                    }),
+                }
+            }
+        }
+        Err(err) => Err(TauriError {
+            message: err.to_string(),
+            status_code: 0,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn get_active_builds(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<ActiveBuild>, TauriError> {
+    let req = state
+        .client
+        .get(format!("{}/builds/active", state.server_url));
+
+    match req.send().await {
+        Ok(res) => {
+            if is_error_status(res.status()) {
+                Err(create_tauri_error(res).await)
+            } else {
+                match res.json::<Vec<ActiveBuild>>().await {
                     Ok(res) => Ok(res),
                     Err(err) => Err(TauriError {
                         message: err.to_string(),

@@ -61,6 +61,21 @@ pub struct StoredDeviceClientInfo {
     pub registration_expires_at: DateTime<Utc>,
 }
 
+/// Parses the body of a promoted-build metadata object, which is plain text whose entire
+/// content is a commit SHA. Trims surrounding whitespace and rejects an empty body, since an
+/// empty object is a broken deploy marker rather than a valid SHA. Does not validate that the
+/// result looks like a SHA — that is the producer's contract, not this layer's.
+fn parse_metadata_body(body: &str) -> Result<String, CoreError> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return Err(CoreError::Internal(anyhow!(
+            "Promoted build metadata object was empty"
+        )));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 impl AWSClient {
     #[instrument(skip_all)]
     pub async fn from_static_creds(
@@ -197,6 +212,62 @@ impl AWSClient {
                 std::process::exit(1);
             }
         }
+    }
+
+    /// Reads a plain-text object and returns its trimmed body along with the object's
+    /// last-modified time. Used for promoted-build metadata objects, whose entire body
+    /// is the deployed commit SHA — they are not JSON.
+    ///
+    /// The bucket is passed explicitly rather than taken from `self` because the promoted
+    /// bucket has three possible sources (dynamic config, the Friendshipper server config,
+    /// and the build-time constant) and resolving that precedence belongs to the caller.
+    #[instrument(skip(self), err)]
+    pub async fn read_object_to_string(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<(String, Option<DateTime<Utc>>), CoreError> {
+        // A blank bucket is reachable in normal operation: the server config field is an
+        // Option and the build-time constant defaults to empty. Fail here rather than in
+        // the SDK, whose error for a blank bucket is an opaque ConstructionFailure /
+        // MissingField that says nothing about how to fix it.
+        if bucket.is_empty() {
+            return Err(CoreError::Internal(anyhow!(
+                "No promoted artifact bucket configured. Set promotedArtifactBucketName in \
+                 dynamic config, or promotedArtifactBucketName in the Friendshipper server \
+                 config, or the PROMOTED_ARTIFACT_BUCKET_NAME build-time variable."
+            )));
+        }
+
+        let client = S3Client::new(&self.get_sdk_config().await);
+        let resp = match client
+            .get_object()
+            .bucket(bucket.to_string())
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let e = e.into_service_error();
+                error!("Error getting promoted build metadata object: {:?}", e);
+                return Err(CoreError::Internal(anyhow!(
+                    "Error getting promoted build metadata object: {:?}",
+                    e
+                )));
+            }
+        };
+
+        // Capture last_modified before collect() consumes the body.
+        let last_modified = resp
+            .last_modified()
+            .and_then(|t| DateTime::<Utc>::from_timestamp(t.secs(), t.subsec_nanos()));
+
+        let bytes = resp.body.collect().await?.into_bytes();
+        let body = std::str::from_utf8(&bytes)?;
+        let sha = parse_metadata_body(body)?;
+
+        Ok((sha, last_modified))
     }
 
     #[instrument(skip(self), err)]
@@ -506,4 +577,50 @@ pub fn create_hyper_client() -> aws_sdk_ssooidc::config::SharedHttpClient {
         .build();
 
     HyperClientBuilder::new().build(tls_connector)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_metadata_body;
+
+    // Synthetic placeholder only — not a real commit SHA. See the Public Repository
+    // Constraint in the active-builds-modal proposal: this repo is public.
+    fn fake_sha() -> String {
+        "a".repeat(40)
+    }
+
+    #[test]
+    fn parse_metadata_body_trims_trailing_newline() {
+        let body = format!("{}\n", fake_sha());
+        assert_eq!(parse_metadata_body(&body).unwrap(), fake_sha());
+    }
+
+    #[test]
+    fn parse_metadata_body_trims_surrounding_whitespace() {
+        let body = format!("  {}  \n\t", fake_sha());
+        assert_eq!(parse_metadata_body(&body).unwrap(), fake_sha());
+    }
+
+    #[test]
+    fn parse_metadata_body_accepts_body_with_no_whitespace() {
+        let body = fake_sha();
+        assert_eq!(parse_metadata_body(&body).unwrap(), fake_sha());
+    }
+
+    #[test]
+    fn parse_metadata_body_rejects_empty_body() {
+        assert!(parse_metadata_body("").is_err());
+    }
+
+    #[test]
+    fn parse_metadata_body_rejects_whitespace_only_body() {
+        assert!(parse_metadata_body("   \n\t ").is_err());
+    }
+
+    #[test]
+    fn parse_metadata_body_does_not_validate_shape() {
+        // The parser must not reject a body just because it doesn't look like a SHA — that
+        // format is owned by the producer, not this layer.
+        assert_eq!(parse_metadata_body("not-a-sha").unwrap(), "not-a-sha");
+    }
 }

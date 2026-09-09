@@ -195,6 +195,7 @@ fn main() -> Result<(), CoreError> {
                 download_server_logs,
                 download_utrace,
                 fix_rebase,
+                get_active_builds,
                 get_build,
                 get_builds,
                 get_commits,

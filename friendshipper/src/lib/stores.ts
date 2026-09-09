@@ -2,6 +2,7 @@ import { derived, type Readable, writable } from 'svelte/store';
 import type { ChangeSet, Commit, ModifiedFile } from '@ethos/core';
 import OktaAuth from '@okta/okta-auth-js';
 import type {
+	ActiveBuild,
 	AppConfig,
 	ArtifactEntry,
 	ArtifactListResponse,
@@ -33,6 +34,9 @@ export const selectedFiles = writable(<ModifiedFile[]>[]);
 export const repoStatus = writable(<Nullable<RepoStatus>>null);
 export const workflows = writable(<CommitWorkflowInfo[]>[]);
 export const engineWorkflows = writable(<CommitWorkflowInfo[]>[]);
+// Currently-deployed build per destination. Refreshed by the builds page poll and by
+// the active builds modal, so both surfaces read one source rather than diverging.
+export const activeBuilds = writable(<ActiveBuild[]>[]);
 export const onboardingInProgress = writable(false);
 export const changeSets = writable(<ChangeSet[]>[]);
 export const startTime = writable(Date.now());

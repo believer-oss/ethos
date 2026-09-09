@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { Button, Card, Spinner, TabItem, Tabs, Tooltip } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { RefreshOutline } from 'flowbite-svelte-icons';
-	import { getWorkflows } from '$lib/builds';
+	import { RefreshOutline, RocketOutline } from 'flowbite-svelte-icons';
+	import { getWorkflows, getActiveBuilds } from '$lib/builds';
+	import { logError } from '$lib/utils';
 	import type { Nullable, Workflow } from '$lib/types';
 	import WorkflowLogsModal from '$lib/components/workflows/WorkflowLogsModal.svelte';
 	import PromoteBuildModal from '$lib/components/PromoteBuildModal.svelte';
 	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
-	import { appConfig, engineWorkflows, workflows } from '$lib/stores';
+	import ActiveBuildsModal from '$lib/components/ActiveBuildsModal.svelte';
+	import { activeBuilds, appConfig, engineWorkflows, workflows } from '$lib/stores';
 	import WorkflowTable from '$lib/components/workflows/WorkflowTable.svelte';
 
 	let loading: boolean = false;
@@ -18,6 +20,8 @@
 
 	let showPromoteBuildModal: boolean = false;
 	let promoteBuildCommit: string = '';
+
+	let showActiveBuildsModal: boolean = false;
 
 	let commitInfoModalOpen = false;
 	let commitInfoSha: string | null = null;
@@ -40,6 +44,17 @@
 		if ($appConfig.engineRepoUrl !== '') {
 			const engineRes = await getWorkflows(true);
 			$engineWorkflows = engineRes.commits;
+		}
+
+		// Refresh promotion status alongside the workflow list so the promoted arrows
+		// track the same 30s cadence as the rows they annotate. Deliberately not fatal:
+		// an unreachable metadata bucket must not blank the builds list, so on failure
+		// the arrows simply go away and the table renders as before.
+		try {
+			$activeBuilds = await getActiveBuilds();
+		} catch (e) {
+			await logError('Failed to refresh active build promotion status', e);
+			$activeBuilds = [];
 		}
 
 		loading = false;
@@ -66,6 +81,16 @@
 			<RefreshOutline class="w-4 h-4" />
 		{/if}
 	</Button>
+	<Button
+		class="ml-auto"
+		primary
+		on:click={() => {
+			showActiveBuildsModal = true;
+		}}
+	>
+		<RocketOutline class="w-4 h-4 mr-2" />
+		Active Builds
+	</Button>
 </div>
 <Card
 	class="w-full p-0 sm:p-0 px-2 sm:px-2 max-w-full bg-secondary-700 dark:bg-space-900 h-full overflow-y-hidden border-0 shadow-none flex flex-col gap-0 overflow-auto"
@@ -80,6 +105,7 @@
 				bind:showPromoteBuildModal
 				bind:promoteBuildCommit
 				onShowCommitInfo={gameCommitInfoHandler}
+				showPromotionStatus
 			/>
 		</TabItem>
 		<TabItem
@@ -112,3 +138,5 @@
 <PromoteBuildModal bind:showModal={showPromoteBuildModal} bind:commit={promoteBuildCommit} />
 
 <CommitInfoModal bind:open={commitInfoModalOpen} sha={commitInfoSha} />
+
+<ActiveBuildsModal bind:showModal={showActiveBuildsModal} />

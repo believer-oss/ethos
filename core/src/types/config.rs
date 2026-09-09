@@ -491,6 +491,20 @@ pub struct PromoteBuildDestination {
     )]
     pub metadata_path: Option<String>,
 
+    /// S3 key of the object holding this destination's currently-deployed SHA,
+    /// e.g. `metadata/<name>`. Deliberately separate from `metadata_path`, which
+    /// is the Argo workflow parameter: the two differ (the template composes the
+    /// key from its parameter), and a destination may legitimately have one and
+    /// not the other. Reusing `metadata_path` here would force operators to set
+    /// it on destinations that deliberately omit it, silently changing what is
+    /// sent to Argo on promotion.
+    #[serde(
+        default,
+        rename = "metadataObjectKey",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub metadata_object_key: Option<String>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distribution: Option<String>,
 
@@ -739,6 +753,15 @@ pub struct DynamicConfig {
 
     #[serde(default, rename = "gameServerClusters")]
     pub game_server_clusters: Option<Vec<GameServerCluster>>,
+
+    /// Bucket holding promoted-build metadata objects. Optional override that
+    /// takes precedence over `FriendshipperConfig::promoted_artifact_bucket_name`
+    /// and the `PROMOTED_ARTIFACT_BUCKET_NAME` build-time constant, both of which
+    /// can legitimately be absent — the server config field is an `Option` and the
+    /// constant defaults to empty. Configuring it here means a new bucket needs no
+    /// Friendshipper release.
+    #[serde(default, rename = "promotedArtifactBucketName")]
+    pub promoted_artifact_bucket_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
