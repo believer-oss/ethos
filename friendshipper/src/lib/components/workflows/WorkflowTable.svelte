@@ -12,7 +12,7 @@
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
-	import { stopWorkflow, getWorkflowNodes, promotedDestinationsFor } from '$lib/builds';
+	import { stopWorkflow, getWorkflowNodes, promotedShardsFor } from '$lib/builds';
 	import { activeBuilds, appConfig, repoConfig } from '$lib/stores';
 	import { resolveTrunkBranch } from '$lib/utils';
 
@@ -223,7 +223,7 @@
 				>
 			{/if}
 			{#if showPromotionStatus}
-				{@const promotedTo = promotedDestinationsFor(commit.commit, $activeBuilds)}
+				{@const promotedTo = promotedShardsFor(commit.commit, $activeBuilds)}
 				{#if promotedTo.length > 0}
 					<!-- Framed to read as a status badge, not an action. Padding matches the
 					     info button so the row height is unchanged. -->

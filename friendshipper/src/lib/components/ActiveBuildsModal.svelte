@@ -105,12 +105,12 @@
 	{:else if loadError}
 		<p class="text-red-400 p-2">{loadError}</p>
 	{:else if rows.length === 0}
-		<p class="text-gray-300 p-2">No promotion destinations are configured.</p>
+		<p class="text-gray-300 p-2">No promotion shards are configured.</p>
 	{:else}
 		<div class="max-h-96 overflow-y-auto bg-secondary-800 dark:bg-space-950 rounded-md">
 			<Table color="custom" striped={true}>
 				<TableHead class="w-full border-b-0 p-2 bg-secondary-900 dark:bg-space-950 text-white">
-					<TableHeadCell class="p-2">Destination</TableHeadCell>
+					<TableHeadCell class="p-2">Shard</TableHeadCell>
 					<TableHeadCell class="p-2">Commit</TableHeadCell>
 					<TableHeadCell class="p-2">Deployed</TableHeadCell>
 					<TableHeadCell class="p-2">Action</TableHeadCell>

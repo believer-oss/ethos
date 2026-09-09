@@ -47,8 +47,6 @@ export const stopWorkflow = async (workflow: string): Promise<string> =>
 
 export interface CreatePromoteBuildWorkflowRequest {
 	commit: string; // required
-	// Backend environment. Key stays `shard`: it is the Argo template's
-	// parameter name and the wire field shared with friendshipper-server.
 	shard?: string; // optional, from repo config
 	metadata_path?: string; // optional, from repo config
 	pusher?: string; // optional, github username or playtest username
@@ -83,12 +81,12 @@ const isSameCommit = (a: string, b: string): boolean => {
 };
 
 /**
- * Destination names this commit is deployed to, in configured order.
+ * Shard names this commit is deployed to, in configured order.
  *
  * Only `resolved` rows count; Steam rows carry no SHA, so a configured Steam branch is
  * never reported as promoted.
  */
-export const promotedDestinationsFor = (commit: string, rows: ActiveBuild[]): string[] => {
+export const promotedShardsFor = (commit: string, rows: ActiveBuild[]): string[] => {
 	if (!commit) return [];
 	return rows
 		.filter((row) => row.status === 'resolved' && !!row.sha && isSameCommit(commit, row.sha))

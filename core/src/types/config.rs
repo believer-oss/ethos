@@ -474,14 +474,12 @@ pub struct TargetBranchConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromoteBuildDestination {
+pub struct PromoteBuildShard {
     #[serde(rename = "displayName")]
     pub display_name: String,
 
-    /// Backend environment this destination deploys to. Serde name stays `shard`:
-    /// it is a live dynamic-config key that older clients also read.
-    #[serde(default, rename = "shard", skip_serializing_if = "Option::is_none")]
-    pub backend_environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard: Option<String>,
 
     #[serde(
         default,
@@ -490,10 +488,9 @@ pub struct PromoteBuildDestination {
     )]
     pub metadata_path: Option<String>,
 
-    /// S3 key of the object holding this destination's deployed SHA, e.g.
-    /// `metadata/<name>`. Separate from `metadata_path`, which is the Argo
-    /// workflow parameter the template composes this key from; a destination may
-    /// set either without the other.
+    /// S3 key of the object holding this shard's deployed SHA, e.g.
+    /// `metadata/<name>`. Separate from `metadata_path`, the Argo workflow
+    /// parameter the template composes this key from; either may be set alone.
     #[serde(
         default,
         rename = "metadataObjectKey",
@@ -518,15 +515,14 @@ pub struct PromoteBuildDestination {
     )]
     pub steam_branches: Option<Vec<String>>,
 
-    /// Override that forces the backend deploy off for this destination. When
-    /// true the promote UI sends an empty backend environment, suppressing the
-    /// deploy, and the operator cannot re-enable it.
+    /// Forces the shard deploy off: the promote UI sends an empty shard and the
+    /// operator cannot re-enable it.
     #[serde(
         default,
-        rename = "disableBackendDeploy",
+        rename = "disableShardDeploy",
         skip_serializing_if = "Option::is_none"
     )]
-    pub disable_backend_deploy: Option<bool>,
+    pub disable_shard_deploy: Option<bool>,
 }
 
 impl Default for TargetBranchConfig {
@@ -741,10 +737,8 @@ pub struct DynamicConfig {
     #[serde(default, rename = "mobileURLScheme")]
     pub mobile_url_scheme: String,
 
-    /// Serde name stays `promotableBuildShards`: it is a live dynamic-config
-    /// key that older clients also read.
     #[serde(default, rename = "promotableBuildShards")]
-    pub promotable_build_destinations: Option<Vec<PromoteBuildDestination>>,
+    pub promotable_build_shards: Option<Vec<PromoteBuildShard>>,
 
     #[serde(default, rename = "gameServerClusters")]
     pub game_server_clusters: Option<Vec<GameServerCluster>>,
