@@ -33,6 +33,9 @@ export interface DynamicConfig {
 	profileDataPath: string;
 	mobileURLScheme: string;
 	promotableBuildShards?: PromoteBuildDestination[];
+	// Bucket holding promoted-build metadata objects. Overrides the server config and
+	// the build-time constant, so changing buckets needs no Friendshipper release.
+	promotedArtifactBucketName?: string;
 	gameServerClusters?: GameServerCluster[];
 }
 
@@ -107,6 +110,9 @@ export interface PromoteBuildDestination {
 	// Backend environment. Key stays `shard`: it is a live dynamic-config key.
 	shard?: string;
 	metadataPath?: string;
+	// S3 key of the object holding this destination's deployed SHA. Separate from
+	// metadataPath, which is the Argo workflow parameter — the two differ.
+	metadataObjectKey?: string;
 	distribution?: string;
 	gameConfig?: string;
 	steamBranches?: string[];
@@ -151,6 +157,17 @@ export interface ArtifactEntry {
 export interface ArtifactListResponse {
 	methodPrefix: string;
 	entries: ArtifactEntry[];
+}
+
+export type ActiveBuildStatus = 'resolved' | 'tbd' | 'error';
+
+export interface ActiveBuild {
+	displayName: string;
+	steamBranch?: string;
+	sha?: string;
+	deployedAt?: string;
+	status: ActiveBuildStatus;
+	error?: string;
 }
 
 export enum LaunchMode {

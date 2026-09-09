@@ -5,6 +5,7 @@ import type {
 	SyncClientRequest,
 	JunitOutput,
 	ArtifactEntry,
+	ActiveBuild,
 	Workflow
 } from '$lib/types';
 
@@ -13,6 +14,8 @@ export const getBuild = async (commit: string, project?: string): Promise<Artifa
 
 export const getBuilds = async (limit?: number, project?: string): Promise<ArtifactListResponse> =>
 	invoke('get_builds', { limit, project });
+
+export const getActiveBuilds = async (): Promise<ActiveBuild[]> => invoke('get_active_builds');
 
 export const syncClient = async (req: SyncClientRequest): Promise<boolean> =>
 	invoke('sync_client', { req });
@@ -62,3 +65,36 @@ export const startWorkflowLogTail = async (workflowName: string, nodeId: string)
 	invoke('start_workflow_log_tail', { workflowName, nodeId });
 
 export const stopWorkflowLogTail = async (): Promise<void> => invoke('stop_workflow_log_tail');
+
+// Shortest prefix we will call a match. Mirrors git's own abbreviation floor; below this
+// a collision stops being negligible.
+const MIN_SHA_MATCH_LENGTH = 7;
+
+/**
+ * True when two commit identifiers refer to the same commit.
+ *
+ * Compared by prefix rather than equality because the two sides come from different
+ * producers: the workflow list carries full SHAs, while the metadata object holds
+ * whatever the promotion pipeline wrote, which may be abbreviated. Requiring equality
+ * would silently show nothing when the pipeline writes a short SHA.
+ */
+const isSameCommit = (a: string, b: string): boolean => {
+	const left = a.trim().toLowerCase();
+	const right = b.trim().toLowerCase();
+	if (left.length < MIN_SHA_MATCH_LENGTH || right.length < MIN_SHA_MATCH_LENGTH) return false;
+	return left.startsWith(right) || right.startsWith(left);
+};
+
+/**
+ * Destination names this commit is currently deployed to, in configured order.
+ *
+ * Only `resolved` rows count. Steam rows carry no SHA (they are `tbd` pending a
+ * resolution mechanism), so they never contribute a match — a Steam branch is not
+ * reported as promoted just because it is configured.
+ */
+export const promotedDestinationsFor = (commit: string, rows: ActiveBuild[]): string[] => {
+	if (!commit) return [];
+	return rows
+		.filter((row) => row.status === 'resolved' && !!row.sha && isSameCommit(commit, row.sha))
+		.map((row) => row.displayName);
+};

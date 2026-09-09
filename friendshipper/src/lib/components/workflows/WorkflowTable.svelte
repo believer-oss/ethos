@@ -12,8 +12,8 @@
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import type { CommitWorkflowInfo, Nullable, Workflow } from '$lib/types';
-	import { stopWorkflow, getWorkflowNodes } from '$lib/builds';
-	import { appConfig, repoConfig } from '$lib/stores';
+	import { stopWorkflow, getWorkflowNodes, promotedDestinationsFor } from '$lib/builds';
+	import { activeBuilds, appConfig, repoConfig } from '$lib/stores';
 	import { resolveTrunkBranch } from '$lib/utils';
 
 	export let selectedCommit = '';
@@ -23,6 +23,9 @@
 	export let showPromoteBuildModal: boolean = false;
 	export let promoteBuildCommit: string = '';
 	export let onShowCommitInfo: Nullable<(sha: string) => void> = null;
+	// Promotion status is a Game-side concept - there is no engine equivalent - so the
+	// Engine tab leaves this off rather than rendering arrows that could never appear.
+	export let showPromotionStatus: boolean = false;
 
 	const setSelectedCommit = (commit: string) => {
 		selectedCommit = commit;
@@ -219,6 +222,23 @@
 					class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 					placement="right">Show commit details</Tooltip
 				>
+			{/if}
+			{#if showPromotionStatus}
+				{@const promotedTo = promotedDestinationsFor(commit.commit, $activeBuilds)}
+				{#if promotedTo.length > 0}
+					<!-- Framed so the arrow reads as a status badge rather than another
+					     action control. Padding matches the adjacent info button so the
+					     two sit on the same baseline and the row height does not shift. -->
+					<span
+						class="flex-none inline-flex items-center justify-center rounded-md border border-green-500 bg-green-500/15 p-1 leading-none"
+					>
+						<ArrowUpOutline class="w-4 h-4 text-green-400" />
+					</span>
+					<Tooltip
+						class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+						placement="right">Promoted to: {promotedTo.join(', ')}</Tooltip
+					>
+				{/if}
 			{/if}
 			{#if commit.branch}
 				<div class="flex items-center gap-1">
