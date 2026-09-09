@@ -280,42 +280,29 @@ where
         (ac, rc)
     };
 
-    let engine_path = app_config
-        .load_engine_path_from_repo(&repo_config)
-        .map_err(|e| {
-            CoreError::Internal(anyhow!(
+    // Only the VC++ redistributable comes from the engine now, so a missing
+    // engine is reported by that step instead of failing the whole install.
+    let engine_path = match app_config.load_engine_path_from_repo(&repo_config) {
+        Ok(path) => Some(path),
+        Err(e) => {
+            warn!(
                 "Failed to resolve engine path: {}. Ensure repo path and .uproject are configured.",
                 e
-            ))
-        })?;
-
-    let sdk_json_path = engine_path
-        .join("Engine")
-        .join("Config")
-        .join("Windows")
-        .join("Windows_SDK.json");
+            );
+            None
+        }
+    };
 
     let _ = state
         .build_tools_tx
         .send("Retrieving required tool versions...".to_string());
 
-    let sdk_contents = tokio::fs::read_to_string(&sdk_json_path)
-        .await
-        .map_err(|e| {
-            CoreError::Internal(anyhow!(
-                "Failed to read {}: {}. Ensure the engine is downloaded and the file exists.",
-                sdk_json_path.display(),
-                e
-            ))
-        })?;
-
-    let sdk: WindowsSdk = serde_json::from_str(&sdk_contents).map_err(|e| {
-        CoreError::Internal(anyhow!(
-            "Failed to parse {}: {}",
-            sdk_json_path.display(),
-            e
-        ))
-    })?;
+    // A local override file takes priority so studios can pin specific
+    // requirements without waiting for an S3 update.
+    let sdk = match load_local_override(&engine_path).await {
+        Some(sdk) => sdk,
+        None => fetch_windows_sdk(&state).await?,
+    };
 
     let mut errors: Vec<String> = Vec::new();
     let mut reboot_required = false;
@@ -495,7 +482,7 @@ where
     }
 
     // 3. Install Visual C++ Redistributable from the engine's bundled installer.
-    {
+    if let Some(engine_path) = &engine_path {
         let _ = state
             .build_tools_tx
             .send("Installing VC++ Redistributable".to_string());
@@ -551,6 +538,11 @@ where
                 }
             }
         }
+    } else {
+        errors.push(
+            "VC++ Redistributable: unable to resolve the engine path. Ensure repo path and .uproject are configured."
+                .to_string(),
+        );
     }
 
     if errors.is_empty() {
@@ -566,4 +558,123 @@ where
             errors.join("\n")
         )))
     }
+}
+
+/// Check for a `Windows_SDK.override.json` next to the normal SDK config in
+/// the engine folder. Returns `Some(sdk)` when the file exists and parses
+/// successfully, `None` otherwise (missing engine path, missing file, or parse
+/// error are all treated as "no override").
+#[cfg(windows)]
+async fn load_local_override(engine_path: &Option<std::path::PathBuf>) -> Option<WindowsSdk> {
+    let engine_path = engine_path.as_ref()?;
+    let override_path = engine_path
+        .join("Engine")
+        .join("Config")
+        .join("Windows")
+        .join("Windows_SDK.override.json");
+
+    if !override_path.exists() {
+        return None;
+    }
+
+    info!(
+        "Found local override at {}, using it instead of S3",
+        override_path.display()
+    );
+
+    match tokio::fs::read_to_string(&override_path).await {
+        Ok(contents) => match serde_json::from_str::<WindowsSdk>(&contents) {
+            Ok(sdk) => Some(sdk),
+            Err(e) => {
+                warn!(
+                    "Failed to parse {}: {}. Falling back to S3.",
+                    override_path.display(),
+                    e
+                );
+                None
+            }
+        },
+        Err(e) => {
+            warn!(
+                "Failed to read {}: {}. Falling back to S3.",
+                override_path.display(),
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Path the Windows SDK config is cached to in Friendshipper's data directory.
+#[cfg(windows)]
+fn windows_sdk_path() -> std::path::PathBuf {
+    let mut path = ethos_core::fs::LocalDownloadPath::new(crate::APP_NAME).to_path_buf();
+    path.push("Windows_SDK.json");
+    path
+}
+
+/// Download the Windows SDK config from the artifact bucket into the app data
+/// directory and parse it, falling back to a previously downloaded copy if the
+/// download fails.
+#[cfg(windows)]
+async fn fetch_windows_sdk<T>(state: &AppState<T>) -> Result<WindowsSdk, CoreError>
+where
+    T: EngineProvider,
+{
+    use ethos_core::clients::aws::ensure_aws_client;
+    use ethos_core::WINDOWS_SDK_CONFIG_KEY;
+
+    let sdk_json_path = windows_sdk_path();
+    if let Some(parent) = sdk_json_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            CoreError::Internal(anyhow!("Failed to create {}: {}", parent.display(), e))
+        })?;
+    }
+
+    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
+    aws_client.check_expiration().await?;
+
+    info!(
+        "Downloading {} to {}",
+        WINDOWS_SDK_CONFIG_KEY,
+        sdk_json_path.display()
+    );
+
+    // The object is fetched in full before the cache file is opened, so a
+    // failed download leaves any existing copy intact.
+    if let Err(e) = aws_client
+        .download_object_to_path(
+            sdk_json_path.to_string_lossy().as_ref(),
+            WINDOWS_SDK_CONFIG_KEY,
+        )
+        .await
+    {
+        if !sdk_json_path.exists() {
+            return Err(CoreError::Internal(anyhow!(
+                "Failed to download {}: {}",
+                WINDOWS_SDK_CONFIG_KEY,
+                e
+            )));
+        }
+        warn!(
+            "Failed to download {}: {}. Falling back to the cached copy at {}",
+            WINDOWS_SDK_CONFIG_KEY,
+            e,
+            sdk_json_path.display()
+        );
+    }
+
+    let sdk_contents = tokio::fs::read_to_string(&sdk_json_path)
+        .await
+        .map_err(|e| {
+            CoreError::Internal(anyhow!("Failed to read {}: {}", sdk_json_path.display(), e))
+        })?;
+
+    serde_json::from_str(&sdk_contents).map_err(|e| {
+        CoreError::Internal(anyhow!(
+            "Failed to parse {}: {}",
+            sdk_json_path.display(),
+            e
+        ))
+    })
 }
