@@ -19,6 +19,10 @@ pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub static ETHOS_APP_NAME: &str = "ethos";
 
 const DYNAMIC_CONFIG_KEY: &str = "friendshipper/dynamic-config.json";
+/// Unreal's Windows toolchain config, stored in the artifact bucket beside
+/// [`DYNAMIC_CONFIG_KEY`] so build tool requirements can be updated without
+/// shipping a new engine.
+pub const WINDOWS_SDK_CONFIG_KEY: &str = "friendshipper/Windows_SDK.json";
 static AWS_REGION: &str = "us-west-2";
 pub const KUBE_SHA_LABEL_KEY: &str = "believer.dev/commit";
 pub static AWS_ACCOUNT_ID: &str = match option_env!("AWS_ACCOUNT_ID") {
