@@ -36,6 +36,17 @@
 		  }
 		: null;
 
+	// Deliberately not fatal: an unreachable metadata bucket must not blank the builds
+	// list, so on failure the arrows simply go away and the table renders as before.
+	const refreshActiveBuilds = async () => {
+		try {
+			$activeBuilds = await getActiveBuilds();
+		} catch (e) {
+			await logError('Failed to refresh active build promotion status', e);
+			$activeBuilds = [];
+		}
+	};
+
 	const refreshWorkflows = async () => {
 		loading = true;
 		const res = await getWorkflows();
@@ -46,21 +57,21 @@
 			$engineWorkflows = engineRes.commits;
 		}
 
-		// Refresh promotion status alongside the workflow list so the promoted arrows
-		// track the same 30s cadence as the rows they annotate. Deliberately not fatal:
-		// an unreachable metadata bucket must not blank the builds list, so on failure
-		// the arrows simply go away and the table renders as before.
-		try {
-			$activeBuilds = await getActiveBuilds();
-		} catch (e) {
-			await logError('Failed to refresh active build promotion status', e);
-			$activeBuilds = [];
-		}
+		// Promotion status tracks the same cadence as the rows it annotates.
+		await refreshActiveBuilds();
 
 		loading = false;
 	};
 
 	onMount(() => {
+		// The workflow list is already populated by the root layout at startup, so the
+		// table has rows on arrival — but promotion status is fetched only here. Without
+		// this first call the arrows would be missing for up to 30 seconds every time the
+		// tab is opened, which reads as "nothing is promoted" rather than "not loaded yet".
+		// Only the promotion status is fetched; re-fetching workflows would duplicate what
+		// the layout already did.
+		void refreshActiveBuilds();
+
 		// refresh every 30 seconds
 		const interval = setInterval(() => {
 			void refreshWorkflows();
