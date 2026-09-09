@@ -349,7 +349,7 @@
 	});
 </script>
 
-<div class="flex flex-col h-full gap-2 pb-20">
+<div class="flex flex-col h-full gap-2 pb-4">
 	<div class="flex flex-row gap-2">
 		{#if displayedPlaytests.length > 0}
 			<div class="flex flex-col gap-2 w-full overflow-x-auto overflow-y-hidden flex-grow min-w-0">
@@ -611,7 +611,7 @@
 	<Button
 		disabled={shouldDisableLaunchButton() || $backgroundSyncInProgress}
 		size="xl"
-		class="fixed bottom-6 right-6 shadow-2xl"
+		class="fixed bottom-10 right-4 shadow-2xl"
 		on:click={handleSyncAndLaunch}
 		>{getMainButtonText()}
 	</Button>

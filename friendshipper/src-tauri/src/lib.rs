@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use std::fs;
 use std::io::Write;
 use std::path::Path;

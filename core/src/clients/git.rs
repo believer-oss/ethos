@@ -1935,6 +1935,12 @@ impl Git {
             *output = Some(locked_lines.join("\n"));
         }
 
+        // Signal the frontend that the git command has completed by sending
+        // an empty string, allowing the UI to clear the status message.
+        if !opts.skip_notify_frontend {
+            let _ = self.tx.send(String::new());
+        }
+
         Ok(())
     }
 }

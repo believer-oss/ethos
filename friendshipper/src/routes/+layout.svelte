@@ -100,7 +100,7 @@
 	let initialized = false;
 	let loadingBuilds = false;
 	let startupMessage = 'Initializing Friendshipper';
-	let gitStartupMessage = '';
+	let lastGitLogMessage = '';
 
 	// Refresh timer
 	let lastRefresh = new Date().getTime();
@@ -898,12 +898,13 @@
 	});
 
 	void listen('git-log', (event) => {
-		// git-log "Updating files: 1%" etc too long, filter out and show static string
-		if (event.payload.startsWith('Updating files: ')) {
-			gitStartupMessage = 'Updating files...';
-		} else {
-			gitStartupMessage = event.payload as string;
+		const msg = event.payload as string;
+		if (!msg) {
+			// Empty payload signals the git command completed
+			lastGitLogMessage = '';
+			return;
 		}
+		lastGitLogMessage = msg;
 	});
 
 	void listen('background-sync-start', () => {
@@ -1128,11 +1129,6 @@
 						<Spinner size="4" />
 					{/if}
 				</div>
-				{#if gitStartupMessage}
-					<div class="rounded-md p-2 bg-secondary-800 dark:bg-space-950">
-						<code class="text-sm text-gray-300 dark:text-gray-300 m-0">{gitStartupMessage}</code>
-					</div>
-				{/if}
 				<div class="flex gap-2">
 					<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
 					<Button color="red" on:click={handleResetConfigRequest}>Reset Config & Restart</Button>
@@ -1394,7 +1390,7 @@
 			</Sidebar>
 
 			<div class="flex flex-col mx-auto w-full h-full overflow-hidden">
-				<main class="w-full h-full flex flex-col px-4 pb-2 overflow-hidden">
+				<main class="w-full h-full flex flex-col p-4 overflow-hidden">
 					{#if appDataLoaded}
 						<slot class="overflow-hidden" />
 					{:else}
@@ -1430,6 +1426,12 @@
 			</Button>
 		</div>
 	{/if}
+	<div
+		class="flex items-center bg-secondary-800 dark:bg-space-950 h-6 max-h-6 w-full px-2 z-50 border-t border-secondary-700 dark:border-space-900"
+		title={lastGitLogMessage}
+	>
+		<code class="text-xs text-gray-500 dark:text-gray-500 truncate">{lastGitLogMessage}</code>
+	</div>
 </div>
 <div class="fixed top-0 w-full flex flex-col items-center z-50 pointer-events-none pt-2 gap-2">
 	<ErrorToastStack {errors} onDismiss={onErrorDismissed} onDismissAll={onDismissAllErrors} />

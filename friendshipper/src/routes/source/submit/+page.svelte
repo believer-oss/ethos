@@ -1332,9 +1332,8 @@
 			<DropdownItem class="text-xs" on:click={handleInstallBuildToolsClicked}>
 				Install Build Tools
 			</DropdownItem>
-			<Tooltip class="text-xs w-[22rem]" placement="left">
-				Installs Visual Studio and Windows SDK using winget. Installs Visual C++ redistributables
-				from the engine directory.
+			<Tooltip class="text-xs w-auto" placement="left">
+				Installs all tools required to Build the Game/Editor.
 			</Tooltip>
 		{/if}
 	</Dropdown>

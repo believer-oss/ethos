@@ -70,6 +70,7 @@ pub struct AppState<T> {
     /// pulling modal to show coarse progress distinct from the noisier
     /// `git-log` stream.
     pub sync_phase_tx: STDSender<String>,
+    pub build_tools_tx: STDSender<String>,
 
     pub engine: T,
 
@@ -99,6 +100,7 @@ where
         otel_reload_handle: Option<OtelReloadHandle>,
         git_tx: STDSender<String>,
         sync_phase_tx: STDSender<String>,
+        build_tools_tx: STDSender<String>,
         server_log_tx: STDSender<String>,
         workflow_log_tx: STDSender<String>,
     ) -> Result<Self> {
@@ -203,6 +205,7 @@ where
             otel_reload_handle,
             git_tx,
             sync_phase_tx,
+            build_tools_tx,
             gameserver_log_tx: server_log_tx,
             workflow_log_tx,
             engine,

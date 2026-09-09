@@ -447,6 +447,16 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
+                let (build_tools_tx, build_tools_rx) = std::sync::mpsc::channel::<String>();
+                let build_tools_app_handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(msg) = build_tools_rx.recv() {
+                        build_tools_app_handle
+                            .emit("installing-build-tools", &msg)
+                            .unwrap();
+                    }
+                });
+
                 let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
                 let longtail_handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -529,6 +539,7 @@ fn main() -> Result<(), CoreError> {
                         server_log_path,
                         git_tx.clone(),
                         sync_phase_tx.clone(),
+                        build_tools_tx.clone(),
                         gameserver_log_tx.clone(),
                         workflow_log_tx.clone(),
                         otel_reload_handle,

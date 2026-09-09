@@ -98,8 +98,82 @@ const EXIT_CODE_ALREADY_INSTALLED: i32 = 1638;
 #[cfg(windows)]
 const EXIT_CODE_NO_UPGRADE_FOUND: i32 = -1978335189;
 
+/// Winget exit code when no applicable installer is found (also returned when
+/// the installer is blocked from running, e.g. UAC denied).
+#[cfg(windows)]
+const EXIT_CODE_NO_APPLICABLE_INSTALLER: i32 = -1978335226;
+
 #[cfg(windows)]
 const WINGET_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Query winget for the currently installed version of a package, if any.
+#[cfg(windows)]
+async fn query_installed_version(package_id: &str) -> Result<Option<String>, CoreError> {
+    use crate::repo::CREATE_NO_WINDOW;
+    use tokio::process::Command;
+
+    let mut cmd = Command::new("winget");
+    cmd.args([
+        "list",
+        "--id",
+        package_id,
+        "--exact",
+        "--accept-source-agreements",
+    ]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.kill_on_drop(true);
+
+    let output = match tokio::time::timeout(WINGET_QUERY_TIMEOUT, cmd.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            return Err(CoreError::Internal(anyhow!(
+                "Failed to run winget list for {}: {}",
+                package_id,
+                e
+            )));
+        }
+        Err(_) => {
+            return Err(CoreError::Internal(anyhow!(
+                "winget list for {} timed out after {} seconds",
+                package_id,
+                WINGET_QUERY_TIMEOUT.as_secs()
+            )));
+        }
+    };
+
+    if !output.status.success() {
+        // winget list returns non-zero when the package is not installed
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Output format:
+    //   Name                         Id                               Version Available Source
+    //   --------------------------------------------------------------------------------------
+    //   Visual Studio Community 2026 Microsoft.VisualStudio.Community 18.9.1  18.10.0   winget
+    //
+    // Find the line containing the package_id and extract the version column.
+    let mut past_separator = false;
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("---") {
+            past_separator = true;
+            continue;
+        }
+        if past_separator && trimmed.contains(package_id) {
+            // Split on whitespace and find the token after the package ID
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if let Some(id_pos) = parts.iter().position(|&p| p == package_id) {
+                if let Some(version) = parts.get(id_pos + 1) {
+                    info!("{} is installed at version {}", package_id, version);
+                    return Ok(Some(version.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
 
 /// Query winget for available versions of a package, returned latest-first.
 #[cfg(windows)]
@@ -182,6 +256,7 @@ where
 {
     use std::sync::atomic::Ordering;
 
+    use crate::repo::CREATE_NO_WINDOW;
     use tokio::process::Command;
 
     if INSTALLING_BUILD_TOOLS
@@ -195,6 +270,9 @@ where
     let _guard = InstallGuard;
 
     info!("Starting build tools installation");
+    let _ = state
+        .build_tools_tx
+        .send("Starting build tools installation".to_string());
 
     let (app_config, repo_config) = {
         let ac = state.app_config.read().clone();
@@ -216,6 +294,10 @@ where
         .join("Config")
         .join("Windows")
         .join("Windows_SDK.json");
+
+    let _ = state
+        .build_tools_tx
+        .send("Retrieving required tool versions...".to_string());
 
     let sdk_contents = tokio::fs::read_to_string(&sdk_json_path)
         .await
@@ -243,6 +325,9 @@ where
         "Microsoft.DotNet.DesktopRuntime.10",
         "Microsoft.DotNet.Runtime.10",
     ] {
+        let _ = state
+            .build_tools_tx
+            .send(format!("Installing {}", dotnet_package));
         info!("Installing {}", dotnet_package);
 
         let mut cmd = Command::new("winget");
@@ -254,6 +339,7 @@ where
             "--accept-source-agreements",
             "--accept-package-agreements",
         ]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
         match cmd.output().await {
             Ok(output) => {
@@ -289,19 +375,38 @@ where
     //    MinimumVisualStudio2026Version. Combines all suggested components into
     //    the --override argument.
     {
-        let vs_versions = query_winget_versions("Microsoft.VisualStudio.Community").await?;
+        let _ = state
+            .build_tools_tx
+            .send("Installing Visual Studio Community (this may take 10-30 minutes)".to_string());
         let minimum = parse_version(&sdk.minimum_visual_studio_2026_version);
 
-        // Pick the latest version >= minimum (list is latest-first)
-        let vs_version = vs_versions
-            .iter()
-            .find(|v| parse_version(v) >= minimum)
-            .map(|v| v.as_str());
+        // If VS is already installed at a version >= minimum, use that version
+        // to avoid the "no applicable installer" error from winget.
+        let installed = query_installed_version("Microsoft.VisualStudio.Community").await?;
+        let installed_meets_minimum = installed
+            .as_ref()
+            .map(|v| parse_version(v) >= minimum)
+            .unwrap_or(false);
+
+        let vs_version: Option<String> = if installed_meets_minimum {
+            info!(
+                "Visual Studio Community {} is already installed (>= minimum {})",
+                installed.as_ref().unwrap(),
+                sdk.minimum_visual_studio_2026_version
+            );
+            installed
+        } else {
+            let vs_versions = query_winget_versions("Microsoft.VisualStudio.Community").await?;
+            // Pick the latest version >= minimum (list is latest-first)
+            vs_versions
+                .into_iter()
+                .find(|v| parse_version(v) >= minimum)
+        };
 
         match vs_version {
             Some(version) => {
                 let mut override_parts: Vec<String> =
-                    vec!["--quiet --wait --norestart --nocache".to_string()];
+                    vec!["--passive --wait --norestart --nocache".to_string()];
 
                 for component in sdk.all_components() {
                     if !is_valid_component_id(component) {
@@ -335,7 +440,7 @@ where
                     "--accept-source-agreements",
                     "--accept-package-agreements",
                     "--version",
-                    version,
+                    &version,
                     "--override",
                     &override_arg,
                 ];
@@ -344,6 +449,7 @@ where
 
                 let mut cmd = Command::new("winget");
                 cmd.args(args);
+                cmd.creation_flags(CREATE_NO_WINDOW);
 
                 match cmd.output().await {
                     Ok(output) => {
@@ -353,6 +459,12 @@ where
                         } else if exit_code == Some(EXIT_CODE_REBOOT_REQUIRED) {
                             info!("Visual Studio Community installed (reboot required)");
                             reboot_required = true;
+                        } else if exit_code == Some(EXIT_CODE_NO_APPLICABLE_INSTALLER) {
+                            error!(
+                                "Visual Studio installer was unable to run (exit {:?})",
+                                exit_code
+                            );
+                            errors.push("Visual Studio: installer was unable to run. Ensure you allow the installer when prompted.".to_string());
                         } else {
                             let stderr = String::from_utf8_lossy(&output.stderr);
                             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -384,6 +496,9 @@ where
 
     // 3. Install Visual C++ Redistributable from the engine's bundled installer.
     {
+        let _ = state
+            .build_tools_tx
+            .send("Installing VC++ Redistributable".to_string());
         let vcredist_path = engine_path
             .join("Engine")
             .join("Extras")
@@ -408,6 +523,7 @@ where
 
             let mut cmd = Command::new(&vcredist_path);
             cmd.args(["/install", "/quiet", "/norestart"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
 
             match cmd.output().await {
                 Ok(output) => {
