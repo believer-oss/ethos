@@ -6,6 +6,21 @@ export const openUrl = async (url: string) => {
 	await invoke('open_url', { url });
 };
 
+/**
+ * GitHub commit URL, or null when the repo is unknown.
+ *
+ * `repoOwner`/`repoName` default to empty strings rather than null, so both must be
+ * checked for emptiness or the result is `https://github.com///commit/<sha>`.
+ */
+export const commitUrl = (
+	repoOwner: string | undefined,
+	repoName: string | undefined,
+	sha: string | undefined
+): string | null => {
+	if (!repoOwner || !repoName || !sha) return null;
+	return `https://github.com/${repoOwner}/${repoName}/commit/${sha}`;
+};
+
 export const handleError = async (e: unknown) => {
 	await emit('error', e);
 };

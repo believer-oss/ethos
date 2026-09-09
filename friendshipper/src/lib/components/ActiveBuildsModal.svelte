@@ -15,7 +15,7 @@
 	import { GithubSolid, RefreshOutline } from 'flowbite-svelte-icons';
 	import { getActiveBuilds } from '$lib/builds';
 	import { activeBuilds, repoStatus } from '$lib/stores';
-	import { openUrl } from '$lib/utils';
+	import { commitUrl, openUrl } from '$lib/utils';
 	import type { ActiveBuild } from '$lib/types';
 
 	export let showModal: boolean = false;
@@ -23,37 +23,29 @@
 	let loading = false;
 	let rows: ActiveBuild[] = [];
 	let loadError = '';
-	let hasLoaded = false;
+	let wasOpen = false;
 
 	const load = async () => {
 		loading = true;
 		loadError = '';
 		try {
 			rows = await getActiveBuilds();
-			// Share the result so the builds table's promoted arrows update too, rather
-			// than waiting for the page's own 30s poll to catch up with what is on screen.
+			// Shared so the table's arrows update without waiting for the 30s poll.
 			$activeBuilds = rows;
 		} catch (e) {
-			// A whole-request failure (the invoke itself failed) is distinct from a
-			// per-row error, which arrives inside `rows` and renders in that row alone.
+			// Distinct from a per-row error, which arrives inside `rows`.
 			loadError = e instanceof Error ? e.message : String(e);
 		} finally {
-			hasLoaded = true;
 			loading = false;
 		}
 	};
 
-	// Fetch once per open. Guarded on hasLoaded so this does not refire on every
-	// reactive tick while the modal stays open - an unguarded `$: if (showModal) load()`
-	// would refetch continuously instead of once.
-	$: if (showModal && !hasLoaded) {
-		void load();
-	}
-
-	// Reset the guard on close so the next open fetches fresh rows instead of
-	// showing whatever was last loaded.
-	$: if (!showModal) {
-		hasLoaded = false;
+	// Fetch on the closed->open transition only. Keying off the transition rather than a
+	// loaded flag means closing mid-load cannot leave the guard stuck and skip the next
+	// open's fetch.
+	$: if (showModal !== wasOpen) {
+		wasOpen = showModal;
+		if (showModal) void load();
 	}
 
 	// deployedAt arrives as an ISO 8601 string, not a Date - parse before formatting.
@@ -64,15 +56,7 @@
 		return parsed.toLocaleString();
 	};
 
-	// repoOwner/repoName default to an empty string, not null, when repo status is
-	// unknown (core/src/types/repo.rs). Checking only for null/undefined would still
-	// produce a link to https://github.com///commit/<sha>, so both must be non-empty.
-	const canOpenOnGithub = (row: ActiveBuild): boolean =>
-		row.status === 'resolved' && !!row.sha && !!$repoStatus?.repoOwner && !!$repoStatus?.repoName;
-
-	const openOnGithub = async (row: ActiveBuild) => {
-		if (!row.sha || !$repoStatus?.repoOwner || !$repoStatus?.repoName) return;
-		const url = `https://github.com/${$repoStatus.repoOwner}/${$repoStatus.repoName}/commit/${row.sha}`;
+	const openOnGithub = async (url: string) => {
 		try {
 			await openUrl(url);
 		} catch (e) {
@@ -113,7 +97,7 @@
 		</div>
 	</svelte:fragment>
 
-	{#if loading && !hasLoaded}
+	{#if loading && rows.length === 0}
 		<div class="flex items-center gap-2 py-4">
 			<Spinner size="5" />
 			<span class="text-gray-300">Loading active builds…</span>
@@ -132,7 +116,7 @@
 					<TableHeadCell class="p-2">Action</TableHeadCell>
 				</TableHead>
 				<TableBody>
-					{#each rows as row, i (`${row.displayName}-${row.steamBranch ?? ''}-${i}`)}
+					{#each rows as row, i (`${row.displayName}-${row.steamBranch ?? ''}`)}
 						<TableBodyRow
 							class="text-left border-b-0 {i % 2 === 0
 								? 'bg-secondary-800 dark:bg-space-950'
@@ -165,12 +149,18 @@
 								{formatDeployedAt(row.deployedAt)}
 							</TableBodyCell>
 							<TableBodyCell class="p-2">
-								{#if canOpenOnGithub(row)}
+								<!-- Computed inline so $repoStatus is a template dependency; a helper
+								     closing over the store would not re-evaluate when it arrives. -->
+								{@const githubUrl =
+									row.status === 'resolved'
+										? commitUrl($repoStatus?.repoOwner, $repoStatus?.repoName, row.sha)
+										: null}
+								{#if githubUrl}
 									<Button
 										outline
 										size="xs"
 										class="p-1 border-0 focus-within:ring-0 dark:focus-within:ring-0"
-										on:click={() => openOnGithub(row)}
+										on:click={() => openOnGithub(githubUrl)}
 									>
 										<GithubSolid class="w-4 h-4" />
 									</Button>

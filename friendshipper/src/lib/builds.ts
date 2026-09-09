@@ -66,17 +66,14 @@ export const startWorkflowLogTail = async (workflowName: string, nodeId: string)
 
 export const stopWorkflowLogTail = async (): Promise<void> => invoke('stop_workflow_log_tail');
 
-// Shortest prefix we will call a match. Mirrors git's own abbreviation floor; below this
-// a collision stops being negligible.
+// Shortest prefix treated as a match; below this collisions stop being negligible.
 const MIN_SHA_MATCH_LENGTH = 7;
 
 /**
  * True when two commit identifiers refer to the same commit.
  *
- * Compared by prefix rather than equality because the two sides come from different
- * producers: the workflow list carries full SHAs, while the metadata object holds
- * whatever the promotion pipeline wrote, which may be abbreviated. Requiring equality
- * would silently show nothing when the pipeline writes a short SHA.
+ * Prefix rather than equality: the workflow list carries full SHAs while the metadata
+ * object holds whatever the pipeline wrote, which may be abbreviated.
  */
 const isSameCommit = (a: string, b: string): boolean => {
 	const left = a.trim().toLowerCase();
@@ -86,11 +83,10 @@ const isSameCommit = (a: string, b: string): boolean => {
 };
 
 /**
- * Destination names this commit is currently deployed to, in configured order.
+ * Destination names this commit is deployed to, in configured order.
  *
- * Only `resolved` rows count. Steam rows carry no SHA (they are `tbd` pending a
- * resolution mechanism), so they never contribute a match — a Steam branch is not
- * reported as promoted just because it is configured.
+ * Only `resolved` rows count; Steam rows carry no SHA, so a configured Steam branch is
+ * never reported as promoted.
  */
 export const promotedDestinationsFor = (commit: string, rows: ActiveBuild[]): string[] => {
 	if (!commit) return [];

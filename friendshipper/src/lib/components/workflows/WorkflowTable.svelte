@@ -23,8 +23,7 @@
 	export let showPromoteBuildModal: boolean = false;
 	export let promoteBuildCommit: string = '';
 	export let onShowCommitInfo: Nullable<(sha: string) => void> = null;
-	// Promotion status is a Game-side concept - there is no engine equivalent - so the
-	// Engine tab leaves this off rather than rendering arrows that could never appear.
+	// Game-only: promotion has no engine equivalent.
 	export let showPromotionStatus: boolean = false;
 
 	const setSelectedCommit = (commit: string) => {
@@ -226,9 +225,8 @@
 			{#if showPromotionStatus}
 				{@const promotedTo = promotedDestinationsFor(commit.commit, $activeBuilds)}
 				{#if promotedTo.length > 0}
-					<!-- Framed so the arrow reads as a status badge rather than another
-					     action control. Padding matches the adjacent info button so the
-					     two sit on the same baseline and the row height does not shift. -->
+					<!-- Framed to read as a status badge, not an action. Padding matches the
+					     info button so the row height is unchanged. -->
 					<span
 						class="flex-none inline-flex items-center justify-center rounded-md border border-green-500 bg-green-500/15 p-1 leading-none"
 					>
