@@ -56,6 +56,10 @@ where
             "/sync-uproject-commit-with-engine",
             post(sync_uproject_commit_with_engine),
         )
+        .route(
+            "/install-build-tools",
+            post(operations::install_build_tools_handler),
+        )
 }
 
 async fn open_project<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>

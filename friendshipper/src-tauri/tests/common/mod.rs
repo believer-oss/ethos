@@ -453,6 +453,7 @@ pub async fn setup_with_repo_config(
     let (longtail_tx, longtail_rx) = std::sync::mpsc::channel();
     let (git_tx, git_rx) = std::sync::mpsc::channel();
     let (sync_phase_tx, _sync_phase_rx) = std::sync::mpsc::channel::<String>();
+    let (build_tools_tx, _build_tools_rx) = std::sync::mpsc::channel();
     let (gs_tx, _gs_rx) = std::sync::mpsc::channel();
     let (workflow_tx, _workflow_rx) = std::sync::mpsc::channel();
 
@@ -507,6 +508,7 @@ pub async fn setup_with_repo_config(
         None,
         git_tx,
         sync_phase_tx,
+        build_tools_tx,
         gs_tx,
         workflow_tx,
     )

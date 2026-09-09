@@ -458,7 +458,7 @@
 	<Button
 		disabled={shouldDisableLaunchButton() || $backgroundSyncInProgress}
 		size="xl"
-		class="fixed bottom-6 right-6 shadow-2xl"
+		class="fixed bottom-10 right-4 shadow-2xl"
 		on:click={handleSyncAndLaunch}
 		>{getMainButtonText()}
 	</Button>

@@ -4,7 +4,7 @@
 	import { get } from 'svelte/store';
 	import { onMount } from 'svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
-	import { emit, listen } from '@tauri-apps/api/event';
+	import { emit } from '@tauri-apps/api/event';
 	import { updateAppConfig } from '$lib/config';
 	import { appConfig, onboardingInProgress } from '$lib/stores';
 	import UnrealEngineLogo from '$lib/icons/UnrealEngineLogo.svelte';
@@ -46,8 +46,6 @@
 
 	let gitUsername: string = '';
 	let gitEmail: string = '';
-
-	let message: string = '';
 
 	$: repoUrl,
 		cloneLocation,
@@ -215,10 +213,6 @@
 
 		updateRepoPath();
 	};
-
-	void listen('git-log', (event) => {
-		message = event.payload as string;
-	});
 
 	onMount(() => {
 		if (currentConfig.userDisplayName) {
@@ -423,11 +417,6 @@
 							This will take some time. Feel free to go get some coffee or have lunch!☕🌭💤</span
 						>
 					</div>
-					{#if message}
-						<div class="rounded-md p-2 bg-secondary-800 dark:bg-space-950">
-							<p class="text-sm font-mono text-primary-400 dark:text-primary-400 m-0">{message}</p>
-						</div>
-					{/if}
 				{:else if !errorMessage}
 					<span class="text-md text-center text-gray-300 dark:text-gray-300 w-full"
 						>Repo cloned to <span class="font-mono text-primary-400 dark:text-primary-400"

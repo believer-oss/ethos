@@ -193,6 +193,8 @@ export const resetEngine = async (): Promise<void> => invoke('reset_engine');
 
 export const reinstallGitHooks = async (): Promise<void> => invoke('reinstall_git_hooks');
 
+export const installBuildTools = async (): Promise<void> => invoke('install_build_tools');
+
 export const syncEngineCommitWithUproject = async (): Promise<string> =>
 	invoke('sync_engine_commit_with_uproject');
 
