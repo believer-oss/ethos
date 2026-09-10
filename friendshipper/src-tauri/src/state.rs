@@ -245,10 +245,24 @@ where
         playtest_region: String,
         username: &str,
     ) -> Result<(), CoreError> {
-        let mut aws_client = self.aws_client.write().await;
+        // Refresh the client the app already handed out rather than swapping in a new
+        // one: clones captured by an in-flight operation share its context.
+        let client = {
+            let mut aws_client = self.aws_client.write().await;
 
-        info!("Replacing AWS client");
-        aws_client.replace(client.clone());
+            match aws_client.as_ref() {
+                Some(existing) => {
+                    info!("Refreshing AWS client credentials");
+                    existing.refresh_from(&client);
+                    existing.clone()
+                }
+                None => {
+                    info!("Replacing AWS client");
+                    aws_client.replace(client.clone());
+                    client
+                }
+            }
+        };
 
         let new_dynamic_config = match client.get_dynamic_config().await {
             Ok(config) => config,

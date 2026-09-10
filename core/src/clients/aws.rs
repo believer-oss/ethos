@@ -18,27 +18,28 @@ use bytes::Buf;
 use chrono::{DateTime, Utc};
 use directories_next::BaseDirs;
 use http::Request;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 
 use crate::types::config::DynamicConfig;
 use crate::types::errors::CoreError;
 
+/// Everything a credential refresh replaces. Shared so that clones handed out earlier
+/// see the new session - a download can outlast the token it started with.
 #[derive(Debug, Clone)]
-pub struct AWSAuthContext {
+pub struct AWSClientContext {
     pub credentials: Credentials,
     pub sdkconfig: SdkConfig,
     pub login_required: bool,
     pub expires_at: Option<DateTime<Utc>>,
+    pub artifact_bucket_name: String,
+    pub promoted_artifact_bucket_name: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct AWSClient {
-    pub artifact_bucket_name: String,
-    pub promoted_artifact_bucket_name: String,
-
-    auth_context: Arc<RwLock<AWSAuthContext>>,
+    context: Arc<RwLock<AWSClientContext>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,31 +98,47 @@ impl AWSClient {
             .build();
 
         AWSClient {
-            auth_context: Arc::new(RwLock::new(AWSAuthContext {
+            context: Arc::new(RwLock::new(AWSClientContext {
                 credentials: creds,
                 sdkconfig: shared_config.clone(),
                 login_required: false,
                 expires_at,
+                artifact_bucket_name: bucket_name,
+                promoted_artifact_bucket_name: input_promoted_artifact_bucket_name,
             })),
-            artifact_bucket_name: bucket_name,
-            promoted_artifact_bucket_name: input_promoted_artifact_bucket_name,
         }
     }
 
+    /// Adopt another client's session in place, so an operation already in flight picks
+    /// up the refreshed credentials rather than the ones it started with.
+    pub fn refresh_from(&self, other: &AWSClient) {
+        if Arc::ptr_eq(&self.context, &other.context) {
+            return;
+        }
+
+        let refreshed = other.context.read().clone();
+        *self.context.write() = refreshed;
+    }
+
+    /// Credentials and their expiry, read without awaiting: the download path runs on a
+    /// blocking thread and re-reads these between attempts.
+    pub fn current_credentials(&self) -> (Credentials, Option<DateTime<Utc>>) {
+        let context = self.context.read();
+        (context.credentials.clone(), context.expires_at)
+    }
+
     pub async fn login_required(&self) -> bool {
-        let auth_context = self.auth_context.read().await;
-        auth_context.login_required
+        self.context.read().login_required
     }
 
     pub async fn logout(&self) -> Result<(), CoreError> {
-        let mut auth_context = self.auth_context.write().await;
-        auth_context.login_required = true;
+        self.context.write().login_required = true;
         Ok(())
     }
 
     pub async fn check_expiration(&self) -> Result<(), CoreError> {
-        let auth_context = self.auth_context.read().await;
-        if let Some(expires_at) = auth_context.expires_at {
+        let expires_at = self.context.read().expires_at;
+        if let Some(expires_at) = expires_at {
             if expires_at < Utc::now() {
                 return Err(CoreError::Internal(anyhow!("Credentials have expired")));
             }
@@ -131,29 +148,28 @@ impl AWSClient {
     }
 
     pub async fn get_credential_expiration(&self) -> Option<DateTime<Utc>> {
-        let auth_context = self.auth_context.read().await;
-        auth_context.expires_at
+        self.context.read().expires_at
     }
 
     pub async fn get_sdk_config(&self) -> SdkConfig {
-        self.auth_context.read().await.sdkconfig.clone()
+        self.context.read().sdkconfig.clone()
     }
 
     pub async fn get_credentials(&self) -> Credentials {
-        self.auth_context.read().await.credentials.clone()
+        self.context.read().credentials.clone()
     }
 
     pub fn get_artifact_bucket(&self) -> String {
-        self.artifact_bucket_name.clone()
+        self.context.read().artifact_bucket_name.clone()
     }
     pub fn get_promoted_artifacts_bucket(&self) -> String {
-        self.promoted_artifact_bucket_name.clone()
+        self.context.read().promoted_artifact_bucket_name.clone()
     }
     pub async fn get_dynamic_config(&self) -> Result<DynamicConfig, CoreError> {
         let client = S3Client::new(&self.get_sdk_config().await);
         let resp = match client
             .get_object()
-            .bucket(self.artifact_bucket_name.clone())
+            .bucket(self.get_artifact_bucket())
             .key(crate::DYNAMIC_CONFIG_KEY)
             .send()
             .await
@@ -274,7 +290,7 @@ impl AWSClient {
         let client = S3Client::new(&self.get_sdk_config().await);
         let mut paginator = client
             .list_objects_v2()
-            .bucket(self.artifact_bucket_name.clone())
+            .bucket(self.get_artifact_bucket())
             .prefix(prefix)
             .into_paginator()
             .send();
@@ -314,7 +330,7 @@ impl AWSClient {
         let client = S3Client::new(&self.get_sdk_config().await);
         let mut paginator = client
             .list_objects_v2()
-            .bucket(self.artifact_bucket_name.clone())
+            .bucket(self.get_artifact_bucket())
             .prefix(prefix)
             .delimiter(delimiter)
             .into_paginator()
@@ -343,7 +359,7 @@ impl AWSClient {
         let client = S3Client::new(&self.get_sdk_config().await);
         let mut paginator = client
             .list_objects_v2()
-            .bucket(self.artifact_bucket_name.clone())
+            .bucket(self.get_artifact_bucket())
             .prefix(prefix)
             .into_paginator()
             .send();
@@ -380,7 +396,7 @@ impl AWSClient {
 
         let get_object_output = client
             .get_object()
-            .bucket(self.artifact_bucket_name.clone())
+            .bucket(self.get_artifact_bucket())
             .key(object_key)
             .send()
             .await
@@ -421,7 +437,7 @@ impl AWSClient {
 
         let object_key = format!("{}/{}", destination_prefix.trim_end_matches('/'), file_name);
 
-        let bucket_name = self.artifact_bucket_name.clone();
+        let bucket_name = self.get_artifact_bucket();
 
         client
             .put_object()

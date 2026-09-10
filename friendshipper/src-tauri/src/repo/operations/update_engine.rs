@@ -164,7 +164,7 @@ where
                     }),
                     &archive_urls,
                     self.longtail_tx.clone(),
-                    self.aws_client.get_credentials().await,
+                    &self.aws_client,
                 );
                 match download_result {
                     Ok(()) => {}
