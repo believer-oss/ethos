@@ -154,7 +154,7 @@ where
             }),
             &archive_urls,
             self.tx.clone(),
-            self.aws_client.get_credentials().await,
+            &self.aws_client,
         );
         match dll_download_result {
             Ok(()) => {}

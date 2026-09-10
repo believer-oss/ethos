@@ -17,6 +17,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use aws_credential_types::Credentials;
+use chrono::{DateTime, Utc};
 use directories_next::ProjectDirs;
 use hex::FromHex;
 use parking_lot::Mutex;
@@ -26,6 +27,7 @@ use which::{which, which_in};
 
 use super::fs::LocalDownloadPath;
 use super::msg::LongtailMsg;
+use crate::clients::aws::AWSClient;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -53,6 +55,88 @@ pub struct Longtail {
 pub struct CacheControl {
     pub path: PathBuf,
     pub max_size_bytes: u64,
+}
+
+/// How many times a download may restart after its credentials lapsed. Each restart
+/// resumes from the cache.
+const MAX_CREDENTIAL_RETRIES: usize = 5;
+
+/// Diagnostics kept from a failed run, capped because longtail's output is mostly
+/// progress bars.
+const MAX_ERROR_RECORDS: usize = 5;
+const MAX_ERROR_RECORD_CHARS: usize = 1500;
+
+/// Errors S3 reports when it rejects a request outright rather than mid-transfer.
+const CREDENTIAL_ERROR_MARKERS: [&str; 4] = [
+    "ExpiredToken",
+    "ExpiredTokenException",
+    "InvalidAccessKeyId",
+    "token has expired",
+];
+
+/// Recovery steps for a failed download, in order of how much work they throw away.
+/// Clearing the cache costs the entire download, so credential failures never reach it.
+enum Recovery {
+    ClearTarget,
+    ClearCache,
+}
+
+/// Whether an attempt failed over credentials rather than anything on disk. A lapse
+/// mid-download surfaces only as a block store I/O error, so the expiry is the more
+/// reliable signal.
+fn credentials_lapsed(error: &str, expires_at: Option<DateTime<Utc>>) -> bool {
+    if CREDENTIAL_ERROR_MARKERS
+        .iter()
+        .any(|marker| error.contains(marker))
+    {
+        return true;
+    }
+
+    matches!(expires_at, Some(expires_at) if expires_at <= Utc::now())
+}
+
+fn same_session(a: &Credentials, b: &Credentials) -> bool {
+    a.access_key_id() == b.access_key_id() && a.session_token() == b.session_token()
+}
+
+/// Split the error and fatal records out of a chunk of longtail output. The progress bar
+/// shares the chunk, and the record naming the failure comes last.
+fn error_records(chunk: &str) -> Vec<String> {
+    let mut records: Vec<String> = vec![];
+    let mut rest = chunk;
+
+    while let Some(start) = ["level=error", "level=fatal"]
+        .iter()
+        .filter_map(|marker| rest.find(marker))
+        .min()
+    {
+        rest = &rest[start..];
+        let end = rest[1..].find("level=").map_or(rest.len(), |i| i + 1);
+        records.push(
+            rest[..end]
+                .trim()
+                .chars()
+                .take(MAX_ERROR_RECORD_CHARS)
+                .collect(),
+        );
+        rest = &rest[end..];
+    }
+
+    records
+}
+
+/// Keep the most recent records: the failure that stopped the run is reported last.
+fn keep_error_records(kept: &mut Vec<String>, records: Vec<String>) {
+    for record in records {
+        if record.trim().is_empty() {
+            continue;
+        }
+
+        kept.push(record);
+        if kept.len() > MAX_ERROR_RECORDS {
+            kept.remove(0);
+        }
+    }
 }
 
 struct FileCacheData {
@@ -239,50 +323,85 @@ impl Longtail {
     }
 
     // Use longtail 'get' to download a given archive
-    #[instrument(skip(cache, tx, credentials), err)]
+    #[instrument(skip(cache, tx, aws_client), err)]
     pub fn get_archive(
         &self,
         path: &Path,
         cache: Option<CacheControl>,
         archives: &[String],
         tx: Sender<LongtailMsg>,
-        credentials: Credentials,
+        aws_client: &AWSClient,
     ) -> Result<()> {
         info!(
             "Attempting to download longtail archives {:?} to path {:?}",
             &archives, path
         );
 
-        match cache {
-            None => self.get_archive_internal(path, cache.as_ref(), archives, &tx, &credentials),
-            Some(cache) => {
-                let mut result: Result<()> =
-                    self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials);
-                if result.is_err() {
-                    warn!("Longtail get failed. Attempting to clear target path and retry unpack. Original error was: {:?}", result);
+        let Some(cache) = cache else {
+            let (credentials, _) = aws_client.current_credentials();
+            return self.get_archive_internal(path, None, archives, &tx, &credentials);
+        };
+
+        let mut recovery = [Recovery::ClearTarget, Recovery::ClearCache].into_iter();
+        let mut credential_retries = 0;
+
+        // Read per attempt: a child process can only be handed credentials when it is
+        // spawned, so outliving the session means retrying with the renewed one.
+        let result = loop {
+            let (credentials, expires_at) = aws_client.current_credentials();
+            let err =
+                match self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials) {
+                    Ok(()) => break Ok(()),
+                    Err(e) => e,
+                };
+
+            if credentials_lapsed(&err.to_string(), expires_at) {
+                let (renewed, _) = aws_client.current_credentials();
+                if same_session(&credentials, &renewed) {
+                    break Err(anyhow!(
+                        "AWS credentials expired during download and have not been renewed. \
+                         Sign in again and restart the download - cached chunks are kept, so \
+                         it resumes rather than starting over. Original error: {}",
+                        err
+                    ));
+                }
+
+                if credential_retries >= MAX_CREDENTIAL_RETRIES {
+                    break Err(anyhow!(
+                        "AWS credentials expired {} times without the download completing. \
+                         Original error: {}",
+                        credential_retries,
+                        err
+                    ));
+                }
+
+                credential_retries += 1;
+                warn!(
+                    "Longtail get failed after AWS credentials expired mid-download (retry {} of \
+                     {}). Retrying with renewed credentials, keeping the target path and cache so \
+                     the download resumes. Original error was: {:?}",
+                    credential_retries, MAX_CREDENTIAL_RETRIES, err
+                );
+                continue;
+            }
+
+            match recovery.next() {
+                Some(Recovery::ClearTarget) => {
+                    warn!("Longtail get failed. Attempting to clear target path and retry unpack. Original error was: {:?}", err);
                     if path.exists() {
                         std::fs::remove_dir_all(path)?;
                     }
-                    result =
-                        self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials);
-
-                    if result.is_err() {
-                        warn!("Longtail get failed AGAIN - assuming bad chunks in cache. Attempting to clear cache and retry download + unpack. Original error was: {:?}", result);
-                        std::fs::remove_dir_all(&cache.path)?;
-                        result = self.get_archive_internal(
-                            path,
-                            Some(&cache),
-                            archives,
-                            &tx,
-                            &credentials,
-                        );
-                    }
                 }
-
-                info!("Longtail get result: {:?}", result);
-                result
+                Some(Recovery::ClearCache) => {
+                    warn!("Longtail get failed AGAIN - assuming bad chunks in cache. Attempting to clear cache and retry download + unpack. Original error was: {:?}", err);
+                    std::fs::remove_dir_all(&cache.path)?;
+                }
+                None => break Err(err),
             }
-        }
+        };
+
+        info!("Longtail get result: {:?}", result);
+        result
     }
 
     pub fn get_archive_internal(
@@ -333,6 +452,8 @@ impl Longtail {
         let reader = BufReader::new(stdout);
         let errreader = BufReader::new(stderr);
 
+        let mut error_records_kept: Vec<String> = vec![];
+
         // Longtail is using hardcoded CR characters in it's progress bar implementation, so
         // split on those... https://github.com/DanEngelbrecht/golongtail/blob/main/longtailutils/progress.go#L24
         reader
@@ -342,17 +463,18 @@ impl Longtail {
             .for_each(|line| {
                 let line = std::str::from_utf8(&line).unwrap_or("").replace('\n', "");
                 if !line.is_empty() {
+                    // longtail logs its fatals to stdout, not stderr.
+                    keep_error_records(&mut error_records_kept, error_records(&line));
                     send_msg(tx, LongtailMsg::Log(line));
                 }
             });
 
-        let mut error_lines = Vec::new();
         errreader
             .lines()
             .map_while(|line| line.ok())
             .for_each(|line| {
                 send_msg(tx, LongtailMsg::ErrEvt(line.clone()));
-                error_lines.push(line);
+                keep_error_records(&mut error_records_kept, vec![line]);
             });
 
         let mut child = self
@@ -366,7 +488,7 @@ impl Longtail {
             .map_err(|e| anyhow::anyhow!("Failed waiting on child: {}", e))?;
 
         if !status.success() {
-            let error_message = error_lines.join("\n");
+            let error_message = error_records_kept.join("\n");
             return Err(anyhow::anyhow!(
                 "Longtail command failed: {}",
                 error_message
@@ -433,5 +555,90 @@ impl Longtail {
                 info!("Done syncing");
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Shape of a real failure: the progress bar shares the chunk, the cause comes last.
+    const LAPSED_MID_DOWNLOAD: &str = concat!(
+        "Updating version           100%: |####|: [42m18s]        ",
+        r#"level=error msg="job_api->WaitForAllJobs() failed with 5" line=1049"#,
+        r#"level=error msg="Longtail_RunJobsBatched() failed with 5" line=8851"#,
+        "Dropping prefetched block due to background prefetch",
+        r#"level=fatal msg="get: downsync: Failed writing version to `C:\engine`: ChangeVersion2: 5: I/O error.""#,
+    );
+
+    const REJECTED_UP_FRONT: &str = concat!(
+        r#"level=fatal msg="get: ReadFromURI: operation error S3: GetObject, https "#,
+        r#"response error StatusCode: 400, api error ExpiredToken: The provided token has expired.""#,
+    );
+
+    fn creds(access_key: &str, session_token: &str) -> Credentials {
+        Credentials::from_keys(access_key, "secret", Some(session_token.to_string()))
+    }
+
+    #[test]
+    fn error_records_skips_progress_and_keeps_the_cause() {
+        let records = error_records(LAPSED_MID_DOWNLOAD);
+
+        assert_eq!(records.len(), 3);
+        assert!(records[0].starts_with("level=error"));
+        assert!(records[2].contains("I/O error"));
+        assert!(records.iter().all(|r| !r.contains("Updating version")));
+    }
+
+    #[test]
+    fn error_records_ignores_output_without_a_failure() {
+        assert!(error_records("Updating version  59%: |###|: [37m10s:28m30s]").is_empty());
+        assert!(error_records(r#"level=warning msg="Dropping prefetched block""#).is_empty());
+    }
+
+    #[test]
+    fn keep_error_records_keeps_the_last_ones() {
+        let mut kept = vec![];
+        for i in 0..MAX_ERROR_RECORDS + 3 {
+            keep_error_records(&mut kept, vec![format!("record {i}")]);
+        }
+
+        assert_eq!(kept.len(), MAX_ERROR_RECORDS);
+        assert_eq!(
+            kept.last().unwrap(),
+            &format!("record {}", MAX_ERROR_RECORDS + 2)
+        );
+    }
+
+    #[test]
+    fn rejected_request_reads_as_a_credential_failure() {
+        // No expiry to go on: the message alone has to carry it.
+        assert!(credentials_lapsed(REJECTED_UP_FRONT, None));
+    }
+
+    #[test]
+    fn lapse_mid_download_reads_as_a_credential_failure() {
+        // Only the expiry distinguishes a lapsed session from a corrupt cache here;
+        // misreading it deletes the cache.
+        let expired = Utc::now() - chrono::Duration::seconds(1);
+
+        assert!(credentials_lapsed(LAPSED_MID_DOWNLOAD, Some(expired)));
+    }
+
+    #[test]
+    fn io_error_within_a_live_session_is_not_a_credential_failure() {
+        let valid = Utc::now() + chrono::Duration::hours(1);
+
+        assert!(!credentials_lapsed(LAPSED_MID_DOWNLOAD, Some(valid)));
+        assert!(!credentials_lapsed(LAPSED_MID_DOWNLOAD, None));
+    }
+
+    #[test]
+    fn same_session_tracks_the_token() {
+        let original = creds("AKIAEXAMPLE", "token-one");
+
+        assert!(same_session(&original, &creds("AKIAEXAMPLE", "token-one")));
+        assert!(!same_session(&original, &creds("AKIAEXAMPLE", "token-two")));
+        assert!(!same_session(&original, &creds("AKIAOTHER", "token-one")));
     }
 }

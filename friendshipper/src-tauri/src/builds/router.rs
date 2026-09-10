@@ -503,7 +503,6 @@ where
                     return Ok(Json(false));
                 }
                 download_result = async move {
-                    let credentials = aws_client.get_credentials().await;
                     tokio::task::spawn_blocking(move || {
                         info!("Starting actual download...");
                         state.longtail.get_archive(
@@ -511,7 +510,7 @@ where
                             Some(cache_control),
                             &archive_urls,
                             tx,
-                            credentials,
+                            &aws_client,
                         )
                     }).await
                 } => {
