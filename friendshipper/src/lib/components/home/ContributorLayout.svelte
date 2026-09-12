@@ -10,7 +10,8 @@
 		TableBodyCell,
 		TableBodyRow,
 		TableHead,
-		TableHeadCell
+		TableHeadCell,
+		Tooltip
 	} from 'flowbite-svelte';
 	import { LinkOutline, RefreshOutline } from 'flowbite-svelte-icons';
 	import { type Nullable, ProgressModal } from '@ethos/core';
@@ -23,7 +24,9 @@
 		openProject,
 		syncLatest,
 		getRepoStatus,
-		getBranchComparison
+		getBranchComparison,
+		AllowOfflineCommunication,
+		SkipDllCheck
 	} from '$lib/repo';
 	import type {
 		ArtifactEntry,
@@ -121,10 +124,17 @@
 		}
 	};
 
-	const refreshRepo = async () => {
+	// `fetchFirst` must stay an explicit parameter with a default of false, and every caller must
+	// pass it deliberately. The git-refresh listener below is file-watcher-driven and must never
+	// fetch; only the refresh button may.
+	const refreshRepo = async (fetchFirst: boolean = false) => {
 		try {
 			loadingRepoStatus = true;
-			$repoStatus = await getRepoStatus();
+			$repoStatus = await getRepoStatus(
+				SkipDllCheck.False,
+				AllowOfflineCommunication.False,
+				fetchFirst
+			);
 		} catch (e) {
 			await emit('error', e);
 		}
@@ -394,7 +404,30 @@
 		<div class="flex flex-col gap-2 max-w-[24rem] w-96 flex-shrink-0 h-fit">
 			<div class="flex mt-2 items-center gap-2">
 				<p class="text-2xl text-primary-400 dark:text-primary-400">Repo Status</p>
-				<Button disabled={loadingRepoStatus} class="!p-1.5" primary on:click={refreshRepo}>
+				<!-- The sidebar banner says which mode we are in; this one sits next to the counts that
+				     are actually frozen, so they are not read as fact. -->
+				{#if $appConfig.disableBackgroundGitOperations}
+					<span
+						class="text-xs text-yellow-500 border border-yellow-600 rounded px-1.5 py-0.5 whitespace-nowrap"
+					>
+						git paused
+					</span>
+					<Tooltip
+						class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+						placement="bottom"
+					>
+						Background git operations are disabled, so these counts only update when you press
+						refresh or sync.
+					</Tooltip>
+				{/if}
+				<!-- a closure, not a bare reference: `on:click={refreshRepo}` would pass the
+				     MouseEvent as `fetchFirst`, making every click fetch -->
+				<Button
+					disabled={loadingRepoStatus}
+					class="!p-1.5"
+					primary
+					on:click={() => refreshRepo(true)}
+				>
 					{#if loadingRepoStatus}
 						<Spinner size="4" />
 					{:else}

@@ -60,6 +60,7 @@ where
         )
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
+        .route("/maintenance", post(operations::run_maintenance_handler))
         .route("/reset/:commit", post(operations::reset_repo_to_commit))
         .route("/revert", post(operations::revert_files_handler::<T>))
         .route(

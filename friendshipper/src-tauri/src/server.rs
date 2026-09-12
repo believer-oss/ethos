@@ -384,9 +384,13 @@ impl Server {
         // fetch` reading the same .git/config — on Windows that surfaces as
         // "unable to access '.git/config': Permission denied".
         if !repo_path.is_empty() {
-            let maintenance_runner =
-                GitMaintenanceRunner::new(repo_path, pause_background_tasks.clone(), tx)
-                    .with_fetch_interval(Duration::from_secs(5));
+            let maintenance_runner = GitMaintenanceRunner::new(
+                repo_path,
+                pause_background_tasks.clone(),
+                shared_state.app_config.clone(),
+                tx,
+            )
+            .with_fetch_interval(Duration::from_secs(5));
             tokio::spawn(async move {
                 match maintenance_runner.run().await {
                     Ok(_) => {}

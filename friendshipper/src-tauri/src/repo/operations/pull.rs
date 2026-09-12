@@ -121,6 +121,8 @@ where
                 allow_offline_communication: false,
                 skip_display_names: true,
                 skip_engine_update: false,
+                // internal post-operation refresh, not a user-initiated one
+                fetch_first: false,
             };
 
             status_op.execute().await?;
@@ -263,6 +265,8 @@ where
                         allow_offline_communication: false,
                         skip_display_names: true,
                         skip_engine_update: true,
+                        // internal post-operation refresh, not a user-initiated one
+                        fetch_first: false,
                     }
                 };
 
@@ -352,6 +356,8 @@ where
                     allow_offline_communication: false,
                     skip_display_names: true,
                     skip_engine_update: false,
+                    // internal post-operation refresh, not a user-initiated one
+                    fetch_first: false,
                 }
             };
 
