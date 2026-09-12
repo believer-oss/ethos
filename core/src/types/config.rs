@@ -178,6 +178,11 @@ pub struct AppConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub last_quick_submit_scope: Option<String>,
+
+    /// Stops the periodic fetch and maintenance tasks in `GitMaintenanceRunner`.
+    /// Read per tick, so toggling it takes effect without a restart.
+    #[serde(default, rename = "disableBackgroundGitOperations")]
+    pub disable_background_git_operations: bool,
 }
 
 fn default_playtest_region() -> String {
@@ -230,6 +235,7 @@ impl AppConfig {
             initialized: false,
             last_quick_submit_type: None,
             last_quick_submit_scope: None,
+            disable_background_git_operations: false,
         }
     }
 
@@ -763,6 +769,42 @@ mod tests {
     use crate::types::config::CUSTOM_ENGINE_ASSOCIATION_REGEX;
     use crate::types::config::{AppConfig, ProjectRepoConfig, RepoConfig, TargetBranchConfig};
     use tempfile::TempDir;
+
+    /// Every existing user's `config.yaml` predates this key, so its absence must deserialize to
+    /// `false` rather than failing. This is the whole backward-compatibility guarantee for the
+    /// setting, and it rests on `#[serde(default)]`.
+    #[test]
+    fn test_disable_background_git_operations_defaults_false_when_absent() {
+        let yaml = r#"
+userDisplayName: someone
+repoPath: /tmp/repo
+targetBranch: main
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).expect("deserialize legacy config");
+        assert!(
+            !config.disable_background_git_operations,
+            "an absent key must mean 'background operations enabled'"
+        );
+    }
+
+    /// A `true` value must survive a write/read cycle, since the setting is persisted to
+    /// `config.yaml` by `save_config_to_file` and re-read on the next launch.
+    #[test]
+    fn test_disable_background_git_operations_round_trips() {
+        let mut config = AppConfig::new("test");
+        config.user_display_name = "someone".to_string();
+        config.disable_background_git_operations = true;
+
+        let yaml = serde_yaml::to_string(&config).expect("serialize");
+        assert!(
+            yaml.contains("disableBackgroundGitOperations: true"),
+            "expected the camelCase key in the serialized form, got:
+{yaml}"
+        );
+
+        let restored: AppConfig = serde_yaml::from_str(&yaml).expect("deserialize");
+        assert!(restored.disable_background_git_operations);
+    }
 
     /// Writes `yaml` to `<tempdir>/friendshipper.yaml` and runs it through the
     /// real `AppConfig::initialize_repo_config` path. Returns the tempdir guard

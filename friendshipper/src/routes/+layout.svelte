@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.postcss';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		Button,
 		DarkMode,
@@ -59,6 +59,7 @@
 		playtests,
 		projectConfigs,
 		repoConfig,
+		repoFreshness,
 		repoStatus,
 		selectedCommit,
 		showPreferences,
@@ -73,6 +74,7 @@
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
 	import {
 		getAllCommits,
+		getObjectCount,
 		getRepoStatus,
 		SkipDllCheck,
 		AllowOfflineCommunication,
@@ -80,6 +82,7 @@
 		reconcileChangeSets,
 		saveChangeSet
 	} from '$lib/repo';
+	import { formatFreshness } from '$lib/backgroundOps';
 
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import {
@@ -968,9 +971,61 @@
 		})();
 	});
 
+	// Clock tick for the "last packed N ago" text. Deliberately NOT a data refresh: re-reading the
+	// object count costs a `count-objects` walk, which is slowest exactly when maintenance is most
+	// overdue, so that stays event-driven. Re-deriving the age from an absolute timestamp is pure
+	// arithmetic, so it can tick cheaply — without it the text freezes at whatever it said when the
+	// data was last fetched. Only runs while paused.
+	let freshnessNow = Date.now();
+	let freshnessTimer: ReturnType<typeof setInterval> | null = null;
+
+	const stopFreshnessTimer = () => {
+		if (freshnessTimer) {
+			clearInterval(freshnessTimer);
+			freshnessTimer = null;
+		}
+	};
+
+	// Only fetched while paused, so nobody who has not opted out pays for the `count-objects` walk.
+	// Event-driven: config change and maintenance completion. Never on a timer.
+	const refreshFreshness = async () => {
+		if (!$appConfig.disableBackgroundGitOperations || $appConfig.repoPath === '') {
+			$repoFreshness = null;
+			return;
+		}
+
+		try {
+			$repoFreshness = await getObjectCount();
+		} catch (e) {
+			// A missing repo or an initialising backend must not hide the paused banner; the banner
+			// renders without its annotation instead.
+			await logError('Failed to read repo freshness', e);
+			$repoFreshness = null;
+		}
+	};
+
+	$: if ($appConfig.disableBackgroundGitOperations) {
+		void refreshFreshness();
+		if (!freshnessTimer) {
+			freshnessNow = Date.now();
+			freshnessTimer = setInterval(() => {
+				freshnessNow = Date.now();
+			}, 60 * 1000);
+		}
+	} else {
+		$repoFreshness = null;
+		stopFreshnessTimer();
+	}
+
+	onDestroy(stopFreshnessTimer);
+
 	void listen('success', (e) => {
 		successMessage = e.payload as string;
 		hasSuccess = true;
+
+		// Maintenance reports success through this channel, so re-read freshness rather than letting
+		// the annotation sit stale after a run.
+		void refreshFreshness();
 
 		// If we're on the collaborator layout page then refresh repo status
 		if (activeUrl === '/' && $appConfig.repoUrl !== '') {
@@ -1146,13 +1201,37 @@
 		>
 			<QuickLaunchModal bind:showModal={quickLaunching} serverName={quickLaunchServerName} />
 			<TraceDeepLinkModal bind:open={traceDeepLinkOpen} trace={traceDeepLink} />
+			<!-- asideClass carries z-30 so sidebar-anchored tooltips paint over the content area:
+			     `sticky` creates a stacking context, which would otherwise trap their z-index inside
+			     the sidebar. Kept below the modal layers (backdrop z-40, dialog z-50). -->
 			<Sidebar
-				asideClass="w-56 shadow-md sticky top-0 h-full"
+				asideClass="w-56 shadow-md sticky top-0 h-full z-30"
 				activeClass="flex items-center p-2 text-base font-normal text-gray-900 bg-secondary-800 dark:bg-space-950 rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
 				nonActiveClass="flex items-center p-2 text-base font-normal rounded-lg text-primary-400 dark:text-primary-400 hover:bg-secondary-800 dark:hover:bg-space-950"
 				{activeUrl}
 			>
 				<SidebarWrapper class="h-full rounded-none bg-secondary-700 dark:bg-space-900">
+					<!-- Placed above SidebarGroup so it shows on every route, including each Source
+					     sub-tab: the mode has to be visible wherever the developer happens to be. -->
+					{#if $appConfig.disableBackgroundGitOperations}
+						<div
+							class="mb-3 px-2 py-2 rounded-lg bg-secondary-800 dark:bg-space-950 border border-yellow-600"
+						>
+							<p class="text-xs text-yellow-500 m-0 font-semibold">Background git paused</p>
+							{#if $repoFreshness}
+								<p class="text-xs text-gray-400 m-0 mt-1 leading-tight">
+									{formatFreshness($repoFreshness, freshnessNow)}
+								</p>
+							{/if}
+						</div>
+						<Tooltip
+							class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+							placement="right"
+						>
+							Commits ahead/behind and upstream-conflict warnings only refresh when you press
+							refresh or sync. File status and file locks are unaffected.
+						</Tooltip>
+					{/if}
 					<SidebarGroup>
 						<SidebarItem
 							class="group/item"
