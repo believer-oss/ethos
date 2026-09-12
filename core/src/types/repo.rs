@@ -336,6 +336,15 @@ pub struct ObjectCountResponse {
     pub in_pack_count: u64,
     pub is_healthy: bool,
     pub raw_output: String,
+
+    /// Loose (unpacked) object count. Maintenance debt, as opposed to `in_pack_count`, which is
+    /// repository size.
+    pub loose_count: u64,
+
+    /// When the repository was last packed by anyone — this app, the Diagnostics gc button, or a
+    /// developer's own `git gc`. Derived from the commit-graph mtime, which (unlike pack mtimes) is
+    /// not disturbed by fetching. `None` means never.
+    pub last_packed: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

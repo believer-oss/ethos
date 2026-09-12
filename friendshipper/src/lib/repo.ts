@@ -76,12 +76,15 @@ export enum AllowOfflineCommunication {
 
 export const getRepoStatus = async (
 	shouldSkipDllCheck: SkipDllCheck = SkipDllCheck.False,
-	shouldAllowOfflineCommunication: AllowOfflineCommunication = AllowOfflineCommunication.False
+	shouldAllowOfflineCommunication: AllowOfflineCommunication = AllowOfflineCommunication.False,
+	// Only user-initiated refresh actions pass true, and the backend acts on it only while
+	// background git operations are disabled. Defaults false so no existing caller changes behavior.
+	fetchFirst: boolean = false
 ): Promise<RepoStatus> => {
 	const skipDllCheck: boolean = shouldSkipDllCheck === SkipDllCheck.True;
 	const allowOfflineCommunication: boolean =
 		shouldAllowOfflineCommunication === AllowOfflineCommunication.True;
-	return invoke('get_repo_status', { skipDllCheck, allowOfflineCommunication });
+	return invoke('get_repo_status', { skipDllCheck, allowOfflineCommunication, fetchFirst });
 };
 
 export const submit = async (req: PushRequest): Promise<void> => invoke('submit', { req });
@@ -224,6 +227,8 @@ export const runGitGc = async (): Promise<void> => invoke('run_git_gc');
 export const resetRepo = async (): Promise<void> => invoke('reset_repo');
 
 export const refetchRepo = async (): Promise<void> => invoke('refetch_repo');
+
+export const runMaintenance = async (): Promise<void> => invoke('run_maintenance');
 
 export const resetRepoToCommit = async (commit: string): Promise<void> =>
 	invoke('reset_repo_to_commit', { commit });

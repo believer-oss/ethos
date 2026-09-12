@@ -10,6 +10,7 @@ import type {
 	CommitWorkflowInfo,
 	DynamicConfig,
 	Nullable,
+	ObjectCountResponse,
 	Playtest,
 	ProjectConfig,
 	RepoConfig,
@@ -26,6 +27,11 @@ export const playtests = writable(<Playtest[]>[]);
 
 export const builds = writable(<ArtifactListResponse>{});
 export const appConfig = writable(<AppConfig>{});
+
+// Object-store freshness, shown only while background git operations are paused. Fetched on mount
+// and after a manual maintenance run, never on a timer: `count-objects -v` walks the loose object
+// directories, so it is slowest exactly when maintenance is most overdue.
+export const repoFreshness = writable(<Nullable<ObjectCountResponse>>null);
 export const repoConfig = writable(<Nullable<RepoConfig>>null);
 export const commits = writable(<Commit[]>[]);
 export const commitMessage = writable(<string | CommitMessage>'');

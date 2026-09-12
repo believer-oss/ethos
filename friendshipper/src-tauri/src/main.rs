@@ -265,6 +265,7 @@ fn main() -> Result<(), CoreError> {
                 sync_uproject_commit_with_engine,
                 reset_repo,
                 refetch_repo,
+                run_maintenance,
                 reset_repo_to_commit,
                 restart,
                 generate_sln,

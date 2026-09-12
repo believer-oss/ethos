@@ -800,6 +800,8 @@ where
 
             // we'll make sure this gets done at the end
             skip_engine_update: true,
+            // internal post-operation refresh, not a user-initiated one
+            fetch_first: false,
         };
 
         // We're moving this call from the frontend to the backend so we can customize

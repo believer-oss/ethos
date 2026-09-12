@@ -515,6 +515,22 @@ pub async fn refetch_repo(state: tauri::State<'_, State>) -> Result<(), TauriErr
 }
 
 #[tauri::command]
+pub async fn run_maintenance(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/maintenance", state.server_url))
+        .send()
+        .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        error!("Error running maintenance: {}", err.message);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn reset_repo_to_commit(
     state: tauri::State<'_, State>,
     commit: String,
@@ -672,12 +688,13 @@ pub async fn get_repo_status(
     state: tauri::State<'_, State>,
     skip_dll_check: bool,
     allow_offline_communication: bool,
+    fetch_first: bool,
 ) -> Result<RepoStatus, TauriError> {
     let res = state
         .client
         .get(format!(
-            "{}/repo/status?&skipDllCheck={}&allowOfflineCommunication={}",
-            state.server_url, skip_dll_check, allow_offline_communication
+            "{}/repo/status?&skipDllCheck={}&allowOfflineCommunication={}&fetchFirst={}",
+            state.server_url, skip_dll_check, allow_offline_communication, fetch_first
         ))
         .send()
         .await?;

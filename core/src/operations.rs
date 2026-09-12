@@ -243,6 +243,42 @@ impl Task for GcOp {
     }
 }
 
+/// A fuller maintenance pass than `GcOp`, for developers who have disabled the periodic background
+/// tasks and need to keep the repository packed themselves.
+#[derive(Clone)]
+pub struct MaintenanceOp {
+    pub git_client: git::Git,
+}
+
+#[async_trait]
+impl Task for MaintenanceOp {
+    /// Order is load-bearing: reflog expiry must precede gc for newly-expired entries' objects to
+    /// become prunable at all, and the commit-graph is written last so it is built over the
+    /// repacked object store.
+    ///
+    /// Each step uses an existing `Git` method rather than a fresh git invocation, and that is a
+    /// safety property, not a style preference:
+    ///
+    /// - `expire_reflog` drives its window through `-c gc.reflogExpire*` config instead of the
+    ///   `--expire` CLI options, which is what keeps git's per-ref lookup active and therefore what
+    ///   protects `refs/stash`. Friendshipper snapshots *are* stashes, so a CLI-driven window would
+    ///   delete users' work.
+    /// - `run_gc_preserve_unreachable` is plain `git gc`, leaving git's two-week grace for
+    ///   unreachable objects. `run_gc` (`--prune=now`) must never be used here.
+    #[instrument(name = "MaintenanceOp::execute", skip(self))]
+    async fn execute(&self) -> Result<(), CoreError> {
+        self.git_client.expire_reflog().await?;
+        self.git_client.run_gc_preserve_unreachable().await?;
+        self.git_client.rewrite_graph().await?;
+
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        String::from("RepoMaintenance")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LockOp {
     pub git_client: git::Git,
@@ -579,5 +615,293 @@ impl LockOp {
             response_tx.send(LockResponse::default()).await?;
         }
         Ok(LockResponse::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::process::Command as StdCommand;
+    use std::sync::mpsc;
+    use tempfile::TempDir;
+
+    /// Initialize a fresh git repo in a tempdir with one committed `seed.txt`, mirroring the
+    /// `setup_repo` helper in `clients::git`'s test module.
+    fn setup_repo() -> (git::Git, TempDir) {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().to_path_buf();
+
+        let config_steps: &[&[&str]] = &[
+            &["init"],
+            &["config", "user.email", "test@example.com"],
+            &["config", "user.name", "test"],
+            &["config", "commit.gpgsign", "false"],
+            &["config", "core.autocrlf", "false"],
+        ];
+        for args in config_steps {
+            run_git(&path, args);
+        }
+
+        std::fs::write(path.join("seed.txt"), "seed").unwrap();
+        run_git(&path, &["add", "seed.txt"]);
+        run_git(&path, &["commit", "-m", "seed"]);
+
+        let (tx, _rx) = mpsc::channel();
+        (git::Git::new(path, tx), dir)
+    }
+
+    fn run_git(path: &Path, args: &[&str]) -> String {
+        let out = StdCommand::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    fn stash_list(path: &Path) -> String {
+        run_git(path, &["stash", "list"])
+    }
+
+    /// Rewrite every entry in `refs/stash`'s reflog to look ~60 days old.
+    ///
+    /// Without this, preservation tests are worthless: a stash created seconds ago falls inside any
+    /// sane expiry window, so it survives an *unsafe* reflog invocation just as happily as a safe
+    /// one. Backdating is what makes the window actually reach the entries, and therefore what
+    /// makes these tests able to fail. Verified by mutation: with backdated entries the unsafe
+    /// `--expire`/`--expire-unreachable` CLI form deletes every stash, while the config-driven form
+    /// `expire_reflog` uses keeps all of them.
+    ///
+    /// Reflog line format: `<old> <new> Name <email> <unix_ts> <tz>\tmessage`.
+    fn backdate_stash_reflog(path: &Path) {
+        let log = path.join(".git/logs/refs/stash");
+        let contents = std::fs::read_to_string(&log).expect("stash reflog exists");
+        let old_ts = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs())
+            - 60 * 24 * 3600;
+
+        let rewritten: String = contents
+            .lines()
+            .map(|line| {
+                // replace the unix timestamp that precedes the timezone offset
+                let (meta, msg) = line.split_once('\t').unwrap_or((line, ""));
+                let mut fields: Vec<&str> = meta.rsplitn(3, ' ').collect();
+                fields.reverse();
+                // fields = [head..., <unix_ts>, <tz>]
+                let head = fields[0];
+                let tz = fields[2];
+                let out = format!("{head} {old_ts} {tz}");
+                if msg.is_empty() {
+                    format!("{out}\n")
+                } else {
+                    format!("{out}\t{msg}\n")
+                }
+            })
+            .collect();
+
+        std::fs::write(&log, rewritten).expect("rewrite stash reflog");
+    }
+
+    /// Loose object count from `git count-objects -v`'s `count:` field.
+    fn loose_count(path: &Path) -> u64 {
+        let out = run_git(path, &["count-objects", "-v"]);
+        out.lines()
+            .find_map(|l| l.strip_prefix("count:"))
+            .and_then(|v| v.trim().parse().ok())
+            .expect("count: field present")
+    }
+
+    /// Add `n` loose blobs in a single `git add`, which is far faster than one
+    /// `hash-object` process per object.
+    fn add_loose_objects(path: &Path, n: usize) {
+        let dir = path.join("many");
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..n {
+            std::fs::write(dir.join(format!("f{i}.txt")), format!("blob{i}")).unwrap();
+        }
+        run_git(path, &["add", "many"]);
+    }
+
+    /// Manual, non-snapshot stashes must survive maintenance.
+    ///
+    /// Direct regression guard for a bug that already shipped in this repository: reflog expiry
+    /// passed `--expire`/`--expire-unreachable` as CLI options, which makes git skip the per-ref
+    /// config lookup that protects `refs/stash`, and users lost their stashes. See
+    /// `expire_reflog`'s doc comment in `clients::git`.
+    ///
+    /// Two details are what give this test teeth, and both were established by mutating the
+    /// implementation and confirming the test fails:
+    ///
+    /// - **Several stashes, not one.** Only entries *below* the stash tip are unreachable, so a
+    ///   lone stash can survive an unsafe invocation on reachability alone.
+    /// - **Backdated reflog entries.** A stash created seconds ago sits inside any sane expiry
+    ///   window and survives regardless of which form is used.
+    #[tokio::test]
+    async fn test_maintenance_preserves_manual_stashes() {
+        let (git_client, _dir) = setup_repo();
+        let path = git_client.repo_path.clone();
+
+        for i in 0..3 {
+            std::fs::write(path.join("seed.txt"), format!("dirty {i}")).unwrap();
+            run_git(&path, &["stash", "push", "-m", &format!("manual work {i}")]);
+        }
+        backdate_stash_reflog(&path);
+
+        let before = stash_list(&path);
+        assert_eq!(
+            before.lines().count(),
+            3,
+            "precondition: expected 3 stashes, got {before:?}"
+        );
+
+        MaintenanceOp {
+            git_client: git_client.clone(),
+        }
+        .execute()
+        .await
+        .expect("maintenance succeeds");
+
+        assert_eq!(
+            stash_list(&path),
+            before,
+            "maintenance must not disturb the stash stack"
+        );
+    }
+
+    /// A Friendshipper snapshot must survive maintenance.
+    ///
+    /// Deliberately separate from the manual-stash test even though both live in `refs/stash`
+    /// today: if a future change ever filters stashes by message, that would break snapshots while
+    /// leaving the manual-stash test passing.
+    #[tokio::test]
+    async fn test_maintenance_preserves_snapshot() {
+        let (git_client, _dir) = setup_repo();
+        let path = git_client.repo_path.clone();
+
+        // a plain stash underneath, so the snapshot is not the reachable tip
+        std::fs::write(path.join("seed.txt"), "plain").unwrap();
+        run_git(&path, &["stash", "push", "-m", "plain stash"]);
+
+        std::fs::write(path.join("seed.txt"), "snapshot me").unwrap();
+        git_client
+            .save_snapshot_all("test snapshot")
+            .await
+            .expect("save snapshot");
+
+        backdate_stash_reflog(&path);
+
+        let before = git_client.list_snapshots().await.expect("list snapshots");
+        assert_eq!(before.len(), 1, "precondition: snapshot was not created");
+
+        MaintenanceOp {
+            git_client: git_client.clone(),
+        }
+        .execute()
+        .await
+        .expect("maintenance succeeds");
+
+        let after = git_client.list_snapshots().await.expect("list snapshots");
+        assert_eq!(
+            after.len(),
+            before.len(),
+            "maintenance must not delete snapshots"
+        );
+        assert_eq!(after[0].commit, before[0].commit);
+    }
+
+    /// Maintenance must actually pack objects. The preservation tests above would both pass
+    /// against an implementation that did nothing at all.
+    ///
+    /// Seeds generously on purpose: git's incremental thresholds sample a single fanout directory,
+    /// so a few hundred loose objects can legitimately fall below the bar and make this pass for
+    /// the wrong reason.
+    #[tokio::test]
+    async fn test_maintenance_packs_loose_objects() {
+        let (git_client, _dir) = setup_repo();
+        let path = git_client.repo_path.clone();
+
+        add_loose_objects(&path, 3000);
+        let before = loose_count(&path);
+        assert!(
+            before >= 3000,
+            "precondition: expected many loose objects, got {before}"
+        );
+
+        MaintenanceOp {
+            git_client: git_client.clone(),
+        }
+        .execute()
+        .await
+        .expect("maintenance succeeds");
+
+        let after = loose_count(&path);
+        assert!(
+            after < before,
+            "maintenance must pack loose objects: {before} -> {after}"
+        );
+    }
+
+    /// Unreachable objects must keep git's two-week grace period, so a dangling commit — work
+    /// left behind by a reset or an abandoned rebase — stays recoverable after maintenance.
+    ///
+    /// Guards the second Decision 10 invariant: `MaintenanceOp` must use
+    /// `run_gc_preserve_unreachable` (plain `git gc`), never `run_gc` (`git gc --prune=now`).
+    /// Verified by mutation: swapping in `run_gc` makes this test fail.
+    #[tokio::test]
+    async fn test_maintenance_preserves_dangling_commit() {
+        let (git_client, _dir) = setup_repo();
+        let path = git_client.repo_path.clone();
+
+        // create a commit, then orphan it
+        std::fs::write(path.join("doomed.txt"), "doomed").unwrap();
+        run_git(&path, &["add", "doomed.txt"]);
+        run_git(&path, &["commit", "-m", "doomed"]);
+        let doomed = run_git(&path, &["rev-parse", "HEAD"]).trim().to_string();
+        run_git(&path, &["reset", "--hard", "HEAD~1"]);
+
+        // drop the reflog entries that would otherwise keep it reachable, so the only thing
+        // standing between this commit and deletion is gc's prune expiry
+        run_git(
+            &path,
+            &[
+                "reflog",
+                "expire",
+                "--expire=now",
+                "--expire-unreachable=now",
+                "--all",
+            ],
+        );
+
+        MaintenanceOp {
+            git_client: git_client.clone(),
+        }
+        .execute()
+        .await
+        .expect("maintenance succeeds");
+
+        let out = run_git(&path, &["cat-file", "-t", &doomed]);
+        assert_eq!(
+            out.trim(),
+            "commit",
+            "dangling commit {doomed} must remain recoverable after maintenance"
+        );
+    }
+
+    #[test]
+    fn test_maintenance_op_name() {
+        let (tx, _rx) = mpsc::channel();
+        let op = MaintenanceOp {
+            git_client: git::Git::new(PathBuf::from("."), tx),
+        };
+        assert_eq!(op.get_name(), "RepoMaintenance");
     }
 }

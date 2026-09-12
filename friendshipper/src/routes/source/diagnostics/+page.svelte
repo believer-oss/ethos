@@ -48,7 +48,9 @@
 	let objectCountStatus: ObjectCountResponse = {
 		inPackCount: 0,
 		isHealthy: true,
-		rawOutput: ''
+		rawOutput: '',
+		looseCount: 0,
+		lastPacked: null
 	};
 
 	let unrealVersionSelectorStatus = {
@@ -348,7 +350,9 @@
 					</Button>
 					<span class="text-xs text-gray-300"
 						>Runs <code>git gc</code> to optimize the repository. Unreachable objects newer than two
-						weeks are kept so lost commits can still be recovered. This may take a while.</span
+						weeks are kept so lost commits can still be recovered. This may take a while. For a fuller
+						pass that also expires old reflog entries and rebuilds the commit-graph, see Background Operations
+						in Preferences.</span
 					>
 				</div>
 			{/if}

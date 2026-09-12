@@ -54,7 +54,8 @@
 		saveChangeSet,
 		loadChangeSet,
 		checkoutTargetBranch,
-		resetEngine
+		resetEngine,
+		runMaintenance
 	} from '$lib/repo';
 	import { getPlaytests } from '$lib/playtests';
 	import { regions } from '$lib/regions';
@@ -76,6 +77,8 @@
 	let configuringNewRepo: boolean = false;
 	let repoName: string = '';
 	let configError: string = '';
+	let showMaintenanceConfirm: boolean = false;
+	let maintenanceInFlight: boolean = false;
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
 	$: isEngineTypeSource = localAppConfig.engineType === 'Source';
@@ -417,6 +420,27 @@
 			await emit('error', e);
 		}
 		showProgressModal = false;
+	};
+
+	// Runs immediately rather than on Apply, matching every other action button in this modal. The
+	// toggle above it is part of localAppConfig and so only takes effect on Apply; the helper text
+	// says so rather than leaving the asymmetry to be discovered.
+	const handleRunMaintenance = async () => {
+		showMaintenanceConfirm = false;
+		maintenanceInFlight = true;
+		try {
+			showModal = false;
+			showProgressModal = true;
+			progressModalTitle = 'Running repo maintenance';
+			await runMaintenance();
+
+			await emit('success', 'Repo maintenance complete.');
+		} catch (e) {
+			showModal = false;
+			await emit('error', e);
+		}
+		showProgressModal = false;
+		maintenanceInFlight = false;
 	};
 </script>
 
@@ -767,6 +791,47 @@
 		</div>
 
 		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
+			<CodeBranchSolid />
+			Background Operations
+		</h1>
+		<div class="rounded-lg border border-gray-300 dark:border-gray-300">
+			<div class="m-4 flex flex-col gap-3">
+				<div class="flex flex-row gap-2 items-center">
+					<Label class="text-white">Disable background git operations</Label>
+					<Toggle
+						bind:checked={localAppConfig.disableBackgroundGitOperations}
+						class="w-8 h-8 text-4xl"
+					/>
+				</div>
+				<p class="text-sm text-primary-400">
+					Stops the periodic <code>git fetch</code> and the 30-minute maintenance pass. Useful if you
+					run several tools or terminals against this repository and they contend for git locks.
+				</p>
+				<Helper class="text-sm text-gray-300 dark:text-gray-300">
+					While disabled: commits ahead/behind and upstream-conflict warnings only refresh when you
+					press refresh or sync, and <strong>keeping the repository packed becomes your job</strong>
+					- use the button below. File status and file locks are unaffected. Takes effect when you press
+					Apply.
+				</Helper>
+				<div class="flex gap-2 items-center">
+					<Button
+						disabled={maintenanceInFlight || requestInFlight}
+						class="w-1/2"
+						on:click={() => {
+							showMaintenanceConfirm = true;
+						}}
+					>
+						Run Maintenance Now
+					</Button>
+					<span class="w-full text-sm text-gray-300">
+						Expire old reflog entries, repack the object store and rebuild the commit-graph. Usually
+						2-10 minutes on a large repository.
+					</span>
+				</div>
+			</div>
+		</div>
+
+		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
 			<AtomOutline />
 			Engine Options
 		</h1>
@@ -1016,3 +1081,54 @@
 </Modal>
 
 <ProgressModal title={progressModalTitle} showModal={showProgressModal} />
+
+<!-- Follows the inline-Modal confirmation pattern in +layout.svelte rather than
+	ConfirmModal.svelte, which takes only a title string and has no slot for a body. -->
+<Modal
+	open={showMaintenanceConfirm}
+	size="sm"
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	on:close={() => {
+		showMaintenanceConfirm = false;
+	}}
+>
+	<div class="flex flex-col gap-4">
+		<div class="text-white">
+			<h3 class="text-lg font-semibold mb-2">Run repo maintenance?</h3>
+			<p class="text-gray-300 mb-2">This will:</p>
+			<ul class="text-gray-300 list-disc list-inside mb-3">
+				<li>expire reflog entries older than 30 days</li>
+				<li>repack the object store (<code>git gc</code>)</li>
+				<li>rebuild the commit-graph</li>
+			</ul>
+			<p class="text-gray-300 mb-2">
+				This usually takes <strong>2-10 minutes</strong> on a large repository. It
+				<strong>cannot be cancelled once started</strong>, and the app is locked until it finishes.
+				Syncs, submits and reverts will queue behind it.
+			</p>
+			<p class="text-gray-300 mb-2">
+				Expiring reflog entries removes the recovery references for
+				<strong>dangling commits</strong> - work left behind by a reset or an abandoned rebase. Unreachable
+				objects are still kept for a further two weeks, but this is the step that starts that clock.
+				If you have unmerged work on a detached HEAD, land it on a branch first.
+			</p>
+			<p class="text-gray-300">Your stashes and Friendshipper snapshots are always preserved.</p>
+		</div>
+		<div class="flex gap-2 justify-end">
+			<!-- `outline` rather than color="gray": this flowbite version has no gray Button color,
+			     and `outline` is what this file already uses for its secondary action (Discard). -->
+			<Button
+				outline
+				on:click={() => {
+					showMaintenanceConfirm = false;
+				}}
+			>
+				Cancel
+			</Button>
+			<Button on:click={handleRunMaintenance}>Run Maintenance</Button>
+		</div>
+	</div>
+</Modal>

@@ -90,7 +90,9 @@
 		syncEngineCommitWithUproject,
 		syncLatest,
 		syncUprojectWithEngineCommit,
-		zipLocalChanges
+		zipLocalChanges,
+		AllowOfflineCommunication,
+		SkipDllCheck
 	} from '$lib/repo';
 	import {
 		activeProjectConfig,
@@ -274,14 +276,24 @@
 		await openUrl(fullPath);
 	};
 
-	const refreshFiles = async (triggerLoading: boolean): Promise<boolean> => {
+	// `fetchFirst` is a separate parameter on purpose: `triggerLoading` is a spinner flag, and six
+	// of the seven `refreshFiles(true)` call sites are post-operation refreshes rather than user
+	// clicks. Only the refresh button passes `fetchFirst`.
+	const refreshFiles = async (
+		triggerLoading: boolean,
+		fetchFirst: boolean = false
+	): Promise<boolean> => {
 		if (triggerLoading) {
 			loading = true;
 		}
 
 		let succeeded = false;
 		try {
-			$repoStatus = await getRepoStatus();
+			$repoStatus = await getRepoStatus(
+				SkipDllCheck.False,
+				AllowOfflineCommunication.False,
+				fetchFirst
+			);
 			succeeded = true;
 		} catch (e) {
 			await emit('error', e);
@@ -1233,7 +1245,24 @@
 <div class="flex items-center justify-between gap-2">
 	<div class="flex items-center gap-2 justify-between">
 		<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">Submit Changes</p>
-		<Button disabled={loading} class="!p-1.5" primary on:click={() => refreshFiles(true)}>
+		<!-- Sits next to the conflict column, which is the thing that actually goes stale while
+		     background git is paused. -->
+		{#if $appConfig.disableBackgroundGitOperations}
+			<span
+				class="text-xs text-yellow-500 border border-yellow-600 rounded px-1.5 py-0.5 whitespace-nowrap"
+			>
+				git paused
+			</span>
+			<Tooltip
+				class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+				placement="bottom"
+			>
+				Background git operations are disabled, so upstream-conflict warnings only refresh when you
+				press refresh or sync.
+			</Tooltip>
+		{/if}
+		<!-- the only refreshFiles call that fetches: an explicit user request to go and look -->
+		<Button disabled={loading} class="!p-1.5" primary on:click={() => refreshFiles(true, true)}>
 			{#if loading}
 				<Spinner size="4" />
 			{:else}

@@ -79,6 +79,9 @@ where
     pub allow_offline_communication: bool,
     pub skip_display_names: bool,
     pub skip_engine_update: bool,
+    /// Fetch before computing status. Set only by user-initiated refresh actions, and only acted on
+    /// while background git operations are disabled.
+    pub fetch_first: bool,
 }
 
 #[async_trait]
@@ -104,6 +107,23 @@ where
 {
     #[instrument(name = "StatusOp::run", err, skip_all)]
     pub(crate) async fn run(&self) -> Result<RepoStatus, CoreError> {
+        // A user-initiated refresh fetches first, but only while the background fetch loop is
+        // disabled — otherwise the loop has already done it seconds ago and this would just add a
+        // network round-trip to a button that is currently instant.
+        //
+        // Upstream-conflict detection (`get_modified_upstream` below) diffs against the *local*
+        // remote-tracking refs, so with the loop off those refs go stale and conflicts stop being
+        // flagged. This is what makes the guard recoverable on demand.
+        //
+        // Read the bool and drop the guard before awaiting: `app_config` is a `parking_lot` lock
+        // whose guard is `!Send`.
+        let background_disabled = self.app_config.read().disable_background_git_operations;
+        if self.fetch_first && background_disabled {
+            self.git_client
+                .fetch(git::ShouldPrune::Yes, git::Opts::new_without_logs())
+                .await?;
+        }
+
         let locks_future = self.git_client.verify_locks();
         let status_future = self.git_client.status(vec![]);
 
@@ -665,6 +685,8 @@ pub struct StatusParams {
     pub skip_display_names: bool,
     #[serde(default)]
     pub skip_engine_update: bool,
+    #[serde(default)]
+    pub fetch_first: bool,
 }
 
 pub async fn status_handler<T>(
@@ -709,6 +731,7 @@ where
         allow_offline_communication: params.allow_offline_communication,
         skip_display_names: params.skip_display_names,
         skip_engine_update: params.skip_engine_update,
+        fetch_first: params.fetch_first,
     };
 
     // make sure this status operation is executed behind any queued operations
@@ -895,9 +918,78 @@ mod tests {
             allow_offline_communication: false,
             skip_display_names: true,
             skip_engine_update: true,
+            fetch_first: false,
         };
 
         (status_op, repo_status)
+    }
+
+    /// Did a fetch happen? `git fetch` writes `.git/FETCH_HEAD`; the fixture only ever pushes, so
+    /// the file's appearance is an unambiguous signal.
+    fn fetch_head_path(repo: &std::path::Path) -> std::path::PathBuf {
+        repo.join(".git/FETCH_HEAD")
+    }
+
+    fn clear_fetch_marker(repo: &std::path::Path) {
+        let _ = std::fs::remove_file(fetch_head_path(repo));
+        assert!(
+            !fetch_head_path(repo).exists(),
+            "precondition: FETCH_HEAD should be absent before the run"
+        );
+    }
+
+    /// The full gate: a fetch happens only when the refresh was user-initiated **and** the
+    /// background fetch loop is disabled.
+    ///
+    /// The `fetch_first && !disabled` cell is the one that keeps this feature invisible to anyone
+    /// who has not opted in (resolved Q1): with the loop running it already fetched seconds ago, so
+    /// refreshing must not add a network round-trip to a button that is currently instant.
+    async fn run_with(fetch_first: bool, disabled: bool) -> bool {
+        let (dir, _remote, git) = make_test_repo_with_remote().await;
+        let repo = dir.path();
+
+        let (mut status_op, _status) = build_status_op(git, repo, "main", vec![]);
+        status_op.fetch_first = fetch_first;
+        status_op
+            .app_config
+            .write()
+            .disable_background_git_operations = disabled;
+
+        clear_fetch_marker(repo);
+        status_op.run().await.expect("status run");
+
+        fetch_head_path(repo).exists()
+    }
+
+    /// The full gate, as one test on purpose.
+    ///
+    /// `Git::fetch` guards on a process-global `GIT_FETCH_LOCK`, and its contended branch waits for
+    /// the in-flight fetch and then returns `Ok(())` **without fetching** (`git.rs:248-253`). Two
+    /// of these cases running in parallel can therefore make each other silently skip, so they are
+    /// sequenced rather than split into separate `#[tokio::test]` functions. Splitting them was
+    /// tried and was flaky under mutation.
+    ///
+    /// The `fetch_first && !disabled` cell is the one that keeps this feature invisible to anyone
+    /// who has not opted in (resolved Q1): the background loop already fetched seconds ago, so a
+    /// refresh must not add a network round-trip to a button that is currently instant.
+    #[tokio::test]
+    async fn fetch_on_refresh_is_gated_on_both_conditions() {
+        assert!(
+            run_with(true, true).await,
+            "user-initiated refresh with the background loop disabled must fetch"
+        );
+        assert!(
+            !run_with(true, false).await,
+            "must not fetch while the background loop is running: non-adopters keep today's behavior"
+        );
+        assert!(
+            !run_with(false, true).await,
+            "page loads, file-watcher refreshes and post-operation refreshes must not fetch"
+        );
+        assert!(
+            !run_with(false, false).await,
+            "the default path must not fetch"
+        );
     }
 
     #[tokio::test]

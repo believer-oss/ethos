@@ -91,6 +91,7 @@ export interface AppConfig {
 	initialized: boolean;
 	lastQuickSubmitType?: string;
 	lastQuickSubmitScope?: string;
+	disableBackgroundGitOperations: boolean;
 }
 
 export interface PlaytestProfile {
@@ -390,6 +391,8 @@ export interface ObjectCountResponse {
 	inPackCount: number;
 	isHealthy: boolean;
 	rawOutput: string;
+	looseCount: number;
+	lastPacked: string | null;
 }
 
 export interface GitHubStatusResponse {
