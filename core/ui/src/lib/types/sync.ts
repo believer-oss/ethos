@@ -46,6 +46,12 @@ export type SyncEvent =
 	| { type: 'started'; kind: SyncKind }
 	| { type: 'progress'; kind: SyncKind; progress: SyncProgress }
 	| { type: 'finished'; kind: SyncKind; summary: SyncSummary }
+	/**
+	 * The artifact is in place and recorded as installed. `finished` only means the
+	 * transfer ended - the editor binaries are still being copied into the repo at that
+	 * point, so anything reading what is installed must wait for this.
+	 */
+	| { type: 'installed'; kind: SyncKind }
 	| { type: 'failed'; kind: SyncKind; error: SyncError }
 	| { type: 'cancelled'; kind: SyncKind };
 

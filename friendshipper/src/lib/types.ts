@@ -63,6 +63,43 @@ export interface Project {
 
 export type SyncKind = 'client' | 'engine' | 'editorDlls';
 
+export interface IncomingEngineChange {
+	/** True only when a difference is visible. Not knowing looks the same as no change. */
+	changes: boolean;
+	current: string | null;
+	incoming: string | null;
+}
+
+export type ArtifactState =
+	| 'notInstalled'
+	| 'outOfDate'
+	| 'installed'
+	| 'installedNoExpectation'
+	/** Installed, but we cannot tell which version it should be. */
+	| 'unknown';
+
+export interface ArtifactStatus {
+	kind: SyncKind;
+	state: ArtifactState;
+	/** What the checkout asks for. Null for the client, where you pick the build. */
+	expected: string | null;
+	/** What is on disk. */
+	installed: string | null;
+	location: string | null;
+	syncedAt: string | null;
+	expectationSource: string | null;
+}
+
+export interface VerifyResponse {
+	status: ArtifactStatus;
+	/** False when the version is wrong or missing - nothing was checked or changed. */
+	checked: boolean;
+	/** Files that did not match the build and were rewritten. Zero is healthy. */
+	repaired: number;
+	bytesWritten: number;
+	message: string;
+}
+
 export interface AppConfig {
 	projects: Record<string, Project>;
 	repoPath: string;
@@ -432,7 +469,13 @@ export interface QuickLaunchEvent {
 export enum CheckStatus {
 	Loading,
 	Success,
-	Failure
+	Failure,
+	/**
+	 * Checked, and the answer is genuinely not knowable - as opposed to Loading, which
+	 * will resolve on its own. Distinct so the icon can say "look inside" rather than
+	 * either claiming a clean bill of health or implying it is still working.
+	 */
+	Unknown
 }
 
 // workflow types

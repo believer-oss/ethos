@@ -1,6 +1,7 @@
 import type { ChangeSet, Commit, CommitFileInfo, ModifiedFile } from '@ethos/core';
 import { invoke } from '@tauri-apps/api/core';
 import type {
+	ArtifactStatus,
 	CloneRequest,
 	CommitInfo,
 	FileHistoryResponse,
@@ -17,6 +18,8 @@ import type {
 	RevertFilesRequest,
 	Snapshot,
 	SnapshotPreviewResponse,
+	SyncKind,
+	VerifyResponse,
 	ZipLocalChangesResponse,
 	ZipPreviewResponse
 } from '$lib/types';
@@ -188,7 +191,8 @@ export const generateSln = async (): Promise<void> => invoke('generate_sln');
 
 export const openSln = async (): Promise<void> => invoke('open_sln');
 
-export const forceDownloadDlls = async (): Promise<void> => invoke('force_download_dlls');
+export const forceDownloadDlls = async (commit?: string): Promise<void> =>
+	invoke('force_download_dlls', { commit });
 
 export const forceDownloadEngine = async (): Promise<void> => invoke('force_download_engine');
 
@@ -223,6 +227,12 @@ export const getGithubStatus = async (): Promise<GitHubStatusResponse> =>
 	invoke('get_github_status');
 
 export const runGitGc = async (): Promise<void> => invoke('run_git_gc');
+
+export const getArtifactStatus = async (): Promise<ArtifactStatus[]> =>
+	invoke('get_artifact_status');
+
+export const verifyArtifact = async (kind: SyncKind): Promise<VerifyResponse> =>
+	invoke('verify_artifact', { kind });
 
 export const resetRepo = async (): Promise<void> => invoke('reset_repo');
 

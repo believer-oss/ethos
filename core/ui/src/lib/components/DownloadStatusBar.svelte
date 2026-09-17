@@ -113,6 +113,8 @@
 				retire(payload.kind);
 				break;
 			}
+			// `installed` says the artifact is in place, which the bar has already shown as
+			// finished. It is for whoever reads what is installed, not for progress.
 			default:
 				break;
 		}

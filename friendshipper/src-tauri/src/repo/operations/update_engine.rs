@@ -13,9 +13,12 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::warn;
 use tracing::{info, instrument};
 
+use chrono::Utc;
 use ethos_core::artifact_sync;
 use ethos_core::artifact_sync::SyncEvent;
-use ethos_core::artifact_sync::{DownloadCancellation, SyncError, SyncKind, SyncRequest};
+use ethos_core::artifact_sync::{
+    DownloadCancellation, SyncError, SyncKind, SyncRecord, SyncRequest,
+};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::types::config::EngineType;
@@ -184,7 +187,29 @@ where
                     .await;
                 result.map_err(SyncError::into_core_error)?;
 
+                let recorded = self.artifact_sync.ledger().record(
+                    SyncKind::Engine,
+                    SyncRecord {
+                        version: commit_sha_short.clone(),
+                        target: engine_target.clone(),
+                        staging: None,
+                        archives: archive_urls.clone(),
+                        cache_path: Some(get_engine_cache_path(&self.artifact_sync)),
+                        cache_size_bytes: self.max_cache_size_bytes,
+                        recorded_at: Utc::now(),
+                    },
+                );
+
                 T::post_download(&self.engine_path).await;
+
+                // Only now is the engine actually usable, and only now does the ledger
+                // agree - anything reading it earlier reads the version being replaced. A
+                // record that did not reach disk never got that far, so it says nothing.
+                if recorded {
+                    let _ = self.sync_event_tx.send(SyncEvent::Installed {
+                        kind: SyncKind::Engine,
+                    });
+                }
             } else {
                 assert_eq!(self.engine_type, EngineType::Source);
 

@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 
 use anyhow::anyhow;
 use anyhow::Context;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::{async_trait, Json};
 use serde::Deserialize;
 use serde::Serialize;
@@ -14,10 +14,11 @@ use tracing::info;
 use tracing::warn;
 
 use crate::engine::EngineProvider;
+use chrono::Utc;
 use ethos_core::artifact_sync;
 use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{
-    DownloadCancellation, SyncError, SyncKind, SyncRequest, TARGET_INDEX_CACHE_NAME,
+    DownloadCancellation, SyncError, SyncKind, SyncRecord, SyncRequest, TARGET_INDEX_CACHE_NAME,
 };
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
@@ -168,7 +169,7 @@ where
         let request =
             SyncRequest::download(SyncKind::EditorDlls, &binaries_staging_path, &archive_urls)
                 .with_cache(Some(artifact_sync::CacheControl {
-                    path: binaries_cache_path,
+                    path: binaries_cache_path.clone(),
                     max_size_bytes: self.max_cache_size_bytes,
                 }))
                 .with_transfer_acceleration(self.transfer_acceleration)
@@ -198,6 +199,31 @@ where
         copy_recursively(&binaries_staging_path, &binaries_destination_path)
             .context("Failed to copy dlls to target directory")?;
 
+        // The repo copy, not the staging directory: staging is an implementation detail
+        // of merging downloaded binaries into a checkout, and the copy in the repo is
+        // what the editor actually loads.
+        let recorded = self.artifact_sync.ledger().record(
+            SyncKind::EditorDlls,
+            SyncRecord {
+                version: self.dll_commit.clone(),
+                target: binaries_destination_path.clone(),
+                staging: Some(binaries_staging_path.clone()),
+                archives: archive_urls.clone(),
+                cache_path: Some(binaries_cache_path.clone()),
+                cache_size_bytes: self.max_cache_size_bytes,
+                recorded_at: Utc::now(),
+            },
+        );
+
+        // The download finished long before this: the binaries had still to be copied out
+        // of staging into the repo. Only now do they match what the ledger records - and
+        // if the record did not reach disk, they do not.
+        if recorded {
+            let _ = self.tx.send(SyncEvent::Installed {
+                kind: SyncKind::EditorDlls,
+            });
+        }
+
         info!("dll download and copy to local repo finished");
 
         Ok(())
@@ -208,8 +234,21 @@ where
     }
 }
 
+/// Which editor build to fetch.
+///
+/// Defaults to the one the remote branch needs, which is what a pull wants. The diagnostics
+/// page and the warning banner ask for the one the *local* checkout needs instead - a
+/// different build whenever you are behind origin, and the only one that makes their own
+/// report of the mismatch go away.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadDllsParams {
+    pub commit: Option<String>,
+}
+
 pub async fn download_dlls_handler<T>(
     State(state): State<AppState<T>>,
+    Query(params): Query<DownloadDllsParams>,
 ) -> Result<Json<DownloadResponse>, CoreError>
 where
     T: EngineProvider,
@@ -250,7 +289,9 @@ where
         DownloadDllsOp {
             git_client: state.git(),
             project_name,
-            dll_commit: state.repo_status.read().dll_commit_remote.clone(),
+            dll_commit: params
+                .commit
+                .unwrap_or_else(|| state.repo_status.read().dll_commit_remote.clone()),
             download_symbols: state.app_config.read().editor_download_symbols,
             storage,
             artifact_sync: state.artifact_sync.clone(),
