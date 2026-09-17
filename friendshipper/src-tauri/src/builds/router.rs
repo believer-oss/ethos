@@ -479,7 +479,7 @@ where
 
     let cache_control = CacheControl {
         path: client_cache_dir,
-        max_size_bytes: state.app_config.read().max_client_cache_size_gb * 1024 * 1024 * 1024,
+        max_size_bytes: state.app_config.read().client_cache_size_bytes(),
     };
 
     let local_path_clone = local_path.clone();

@@ -47,6 +47,7 @@ pub struct UpdateEngineOp<T> {
     pub storage: ArtifactStorage,
     pub project: Project,
     pub engine: T,
+    pub max_cache_size_bytes: u64,
 }
 
 #[async_trait]
@@ -160,7 +161,7 @@ where
                     &PathBuf::from(&self.engine_path),
                     Some(artifact_sync::CacheControl {
                         path: cache_path,
-                        max_size_bytes: 100 * 1024 * 1024 * 1024, // 100 GB
+                        max_size_bytes: self.max_cache_size_bytes,
                     }),
                     &archive_urls,
                     self.longtail_tx.clone(),
@@ -361,6 +362,7 @@ where
         storage,
         project,
         engine: state.engine.clone(),
+        max_cache_size_bytes: app_config.engine_cache_size_bytes(),
     })
 }
 

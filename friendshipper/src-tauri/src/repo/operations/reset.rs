@@ -121,6 +121,7 @@ where
                     project,
                     engine: self.engine.clone(),
                     engine_path: engine_path.clone(),
+                    max_cache_size_bytes: self.app_config.read().editor_cache_size_bytes(),
                 };
                 download_dlls_op.execute().await?;
             }
@@ -182,6 +183,7 @@ where
                     storage: self.storage.clone(),
                     project,
                     engine: self.engine.clone(),
+                    max_cache_size_bytes: self.app_config.read().engine_cache_size_bytes(),
                 };
                 update_engine_op.execute().await?;
             }

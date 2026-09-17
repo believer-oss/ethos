@@ -242,8 +242,10 @@
 				progressModalTitle = 'Saving preferences...';
 				await saveChangeSet($changeSets);
 
-				// make sure maxClientCacheSizeGb is a number
+				// number inputs bind as strings
 				localAppConfig.maxClientCacheSizeGb = Number(localAppConfig.maxClientCacheSizeGb);
+				localAppConfig.maxEngineCacheSizeGb = Number(localAppConfig.maxEngineCacheSizeGb);
+				localAppConfig.maxEditorCacheSizeGb = Number(localAppConfig.maxEditorCacheSizeGb);
 
 				const accessToken = $oktaAuth?.getAccessToken();
 				if (accessToken) {
@@ -495,16 +497,26 @@
 			<Tooltip class="text-sm" placement="bottom">
 				Set your display name for joining playtests inside Friendshipper.
 			</Tooltip>
-			<div class="flex flex-row gap-2 items-center justify-between">
-				<div class="flex flex-row gap-2 items-center">
-					<Checkbox
-						bind:checked={localAppConfig.groupDownloadedBuildsByPlaytest}
-						class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
-					/>
-					<Label class="text-gray-400">Group downloaded builds by playtest</Label>
-				</div>
-				<div class="flex items-center gap-2 ml-4">
-					<Label class="text-gray-400 whitespace-nowrap">Max Cache (GB):</Label>
+			<div class="flex flex-row gap-2 items-center">
+				<Checkbox
+					bind:checked={localAppConfig.groupDownloadedBuildsByPlaytest}
+					class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
+				/>
+				<Label class="text-gray-400">Group downloaded builds by playtest</Label>
+			</div>
+			<Tooltip class="text-sm items-center" placement="bottom">
+				Group downloaded builds by playtest. This will allow you to keep multiple playtests synced
+				at once. However, your initial sync of each playtest <span class="font-bold"
+					>will take longer</span
+				>. This option also uses significantly more disk space. Old clients are never deleted
+				automatically, so you will need to remove those by hand.
+			</Tooltip>
+			<!-- Their own row, and wrapping: three budgets and a label do not fit on a line with
+			anything else, and squeezed onto one they push the last of them off the panel. -->
+			<div class="flex flex-row flex-wrap items-center gap-x-4 gap-y-2">
+				<Label class="text-gray-400 whitespace-nowrap">Cache size (GB):</Label>
+				<div class="flex items-center gap-2">
+					<Label class="text-gray-400 whitespace-nowrap">Client</Label>
 					<Input
 						type="number"
 						min="1"
@@ -512,14 +524,42 @@
 						bind:value={localAppConfig.maxClientCacheSizeGb}
 					/>
 				</div>
+				<div class="flex items-center gap-2">
+					<Label class="text-gray-400 whitespace-nowrap">Engine</Label>
+					<Input
+						type="number"
+						min="1"
+						class="h-8 w-20 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						bind:value={localAppConfig.maxEngineCacheSizeGb}
+					/>
+				</div>
+				<div class="flex items-center gap-2">
+					<Label class="text-gray-400 whitespace-nowrap">Editor</Label>
+					<Input
+						type="number"
+						min="1"
+						class="h-8 w-20 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						bind:value={localAppConfig.maxEditorCacheSizeGb}
+					/>
+				</div>
 			</div>
 			<Tooltip class="text-sm items-center" placement="bottom">
-				Group downloaded builds by playtest. This will allow you to keep multiple playtests synced
-				at once. However, your initial sync of each playtest <span class="font-bold"
-					>will take longer</span
-				>. This option also uses significantly more disk space. The max cache size controls when
-				older cached files will be deleted. Old clients will never automatically be deleted, so you
-				will need to manually delete them.
+				How much disk each download may keep as cache. Cached blocks are what make a repeat sync
+				fast and a cancelled one resumable; when a cache passes its budget the least recently used
+				blocks are evicted first. These do not limit the downloads themselves, only what is kept to
+				speed up the next one.
+			</Tooltip>
+			<div class="flex flex-row gap-2 items-center">
+				<Checkbox
+					bind:checked={localAppConfig.s3TransferAcceleration}
+					class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
+				/>
+				<Label class="text-gray-400">S3 Transfer Acceleration</Label>
+			</div>
+			<Tooltip class="text-sm items-center" placement="bottom">
+				Routes downloads over Amazon's edge network. Usually faster the further you are from the
+				bucket's region, and costs more per gigabyte. Turn it off if downloads are slower with it on
+				than without.
 			</Tooltip>
 			<div class="flex flex-row gap-2">
 				<Checkbox

@@ -87,6 +87,9 @@ export interface AppConfig {
 	serverless: boolean;
 	selectedArtifactProject: string;
 	maxClientCacheSizeGb: number;
+	maxEngineCacheSizeGb: number;
+	maxEditorCacheSizeGb: number;
+	s3TransferAcceleration: boolean;
 	playtestRegion: string;
 	initialized: boolean;
 	lastQuickSubmitType?: string;
