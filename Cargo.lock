@@ -2628,7 +2628,6 @@ dependencies = [
  "futures",
  "globset",
  "graphql_client",
- "hex",
  "http 0.2.12",
  "hyper 0.14.32",
  "hyper-rustls 0.24.2",
@@ -2664,7 +2663,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "serde_yaml",
- "sha2 0.10.9",
  "sysinfo",
  "tauri",
  "tempfile",
@@ -2677,10 +2675,8 @@ dependencies = [
  "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "ureq",
  "urlencoding",
  "walkdir",
- "which",
  "windows 0.56.0",
 ]
 
@@ -3938,7 +3934,7 @@ dependencies = [
  "rustls-native-certs 0.6.3",
  "tokio",
  "tokio-rustls 0.24.1",
- "webpki-roots 0.25.4",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -7556,7 +7552,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
- "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -10058,22 +10053,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
-name = "ureq"
-version = "2.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
-dependencies = [
- "base64 0.22.1",
- "flate2",
- "log",
- "once_cell",
- "rustls 0.23.45",
- "rustls-pki-types",
- "url",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10493,24 +10472,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 
 [[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.9",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
 name = "webview2-com"
 version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10551,18 +10512,6 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
-
-[[package]]
-name = "which"
-version = "4.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ba24419a2078cd2b0f2ede2691b6c66d8e47836da3b6db8265ebad47afbfc7"
-dependencies = [
- "either",
- "home",
- "once_cell",
- "rustix 0.38.44",
-]
 
 [[package]]
 name = "winapi"

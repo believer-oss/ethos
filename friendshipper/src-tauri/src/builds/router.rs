@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
-use ethos_core::artifact_sync::{CacheControl, SyncKind};
+use ethos_core::artifact_sync::{CacheControl, SyncErrorClass, SyncKind, SyncRequest};
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -420,7 +420,7 @@ where
     let remote_path = payload
         .method_prefix
         .get_storage_url(&payload.artifact_entry);
-    let tx = state.longtail_tx.clone();
+    let tx = state.sync_event_tx.clone();
 
     // make a client_cache dir if it doesn't exist
     let client_cache_dir = local_path.join("client_cache");
@@ -482,49 +482,65 @@ where
 
     let local_path_clone = local_path.clone();
     let downloads = state.downloads.clone();
-    match fs::create_dir_all(&local_path_clone) {
-        Ok(_) => {
-            let cancel = downloads.begin(SyncKind::Client);
-
-            info!("Starting download...");
-            let longtail = state.artifact_sync.clone();
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    info!("Client sync cancelled");
-
-                    // Still a kill: the download is a child process until it moves
-                    // in-process, and a subprocess cannot observe a token.
-                    let mut guard = longtail.child_process.lock();
-                    if let Some(mut child) = guard.take() {
-                        info!("Killing child process");
-                        child.kill().unwrap();
-                    }
-
-                    downloads.finish(SyncKind::Client);
-                    return Ok(Json(false));
-                }
-                download_result = async move {
-                    tokio::task::spawn_blocking(move || {
-                        info!("Starting actual download...");
-                        state.artifact_sync.get_archive(
-                            &local_path_clone,
-                            Some(cache_control),
-                            &archive_urls,
-                            tx,
-                            &aws_client,
-                        )
-                    }).await
-                } => {
-                    info!("Download branch complete with result: {:?}", download_result);
-                }
-            }
-        }
-        Err(e) => return Err(CoreError::Internal(e.into())),
+    if let Err(e) = fs::create_dir_all(&local_path_clone) {
+        return Err(CoreError::Internal(e.into()));
     }
 
-    downloads.finish(SyncKind::Client);
+    let Some(download) = downloads.begin(SyncKind::Client) else {
+        return Err(CoreError::Internal(anyhow::anyhow!(
+            "A game client sync is already running. Wait for it to finish, or cancel it."
+        )));
+    };
+    let transfer_acceleration = state.app_config.read().s3_transfer_acceleration;
 
-    T::post_download(&local_path).await;
+    // On its own task, holding the registration, rather than inline in this handler.
+    // A download can run for hours on one HTTP request, and if the connection dies -
+    // a laptop sleeping is enough - the handler future is dropped. Awaiting inline, that
+    // would abort longtail between blocks with the store never closed, no event emitted,
+    // and the status bar left showing a download that is not running. On a task it
+    // finishes and reports either way.
+    //
+    // longtail runs its CPU work on its own rayon pool and its block IO on the store's
+    // workers, so this does not occupy a runtime thread the way the old blocking call did.
+    // There is no select! either - cancellation is the token.
+    let artifact_sync = state.artifact_sync.clone();
+    let aws = aws_client.clone();
+    let target = local_path_clone.clone();
+    let archives = archive_urls.clone();
+    let token = download.token();
+    let handle = tokio::spawn(async move {
+        // The guard moves in, so the registration lasts exactly as long as the download.
+        let _download = download;
+        let request = SyncRequest::download(SyncKind::Client, &target, &archives)
+            .with_cache(Some(cache_control))
+            .with_transfer_acceleration(transfer_acceleration);
+        let result = artifact_sync.get_archive(request, tx, &aws, token).await;
+
+        // Whatever the engine does once the files land belongs with the download, not
+        // with the handler. If the connection dropped, the handler is gone but the files
+        // are on disk and still need it.
+        if result.is_ok() {
+            T::post_download(&target).await;
+        }
+
+        result
+    });
+
+    let result = match handle.await {
+        Ok(result) => result,
+        Err(e) => {
+            return Err(CoreError::Internal(anyhow::anyhow!(
+                "The game client sync did not finish: {e}"
+            )))
+        }
+    };
+
+    match result {
+        Ok(summary) => info!("Client sync complete: {summary:?}"),
+        // Cancelling is a normal outcome with its own signal to the caller, not a failure.
+        Err(e) if e.class == SyncErrorClass::Cancelled => return Ok(Json(false)),
+        Err(e) => return Err(e.into_core_error()),
+    }
 
     if let Some(launch_options) = payload.launch_options {
         match launch_options.launch_mode {

@@ -6,12 +6,10 @@
 
 use std::thread;
 
-use ethos_core::artifact_sync::ArtifactSync;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WebviewWindow};
@@ -19,7 +17,7 @@ use tauri_plugin_notification::NotificationExt;
 use tracing::{debug, error, info, warn};
 
 use ethos_core::tauri::State;
-use ethos_core::{clients, msg::LongtailMsg, utils, utils::logging};
+use ethos_core::{artifact_sync::SyncEvent, clients, utils, utils::logging};
 use friendshipper::state::{FrontendOp, Notification};
 use friendshipper::APP_NAME;
 
@@ -28,19 +26,9 @@ use ethos_core::tauri::command::*;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Clone, Debug, Serialize)]
-struct LongtailProgressCaptures {
-    progress: String,
-    elapsed: String,
-    remaining: String,
-}
-
 mod command;
 
-// see test_longtail_regex() for examples of matches
 lazy_static! {
-    static ref LONGTAIL_PROGRESS_REGEX: Regex =
-        Regex::new(r"(\d{1,3}%).*?((?:\d+[a-z])+):?((?:\d+[a-z])+)?").unwrap();
     static ref ANSI_REGEX: Regex =
         Regex::new(r"[\u001b\u009b]\[[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]")
             .unwrap();
@@ -464,46 +452,29 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
-                let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
-                let longtail_handle = handle.clone();
+                let (sync_event_tx, sync_event_rx) = std::sync::mpsc::channel::<SyncEvent>();
+                let sync_event_handle = handle.clone();
                 thread::spawn(move || {
-                    while let Ok(msg) = longtail_rx.recv() {
-                        ArtifactSync::log_message(msg.clone());
-
-                        if let LongtailMsg::Log(s) = msg {
-                            longtail_handle.emit("longtail-log", &s).unwrap();
-
-                            if let Some(captures) = LONGTAIL_PROGRESS_REGEX.captures(&s) {
-                                let progress: String = captures
-                                    .get(1)
-                                    .map(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let elapsed: String = captures
-                                    .get(2)
-                                    .map(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let remaining: String = captures
-                                    .get(3)
-                                    .map(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-
-                                longtail_handle
-                                    .emit(
-                                        "longtail-sync-progress",
-                                        LongtailProgressCaptures {
-                                            progress,
-                                            elapsed,
-                                            remaining,
-                                        },
-                                    )
-                                    .unwrap();
-                            } else {
-                                warn!("failed to parse longtail log: {}", &s);
+                    while let Ok(event) = sync_event_rx.recv() {
+                        match &event {
+                            SyncEvent::Started { kind } => info!("Started {kind} download"),
+                            SyncEvent::Finished { kind, summary } => info!(
+                                "Finished {kind} download: {} bytes across {} assets, \
+                                 {} blocks fetched, {} assets removed",
+                                summary.bytes_written,
+                                summary.assets_written,
+                                summary.blocks_fetched,
+                                summary.assets_removed
+                            ),
+                            SyncEvent::Failed { kind, error } => {
+                                error!("{kind} download failed: {error}")
                             }
+                            SyncEvent::Cancelled { kind } => info!("Cancelled {kind} download"),
+                            // Far too frequent to log; the UI renders these.
+                            SyncEvent::Progress { .. } => {}
                         }
+
+                        sync_event_handle.emit("sync-event", &event).unwrap();
                     }
                 });
 
@@ -540,7 +511,7 @@ fn main() -> Result<(), CoreError> {
                 tauri::async_runtime::spawn(async move {
                     let server = friendshipper::server::Server::new(
                         port,
-                        longtail_tx.clone(),
+                        sync_event_tx.clone(),
                         notification_tx.clone(),
                         frontend_op_tx,
                         server_log_path,
@@ -610,20 +581,5 @@ fn main() -> Result<(), CoreError> {
         Err(CoreError::Internal(anyhow::anyhow!(
             "Failed to initialize app config"
         )))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::LONGTAIL_PROGRESS_REGEX;
-
-    #[test]
-    fn test_longtail_regex() {
-        let caps = LONGTAIL_PROGRESS_REGEX.captures("Updating version             9%: |████                                              |: [30s:6m7s]");
-        caps.expect("Failed to match string");
-        let caps = LONGTAIL_PROGRESS_REGEX.captures("Indexing version            55%:|███████████████████████████                       |: [0s]");
-        caps.expect("Failed to match string");
-        let caps = LONGTAIL_PROGRESS_REGEX.captures("Updating version             1%: |                                                  |: [0s]");
-        caps.expect("Failed to match string");
     }
 }

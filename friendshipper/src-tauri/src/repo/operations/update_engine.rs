@@ -14,10 +14,10 @@ use tracing::warn;
 use tracing::{info, instrument};
 
 use ethos_core::artifact_sync;
-use ethos_core::artifact_sync::DownloadCancellation;
+use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::artifact_sync::{DownloadCancellation, SyncError, SyncKind, SyncRequest};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::types::config::EngineType;
 use ethos_core::types::config::UProject;
 use ethos_core::types::errors::CoreError;
@@ -42,7 +42,7 @@ pub struct UpdateEngineOp<T> {
     pub engine_type: EngineType,
     pub artifact_sync: artifact_sync::ArtifactSync,
     pub downloads: DownloadCancellation,
-    pub longtail_tx: Sender<LongtailMsg>,
+    pub sync_event_tx: Sender<SyncEvent>,
     pub aws_client: AWSClient,
     pub git_client: git::Git,
     pub download_symbols: bool,
@@ -50,6 +50,7 @@ pub struct UpdateEngineOp<T> {
     pub project: Project,
     pub engine: T,
     pub max_cache_size_bytes: u64,
+    pub transfer_acceleration: bool,
 }
 
 #[async_trait]
@@ -159,25 +160,29 @@ where
 
                 let cache_path = get_engine_cache_path(&self.artifact_sync);
 
-                let download_result = self.artifact_sync.get_archive(
-                    &PathBuf::from(&self.engine_path),
-                    Some(artifact_sync::CacheControl {
-                        path: cache_path,
-                        max_size_bytes: self.max_cache_size_bytes,
-                    }),
-                    &archive_urls,
-                    self.longtail_tx.clone(),
-                    &self.aws_client,
-                );
-                match download_result {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(CoreError::Internal(anyhow!(
-                            "Failed to download engine archive: {:?}",
-                            e
-                        )));
-                    }
-                }
+                let Some(download) = self.downloads.begin(SyncKind::Engine) else {
+                    return Err(CoreError::Internal(anyhow!(
+                        "An engine download is already running."
+                    )));
+                };
+                let engine_target = PathBuf::from(&self.engine_path);
+                let request =
+                    SyncRequest::download(SyncKind::Engine, &engine_target, &archive_urls)
+                        .with_cache(Some(artifact_sync::CacheControl {
+                            path: cache_path,
+                            max_size_bytes: self.max_cache_size_bytes,
+                        }))
+                        .with_transfer_acceleration(self.transfer_acceleration);
+                let result = self
+                    .artifact_sync
+                    .get_archive(
+                        request,
+                        self.sync_event_tx.clone(),
+                        &self.aws_client,
+                        download.token(),
+                    )
+                    .await;
+                result.map_err(SyncError::into_core_error)?;
 
                 T::post_download(&self.engine_path).await;
             } else {
@@ -259,7 +264,7 @@ where
         }
     };
 
-    let tx_lock = state.longtail_tx.clone();
+    let tx_lock = state.sync_event_tx.clone();
     let app_config = state.app_config.read();
 
     let uproject_path =
@@ -358,7 +363,7 @@ where
         engine_type: app_config.engine_type,
         artifact_sync: state.artifact_sync.clone(),
         downloads: state.downloads.clone(),
-        longtail_tx: tx_lock.clone(),
+        sync_event_tx: tx_lock.clone(),
         aws_client,
         git_client: state.git(),
         download_symbols: app_config.engine_download_symbols,
@@ -366,6 +371,7 @@ where
         project,
         engine: state.engine.clone(),
         max_cache_size_bytes: app_config.engine_cache_size_bytes(),
+        transfer_acceleration: app_config.s3_transfer_acceleration,
     })
 }
 

@@ -450,7 +450,7 @@ pub async fn setup_with_repo_config(
     });
 
     info!("Started operation worker. Creating channels for longtail, git, and gameserver.");
-    let (longtail_tx, longtail_rx) = std::sync::mpsc::channel();
+    let (sync_event_tx, sync_event_rx) = std::sync::mpsc::channel();
     let (git_tx, git_rx) = std::sync::mpsc::channel();
     let (sync_phase_tx, _sync_phase_rx) = std::sync::mpsc::channel::<String>();
     let (build_tools_tx, _build_tools_rx) = std::sync::mpsc::channel();
@@ -476,7 +476,7 @@ pub async fn setup_with_repo_config(
 
     info!("Started git logger. Creating longtail logger.");
     std::thread::spawn(move || {
-        while let Ok(msg) = longtail_rx.recv() {
+        while let Ok(msg) = sync_event_rx.recv() {
             info!("longtail: {:?}", msg);
         }
     });
@@ -500,7 +500,7 @@ pub async fn setup_with_repo_config(
         dynamic_config,
         config_file,
         Some(storage),
-        longtail_tx,
+        sync_event_tx,
         op_tx,
         notification_tx,
         frontend_op_tx,
@@ -519,23 +519,6 @@ pub async fn setup_with_repo_config(
     info!("[testing module] created app state");
 
     state.artifact_sync.download_path = LocalDownloadPath(TEST_DIR.join("longtail-downloads"));
-
-    if state.artifact_sync.exec_path.is_none() && state.artifact_sync.update_exec().is_err() {
-        let tx_lock = state.longtail_tx.clone();
-        if let Err(e) = state.artifact_sync.get_longtail(tx_lock.clone()) {
-            info!("failed to get longtail executable: {:?}", e);
-            info!(
-                "[testing module] failed to get longtail executable: {:?}",
-                e
-            );
-        }
-        _ = state.artifact_sync.update_exec();
-    };
-
-    info!(
-        "[testing module] longtail update done. exe path: {:?}",
-        &state.artifact_sync.exec_path
-    );
 
     let mut server = TestServer::new(state, exit_tx);
 

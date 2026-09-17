@@ -15,10 +15,12 @@ use tracing::warn;
 
 use crate::engine::EngineProvider;
 use ethos_core::artifact_sync;
-use ethos_core::artifact_sync::DownloadCancellation;
+use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::artifact_sync::{
+    DownloadCancellation, SyncError, SyncKind, SyncRequest, TARGET_INDEX_CACHE_NAME,
+};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::config::Project;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::storage::{ArtifactBuildConfig, ArtifactConfig, ArtifactKind, Platform};
@@ -43,12 +45,13 @@ pub struct DownloadDllsOp<T> {
     pub storage: ArtifactStorage,
     pub artifact_sync: artifact_sync::ArtifactSync,
     pub downloads: DownloadCancellation,
-    pub tx: Sender<LongtailMsg>,
+    pub tx: Sender<SyncEvent>,
     pub aws_client: AWSClient,
     pub project: Project,
     pub engine: T,
     pub engine_path: PathBuf,
     pub max_cache_size_bytes: u64,
+    pub transfer_acceleration: bool,
 }
 
 #[async_trait]
@@ -153,27 +156,39 @@ where
             };
         }
 
-        let dll_download_result = self.artifact_sync.get_archive(
-            &binaries_staging_path,
-            Some(artifact_sync::CacheControl {
-                path: binaries_cache_path,
-                max_size_bytes: self.max_cache_size_bytes,
-            }),
-            &archive_urls,
-            self.tx.clone(),
-            &self.aws_client,
-        );
-        match dll_download_result {
-            Ok(()) => {}
-            Err(e) => {
-                return Err(CoreError::Internal(anyhow!(
-                    "Failed to download dll: {:?}",
-                    e
-                )));
-            }
-        }
+        let Some(download) = self.downloads.begin(SyncKind::EditorDlls) else {
+            return Err(CoreError::Internal(anyhow!(
+                "An editor binaries download is already running."
+            )));
+        };
+        // Everything in the staging directory is copied into the user's repo below, and
+        // longtail writes its cached scan of the target into the target. Not writing one
+        // keeps it out of the repo; the cost is a scan of a staging directory that was
+        // scanned every time anyway.
+        let request =
+            SyncRequest::download(SyncKind::EditorDlls, &binaries_staging_path, &archive_urls)
+                .with_cache(Some(artifact_sync::CacheControl {
+                    path: binaries_cache_path,
+                    max_size_bytes: self.max_cache_size_bytes,
+                }))
+                .with_transfer_acceleration(self.transfer_acceleration)
+                .without_target_index();
+        let result = self
+            .artifact_sync
+            .get_archive(request, self.tx.clone(), &self.aws_client, download.token())
+            .await;
+        result.map_err(SyncError::into_core_error)?;
 
         T::post_download(&self.engine_path).await;
+
+        // The download above asks for no target index, but the old CLI wrote one into
+        // staging on every sync, and it is still sitting there on every machine that
+        // synced before this. The copy below takes the staging tree wholesale, so it would
+        // carry that file into the user's repo - which is exactly what the old post-copy
+        // cleanup existed to undo. Clear it from both ends instead, so it is
+        // neither copied in nor left behind.
+        discard_target_index(&binaries_staging_path);
+        discard_target_index(&binaries_destination_path);
 
         info!(
             "download done. copying binaries from '{:?}' to: '{:?}'",
@@ -182,12 +197,6 @@ where
 
         copy_recursively(&binaries_staging_path, &binaries_destination_path)
             .context("Failed to copy dlls to target directory")?;
-
-        const LONGTAIL_INDEX_FILENAME: &str = ".longtail.index.cache.lvi";
-        let longtail_index_path = self.git_client.repo_path.join(LONGTAIL_INDEX_FILENAME);
-        if Path::exists(&longtail_index_path) {
-            _ = fs::remove_file(longtail_index_path)
-        }
 
         info!("dll download and copy to local repo finished");
 
@@ -214,7 +223,7 @@ where
     }
 
     let download_op = {
-        let tx_lock = state.longtail_tx.clone();
+        let tx_lock = state.sync_event_tx.clone();
         let project_name = RepoConfig::get_project_name(&state.repo_config.read().uproject_path)
             .unwrap_or("unknown_project".to_string());
 
@@ -252,6 +261,7 @@ where
             engine: state.engine.clone(),
             engine_path,
             max_cache_size_bytes: state.app_config.read().editor_cache_size_bytes(),
+            transfer_acceleration: state.app_config.read().s3_transfer_acceleration,
         }
     };
 
@@ -268,6 +278,20 @@ where
     Ok(Json(DownloadResponse {
         download_attempted: true,
     }))
+}
+
+/// Remove longtail's cached scan of a directory, if one is there.
+///
+/// It is longtail's own bookkeeping, never part of a build and never needed once the sync
+/// that wrote it has ended. In the user's repo it is an untracked file of several
+/// megabytes that nobody can account for.
+fn discard_target_index(root: &Path) {
+    let path = root.join(TARGET_INDEX_CACHE_NAME);
+    match fs::remove_file(&path) {
+        Ok(()) => info!("Removed a leftover {path:?}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!("Could not remove {path:?}: {e}"),
+    }
 }
 
 /// Copy files from source to destination recursively.
@@ -287,4 +311,37 @@ pub fn copy_recursively(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The old CLI wrote one of these into staging on every sync, so it is sitting in the
+    /// staging directory of every machine that synced before this. The copy into the repo
+    /// takes the staging tree wholesale, so it would go along with the binaries.
+    #[test]
+    fn a_leftover_target_index_is_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path();
+        fs::create_dir_all(staging.join("Binaries/Win64")).unwrap();
+        fs::write(staging.join("Binaries/Win64/Game.dll"), b"x").unwrap();
+        fs::write(staging.join(TARGET_INDEX_CACHE_NAME), b"index").unwrap();
+
+        discard_target_index(staging);
+
+        assert!(!staging.join(TARGET_INDEX_CACHE_NAME).exists());
+        assert!(
+            staging.join("Binaries/Win64/Game.dll").exists(),
+            "only longtail's own bookkeeping is removed"
+        );
+    }
+
+    /// The common case by far: there is none, and that is not a failure.
+    #[test]
+    fn discarding_a_target_index_that_is_not_there_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        discard_target_index(dir.path());
+        assert!(!dir.path().join(TARGET_INDEX_CACHE_NAME).exists());
+    }
 }

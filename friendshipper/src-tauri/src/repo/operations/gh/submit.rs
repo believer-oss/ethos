@@ -16,10 +16,10 @@ use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use crate::state::Notification;
+use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::git;
 use ethos_core::clients::github;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
@@ -61,7 +61,7 @@ where
     pub artifact_sync: ArtifactSync,
 
     pub downloads: DownloadCancellation,
-    pub longtail_tx: Sender<LongtailMsg>,
+    pub sync_event_tx: Sender<SyncEvent>,
     pub notification_tx: Sender<Notification>,
     /// Forwarded into the auto-sync `PullOp` kicked off after a successful
     /// quicksubmit merge so the pulling modal shows the same phase labels
@@ -1348,7 +1348,7 @@ where
                                         repo_status: self.repo_status.clone(),
                                         artifact_sync: self.artifact_sync.clone(),
                                         downloads: self.downloads.clone(),
-                                        longtail_tx: self.longtail_tx.clone(),
+                                        sync_event_tx: self.sync_event_tx.clone(),
                                         aws_client,
                                         storage,
                                         git_client: self.git_client.clone(),
@@ -1477,7 +1477,7 @@ where
         artifact_sync: state.artifact_sync.clone(),
 
         downloads: state.downloads.clone(),
-        longtail_tx: state.longtail_tx.clone(),
+        sync_event_tx: state.sync_event_tx.clone(),
         notification_tx: state.notification_tx.clone(),
         sync_phase_tx: state.sync_phase_tx.clone(),
 

@@ -5,7 +5,7 @@
 
 Friendshipper is a desktop application for managing Unreal Engine project source control through Git.
 
-- Uses [longtail](https://github.com/DanEngelbrecht/golongtail) to download builds of the game client.
+- Uses [longtail-rs](https://github.com/believer-oss/longtail-rs) to download builds of the game client.
 - Interacts with [f11r-operator](https://github.com/believer-oss/f11r-operator) to create game servers and facilitate
   playtests.
 - [Git repo management](docs/sourcecontrol.md) with a corresponding [Unreal plugin](https://github.com/believer-oss/FriendshipperSourceControl).

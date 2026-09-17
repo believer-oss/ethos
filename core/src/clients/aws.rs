@@ -182,13 +182,6 @@ impl AWSClient {
         *self.context.write() = refreshed;
     }
 
-    /// Credentials and their expiry, read without awaiting: the download path runs on a
-    /// blocking thread and re-reads these between attempts.
-    pub fn current_credentials(&self) -> (Credentials, Option<DateTime<Utc>>) {
-        let context = self.context.read();
-        (context.credentials.clone(), context.expires_at)
-    }
-
     pub async fn login_required(&self) -> bool {
         self.context.read().login_required
     }
@@ -745,7 +738,7 @@ mod tests {
 
         aws.refresh_from(&client("AKIATWO", "token-two", None).await);
 
-        let (credentials, _) = clone.current_credentials();
+        let credentials = resolve(&clone.get_sdk_config().await).await;
         assert_eq!(credentials.access_key_id(), "AKIATWO");
         assert_eq!(clone.get_artifact_bucket(), "bucket");
     }
