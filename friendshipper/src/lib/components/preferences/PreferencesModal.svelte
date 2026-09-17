@@ -242,8 +242,10 @@
 				progressModalTitle = 'Saving preferences...';
 				await saveChangeSet($changeSets);
 
-				// make sure maxClientCacheSizeGb is a number
+				// number inputs bind as strings
 				localAppConfig.maxClientCacheSizeGb = Number(localAppConfig.maxClientCacheSizeGb);
+				localAppConfig.maxEngineCacheSizeGb = Number(localAppConfig.maxEngineCacheSizeGb);
+				localAppConfig.maxEditorCacheSizeGb = Number(localAppConfig.maxEditorCacheSizeGb);
 
 				const accessToken = $oktaAuth?.getAccessToken();
 				if (accessToken) {
@@ -504,13 +506,38 @@
 					<Label class="text-gray-400">Group downloaded builds by playtest</Label>
 				</div>
 				<div class="flex items-center gap-2 ml-4">
-					<Label class="text-gray-400 whitespace-nowrap">Max Cache (GB):</Label>
+					<Label class="text-gray-400 whitespace-nowrap">Client Cache (GB):</Label>
 					<Input
 						type="number"
 						min="1"
 						class="h-8 w-20 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
 						bind:value={localAppConfig.maxClientCacheSizeGb}
 					/>
+				</div>
+				<div class="flex items-center gap-2 ml-4">
+					<Label class="text-gray-400 whitespace-nowrap">Engine Cache (GB):</Label>
+					<Input
+						type="number"
+						min="1"
+						class="h-8 w-20 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						bind:value={localAppConfig.maxEngineCacheSizeGb}
+					/>
+				</div>
+				<div class="flex items-center gap-2 ml-4">
+					<Label class="text-gray-400 whitespace-nowrap">Editor Cache (GB):</Label>
+					<Input
+						type="number"
+						min="1"
+						class="h-8 w-20 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
+						bind:value={localAppConfig.maxEditorCacheSizeGb}
+					/>
+				</div>
+				<div class="flex items-center gap-2 ml-4">
+					<Checkbox
+						bind:checked={localAppConfig.s3TransferAcceleration}
+						class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
+					/>
+					<Label class="text-gray-400 whitespace-nowrap">S3 Transfer Acceleration</Label>
 				</div>
 			</div>
 			<Tooltip class="text-sm items-center" placement="bottom">

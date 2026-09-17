@@ -407,6 +407,10 @@ where
                                 project,
                                 engine: self.engine.clone(),
                                 engine_path,
+                                max_cache_size_bytes: self
+                                    .app_config
+                                    .read()
+                                    .editor_cache_size_bytes(),
                             };
                             self.emit_phase("Downloading latest binaries");
                             errors.push(download_op.execute().await.err())
@@ -442,6 +446,7 @@ where
                             storage: self.storage.clone(),
                             project,
                             engine: self.engine.clone(),
+                            max_cache_size_bytes: app_config.engine_cache_size_bytes(),
                         };
                         self.emit_phase("Updating engine");
                         errors.push(update_engine_op.execute().await.err());

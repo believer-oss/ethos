@@ -571,6 +571,12 @@ impl Server {
                 .unwrap()
                 .set_default("maxClientCacheSizeGb", 32)
                 .unwrap()
+                .set_default("maxEngineCacheSizeGb", 100)
+                .unwrap()
+                .set_default("maxEditorCacheSizeGb", 5)
+                .unwrap()
+                .set_default("s3TransferAcceleration", true)
+                .unwrap()
                 .set_default("targetBranch", "main".to_string())
                 .unwrap();
 

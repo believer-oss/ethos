@@ -46,6 +46,7 @@ pub struct DownloadDllsOp<T> {
     pub project: Project,
     pub engine: T,
     pub engine_path: PathBuf,
+    pub max_cache_size_bytes: u64,
 }
 
 #[async_trait]
@@ -154,7 +155,7 @@ where
             &binaries_staging_path,
             Some(artifact_sync::CacheControl {
                 path: binaries_cache_path,
-                max_size_bytes: 5 * 1024 * 1024 * 1024, // 5 GB
+                max_size_bytes: self.max_cache_size_bytes,
             }),
             &archive_urls,
             self.tx.clone(),
@@ -247,6 +248,7 @@ where
             project,
             engine: state.engine.clone(),
             engine_path,
+            max_cache_size_bytes: state.app_config.read().editor_cache_size_bytes(),
         }
     };
 
