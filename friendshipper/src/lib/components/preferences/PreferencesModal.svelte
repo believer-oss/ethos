@@ -44,7 +44,7 @@
 		allModifiedFiles
 	} from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
-	import { resetLongtail, wipeClientData, getWorkflows } from '$lib/builds';
+	import { wipeClientData, getWorkflows } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
 	import {
 		resetRepo,
@@ -383,14 +383,6 @@
 			await emit('error', e);
 		}
 		await emit('progress-modal', { show: false });
-	};
-
-	const handleResetLongtail = async () => {
-		try {
-			await resetLongtail();
-		} catch (e) {
-			await emit('error', e);
-		}
 	};
 
 	const handleResetRepo = async () => {
@@ -1062,15 +1054,6 @@
 							>Wipe Data Directory
 						</Button>
 						<span class="w-full">Delete previously downloaded game clients</span>
-					</div>
-					<div class="flex gap-2 items-center">
-						<Button
-							outline
-							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
-							on:click={handleResetLongtail}
-							>Re-install Longtail
-						</Button>
-						<span class="w-full">Reset Longtail installation (requires app restart)</span>
 					</div>
 					{#if localAppConfig.engineType === 'Prebuilt'}
 						<div class="flex gap-2 items-center">

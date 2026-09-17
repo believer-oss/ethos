@@ -3,7 +3,7 @@ use friendshipper::engine::router::OpenUrlForPathRequest;
 use tracing::error;
 
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
-use ethos_core::tauri::command::{check_error, restart};
+use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
 use ethos_core::tauri::State;
 use ethos_core::types::builds::SyncClientRequest;
@@ -460,24 +460,6 @@ pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), Taur
         error!("Error wiping client data: {}", err.message);
         return Err(err);
     }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn reset_longtail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/builds/longtail/reset", state.server_url))
-        .send()
-        .await?;
-
-    if let Some(err) = check_error(res.status(), res.text().await?).await {
-        error!("Error resetting longtail: {}", err.message);
-        return Err(err);
-    }
-
-    restart(state).await?;
 
     Ok(())
 }

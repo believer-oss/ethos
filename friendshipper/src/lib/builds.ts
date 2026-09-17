@@ -24,8 +24,6 @@ export const cancelDownload = async (): Promise<void> => invoke('cancel_download
 
 export const wipeClientData = async (): Promise<void> => invoke('wipe_client_data');
 
-export const resetLongtail = async (): Promise<void> => invoke('reset_longtail');
-
 export const getWorkflows = async (
 	engine: boolean = false,
 	project?: string

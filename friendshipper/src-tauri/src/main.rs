@@ -270,7 +270,6 @@ fn main() -> Result<(), CoreError> {
                 restart,
                 generate_sln,
                 open_sln,
-                reset_longtail,
                 show_commit_files,
                 list_repo_directory,
                 get_file_history,

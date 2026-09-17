@@ -49,7 +49,6 @@ where
         .route("/client/sync", post(sync_client))
         .route("/client/cancel", post(cancel_download))
         .route("/client/wipe", post(wipe_client_data))
-        .route("/longtail/reset", post(reset_longtail))
         .route("/server/verify", get(verify_server_image))
         .route("/workflows", get(get_workflows))
         .route("/workflows/nodes", get(get_workflow_nodes))
@@ -651,19 +650,6 @@ where
 
     for entry in entries {
         fs::remove_dir_all(entry.path())?;
-    }
-
-    Ok(())
-}
-
-pub async fn reset_longtail<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
-where
-    T: EngineProvider,
-{
-    let longtail_path = state.artifact_sync.exec_path.clone();
-
-    if let Some(longtail_path) = longtail_path {
-        fs::remove_file(longtail_path)?;
     }
 
     Ok(())
