@@ -457,23 +457,25 @@ pub async fn setup_with_repo_config(
     let (gs_tx, _gs_rx) = std::sync::mpsc::channel();
     let (workflow_tx, _workflow_rx) = std::sync::mpsc::channel();
 
-    // start a notification logger
+    // On threads, not the runtime: each of these blocks on recv() for the life of the
+    // test, and longtail now runs in-process here, so a parked tokio worker is one the
+    // download cannot have.
     info!("Starting notification logger");
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         while let Ok(msg) = notification_rx.recv() {
             info!("notification: {:?}", msg);
         }
     });
 
     info!("Started notification logger. Creating git logger.");
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         while let Ok(msg) = git_rx.recv() {
             info!("git: {}", msg);
         }
     });
 
     info!("Started git logger. Creating longtail logger.");
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         while let Ok(msg) = longtail_rx.recv() {
             info!("longtail: {:?}", msg);
         }

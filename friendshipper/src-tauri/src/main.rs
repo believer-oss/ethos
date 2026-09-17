@@ -404,9 +404,15 @@ fn main() -> Result<(), CoreError> {
                     });
                 }
 
+                // The forwarders below each block on a std::sync::mpsc receiver for the
+                // life of the app, so they run on their own threads rather than on the
+                // tauri runtime - an async task blocking on a sync recv() parks a tokio
+                // worker permanently, and there are eight of them. That was free while
+                // longtail ran as a child process and contributed no tokio work of its
+                // own; it will not be once downloads run in-process.
                 let (gameserver_log_tx, gameserver_log_rx) = std::sync::mpsc::channel::<String>();
                 let gameserver_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = gameserver_log_rx.recv() {
                         gameserver_handle.emit("gameserver-log", &msg).unwrap();
                     }
@@ -414,7 +420,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (workflow_log_tx, workflow_log_rx) = std::sync::mpsc::channel::<String>();
                 let workflow_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = workflow_log_rx.recv() {
                         debug!(
                             "Emitting workflow-log event - message length: {}",
@@ -430,7 +436,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (git_tx, git_rx) = std::sync::mpsc::channel::<String>();
                 let git_app_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = git_rx.recv() {
                         let msg = ANSI_REGEX.replace_all(&msg, "");
                         git_app_handle.emit("git-log", &msg).unwrap();
@@ -443,7 +449,7 @@ fn main() -> Result<(), CoreError> {
                 // 'git ...'` messages that flow through `git-log`.
                 let (sync_phase_tx, sync_phase_rx) = std::sync::mpsc::channel::<String>();
                 let sync_phase_app_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = sync_phase_rx.recv() {
                         sync_phase_app_handle.emit("sync-phase", &msg).unwrap();
                     }
@@ -451,7 +457,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (build_tools_tx, build_tools_rx) = std::sync::mpsc::channel::<String>();
                 let build_tools_app_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = build_tools_rx.recv() {
                         build_tools_app_handle
                             .emit("installing-build-tools", &msg)
@@ -461,7 +467,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
                 let longtail_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = longtail_rx.recv() {
                         Longtail::log_message(msg.clone());
 
@@ -504,7 +510,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (startup_tx, startup_rx) = std::sync::mpsc::channel::<String>();
                 let startup_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = startup_rx.recv() {
                         startup_handle.emit("startup-message", &msg).unwrap();
 
@@ -525,7 +531,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (refresh_tx, refresh_rx) = std::sync::mpsc::channel::<()>();
                 let refresh_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while refresh_rx.recv().is_ok() {
                         refresh_handle.emit("git-refresh", "").unwrap();
                     }
