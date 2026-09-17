@@ -12,11 +12,11 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
 use crate::repo::RepoStatusRef;
+use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::git;
 use ethos_core::clients::github;
 use ethos_core::clients::kube::KubeClient;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::errors::CoreError;
@@ -46,7 +46,7 @@ pub struct AppState<T> {
     pub repo_status: RepoStatusRef,
 
     pub artifact_sync: ArtifactSync,
-    pub longtail_tx: STDSender<LongtailMsg>,
+    pub sync_event_tx: STDSender<SyncEvent>,
 
     pub operation_tx: MPSCSender<TaskSequence>,
     pub notification_tx: STDSender<Notification>,
@@ -92,7 +92,7 @@ where
         dynamic_config: DynamicConfigRef,
         config_file: PathBuf,
         storage: Option<ArtifactStorage>,
-        longtail_tx: STDSender<LongtailMsg>,
+        sync_event_tx: STDSender<SyncEvent>,
         operation_tx: MPSCSender<TaskSequence>,
         notification_tx: STDSender<Notification>,
         frontend_op_tx: STDSender<FrontendOp>,
@@ -106,19 +106,7 @@ where
         server_log_tx: STDSender<String>,
         workflow_log_tx: STDSender<String>,
     ) -> Result<Self> {
-        let mut artifact_sync = ArtifactSync::new(crate::APP_NAME);
-
-        debug!("Checking longtail");
-        if artifact_sync.exec_path.is_none() && artifact_sync.update_exec().is_err() {
-            match artifact_sync.get_longtail(longtail_tx.clone()) {
-                Ok(_) => {
-                    artifact_sync.update_exec()?;
-                }
-                Err(e) => {
-                    return Err(anyhow!("Failed to get longtail exe. Any operations depending on longtail will fail. Reason: {}", e));
-                }
-            }
-        }
+        let artifact_sync = ArtifactSync::new(crate::APP_NAME);
 
         debug!("Creating repo status");
         let repo_status = Arc::new(RwLock::new(RepoStatus {
@@ -194,7 +182,7 @@ where
             storage: Arc::new(RwLock::new(storage)),
             repo_status,
             artifact_sync,
-            longtail_tx,
+            sync_event_tx,
             operation_tx,
             notification_tx,
             frontend_op_tx,

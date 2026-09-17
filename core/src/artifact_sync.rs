@@ -1,44 +1,58 @@
-use core::cmp::Ordering;
-use std::collections::HashMap;
-#[cfg(unix)]
-use std::os::unix::prelude::PermissionsExt;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-use std::process::Child;
-use std::sync::Arc;
-use std::time::SystemTime;
-use std::{
-    env,
-    fs::{self, File},
-    io::{copy, BufRead, BufReader},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::mpsc::Sender,
-};
+//! Downloading build artifacts from the longtail store.
+//!
+//! This drives the `longtail` library directly. It used to drive a `longtail` executable
+//! that was downloaded at runtime, and most of what is gone with that was there to cope
+//! with the subprocess rather than with longtail: parsing a progress bar out of stdout to
+//! find errors in it, guessing from those strings whether a failure was an expired
+//! credential, and retrying blind - first deleting the target directory, then the cache -
+//! because there was no way to tell what had actually gone wrong.
 
-use anyhow::{anyhow, Context, Result};
-use aws_credential_types::Credentials;
-use chrono::{DateTime, Utc};
-use directories_next::ProjectDirs;
-use hex::FromHex;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+
+use longtail::{ErrorClass, GetOptions, LongtailError, Progress, ProgressSink};
 use parking_lot::Mutex;
-use sha2::{Digest, Sha256};
-use tracing::{error, info, instrument, warn};
-use which::{which, which_in};
+use serde::{Deserialize, Serialize};
+use tracing::{info, instrument, warn};
 
 use super::fs::LocalDownloadPath;
-use super::msg::LongtailMsg;
 use crate::clients::aws::AWSClient;
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Re-exported so callers can hold a token without depending on `longtail` or
 /// `tokio-util` directly, and without coupling to their versions.
 pub use longtail::CancellationToken;
+pub use longtail::TARGET_INDEX_CACHE_NAME;
+
+/// How many times a download may be restarted after its credentials were rejected.
+///
+/// The provider refreshes credentials underneath a running transfer, so this only covers
+/// the window between a session lapsing and the app renewing it. A restart resumes from
+/// the block cache, so the cost is a target rescan rather than a re-download.
+const MAX_UNAUTHORIZED_RETRIES: usize = 3;
+
+/// How long to wait before retrying a download the store would not authorise.
+///
+/// Long enough for a renewal that is already in flight to land, short enough that a user
+/// watching a progress bar does not think it has hung.
+const UNAUTHORIZED_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Leave a couple of cores for the UI and for whatever the user is running - most
+/// likely the Unreal editor, which is why they are downloading anything.
+fn chunk_worker_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(2).max(1))
+        .unwrap_or(1)
+}
+
+/// Matches longtail's own default for an S3 store. Set explicitly so a local-path store
+/// in a test behaves the way the real one does.
+const BLOCK_WORKER_COUNT: usize = 8;
 
 /// Which artifact a download, and so a cancellation, belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SyncKind {
     Client,
@@ -81,7 +95,50 @@ impl std::fmt::Display for SyncKind {
 #[derive(Debug, Clone)]
 pub struct DownloadCancellation {
     root: CancellationToken,
-    in_flight: Arc<Mutex<HashMap<SyncKind, CancellationToken>>>,
+    in_flight: Arc<Mutex<HashMap<SyncKind, Registered>>>,
+    /// Distinguishes one download of a kind from the next, so a finishing download can
+    /// only ever clear its own registration.
+    next_id: Arc<AtomicU64>,
+}
+
+#[derive(Debug, Clone)]
+struct Registered {
+    id: u64,
+    token: CancellationToken,
+}
+
+/// A download's registration, for as long as it runs.
+///
+/// Clearing the registration on drop rather than at a call site: an axum handler whose
+/// future is dropped - the client disconnected, the runtime shut down - would otherwise
+/// leave its kind registered forever, and since starting is now refused while one is
+/// registered, that would block every later download of that kind until a restart.
+#[derive(Debug)]
+pub struct DownloadGuard {
+    cancellation: DownloadCancellation,
+    kind: SyncKind,
+    id: u64,
+    token: CancellationToken,
+}
+
+impl DownloadGuard {
+    pub fn token(&self) -> CancellationToken {
+        self.token.clone()
+    }
+}
+
+impl Drop for DownloadGuard {
+    fn drop(&mut self) {
+        let mut in_flight = self.cancellation.in_flight.lock();
+        // Only if it is still ours. A cancel removes the entry, and the next download of
+        // the same kind may have registered before this guard was dropped.
+        if in_flight
+            .get(&self.kind)
+            .is_some_and(|held| held.id == self.id)
+        {
+            in_flight.remove(&self.kind);
+        }
+    }
 }
 
 impl Default for DownloadCancellation {
@@ -95,33 +152,57 @@ impl DownloadCancellation {
         DownloadCancellation {
             root: CancellationToken::new(),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Register a token for `kind` and hand it back to the download.
+    /// Register a download of `kind`, or refuse if one is already running.
     ///
-    /// Replaces any token already registered for that kind. Each kind has a single
-    /// driver - the client sync endpoint, or the serialized repo worker queue - so two
-    /// downloads of the same kind do not overlap in practice.
-    pub fn begin(&self, kind: SyncKind) -> CancellationToken {
-        let token = self.root.child_token();
-        self.in_flight.lock().insert(kind, token.clone());
-        token
-    }
+    /// Refusing rather than replacing. Two downloads of a kind write to the same
+    /// directory, and replacing dropped the first one's token on the floor - so it could
+    /// no longer be cancelled or shut down, while both carried on writing the same files.
+    /// That is reachable because the client sync runs in its HTTP handler rather than on
+    /// the serialized worker queue, so it can overlap a download already in progress.
+    pub fn begin(&self, kind: SyncKind) -> Option<DownloadGuard> {
+        let mut in_flight = self.in_flight.lock();
+        if in_flight.contains_key(&kind) {
+            return None;
+        }
 
-    /// Forget `kind`'s token. Call when the download ends, however it ended.
-    pub fn finish(&self, kind: SyncKind) {
-        self.in_flight.lock().remove(&kind);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let token = self.root.child_token();
+        in_flight.insert(
+            kind,
+            Registered {
+                id,
+                token: token.clone(),
+            },
+        );
+
+        Some(DownloadGuard {
+            cancellation: self.clone(),
+            kind,
+            id,
+            token,
+        })
     }
 
     /// Cancel one download. Returns whether there was one to cancel.
     ///
+    /// The registration stays until the download actually stops. Cancelling is not
+    /// immediate - longtail finishes the blocks already in flight, then flushes and
+    /// closes the store, which includes sweeping the cache down to its budget. Freeing
+    /// the slot at the moment of cancelling would let the next download start into the
+    /// same target and the same cache while the previous one is still writing, which is
+    /// what refusing a second download exists to prevent. The guard clears it when the
+    /// download has genuinely finished.
+    ///
     /// Leaves every other in-flight download running, and leaves the root untouched so
     /// later downloads still start uncancelled.
     pub fn cancel(&self, kind: SyncKind) -> bool {
-        match self.in_flight.lock().remove(&kind) {
-            Some(token) => {
-                token.cancel();
+        match self.in_flight.lock().get(&kind) {
+            Some(held) => {
+                held.token.cancel();
                 true
             }
             None => false,
@@ -133,531 +214,413 @@ impl DownloadCancellation {
         self.root.cancel();
         self.in_flight.lock().clear();
     }
-}
 
-// Send a Msg down the transmit channel
-pub fn send_msg(tx: &Sender<LongtailMsg>, msg: LongtailMsg) {
-    if tx.send(msg.clone()).is_err() {
-        // We probably can't and don't want to do much in the way of error handling,
-        // since we're likely on a thread. At worst the UI gets a little wonky, because
-        // log messages and the busy spinner stops working...
-        info!("Failed to send message! {:?} {:?}", tx, msg)
+    /// Whether a download of this kind is registered. For a caller that wants to report
+    /// "already running" rather than simply failing to start.
+    pub fn is_running(&self, kind: SyncKind) -> bool {
+        self.in_flight.lock().contains_key(&kind)
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct ArtifactSync {
-    pub app_name: String,
-    pub exec_path: Option<PathBuf>,
-    pub download_path: LocalDownloadPath,
-
-    #[serde(skip)]
-    pub child_process: Arc<Mutex<Option<Child>>>,
+/// What a caller should *do* about a failure, mirroring [`longtail::ErrorClass`].
+///
+/// Mirrored rather than re-exported because this crosses to the frontend as a wire type:
+/// `ErrorClass` is `#[non_exhaustive]`, and a new variant appearing there should not
+/// silently widen what the UI has to handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncErrorClass {
+    Cancelled,
+    NotFound,
+    Unauthorized,
+    Transient,
+    InvalidInput,
+    Corrupt,
+    Io,
+    Internal,
 }
 
+impl From<ErrorClass> for SyncErrorClass {
+    fn from(class: ErrorClass) -> Self {
+        match class {
+            ErrorClass::Cancelled => SyncErrorClass::Cancelled,
+            ErrorClass::NotFound => SyncErrorClass::NotFound,
+            ErrorClass::Unauthorized => SyncErrorClass::Unauthorized,
+            ErrorClass::Transient => SyncErrorClass::Transient,
+            ErrorClass::InvalidInput => SyncErrorClass::InvalidInput,
+            ErrorClass::Corrupt => SyncErrorClass::Corrupt,
+            ErrorClass::Io => SyncErrorClass::Io,
+            _ => SyncErrorClass::Internal,
+        }
+    }
+}
+
+/// A failed download, in the two parts the UI wants: something to show, and the cause
+/// chain to put behind a disclosure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncError {
+    pub class: SyncErrorClass,
+    pub summary: String,
+    pub detail: String,
+}
+
+impl SyncError {
+    fn from_longtail(kind: SyncKind, error: &LongtailError) -> Self {
+        let class = SyncErrorClass::from(error.class());
+        let summary = match class {
+            SyncErrorClass::Cancelled => format!("The {kind} download was cancelled."),
+            SyncErrorClass::Unauthorized => format!(
+                "Your session expired while downloading the {kind}. Sign in again and retry - \
+                 cached data is kept, so it resumes rather than starting over."
+            ),
+            SyncErrorClass::NotFound => format!(
+                "The {kind} build could not be found in storage. It may have been cleaned up."
+            ),
+            SyncErrorClass::Transient => {
+                format!("The {kind} download hit a network problem. Retrying usually works.")
+            }
+            SyncErrorClass::Corrupt => format!(
+                "Downloaded {kind} data did not match what the build says it should be. \
+                 Retrying will re-fetch it."
+            ),
+            SyncErrorClass::Io => format!(
+                "Writing the {kind} to disk failed. Check for free space and that no other \
+                 program has the files open."
+            ),
+            SyncErrorClass::InvalidInput => {
+                format!("The {kind} download was asked for something it cannot do.")
+            }
+            SyncErrorClass::Internal => format!("The {kind} download failed unexpectedly."),
+        };
+
+        SyncError {
+            class,
+            summary,
+            // Not `to_string()`: a LongtailError's own Display is only a category, and the
+            // part that says what happened hangs off its source chain.
+            detail: error.full_chain(),
+        }
+    }
+
+    /// Convert for an HTTP handler.
+    ///
+    /// Deliberately a method rather than `From`: `CoreError` has a blanket conversion
+    /// from anything that is an error, which would swallow this one - and with it the
+    /// distinction between "sign in again" and "something broke".
+    pub fn into_core_error(self) -> crate::types::errors::CoreError {
+        match self.class {
+            SyncErrorClass::Unauthorized => crate::types::errors::CoreError::Unauthorized,
+            _ => crate::types::errors::CoreError::Internal(anyhow::anyhow!("{self}")),
+        }
+    }
+}
+
+impl std::fmt::Display for SyncError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.summary, self.detail)
+    }
+}
+
+impl std::error::Error for SyncError {}
+
+/// How far along a download is, in two independent dimensions.
+///
+/// A `total` of zero means that dimension is not known yet - longtail reports some phases
+/// without a total - and the UI shows an indeterminate bar rather than nought percent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProgress {
+    pub done_bytes: u64,
+    pub total_bytes: u64,
+    pub done_items: u64,
+    pub total_items: u64,
+    /// The phase longtail is in, e.g. "Updating version". Distinct from the coarse
+    /// `sync-phase` messages ethos emits for its own steps.
+    pub phase: String,
+}
+
+/// What a finished download did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSummary {
+    pub bytes_written: u64,
+    pub assets_written: u32,
+    pub assets_removed: u32,
+    pub blocks_fetched: u64,
+}
+
+/// Everything a download reports, tagged with which download it came from so a caller
+/// watching several at once can tell them apart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SyncEvent {
+    Started {
+        kind: SyncKind,
+    },
+    Progress {
+        kind: SyncKind,
+        progress: SyncProgress,
+    },
+    Finished {
+        kind: SyncKind,
+        summary: SyncSummary,
+    },
+    Failed {
+        kind: SyncKind,
+        error: SyncError,
+    },
+    Cancelled {
+        kind: SyncKind,
+    },
+}
+
+/// Forwards longtail's progress onto the event channel.
+///
+/// Must stay cheap and non-blocking: longtail calls this from its async task and from
+/// rayon workers. The channel is unbounded for the same reason - a bounded one would
+/// park a worker - and a send failure is ignored, since a closed receiver only means
+/// nobody is watching any more, which is not a reason to fail a download.
+struct ChannelProgress {
+    kind: SyncKind,
+    tx: Sender<SyncEvent>,
+    phase: Mutex<String>,
+}
+
+impl ChannelProgress {
+    fn new(kind: SyncKind, tx: Sender<SyncEvent>) -> Self {
+        ChannelProgress {
+            kind,
+            tx,
+            phase: Mutex::new(String::new()),
+        }
+    }
+}
+
+impl ProgressSink for ChannelProgress {
+    fn on_progress(&self, p: Progress) {
+        let _ = self.tx.send(SyncEvent::Progress {
+            kind: self.kind,
+            progress: SyncProgress {
+                done_bytes: p.done_bytes,
+                total_bytes: p.total_bytes,
+                done_items: p.done_items,
+                total_items: p.total_items,
+                phase: self.phase.lock().clone(),
+            },
+        });
+    }
+
+    fn on_phase(&self, phase: &str) {
+        *self.phase.lock() = phase.to_string();
+
+        // Emit immediately so the UI shows the new phase before the first sample of it
+        // arrives; the zero totals leave the bar indeterminate in the meantime.
+        let _ = self.tx.send(SyncEvent::Progress {
+            kind: self.kind,
+            progress: SyncProgress {
+                phase: phase.to_string(),
+                ..Default::default()
+            },
+        });
+    }
+}
+
+/// A local block cache and the budget it is held to.
 pub struct CacheControl {
     pub path: PathBuf,
     pub max_size_bytes: u64,
 }
 
-/// How many times a download may restart after its credentials lapsed. Each restart
-/// resumes from the cache.
-const MAX_CREDENTIAL_RETRIES: usize = 5;
-
-/// Diagnostics kept from a failed run, capped because longtail's output is mostly
-/// progress bars.
-const MAX_ERROR_RECORDS: usize = 5;
-const MAX_ERROR_RECORD_CHARS: usize = 1500;
-
-/// Errors S3 reports when it rejects a request outright rather than mid-transfer.
-const CREDENTIAL_ERROR_MARKERS: [&str; 4] = [
-    "ExpiredToken",
-    "ExpiredTokenException",
-    "InvalidAccessKeyId",
-    "token has expired",
-];
-
-/// Recovery steps for a failed download, in order of how much work they throw away.
-/// Clearing the cache costs the entire download, so credential failures never reach it.
-enum Recovery {
-    ClearTarget,
-    ClearCache,
+/// Where downloaded artifacts and their caches live.
+#[derive(Debug, Clone)]
+pub struct ArtifactSync {
+    pub download_path: LocalDownloadPath,
 }
 
-/// Whether an attempt failed over credentials rather than anything on disk. A lapse
-/// mid-download surfaces only as a block store I/O error, so the expiry is the more
-/// reliable signal.
-fn credentials_lapsed(error: &str, expires_at: Option<DateTime<Utc>>) -> bool {
-    if CREDENTIAL_ERROR_MARKERS
-        .iter()
-        .any(|marker| error.contains(marker))
-    {
-        return true;
-    }
-
-    matches!(expires_at, Some(expires_at) if expires_at <= Utc::now())
+/// One sync, described.
+pub struct SyncRequest<'a> {
+    pub kind: SyncKind,
+    /// Where the artifact goes.
+    pub target: &'a Path,
+    /// Get-config URIs. Several are merged, which is how a build and its symbols arrive
+    /// together; they must share a storage URI.
+    pub archives: &'a [String],
+    pub cache: Option<CacheControl>,
+    /// Whether longtail may leave its scan of the target cached in the target.
+    ///
+    /// Off where the target is copied somewhere else afterwards, so the index does not
+    /// travel with it.
+    pub cache_target_index: bool,
+    pub transfer_acceleration: bool,
 }
 
-fn same_session(a: &Credentials, b: &Credentials) -> bool {
-    a.access_key_id() == b.access_key_id() && a.session_token() == b.session_token()
-}
-
-/// Split the error and fatal records out of a chunk of longtail output. The progress bar
-/// shares the chunk, and the record naming the failure comes last.
-fn error_records(chunk: &str) -> Vec<String> {
-    let mut records: Vec<String> = vec![];
-    let mut rest = chunk;
-
-    while let Some(start) = ["level=error", "level=fatal"]
-        .iter()
-        .filter_map(|marker| rest.find(marker))
-        .min()
-    {
-        rest = &rest[start..];
-        let end = rest[1..].find("level=").map_or(rest.len(), |i| i + 1);
-        records.push(
-            rest[..end]
-                .trim()
-                .chars()
-                .take(MAX_ERROR_RECORD_CHARS)
-                .collect(),
-        );
-        rest = &rest[end..];
-    }
-
-    records
-}
-
-/// Keep the most recent records: the failure that stopped the run is reported last.
-fn keep_error_records(kept: &mut Vec<String>, records: Vec<String>) {
-    for record in records {
-        if record.trim().is_empty() {
-            continue;
-        }
-
-        kept.push(record);
-        if kept.len() > MAX_ERROR_RECORDS {
-            kept.remove(0);
+impl<'a> SyncRequest<'a> {
+    pub fn download(kind: SyncKind, target: &'a Path, archives: &'a [String]) -> Self {
+        SyncRequest {
+            kind,
+            target,
+            archives,
+            cache: None,
+            cache_target_index: true,
+            transfer_acceleration: true,
         }
     }
-}
 
-struct FileCacheData {
-    path: PathBuf,
-    size: u64,
-    timestamp: SystemTime,
-}
-
-impl FileCacheData {
-    fn collect(path: &Path) -> Vec<FileCacheData> {
-        let mut vec: Vec<FileCacheData> = vec![];
-        Self::collect_internal(path, &mut vec);
-        vec
+    pub fn with_cache(mut self, cache: Option<CacheControl>) -> Self {
+        self.cache = cache;
+        self
     }
 
-    fn collect_internal(path: &Path, data: &mut Vec<FileCacheData>) {
-        if let Ok(dir_entries) = fs::read_dir(path) {
-            for entry in dir_entries.flatten() {
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.is_dir() {
-                        Self::collect_internal(&entry.path(), data);
-                    } else if metadata.is_file() {
-                        let last_modified = metadata.modified().unwrap();
-                        let last_accessed = metadata.accessed().unwrap();
+    pub fn with_transfer_acceleration(mut self, enabled: bool) -> Self {
+        self.transfer_acceleration = enabled;
+        self
+    }
 
-                        let timestamp = last_modified.max(last_accessed);
-
-                        data.push(FileCacheData {
-                            path: entry.path().clone(),
-                            size: metadata.len(),
-                            timestamp,
-                        });
-                    }
-                }
-            }
-        }
+    /// Keep longtail's target index out of the target, for a target that is copied
+    /// elsewhere afterwards.
+    pub fn without_target_index(mut self) -> Self {
+        self.cache_target_index = false;
+        self
     }
 }
 
 impl ArtifactSync {
     pub fn new(app_name: &str) -> Self {
-        let exec_path = ArtifactSync::find_exec(app_name);
-
         ArtifactSync {
-            exec_path,
-            app_name: app_name.to_string(),
             download_path: LocalDownloadPath::new(app_name),
-            child_process: Arc::new(Mutex::new(None)),
         }
     }
 
-    // Per-platform executable names, defaulting to a renamed 'longtail' binary
-    fn get_longtail_exec_name() -> String {
-        match std::env::consts::OS {
-            "linux" => "longtail-linux-x64",
-            "macos" => "longtail-macos-x64",
-            "windows" => "longtail-win32-x64.exe",
-            _ => "longtail",
-        }
-        .to_string()
-    }
-
-    // Build the URL to download longtail from
-    fn get_longtail_dl_url() -> String {
-        let exec_name = ArtifactSync::get_longtail_exec_name();
-
-        format!(
-            "{}/{}/{}",
-            crate::LONGTAIL_DL_PREFIX,
-            crate::LONGTAIL_VERSION,
-            exec_name
-        )
-    }
-
-    // Search for the longtail executable in our download dir or the user's path
-    #[instrument]
-    fn find_exec(app_name: &str) -> Option<PathBuf> {
-        let exe_name = ArtifactSync::get_longtail_exec_name();
-
-        // Try to find the executable in the project data path, and if that fails
-        // check the current exe directory.
-        let mut exe_path: Option<PathBuf>;
-        if let Some(proj_dirs) = ProjectDirs::from("", "", app_name) {
-            exe_path = Some(proj_dirs.data_dir().to_path_buf());
-        } else {
-            exe_path = env::current_exe().ok().or(None);
-            if let Some(exe_path) = &mut exe_path {
-                exe_path.pop();
-            };
-        }
-
-        // Check the path found above, and if all else fails try to find it in $PATH
-        match which_in(exe_name.clone(), exe_path, env::current_dir().unwrap()) {
-            Ok(path) => Some(path),
-            Err(_) => which(exe_name).ok(),
-        }
-    }
-
-    // Wrapper for find_exec to update the struct
-    #[instrument(err)]
-    pub fn update_exec(&mut self) -> Result<()> {
-        match Self::find_exec(&self.app_name) {
-            Some(path) => self.exec_path = Some(path),
-            None => {
-                return Err(anyhow!("Could not find longtail executable!"));
-            }
-        };
-        Ok(())
-    }
-
-    // Download the longtail executable and check it's hash
-    #[instrument(skip(tx), err)]
-    pub fn get_longtail(&self, tx: Sender<LongtailMsg>) -> Result<()> {
-        // First try to use the data_dir, and if we can't use the curent exe's path
-        let mut exe_path: PathBuf;
-        if let Some(proj_dirs) = ProjectDirs::from("", "", &self.app_name) {
-            exe_path = proj_dirs.data_dir().to_path_buf();
-        } else {
-            exe_path = env::current_exe().context("Could not find current path!!!")?;
-        }
-        exe_path.push(ArtifactSync::get_longtail_exec_name());
-
-        let url = ArtifactSync::get_longtail_dl_url();
-        send_msg(&tx, LongtailMsg::ExecEvt(format!("{url:?}")));
-
-        let response = ureq::get(&url).call()?;
-        let mut dest = {
-            send_msg(&tx, LongtailMsg::Log(format!("dl_path: [{exe_path:?}]")));
-            tracing::info!("[longtail] get_longtail dl_path: [{:?}]", exe_path);
-
-            let exe_dir = exe_path.parent().unwrap();
-            let _ = std::fs::create_dir_all(exe_dir);
-            File::create(exe_path.clone())?
-        };
-        let bytes = copy(&mut response.into_reader(), &mut dest)?;
-        send_msg(&tx, LongtailMsg::Log(format!("Copied {bytes} bytes")));
-
-        send_msg(&tx, LongtailMsg::DoneLtDlEvt);
-
-        let mut hasher = Sha256::new();
-        let file = File::open(exe_path.clone())?;
-        let mut reader = BufReader::new(file);
-        let bytes = copy(&mut reader, &mut hasher)?;
-        let hash = hasher.finalize();
-
-        if *hash != <[u8; 32]>::from_hex(crate::LONGTAIL_SHA256).unwrap() {
-            send_msg(
-                &tx,
-                LongtailMsg::ErrEvt(format!("Failed to validate hash! {bytes}/{hash:x}")),
-            );
-            send_msg(&tx, LongtailMsg::Log("Deleting file!".to_string()));
-            match fs::remove_file(exe_path.clone()) {
-                Ok(_) => info!("Successfully remove unverified longtail executable"),
-                Err(e) => warn!("Unable to remove unverified longtail executable! {:?}", e),
-            };
-        }
-
-        send_msg(
-            &tx,
-            LongtailMsg::Log(format!("Hash from {bytes} bytes: {hash:x}")),
-        );
-
-        #[cfg(unix)]
-        {
-            let mut perms = fs::metadata(exe_path.clone())?.permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(exe_path.clone(), perms)?;
-        }
-
-        Ok(())
-    }
-
-    // Get the current longtail executable version
-    #[instrument(skip(tx), err)]
-    pub fn get_version(&self, tx: Sender<LongtailMsg>) -> Result<()> {
-        let cmd = self.exec_path.clone().context("No exec path set")?;
-
-        let output = Command::new(cmd).arg("version").output()?;
-        if !output.status.success() {
-            return Err(anyhow!("Command executed with failing exit code"));
-        };
-        send_msg(&tx, LongtailMsg::Log(String::from_utf8(output.stdout)?));
-        Ok(())
-    }
-
-    // Use longtail 'get' to download a given archive
-    #[instrument(skip(cache, tx, aws_client), err)]
-    pub fn get_archive(
+    /// Run one sync.
+    ///
+    /// The archives are longtail get-config JSONs; passing several merges them, which is
+    /// how a build and its symbols arrive together. They must share a storage URI, which
+    /// the build pipeline guarantees by uploading both to the same store.
+    #[instrument(skip(self, request, tx, aws_client, cancel), fields(kind = %request.kind))]
+    pub async fn get_archive(
         &self,
-        path: &Path,
-        cache: Option<CacheControl>,
-        archives: &[String],
-        tx: Sender<LongtailMsg>,
+        request: SyncRequest<'_>,
+        tx: Sender<SyncEvent>,
         aws_client: &AWSClient,
-    ) -> Result<()> {
+        cancel: CancellationToken,
+    ) -> Result<SyncSummary, SyncError> {
+        let kind = request.kind;
         info!(
-            "Attempting to download longtail archives {:?} to path {:?}",
-            &archives, path
+            "Downloading {kind} archives {:?} to {:?}",
+            request.archives, request.target
         );
 
-        let Some(cache) = cache else {
-            let (credentials, _) = aws_client.current_credentials();
-            return self.get_archive_internal(path, None, archives, &tx, &credentials);
+        let Some(target) = request.target.to_str() else {
+            return Err(SyncError {
+                class: SyncErrorClass::InvalidInput,
+                summary: format!("The {kind} download path cannot be used."),
+                detail: format!("target path is not valid UTF-8: {:?}", request.target),
+            });
         };
 
-        let mut recovery = [Recovery::ClearTarget, Recovery::ClearCache].into_iter();
-        let mut credential_retries = 0;
+        let _ = tx.send(SyncEvent::Started { kind });
 
-        // Read per attempt: a child process can only be handed credentials when it is
-        // spawned, so outliving the session means retrying with the renewed one.
+        let mut attempt = 0;
         let result = loop {
-            let (credentials, expires_at) = aws_client.current_credentials();
-            let err =
-                match self.get_archive_internal(path, Some(&cache), archives, &tx, &credentials) {
-                    Ok(()) => break Ok(()),
-                    Err(e) => e,
-                };
+            let error = match self
+                .run_once(&request, target, &tx, aws_client, cancel.clone())
+                .await
+            {
+                Ok(summary) => break Ok(summary),
+                Err(error) => error,
+            };
 
-            if credentials_lapsed(&err.to_string(), expires_at) {
-                let (renewed, _) = aws_client.current_credentials();
-                if same_session(&credentials, &renewed) {
-                    break Err(anyhow!(
-                        "AWS credentials expired during download and have not been renewed. \
-                         Sign in again and restart the download - cached chunks are kept, so \
-                         it resumes rather than starting over. Original error: {}",
-                        err
-                    ));
-                }
-
-                if credential_retries >= MAX_CREDENTIAL_RETRIES {
-                    break Err(anyhow!(
-                        "AWS credentials expired {} times without the download completing. \
-                         Original error: {}",
-                        credential_retries,
-                        err
-                    ));
-                }
-
-                credential_retries += 1;
-                warn!(
-                    "Longtail get failed after AWS credentials expired mid-download (retry {} of \
-                     {}). Retrying with renewed credentials, keeping the target path and cache so \
-                     the download resumes. Original error was: {:?}",
-                    credential_retries, MAX_CREDENTIAL_RETRIES, err
-                );
-                continue;
+            // The SDK refreshes credentials underneath a running transfer, so reaching
+            // here means the session lapsed and had not been renewed yet. Retrying picks
+            // up whatever the app has now and resumes from the cache. It is deliberately
+            // the only retry: every other class either cannot be fixed by repeating the
+            // request, or is already retried inside longtail.
+            if error.class() != ErrorClass::Unauthorized || attempt >= MAX_UNAUTHORIZED_RETRIES {
+                break Err(SyncError::from_longtail(kind, &error));
             }
 
-            match recovery.next() {
-                Some(Recovery::ClearTarget) => {
-                    warn!("Longtail get failed. Attempting to clear target path and retry unpack. Original error was: {:?}", err);
-                    if path.exists() {
-                        std::fs::remove_dir_all(path)?;
-                    }
+            attempt += 1;
+
+            // Wait before trying again. The session lapsed and the app has not renewed it
+            // yet; going straight back would ask the same dead session three times inside
+            // a millisecond and cost a target rescan for each. Cancelling during the wait
+            // stops here rather than at the next checkpoint, so cancelling is as prompt
+            // as it says it is.
+            tokio::select! {
+                _ = tokio::time::sleep(UNAUTHORIZED_RETRY_DELAY) => {}
+                _ = cancel.cancelled() => {
+                    break Err(SyncError {
+                        class: SyncErrorClass::Cancelled,
+                        summary: format!("The {kind} download was cancelled."),
+                        detail: "cancelled while waiting to retry an expired session"
+                            .to_string(),
+                    });
                 }
-                Some(Recovery::ClearCache) => {
-                    warn!("Longtail get failed AGAIN - assuming bad chunks in cache. Attempting to clear cache and retry download + unpack. Original error was: {:?}", err);
-                    std::fs::remove_dir_all(&cache.path)?;
-                }
-                None => break Err(err),
             }
+
+            warn!(
+                "{kind} download was not authorized (attempt {attempt} of \
+                 {MAX_UNAUTHORIZED_RETRIES}); retrying with whatever session is current. \
+                 Cached blocks are kept, so it resumes. Cause: {}",
+                error.full_chain()
+            );
         };
 
-        info!("Longtail get result: {:?}", result);
+        match &result {
+            Ok(summary) => {
+                let _ = tx.send(SyncEvent::Finished {
+                    kind,
+                    summary: summary.clone(),
+                });
+            }
+            Err(error) if error.class == SyncErrorClass::Cancelled => {
+                let _ = tx.send(SyncEvent::Cancelled { kind });
+            }
+            Err(error) => {
+                let _ = tx.send(SyncEvent::Failed {
+                    kind,
+                    error: error.clone(),
+                });
+            }
+        }
+
         result
     }
 
-    pub fn get_archive_internal(
+    async fn run_once(
         &self,
-        path: &Path,
-        cache: Option<&CacheControl>,
-        archives: &[String],
-        tx: &Sender<LongtailMsg>,
-        credentials: &Credentials,
-    ) -> Result<()> {
-        let cmd = self.exec_path.clone().context("No exec path set")?;
-        let pipe = Stdio::piped();
-        let errpipe = Stdio::piped();
+        request: &SyncRequest<'_>,
+        target: &str,
+        tx: &Sender<SyncEvent>,
+        aws_client: &AWSClient,
+        cancel: CancellationToken,
+    ) -> Result<SyncSummary, LongtailError> {
+        // GetOptions is #[non_exhaustive]: it has to be built through its constructor and
+        // then adjusted, so that new options can land upstream without breaking this.
+        let mut options = GetOptions::new(request.archives.to_vec(), target);
+        options.progress = Some(Arc::new(ChannelProgress::new(request.kind, tx.clone())));
+        options.cancel = Some(cancel);
+        options.worker_count = chunk_worker_count();
+        options.remote_worker_count = BLOCK_WORKER_COUNT;
+        options.cache_target_index = request.cache_target_index;
+        options.s3_options = aws_client.longtail_s3_options(request.transfer_acceleration);
 
-        let mut exec = Command::new(cmd);
-        #[cfg(windows)]
-        exec.creation_flags(CREATE_NO_WINDOW);
-
-        exec.arg("get");
-        for archive in archives {
-            exec.arg("--source-path").arg(archive);
-        }
-        exec.arg("--target-path")
-            .arg(path.as_os_str())
-            .env("AWS_DEFAULT_REGION", crate::AWS_REGION);
-
-        if let Some(cache) = &cache {
-            exec.arg("--cache-path").arg(&cache.path);
+        if let Some(cache) = request.cache.as_ref() {
+            options.cache_path = Some(cache.path.clone());
+            // The whole of cache maintenance: longtail stamps each block on access and
+            // evicts least-recently-used down to this when the store closes.
+            options.cache_size_limit = Some(cache.max_size_bytes);
         }
 
-        send_msg(tx, LongtailMsg::ExecEvt(format!("{exec:?}")));
+        let report = longtail::get(options).await?;
 
-        // Add creds separately so they aren't logged in the above msg
-        exec.env("AWS_ACCESS_KEY_ID", credentials.access_key_id())
-            .env("AWS_SECRET_ACCESS_KEY", credentials.secret_access_key())
-            .env(
-                "AWS_SESSION_TOKEN",
-                credentials.session_token().unwrap_or(""),
-            );
-
-        let mut output = exec.stdout(pipe).stderr(errpipe).spawn()?;
-
-        let stdout = output.stdout.take().expect("Failed to get stdout!!!");
-        let stderr = output.stderr.take().expect("Failed to get stderr!!!");
-
-        self.child_process.lock().replace(output);
-
-        let reader = BufReader::new(stdout);
-        let errreader = BufReader::new(stderr);
-
-        let mut error_records_kept: Vec<String> = vec![];
-
-        // Longtail is using hardcoded CR characters in it's progress bar implementation, so
-        // split on those... https://github.com/DanEngelbrecht/golongtail/blob/main/longtailutils/progress.go#L24
-        reader
-            // .lines()
-            .split(b'\r')
-            .filter_map(|line| line.ok())
-            .for_each(|line| {
-                let line = std::str::from_utf8(&line).unwrap_or("").replace('\n', "");
-                if !line.is_empty() {
-                    // longtail logs its fatals to stdout, not stderr.
-                    keep_error_records(&mut error_records_kept, error_records(&line));
-                    send_msg(tx, LongtailMsg::Log(line));
-                }
-            });
-
-        errreader
-            .lines()
-            .map_while(|line| line.ok())
-            .for_each(|line| {
-                send_msg(tx, LongtailMsg::ErrEvt(line.clone()));
-                keep_error_records(&mut error_records_kept, vec![line]);
-            });
-
-        let mut child = self
-            .child_process
-            .lock()
-            .take()
-            .expect("No child process found");
-
-        let status = child
-            .wait()
-            .map_err(|e| anyhow::anyhow!("Failed waiting on child: {}", e))?;
-
-        if !status.success() {
-            let error_message = error_records_kept.join("\n");
-            return Err(anyhow::anyhow!(
-                "Longtail command failed: {}",
-                error_message
-            ));
-        }
-
-        send_msg(tx, LongtailMsg::DoneArcSyncEvt);
-
-        if let Some(cache) = &cache {
-            let mut all_files = FileCacheData::collect(&cache.path.join("chunks"));
-            let total_size = all_files.iter().fold(0, |acc, entry| acc + entry.size);
-
-            if total_size > cache.max_size_bytes {
-                info!("File cache total size {} is over threshold {} by {} bytes. Purging old chunks...",
-                    total_size, cache.max_size_bytes, total_size - cache.max_size_bytes);
-                all_files.sort_by(|a, b| -> Ordering {
-                    let time_ord = a.timestamp.partial_cmp(&b.timestamp);
-                    if time_ord == Some(Ordering::Equal) {
-                        return a.size.partial_cmp(&b.size).unwrap();
-                    }
-                    time_ord.unwrap()
-                });
-
-                let mut current_size = total_size;
-                for f in all_files.iter() {
-                    info!(
-                        "Deleting chunk {:?} with size {} (total {} -> {}, threshold {})",
-                        f.path,
-                        f.size,
-                        current_size,
-                        current_size - f.size,
-                        cache.max_size_bytes
-                    );
-                    if let Err(e) = std::fs::remove_file(&f.path) {
-                        warn!("Unable to delete file {:?}: {:?}", &f.path, e);
-                    }
-                    current_size -= f.size;
-                    if current_size <= cache.max_size_bytes {
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    #[instrument]
-    pub fn log_message(msg: LongtailMsg) {
-        match msg {
-            LongtailMsg::Log(s) => {
-                info!("Log: {}", s);
-            }
-            LongtailMsg::ExecEvt(s) => {
-                info!("Executing: {}", s)
-            }
-            LongtailMsg::ErrEvt(s) => {
-                error!("ERROR: {}", s)
-            }
-            LongtailMsg::DoneLtDlEvt => {
-                info!("Done downloading longtail");
-            }
-            LongtailMsg::DoneArcSyncEvt => {
-                info!("Done syncing");
-            }
-        };
+        Ok(SyncSummary {
+            bytes_written: report.bytes_written,
+            assets_written: report.assets_written,
+            assets_removed: report.assets_removed,
+            blocks_fetched: report.blocks_fetched,
+        })
     }
 }
 
@@ -671,12 +634,18 @@ mod tests {
     fn cancelling_a_download_leaves_the_next_one_runnable() {
         let downloads = DownloadCancellation::new();
 
-        let first = downloads.begin(SyncKind::Client);
+        let first = downloads.begin(SyncKind::Client).expect("nothing running");
         assert!(downloads.cancel(SyncKind::Client));
-        assert!(first.is_cancelled());
+        assert!(first.token().is_cancelled());
+        drop(first);
 
-        let second = downloads.begin(SyncKind::Client);
-        assert!(!second.is_cancelled(), "a new download starts uncancelled");
+        let second = downloads
+            .begin(SyncKind::Client)
+            .expect("the last one ended");
+        assert!(
+            !second.token().is_cancelled(),
+            "a new download starts uncancelled"
+        );
     }
 
     /// The reason there is a registry at all rather than one token.
@@ -684,15 +653,15 @@ mod tests {
     fn cancelling_one_kind_leaves_the_others_running() {
         let downloads = DownloadCancellation::new();
 
-        let client = downloads.begin(SyncKind::Client);
-        let engine = downloads.begin(SyncKind::Engine);
-        let dlls = downloads.begin(SyncKind::EditorDlls);
+        let client = downloads.begin(SyncKind::Client).unwrap();
+        let engine = downloads.begin(SyncKind::Engine).unwrap();
+        let dlls = downloads.begin(SyncKind::EditorDlls).unwrap();
 
         downloads.cancel(SyncKind::Engine);
 
-        assert!(engine.is_cancelled());
-        assert!(!client.is_cancelled());
-        assert!(!dlls.is_cancelled());
+        assert!(engine.token().is_cancelled());
+        assert!(!client.token().is_cancelled());
+        assert!(!dlls.token().is_cancelled());
     }
 
     /// Shutdown has to stop everything, including anything that starts while it happens.
@@ -700,15 +669,19 @@ mod tests {
     fn cancel_all_stops_every_kind_and_everything_after() {
         let downloads = DownloadCancellation::new();
 
-        let client = downloads.begin(SyncKind::Client);
-        let engine = downloads.begin(SyncKind::Engine);
+        let client = downloads.begin(SyncKind::Client).unwrap();
+        let engine = downloads.begin(SyncKind::Engine).unwrap();
 
         downloads.cancel_all();
 
-        assert!(client.is_cancelled());
-        assert!(engine.is_cancelled());
+        assert!(client.token().is_cancelled());
+        assert!(engine.token().is_cancelled());
         assert!(
-            downloads.begin(SyncKind::EditorDlls).is_cancelled(),
+            downloads
+                .begin(SyncKind::EditorDlls)
+                .unwrap()
+                .token()
+                .is_cancelled(),
             "a download racing shutdown must not start uncancelled"
         );
     }
@@ -719,8 +692,7 @@ mod tests {
 
         assert!(!downloads.cancel(SyncKind::Client));
 
-        downloads.begin(SyncKind::Client);
-        downloads.finish(SyncKind::Client);
+        drop(downloads.begin(SyncKind::Client));
         assert!(!downloads.cancel(SyncKind::Client));
     }
 
@@ -731,88 +703,254 @@ mod tests {
         let downloads = DownloadCancellation::new();
         let handed_to_an_op = downloads.clone();
 
-        let token = handed_to_an_op.begin(SyncKind::Engine);
+        let guard = handed_to_an_op.begin(SyncKind::Engine).unwrap();
         assert!(downloads.cancel(SyncKind::Engine));
-        assert!(token.is_cancelled());
+        assert!(guard.token().is_cancelled());
     }
 
-    // Shape of a real failure: the progress bar shares the chunk, the cause comes last.
-    const LAPSED_MID_DOWNLOAD: &str = concat!(
-        "Updating version           100%: |####|: [42m18s]        ",
-        r#"level=error msg="job_api->WaitForAllJobs() failed with 5" line=1049"#,
-        r#"level=error msg="Longtail_RunJobsBatched() failed with 5" line=8851"#,
-        "Dropping prefetched block due to background prefetch",
-        r#"level=fatal msg="get: downsync: Failed writing version to `C:\engine`: ChangeVersion2: 5: I/O error.""#,
-    );
-
-    const REJECTED_UP_FRONT: &str = concat!(
-        r#"level=fatal msg="get: ReadFromURI: operation error S3: GetObject, https "#,
-        r#"response error StatusCode: 400, api error ExpiredToken: The provided token has expired.""#,
-    );
-
-    fn creds(access_key: &str, session_token: &str) -> Credentials {
-        Credentials::from_keys(access_key, "secret", Some(session_token.to_string()))
-    }
-
+    /// Two downloads of one kind write to the same directory. The old behaviour replaced
+    /// the first one's registration, so it could no longer be cancelled while both kept
+    /// writing - reachable because the client sync runs in its handler rather than on the
+    /// serialized worker queue.
     #[test]
-    fn error_records_skips_progress_and_keeps_the_cause() {
-        let records = error_records(LAPSED_MID_DOWNLOAD);
+    fn a_second_download_of_the_same_kind_is_refused() {
+        let downloads = DownloadCancellation::new();
 
-        assert_eq!(records.len(), 3);
-        assert!(records[0].starts_with("level=error"));
-        assert!(records[2].contains("I/O error"));
-        assert!(records.iter().all(|r| !r.contains("Updating version")));
+        let first = downloads.begin(SyncKind::Engine).expect("nothing running");
+        assert!(downloads.begin(SyncKind::Engine).is_none(), "refused");
+        assert!(downloads.is_running(SyncKind::Engine));
+
+        // A different kind is unaffected - that is the whole point of the registry.
+        assert!(downloads.begin(SyncKind::Client).is_some());
+
+        drop(first);
+        assert!(!downloads.is_running(SyncKind::Engine));
+        assert!(downloads.begin(SyncKind::Engine).is_some(), "freed on drop");
     }
 
+    /// A handler whose future is dropped - client disconnected, runtime shutting down -
+    /// must not leave its kind registered forever, because that would now block every
+    /// later download of that kind.
     #[test]
-    fn error_records_ignores_output_without_a_failure() {
-        assert!(error_records("Updating version  59%: |###|: [37m10s:28m30s]").is_empty());
-        assert!(error_records(r#"level=warning msg="Dropping prefetched block""#).is_empty());
-    }
+    fn a_dropped_download_frees_its_kind() {
+        let downloads = DownloadCancellation::new();
 
-    #[test]
-    fn keep_error_records_keeps_the_last_ones() {
-        let mut kept = vec![];
-        for i in 0..MAX_ERROR_RECORDS + 3 {
-            keep_error_records(&mut kept, vec![format!("record {i}")]);
+        {
+            let _guard = downloads.begin(SyncKind::EditorDlls).unwrap();
+            assert!(downloads.is_running(SyncKind::EditorDlls));
         }
 
-        assert_eq!(kept.len(), MAX_ERROR_RECORDS);
-        assert_eq!(
-            kept.last().unwrap(),
-            &format!("record {}", MAX_ERROR_RECORDS + 2)
+        assert!(!downloads.is_running(SyncKind::EditorDlls));
+    }
+
+    /// Cancelling is not stopping. longtail finishes the blocks already in flight and
+    /// then flushes and closes the store, sweeping the cache, so a download that has been
+    /// cancelled is still writing for a while. Starting the next one into the same target
+    /// during that window is the overlap refusing exists to prevent.
+    #[test]
+    fn a_cancelled_download_still_holds_its_slot_until_it_stops() {
+        let downloads = DownloadCancellation::new();
+
+        let cancelled = downloads.begin(SyncKind::Client).unwrap();
+        assert!(downloads.cancel(SyncKind::Client));
+        assert!(cancelled.token().is_cancelled());
+
+        assert!(
+            downloads.begin(SyncKind::Client).is_none(),
+            "still unwinding, so a second download must not start"
+        );
+
+        // Only once the download has actually finished does the slot free up.
+        drop(cancelled);
+        assert!(!downloads.is_running(SyncKind::Client));
+        assert!(downloads.begin(SyncKind::Client).is_some());
+    }
+
+    /// Shutdown clears everything, so a download may register afterwards. A guard from
+    /// before must not then clear that newcomer's registration when it finally drops.
+    #[test]
+    fn a_stale_guard_does_not_clear_its_successor() {
+        let downloads = DownloadCancellation::new();
+
+        let before = downloads.begin(SyncKind::Client).unwrap();
+        downloads.cancel_all();
+
+        let successor = downloads
+            .begin(SyncKind::Client)
+            .expect("shutdown cleared it");
+        drop(before);
+
+        assert!(
+            downloads.is_running(SyncKind::Client),
+            "the successor is still registered"
+        );
+        assert!(
+            successor.token().is_cancelled(),
+            "though shutdown cancelled it"
         );
     }
 
+    /// Errors must be classified by what the user should do, and must carry the cause.
+    ///
+    /// Both halves have been got wrong before in a port of this library: matching on
+    /// concrete variants rather than `class()` misses failures that arrive flattened from
+    /// a block fetch, and rendering `Display` rather than the source chain throws away
+    /// everything except a category name.
+    #[tokio::test]
+    async fn errors_are_classified_and_keep_their_cause() {
+        // No get-config at all: the request itself is wrong.
+        let empty = longtail::get(longtail::GetOptions::new(vec![], "/tmp/unused"))
+            .await
+            .expect_err("no source paths is an error");
+        let mapped = SyncError::from_longtail(SyncKind::Client, &empty);
+        assert_eq!(mapped.class, SyncErrorClass::InvalidInput);
+        assert_eq!(mapped.detail, empty.full_chain());
+
+        // A get-config that is not there. Note this is Io, not NotFound: NotFound is for
+        // a blob missing inside a store, not a path that does not exist.
+        let missing = longtail::get(longtail::GetOptions::new(
+            vec!["/nonexistent/build.json".to_string()],
+            "/tmp/unused",
+        ))
+        .await
+        .expect_err("a missing get-config is an error");
+        let mapped = SyncError::from_longtail(SyncKind::Engine, &missing);
+        assert_eq!(mapped.class, SyncErrorClass::Io);
+        assert_eq!(mapped.detail, missing.full_chain());
+        assert!(
+            mapped.detail.len() > missing.to_string().len(),
+            "an error with a source chain must render more than its category: {:?} vs {:?}",
+            mapped.detail,
+            missing.to_string()
+        );
+        assert!(mapped.summary.contains("engine"), "{}", mapped.summary);
+    }
+
+    /// The sink runs on longtail's async task and on rayon workers, so it must never
+    /// block and must survive nobody listening.
     #[test]
-    fn rejected_request_reads_as_a_credential_failure() {
-        // No expiry to go on: the message alone has to carry it.
-        assert!(credentials_lapsed(REJECTED_UP_FRONT, None));
+    fn the_progress_sink_never_blocks_or_fails() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sink = ChannelProgress::new(SyncKind::Client, tx);
+
+        sink.on_phase("Updating version");
+        for done in 1..=32u64 {
+            sink.on_progress(Progress {
+                done_bytes: done,
+                total_bytes: 32,
+                done_items: done,
+                total_items: 32,
+            });
+        }
+
+        let events: Vec<SyncEvent> = rx.try_iter().collect();
+        assert_eq!(events.len(), 33, "one phase event plus every sample");
+        assert!(events.iter().all(|e| matches!(
+            e,
+            SyncEvent::Progress { progress, .. } if progress.phase == "Updating version"
+        )));
+
+        // A closed receiver means nobody is watching, which must not fail a download.
+        drop(rx);
+        sink.on_phase("Still going");
+        sink.on_progress(Progress::default());
+    }
+
+    /// The wire contract with the frontend. A Rust test cannot typecheck TypeScript, so
+    /// this pins the Rust half and checks the names it emits all appear in the shared
+    /// type; `svelte-check` pins the other half.
+    #[test]
+    fn sync_events_match_the_shared_typescript_type() {
+        let ts = include_str!("../ui/src/lib/types/sync.ts");
+
+        let summary = SyncSummary {
+            bytes_written: 1,
+            assets_written: 2,
+            assets_removed: 3,
+            blocks_fetched: 4,
+        };
+        let progress = SyncProgress {
+            done_bytes: 1,
+            total_bytes: 2,
+            done_items: 3,
+            total_items: 4,
+            phase: "Updating version".to_string(),
+        };
+        let error = SyncError {
+            class: SyncErrorClass::Unauthorized,
+            summary: "expired".to_string(),
+            detail: "store error: not authorized".to_string(),
+        };
+
+        let events = vec![
+            SyncEvent::Started {
+                kind: SyncKind::Client,
+            },
+            SyncEvent::Progress {
+                kind: SyncKind::Engine,
+                progress,
+            },
+            SyncEvent::Finished {
+                kind: SyncKind::EditorDlls,
+                summary,
+            },
+            SyncEvent::Failed {
+                kind: SyncKind::Client,
+                error,
+            },
+            SyncEvent::Cancelled {
+                kind: SyncKind::Client,
+            },
+        ];
+
+        for event in events {
+            let value = serde_json::to_value(&event).expect("serializes");
+            let object = value.as_object().expect("a tagged object");
+
+            let tag = object["type"].as_str().expect("a type tag");
+            assert!(
+                ts.contains(&format!("type: '{tag}'")),
+                "the shared type has no variant {tag:?}"
+            );
+
+            for key in object.keys() {
+                assert!(
+                    ts.contains(key),
+                    "the shared type does not mention field {key:?} of {tag:?}"
+                );
+            }
+        }
+
+        // The discriminators the UI switches on.
+        for kind in [SyncKind::Client, SyncKind::Engine, SyncKind::EditorDlls] {
+            assert!(ts.contains(&format!("'{}'", kind.as_str())), "{kind}");
+        }
+        assert!(ts.contains("'unauthorized'"));
     }
 
     #[test]
-    fn lapse_mid_download_reads_as_a_credential_failure() {
-        // Only the expiry distinguishes a lapsed session from a corrupt cache here;
-        // misreading it deletes the cache.
-        let expired = Utc::now() - chrono::Duration::seconds(1);
+    fn an_unauthorized_failure_becomes_an_unauthorized_response() {
+        let error = SyncError {
+            class: SyncErrorClass::Unauthorized,
+            summary: "expired".to_string(),
+            detail: "store error: not authorized".to_string(),
+        };
+        assert!(matches!(
+            error.into_core_error(),
+            crate::types::errors::CoreError::Unauthorized
+        ));
 
-        assert!(credentials_lapsed(LAPSED_MID_DOWNLOAD, Some(expired)));
-    }
-
-    #[test]
-    fn io_error_within_a_live_session_is_not_a_credential_failure() {
-        let valid = Utc::now() + chrono::Duration::hours(1);
-
-        assert!(!credentials_lapsed(LAPSED_MID_DOWNLOAD, Some(valid)));
-        assert!(!credentials_lapsed(LAPSED_MID_DOWNLOAD, None));
-    }
-
-    #[test]
-    fn same_session_tracks_the_token() {
-        let original = creds("AKIAEXAMPLE", "token-one");
-
-        assert!(same_session(&original, &creds("AKIAEXAMPLE", "token-one")));
-        assert!(!same_session(&original, &creds("AKIAEXAMPLE", "token-two")));
-        assert!(!same_session(&original, &creds("AKIAOTHER", "token-one")));
+        let other = SyncError {
+            class: SyncErrorClass::Corrupt,
+            summary: "bad block".to_string(),
+            detail: "format error: bad magic".to_string(),
+        };
+        // Everything else keeps its detail rather than collapsing to a bare category.
+        match other.into_core_error() {
+            crate::types::errors::CoreError::Internal(e) => {
+                assert!(e.to_string().contains("bad magic"), "{e}")
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

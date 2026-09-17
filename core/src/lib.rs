@@ -6,7 +6,6 @@ pub mod blocked_files;
 pub mod clients;
 pub mod fs;
 pub mod middleware;
-pub mod msg;
 pub mod operations;
 pub mod storage;
 pub mod tauri;
@@ -63,21 +62,6 @@ pub const BIN_SUFFIX: &str = ".exe";
 pub const BIN_SUFFIX: &str = "friendshipper-linux-amd64";
 #[cfg(target_os = "macos")]
 pub const BIN_SUFFIX: &str = "friendshipper-darwin-amd64";
-
-// Longtail download info
-#[cfg(target_os = "windows")]
-const LONGTAIL_VERSION: &str = "v0.4.2";
-#[cfg(target_os = "linux")]
-const LONGTAIL_VERSION: &str = "v0.4.5";
-#[cfg(target_os = "macos")]
-const LONGTAIL_VERSION: &str = "v0.4.2";
-#[cfg(target_os = "windows")]
-const LONGTAIL_SHA256: &str = "2cb9396d4a09f7083dc5909296944c155415eb4e3c7cbb79dd7d835a2db46e25";
-#[cfg(target_os = "linux")]
-const LONGTAIL_SHA256: &str = "91094c3c28f48b66014f0f5d2679bf6fa1880ca6ce971f861f011c31251401f3";
-#[cfg(target_os = "macos")]
-const LONGTAIL_SHA256: &str = "cf71bb53f1b2819e5aebfcd1b7cbfbf24e88b4bc8ecdf1147bac6fdc4e56d92a";
-const LONGTAIL_DL_PREFIX: &str = "https://github.com/DanEngelbrecht/golongtail/releases/download";
 
 #[cfg(test)]
 mod tests {}

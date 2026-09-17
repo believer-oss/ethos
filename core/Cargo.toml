@@ -77,10 +77,6 @@ pem = "3.0.2"
 schemars = "0.8.12"
 k8s-openapi = { version = "0.20.0", features = ["v1_24"] }
 rand = "0.8.5"
-hex = "0.4"
-sha2 = "0.10.6"
-ureq = "2.6.2"
-which = "4.4.0"
 json-patch = "1.1.0"
 ring = "0.17"
 graphql_client = { version = "0.13.0", features = ["reqwest"] }
@@ -99,3 +95,9 @@ hyper = { version = "0.14.31", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 listeners = "0.2.1"
 tokio-util = "0.7.13"
+
+[dev-dependencies]
+# The end-to-end sync test builds its own longtail store in a temp dir, so it needs the
+# library directly rather than only through ethos-core's API.
+longtail = { workspace = true }
+tempfile = { workspace = true }

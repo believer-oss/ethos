@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, info, instrument, warn};
 
-use ethos_core::msg::LongtailMsg;
+use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig, ProjectRepoConfig};
 use ethos_core::types::errors::CoreError;
@@ -37,7 +37,7 @@ use crate::{state::AppState, KEYRING_USER, VERSION};
 
 pub struct Server {
     port: u16,
-    longtail_tx: STDSender<LongtailMsg>,
+    sync_event_tx: STDSender<SyncEvent>,
     notification_tx: STDSender<Notification>,
     frontend_op_tx: STDSender<FrontendOp>,
     log_path: PathBuf,
@@ -53,7 +53,7 @@ impl Server {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         port: u16,
-        longtail_tx: STDSender<LongtailMsg>,
+        sync_event_tx: STDSender<SyncEvent>,
         notification_tx: STDSender<Notification>,
         frontend_op_tx: STDSender<FrontendOp>,
         log_path: PathBuf,
@@ -66,7 +66,7 @@ impl Server {
     ) -> Self {
         Server {
             port,
-            longtail_tx,
+            sync_event_tx,
             notification_tx,
             frontend_op_tx,
             log_path,
@@ -140,15 +140,14 @@ impl Server {
 
                 info!("Shutting down server");
 
-                // Cancel every download at once. The kill stays alongside it for now:
-                // downloads are still child processes, which cannot observe a token.
+                // Stop every download. Cancellation is block-granular - it stops the
+                // next block rather than aborting one in flight - so give it a moment
+                // and then carry on regardless. Exiting mid-download is safe: the
+                // partial target and the block cache both stay valid, so the next run
+                // resumes. The bound is well under the five seconds the tray Quit
+                // handler waits before calling process::exit itself.
                 shared_state.downloads.cancel_all();
-
-                let longtail = shared_state.artifact_sync.clone();
-                let child = longtail.child_process.lock().take();
-                if let Some(mut child) = child {
-                    child.kill().unwrap();
-                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Wait up to 30 seconds for index.lock to go away
                 let repo_path = shared_state.app_config.read().repo_path.clone();
@@ -260,7 +259,7 @@ impl Server {
             dynamic_config,
             config_file,
             storage,
-            self.longtail_tx.clone(),
+            self.sync_event_tx.clone(),
             op_tx.clone(),
             self.notification_tx.clone(),
             self.frontend_op_tx.clone(),
