@@ -141,7 +141,7 @@ impl Server {
                 info!("Shutting down server");
 
                 // cancel any longtail downloads
-                let longtail = shared_state.longtail.clone();
+                let longtail = shared_state.artifact_sync.clone();
                 let child = longtail.child_process.lock().take();
                 if let Some(mut child) = child {
                     child.kill().unwrap();

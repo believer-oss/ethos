@@ -13,9 +13,9 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::warn;
 use tracing::{info, instrument};
 
+use ethos_core::artifact_sync;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::longtail;
 use ethos_core::msg::LongtailMsg;
 use ethos_core::types::config::EngineType;
 use ethos_core::types::config::UProject;
@@ -39,7 +39,7 @@ pub struct UpdateEngineOp<T> {
     pub old_uproject: Option<UProject>,
     pub new_uproject: UProject,
     pub engine_type: EngineType,
-    pub longtail: longtail::Longtail,
+    pub artifact_sync: artifact_sync::ArtifactSync,
     pub longtail_tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
     pub git_client: git::Git,
@@ -154,11 +154,11 @@ where
                     };
                 }
 
-                let cache_path = get_engine_cache_path(&self.longtail);
+                let cache_path = get_engine_cache_path(&self.artifact_sync);
 
-                let download_result = self.longtail.get_archive(
+                let download_result = self.artifact_sync.get_archive(
                     &PathBuf::from(&self.engine_path),
-                    Some(longtail::CacheControl {
+                    Some(artifact_sync::CacheControl {
                         path: cache_path,
                         max_size_bytes: 100 * 1024 * 1024 * 1024, // 100 GB
                     }),
@@ -236,7 +236,7 @@ where
     }
 }
 
-fn get_engine_cache_path(longtail: &longtail::Longtail) -> PathBuf {
+fn get_engine_cache_path(longtail: &artifact_sync::ArtifactSync) -> PathBuf {
     longtail.download_path.0.join("engine_cache/")
 }
 
@@ -353,7 +353,7 @@ where
         old_uproject: None,
         new_uproject: uproject,
         engine_type: app_config.engine_type,
-        longtail: state.longtail.clone(),
+        artifact_sync: state.artifact_sync.clone(),
         longtail_tx: tx_lock.clone(),
         aws_client,
         git_client: state.git(),
@@ -379,7 +379,7 @@ where
 
     let wipe_op = WipeEngineOp {
         engine_path: update_op.engine_path.clone(),
-        engine_cache_path: get_engine_cache_path(&state.longtail),
+        engine_cache_path: get_engine_cache_path(&state.artifact_sync),
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();

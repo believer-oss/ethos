@@ -43,7 +43,7 @@ pub fn send_msg(tx: &Sender<LongtailMsg>, msg: LongtailMsg) {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct Longtail {
+pub struct ArtifactSync {
     pub app_name: String,
     pub exec_path: Option<PathBuf>,
     pub download_path: LocalDownloadPath,
@@ -176,11 +176,11 @@ impl FileCacheData {
     }
 }
 
-impl Longtail {
+impl ArtifactSync {
     pub fn new(app_name: &str) -> Self {
-        let exec_path = Longtail::find_exec(app_name);
+        let exec_path = ArtifactSync::find_exec(app_name);
 
-        Longtail {
+        ArtifactSync {
             exec_path,
             app_name: app_name.to_string(),
             download_path: LocalDownloadPath::new(app_name),
@@ -201,7 +201,7 @@ impl Longtail {
 
     // Build the URL to download longtail from
     fn get_longtail_dl_url() -> String {
-        let exec_name = Longtail::get_longtail_exec_name();
+        let exec_name = ArtifactSync::get_longtail_exec_name();
 
         format!(
             "{}/{}/{}",
@@ -214,7 +214,7 @@ impl Longtail {
     // Search for the longtail executable in our download dir or the user's path
     #[instrument]
     fn find_exec(app_name: &str) -> Option<PathBuf> {
-        let exe_name = Longtail::get_longtail_exec_name();
+        let exe_name = ArtifactSync::get_longtail_exec_name();
 
         // Try to find the executable in the project data path, and if that fails
         // check the current exe directory.
@@ -257,9 +257,9 @@ impl Longtail {
         } else {
             exe_path = env::current_exe().context("Could not find current path!!!")?;
         }
-        exe_path.push(Longtail::get_longtail_exec_name());
+        exe_path.push(ArtifactSync::get_longtail_exec_name());
 
-        let url = Longtail::get_longtail_dl_url();
+        let url = ArtifactSync::get_longtail_dl_url();
         send_msg(&tx, LongtailMsg::ExecEvt(format!("{url:?}")));
 
         let response = ureq::get(&url).call()?;

@@ -1,10 +1,10 @@
 pub use clients::aws::AWSClient;
 
+pub mod artifact_sync;
 pub mod auth;
 pub mod blocked_files;
 pub mod clients;
 pub mod fs;
-pub mod longtail;
 pub mod middleware;
 pub mod msg;
 pub mod operations;

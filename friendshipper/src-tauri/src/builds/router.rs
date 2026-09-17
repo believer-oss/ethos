@@ -6,7 +6,7 @@ use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
-use ethos_core::longtail::CacheControl;
+use ethos_core::artifact_sync::CacheControl;
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -418,7 +418,7 @@ where
 {
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
-    let mut local_path = state.longtail.download_path.0.clone();
+    let mut local_path = state.artifact_sync.download_path.0.clone();
     let remote_path = payload
         .method_prefix
         .get_storage_url(&payload.artifact_entry);
@@ -489,7 +489,7 @@ where
             state.cancel_tx.write().await.replace(cancel_tx);
 
             info!("Starting download...");
-            let longtail = state.longtail.clone();
+            let longtail = state.artifact_sync.clone();
             tokio::select! {
                 cancel_result = &mut cancel_rx => {
                     info!("Cancel branch hit with result: {:?}", cancel_result);
@@ -505,7 +505,7 @@ where
                 download_result = async move {
                     tokio::task::spawn_blocking(move || {
                         info!("Starting actual download...");
-                        state.longtail.get_archive(
+                        state.artifact_sync.get_archive(
                             &local_path_clone,
                             Some(cache_control),
                             &archive_urls,
@@ -637,7 +637,7 @@ pub async fn wipe_client_data<T>(State(state): State<AppState<T>>) -> Result<(),
 where
     T: EngineProvider,
 {
-    let local_path = state.longtail.download_path.0.clone();
+    let local_path = state.artifact_sync.download_path.0.clone();
 
     // delete all directories in the download path except "logs"
     let entries = fs::read_dir(local_path)
@@ -660,7 +660,7 @@ pub async fn reset_longtail<T>(State(state): State<AppState<T>>) -> Result<(), C
 where
     T: EngineProvider,
 {
-    let longtail_path = state.longtail.exec_path.clone();
+    let longtail_path = state.artifact_sync.exec_path.clone();
 
     if let Some(longtail_path) = longtail_path {
         fs::remove_file(longtail_path)?;

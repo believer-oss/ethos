@@ -6,7 +6,7 @@
 
 use std::thread;
 
-use ethos_core::longtail::Longtail;
+use ethos_core::artifact_sync::ArtifactSync;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
 use lazy_static::lazy_static;
@@ -469,7 +469,7 @@ fn main() -> Result<(), CoreError> {
                 let longtail_handle = handle.clone();
                 thread::spawn(move || {
                     while let Ok(msg) = longtail_rx.recv() {
-                        Longtail::log_message(msg.clone());
+                        ArtifactSync::log_message(msg.clone());
 
                         if let LongtailMsg::Log(s) = msg {
                             longtail_handle.emit("longtail-log", &s).unwrap();

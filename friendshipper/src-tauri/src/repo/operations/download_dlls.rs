@@ -14,9 +14,9 @@ use tracing::info;
 use tracing::warn;
 
 use crate::engine::EngineProvider;
+use ethos_core::artifact_sync;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::longtail;
 use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::config::Project;
 use ethos_core::storage::ArtifactStorage;
@@ -40,7 +40,7 @@ pub struct DownloadDllsOp<T> {
     pub dll_commit: String,
     pub download_symbols: bool,
     pub storage: ArtifactStorage,
-    pub longtail: longtail::Longtail,
+    pub artifact_sync: artifact_sync::ArtifactSync,
     pub tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
     pub project: Project,
@@ -73,11 +73,15 @@ where
             )));
         }
 
-        let mut binaries_staging_path =
-            Path::join(&self.longtail.download_path.0, Path::new("editor_staging"));
+        let mut binaries_staging_path = Path::join(
+            &self.artifact_sync.download_path.0,
+            Path::new("editor_staging"),
+        );
 
-        let mut binaries_cache_path =
-            Path::join(&self.longtail.download_path.0, Path::new("editor_cache"));
+        let mut binaries_cache_path = Path::join(
+            &self.artifact_sync.download_path.0,
+            Path::new("editor_cache"),
+        );
 
         let mut binaries_destination_path = PathBuf::from(&self.git_client.repo_path);
 
@@ -146,9 +150,9 @@ where
             };
         }
 
-        let dll_download_result = self.longtail.get_archive(
+        let dll_download_result = self.artifact_sync.get_archive(
             &binaries_staging_path,
-            Some(longtail::CacheControl {
+            Some(artifact_sync::CacheControl {
                 path: binaries_cache_path,
                 max_size_bytes: 5 * 1024 * 1024 * 1024, // 5 GB
             }),
@@ -237,7 +241,7 @@ where
             dll_commit: state.repo_status.read().dll_commit_remote.clone(),
             download_symbols: state.app_config.read().editor_download_symbols,
             storage,
-            longtail: state.longtail.clone(),
+            artifact_sync: state.artifact_sync.clone(),
             tx: tx_lock.clone(),
             aws_client: aws_client.clone(),
             project,

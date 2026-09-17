@@ -518,23 +518,23 @@ pub async fn setup_with_repo_config(
 
     info!("[testing module] created app state");
 
-    state.longtail.download_path = LocalDownloadPath(TEST_DIR.join("longtail-downloads"));
+    state.artifact_sync.download_path = LocalDownloadPath(TEST_DIR.join("longtail-downloads"));
 
-    if state.longtail.exec_path.is_none() && state.longtail.update_exec().is_err() {
+    if state.artifact_sync.exec_path.is_none() && state.artifact_sync.update_exec().is_err() {
         let tx_lock = state.longtail_tx.clone();
-        if let Err(e) = state.longtail.get_longtail(tx_lock.clone()) {
+        if let Err(e) = state.artifact_sync.get_longtail(tx_lock.clone()) {
             info!("failed to get longtail executable: {:?}", e);
             info!(
                 "[testing module] failed to get longtail executable: {:?}",
                 e
             );
         }
-        _ = state.longtail.update_exec();
+        _ = state.artifact_sync.update_exec();
     };
 
     info!(
         "[testing module] longtail update done. exe path: {:?}",
-        &state.longtail.exec_path
+        &state.artifact_sync.exec_path
     );
 
     let mut server = TestServer::new(state, exit_tx);

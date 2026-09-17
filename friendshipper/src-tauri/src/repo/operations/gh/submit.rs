@@ -16,9 +16,9 @@ use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use crate::state::Notification;
+use ethos_core::artifact_sync::ArtifactSync;
 use ethos_core::clients::git;
 use ethos_core::clients::github;
-use ethos_core::longtail::Longtail;
 use ethos_core::msg::LongtailMsg;
 use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
@@ -58,7 +58,7 @@ where
     pub storage: Option<ArtifactStorage>,
     pub repo_status: RepoStatusRef,
 
-    pub longtail: Longtail,
+    pub artifact_sync: ArtifactSync,
     pub longtail_tx: Sender<LongtailMsg>,
     pub notification_tx: Sender<Notification>,
     /// Forwarded into the auto-sync `PullOp` kicked off after a successful
@@ -1344,7 +1344,7 @@ where
                                         app_config: self.app_config.clone(),
                                         repo_config: self.repo_config.clone(),
                                         repo_status: self.repo_status.clone(),
-                                        longtail: self.longtail.clone(),
+                                        artifact_sync: self.artifact_sync.clone(),
                                         longtail_tx: self.longtail_tx.clone(),
                                         aws_client,
                                         storage,
@@ -1471,7 +1471,7 @@ where
         storage,
         repo_status: state.repo_status.clone(),
 
-        longtail: state.longtail.clone(),
+        artifact_sync: state.artifact_sync.clone(),
         longtail_tx: state.longtail_tx.clone(),
         notification_tx: state.notification_tx.clone(),
         sync_phase_tx: state.sync_phase_tx.clone(),
