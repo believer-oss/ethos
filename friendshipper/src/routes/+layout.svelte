@@ -37,13 +37,12 @@
 	import { invoke } from '@tauri-apps/api/core';
 
 	import {
+		DownloadStatusBar,
 		ErrorToastStack,
 		Pizza,
 		ProgressModal,
 		SuccessToast,
-		SyncTracker,
-		formatDuration,
-		type SyncEvent
+		type SyncKind
 	} from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
@@ -143,29 +142,20 @@
 	let updateAvailable = false;
 	let updateProgress = 0;
 
-	// Background sync
-	const backgroundSyncTracker = new SyncTracker();
-	// null when the current phase has no byte total; renders as indeterminate.
-	let backgroundSyncPercent: number | null = null;
-	let backgroundSyncElapsed = '';
-	let backgroundSyncRemaining = '';
-	let backgroundSyncPhase = '';
-
 	// Reset config confirmation at startup
 	let showResetConfirmModal = false;
 
-	const handleCancelBackgroundSync = async () => {
+	const handleCancelDownload = async (kind: SyncKind) => {
 		try {
-			await cancelDownload();
+			await cancelDownload(kind);
 
-			backgroundSyncPercent = null;
-			backgroundSyncElapsed = '';
-			backgroundSyncRemaining = '';
-			backgroundSyncPhase = '';
-
-			await emit('background-sync-cancel');
+			// The background-sync flow tracks the client download specifically, so only
+			// that one ends it; cancelling an engine or DLL download leaves it running.
+			if (kind === 'client') {
+				await emit('background-sync-cancel');
+			}
 		} catch (e) {
-			await logError('Background sync cancel failed', e);
+			await logError(`Cancelling the ${kind} download failed`, e);
 		}
 	};
 
@@ -924,28 +914,6 @@
 
 	void listen('background-sync-start', () => {
 		backgroundSyncInProgress.set(true);
-
-		backgroundSyncTracker.reset();
-		backgroundSyncPercent = null;
-		backgroundSyncElapsed = '';
-		backgroundSyncRemaining = '';
-		backgroundSyncPhase = '';
-	});
-
-	// Registered once. Nesting this inside the handler above added a listener on every
-	// sync, so a long session accumulated one per sync and updated the bar that many
-	// times per event.
-	void listen<SyncEvent>('sync-event', (event) => {
-		const { payload } = event;
-		if (payload.type !== 'progress') return;
-
-		backgroundSyncTracker.update(payload.progress);
-		backgroundSyncPercent = backgroundSyncTracker.percent;
-		backgroundSyncPhase = backgroundSyncTracker.phase;
-		backgroundSyncElapsed = formatDuration(backgroundSyncTracker.elapsedSeconds);
-		backgroundSyncRemaining = formatDuration(
-			backgroundSyncTracker.remainingSeconds(payload.progress)
-		);
 	});
 
 	void listen('background-sync-end', () => {
@@ -1507,31 +1475,7 @@
 			</div>
 		</div>
 	{/if}
-	{#if $backgroundSyncInProgress}
-		<div
-			class="flex gap-1 items-center bg-secondary-700 dark:bg-space-900 h-6 max-h-6 w-full py-1 px-2 z-50"
-		>
-			<code class="text-xs text-gray-400 dark:text-gray-400 text-nowrap">
-				{backgroundSyncPhase || 'Syncing...'}
-			</code>
-			<Spinner size="2" />
-			{#if backgroundSyncPercent !== null}
-				<Progressbar progress={backgroundSyncPercent} size="h-1" />
-			{/if}
-			<code class="text-xs text-gray-400 dark:text-gray-400 text-nowrap">
-				{backgroundSyncElapsed} / {backgroundSyncRemaining}
-			</code>
-			<Button
-				outline
-				color="dark"
-				size="xs"
-				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
-				on:click={handleCancelBackgroundSync}
-			>
-				<CloseOutline class="h-3 w-3" />
-			</Button>
-		</div>
-	{/if}
+	<DownloadStatusBar onCancel={handleCancelDownload} />
 	<div
 		class="flex items-center bg-secondary-800 dark:bg-space-950 h-6 max-h-6 w-full px-2 z-50 border-t border-secondary-700 dark:border-space-900"
 		title={lastGitLogMessage}
