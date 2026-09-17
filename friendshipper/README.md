@@ -143,6 +143,21 @@ yarn format
 yarn lint
 ```
 
+### Working against a local longtail checkout
+
+`longtail` is pinned by commit in the workspace `Cargo.toml`, because the crate is not
+published and an unpinned git dependency would silently move the build. To build against a
+local checkout instead, override it in your **user** cargo config (`~/.cargo/config.toml`) -
+not in the repo:
+
+```toml
+[patch."https://github.com/believer-oss/longtail-rs"]
+longtail = { path = "/path/to/longtail-rs/crates/longtail" }
+```
+
+The override rewrites `Cargo.lock`, so restore it (`git checkout -- Cargo.lock`) before
+committing, or CI will resolve the dependency from your local path and fail.
+
 # Release Process
 
 We use GitHub to distribute new releases of Friendshipper, according to the [semantic versioning](https://semver.org/)
