@@ -2372,6 +2372,52 @@ mod tests {
         );
     }
 
+    // Unlocked lockable assets sit on disk read-only. Restore must overwrite
+    // one and leave it writable — the same contract `import_zipped_changes`
+    // holds to.
+    #[tokio::test]
+    async fn test_restore_snapshot_overwrites_readonly_file_and_leaves_it_writable() {
+        let (git, _dir) = setup_repo();
+
+        std::fs::write(git.repo_path.join("a.txt"), "base").unwrap();
+        for args in [vec!["add", "a.txt"], vec!["commit", "-m", "add a"]] {
+            let out = StdCommand::new("git")
+                .args(&args)
+                .current_dir(&git.repo_path)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        }
+
+        std::fs::write(git.repo_path.join("a.txt"), "snapshot-version").unwrap();
+        let snapshot = git
+            .save_snapshot_all("snapshot of a")
+            .await
+            .expect("save_snapshot_all");
+
+        // Diverge locally, then mark the file read-only the way an unlocked
+        // lockable asset would be.
+        let path = git.repo_path.join("a.txt");
+        std::fs::write(&path, "post-snapshot").unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        git.restore_snapshot(&snapshot.commit, vec![], true, None)
+            .await
+            .expect("restore over a read-only file");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "snapshot-version",
+            "restore should have overwritten the read-only file"
+        );
+        assert!(
+            !std::fs::metadata(&path).unwrap().permissions().readonly(),
+            "restore should leave the file writable"
+        );
+    }
+
     // Regression: an untracked file round-tripped through the
     // cherry-pick restore could be reported as a conflict — with the
     // snapshot version dropped at `.snapshotcopy` — even though its

@@ -13,6 +13,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::engine::EngineProvider;
 use crate::state::AppState;
+use ethos_core::fs::clear_readonly;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::FileState;
 
@@ -69,6 +70,24 @@ fn join_repo_path(repo_root: &Path, rel: &str) -> PathBuf {
         p.push(seg);
     }
     p
+}
+
+/// Replaces the file at `abs` with `contents`, leaving it writable.
+///
+/// The read-only attribute has to come off first: working-tree assets are
+/// routinely read-only (git-lfs marks lockable files the user doesn't hold a
+/// lock on) and `File::create` fails with "Access is denied" against those on
+/// Windows.
+///
+/// The file is left writable, which is the state both a snapshot restore
+/// (`git checkout` drops the attribute) and the Friendshipper UE plugin's
+/// save-without-checkout produce: writable on disk, no lock held, showing as a
+/// local modification.
+fn write_extracted_file(abs: &Path, contents: &mut impl Read) -> std::io::Result<()> {
+    clear_readonly(abs)?;
+    let mut out = BufWriter::new(File::create(abs)?);
+    std::io::copy(contents, &mut out)?;
+    out.flush()
 }
 
 #[instrument(skip(state, req))]
@@ -437,6 +456,7 @@ where
                 }
                 let abs = join_repo_path(&repo_root, &rel);
                 if abs.is_file() {
+                    // fs::remove_file drops the read-only attribute itself on Windows.
                     fs::remove_file(&abs).map_err(|e| {
                         CoreError::Internal(anyhow!("Failed to remove {}: {}", rel, e))
                     })?;
@@ -481,13 +501,8 @@ where
             })?;
         }
 
-        let out = File::create(&abs)
-            .map_err(|e| CoreError::Internal(anyhow!("Failed to create {}: {}", rel, e)))?;
-        let mut out = BufWriter::new(out);
-        std::io::copy(&mut entry, &mut out)
+        write_extracted_file(&abs, &mut entry)
             .map_err(|e| CoreError::Internal(anyhow!("Failed to extract {}: {}", rel, e)))?;
-        out.flush()
-            .map_err(|e| CoreError::Internal(anyhow!("Failed to flush {}: {}", rel, e)))?;
         extracted += 1;
     }
 
@@ -497,4 +512,43 @@ where
     );
 
     Ok(Json(ImportZippedChangesResponse { extracted, deleted }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set_readonly(path: &Path) {
+        let mut perms = fs::metadata(path).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    // An unlocked lockable asset sits on disk read-only. `File::create` alone
+    // fails with "Access is denied" on Windows, aborting the whole import.
+    #[test]
+    fn write_extracted_file_overwrites_readonly_asset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Blueprint.uasset");
+        fs::write(&path, "locked contents").unwrap();
+        set_readonly(&path);
+
+        write_extracted_file(&path, &mut "imported contents".as_bytes()).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "imported contents");
+        assert!(
+            !fs::metadata(&path).unwrap().permissions().readonly(),
+            "an imported file must be left writable"
+        );
+    }
+
+    #[test]
+    fn write_extracted_file_creates_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("New.uasset");
+
+        write_extracted_file(&path, &mut "new contents".as_bytes()).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new contents");
+    }
 }
