@@ -6,7 +6,9 @@ use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
-use ethos_core::artifact_sync::{CacheControl, SyncErrorClass, SyncKind, SyncRequest};
+use ethos_core::artifact_sync::{
+    CacheControl, SyncErrorClass, SyncEvent, SyncKind, SyncRecord, SyncRequest,
+};
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -476,7 +478,7 @@ where
     }
 
     let cache_control = CacheControl {
-        path: client_cache_dir,
+        path: client_cache_dir.clone(),
         max_size_bytes: state.app_config.read().client_cache_size_bytes(),
     };
 
@@ -508,6 +510,10 @@ where
     let target = local_path_clone.clone();
     let archives = archive_urls.clone();
     let token = download.token();
+    let installed_version = payload.artifact_entry.base_name();
+    let cache_dir = client_cache_dir.clone();
+    let cache_size_bytes = state.app_config.read().client_cache_size_bytes();
+    let installed_tx = tx.clone();
     let handle = tokio::spawn(async move {
         // The guard moves in, so the registration lasts exactly as long as the download.
         let _download = download;
@@ -518,9 +524,32 @@ where
 
         // Whatever the engine does once the files land belongs with the download, not
         // with the handler. If the connection dropped, the handler is gone but the files
-        // are on disk and still need it.
+        // are on disk and still need it - and so does the record of what is now installed,
+        // or diagnostics would report the previous build and a verify would check the
+        // wrong version.
         if result.is_ok() {
+            let recorded = artifact_sync.ledger().record(
+                SyncKind::Client,
+                SyncRecord {
+                    version: installed_version,
+                    target: target.clone(),
+                    staging: None,
+                    archives,
+                    cache_path: Some(cache_dir),
+                    cache_size_bytes,
+                    recorded_at: Utc::now(),
+                },
+            );
             T::post_download(&target).await;
+
+            // Only now is the build actually usable. A record that did not reach disk
+            // leaves the ledger naming the previous build, so saying it is installed
+            // would send everything reading it to the wrong answer.
+            if recorded {
+                let _ = installed_tx.send(SyncEvent::Installed {
+                    kind: SyncKind::Client,
+                });
+            }
         }
 
         result

@@ -3,6 +3,7 @@ use friendshipper::engine::router::OpenUrlForPathRequest;
 use tracing::error;
 
 use ethos_core::artifact_sync::SyncKind;
+
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
 use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
@@ -24,6 +25,7 @@ use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
 };
 use friendshipper::builds::router::{ActiveBuild, GetWorkflowsResponse};
+use friendshipper::repo::operations::diagnostics::{ArtifactStatus, VerifyResponse};
 use friendshipper::repo::operations::{
     ImportZippedChangesRequest, RestoreFileToRevisionRequest, RestoreSnapshotRequest,
     SaveChangeSetRequest, SaveSnapshotRequest, ZipLocalChangesRequest,
@@ -76,6 +78,45 @@ pub async fn get_object_count(
         .get(format!(
             "{}/repo/diagnostics/object-count",
             state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_artifact_status(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<ArtifactStatus>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/diagnostics/artifacts", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn verify_artifact(
+    state: tauri::State<'_, State>,
+    kind: SyncKind,
+) -> Result<VerifyResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/repo/diagnostics/verify/{}",
+            state.server_url,
+            kind.as_str()
         ))
         .send()
         .await?;

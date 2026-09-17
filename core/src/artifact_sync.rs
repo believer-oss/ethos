@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use longtail::{ErrorClass, GetOptions, LongtailError, Progress, ProgressSink};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -366,6 +367,16 @@ pub enum SyncEvent {
         kind: SyncKind,
         summary: SyncSummary,
     },
+    /// The artifact is in place and the ledger says so.
+    ///
+    /// Separate from [`SyncEvent::Finished`], which means only that the transfer ended.
+    /// The editor binaries are downloaded into staging and then copied into the repo, and
+    /// the engine has work to do after its files land, so between the two events the
+    /// ledger still names the previous version - anything reading it on `Finished` reads
+    /// the build that is being replaced.
+    Installed {
+        kind: SyncKind,
+    },
     Failed {
         kind: SyncKind,
         error: SyncError,
@@ -449,12 +460,6 @@ pub enum SyncMode {
     Verify,
 }
 
-/// Where downloaded artifacts and their caches live.
-#[derive(Debug, Clone)]
-pub struct ArtifactSync {
-    pub download_path: LocalDownloadPath,
-}
-
 /// One sync, described.
 pub struct SyncRequest<'a> {
     pub kind: SyncKind,
@@ -513,11 +518,162 @@ impl<'a> SyncRequest<'a> {
     }
 }
 
+/// What was last installed for one artifact.
+///
+/// This records what is *on disk*, which is not the same question as what *should* be on
+/// disk. For the engine and the editor binaries the checkout decides what should be there
+/// (the uproject's engine association, and the last editor build before the current sha),
+/// and that is what this is compared against. Without it a verify can only say "these
+/// bytes match the build they came from", which is true and useless once the build they
+/// came from is no longer the one you need.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRecord {
+    /// What was installed, in the terms the user would recognise - a short commit sha for
+    /// the engine and editor binaries, a build name for the client. Compared against what
+    /// the checkout currently asks for to tell "damaged" from "out of date".
+    pub version: String,
+    /// Where the artifact lives now.
+    ///
+    /// Not necessarily where it was downloaded to: the editor binaries are downloaded to
+    /// a staging directory and then copied into the repo, and the copy in the repo is the
+    /// one worth checking.
+    pub target: PathBuf,
+    /// Where the download actually landed, when that is not where the artifact lives.
+    ///
+    /// The editor binaries are downloaded to a staging directory and then copied into the
+    /// repo. Only staging corresponds to the version index - the repo also holds every
+    /// git-tracked file - so staging is what can be checked against the store, and the
+    /// repo is checked against staging.
+    #[serde(default)]
+    pub staging: Option<PathBuf>,
+    pub archives: Vec<String>,
+    pub cache_path: Option<PathBuf>,
+    pub cache_size_bytes: u64,
+    pub recorded_at: DateTime<Utc>,
+}
+
+impl SyncRecord {
+    pub fn cache(&self) -> Option<CacheControl> {
+        self.cache_path.as_ref().map(|path| CacheControl {
+            path: path.clone(),
+            max_size_bytes: self.cache_size_bytes,
+        })
+    }
+}
+
+/// The last successful download of each artifact, kept beside the downloads themselves.
+///
+/// Best-effort throughout: losing this costs the ability to verify an install, which is
+/// not worth failing a download over.
+#[derive(Debug, Clone)]
+pub struct SyncLedger {
+    path: PathBuf,
+    /// Recording is read-modify-write, and the client sync runs in its HTTP handler while
+    /// the engine and DLL downloads run on the worker queue - so two can finish at once,
+    /// and without this one of them reads the file before the other has written it and
+    /// then writes its own record over the top. The lost kind then reads as never
+    /// installed.
+    writing: Arc<Mutex<()>>,
+}
+
+impl SyncLedger {
+    pub fn new(download_path: &Path) -> Self {
+        SyncLedger {
+            path: download_path.join("last-sync.json"),
+            writing: Arc::new(Mutex::new(())),
+        }
+    }
+
+    pub fn all(&self) -> HashMap<SyncKind, SyncRecord> {
+        let Ok(bytes) = std::fs::read(&self.path) else {
+            return HashMap::new();
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(records) => records,
+            Err(e) => {
+                // A ledger we cannot read is one we will overwrite on the next download.
+                warn!("Ignoring unreadable sync ledger at {:?}: {e}", self.path);
+                HashMap::new()
+            }
+        }
+    }
+
+    pub fn get(&self, kind: SyncKind) -> Option<SyncRecord> {
+        self.all().remove(&kind)
+    }
+
+    /// Returns whether the record reached disk.
+    ///
+    /// The ledger is read back from the file every time, so a write that failed leaves it
+    /// answering with the previous version - and anything that acts on "what is installed"
+    /// would be acting on the build this one replaced.
+    #[must_use]
+    pub fn record(&self, kind: SyncKind, record: SyncRecord) -> bool {
+        let _writing = self.writing.lock();
+
+        let mut all = self.all();
+        all.insert(kind, record);
+
+        let write = || -> std::io::Result<()> {
+            if let Some(parent) = self.path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let bytes = serde_json::to_vec_pretty(&all)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+            // Write then rename, so a crash midway leaves the previous record rather than
+            // a half-written file that reads as no records at all.
+            let temporary = self.path.with_extension("json.tmp");
+            std::fs::write(&temporary, bytes)?;
+            std::fs::rename(&temporary, &self.path)
+        };
+
+        match write() {
+            Ok(()) => true,
+            Err(e) => {
+                warn!(
+                    "Could not record the {kind} download at {:?}: {e}. Verifying it will not \
+                     be offered until the next successful download.",
+                    self.path
+                );
+                false
+            }
+        }
+    }
+}
+
+/// Where downloaded artifacts and their caches live.
+#[derive(Debug, Clone)]
+pub struct ArtifactSync {
+    pub download_path: LocalDownloadPath,
+    ledger: SyncLedger,
+}
+
 impl ArtifactSync {
     pub fn new(app_name: &str) -> Self {
+        let download_path = LocalDownloadPath::new(app_name);
         ArtifactSync {
-            download_path: LocalDownloadPath::new(app_name),
+            ledger: SyncLedger::new(&download_path.0),
+            download_path,
         }
+    }
+
+    /// Point this at a different directory, keeping the ledger with it.
+    ///
+    /// Setting `download_path` on its own would leave the ledger reading and writing the
+    /// old location, which is only ever wanted by accident.
+    pub fn set_download_path(&mut self, download_path: LocalDownloadPath) {
+        self.ledger = SyncLedger::new(&download_path.0);
+        self.download_path = download_path;
+    }
+
+    /// The record of what was last installed, for checking it later.
+    ///
+    /// One instance per `ArtifactSync`, shared by its clones, so that the lock guarding
+    /// the read-modify-write is actually the same lock everywhere.
+    pub fn ledger(&self) -> SyncLedger {
+        self.ledger.clone()
     }
 
     /// Run one sync.
@@ -937,6 +1093,9 @@ mod tests {
             },
             SyncEvent::Cancelled {
                 kind: SyncKind::Client,
+            },
+            SyncEvent::Installed {
+                kind: SyncKind::Engine,
             },
         ];
 

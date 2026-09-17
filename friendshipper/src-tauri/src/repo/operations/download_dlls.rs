@@ -14,10 +14,11 @@ use tracing::info;
 use tracing::warn;
 
 use crate::engine::EngineProvider;
+use chrono::Utc;
 use ethos_core::artifact_sync;
 use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{
-    DownloadCancellation, SyncError, SyncKind, SyncRequest, TARGET_INDEX_CACHE_NAME,
+    DownloadCancellation, SyncError, SyncKind, SyncRecord, SyncRequest, TARGET_INDEX_CACHE_NAME,
 };
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
@@ -168,7 +169,7 @@ where
         let request =
             SyncRequest::download(SyncKind::EditorDlls, &binaries_staging_path, &archive_urls)
                 .with_cache(Some(artifact_sync::CacheControl {
-                    path: binaries_cache_path,
+                    path: binaries_cache_path.clone(),
                     max_size_bytes: self.max_cache_size_bytes,
                 }))
                 .with_transfer_acceleration(self.transfer_acceleration)
@@ -197,6 +198,31 @@ where
 
         copy_recursively(&binaries_staging_path, &binaries_destination_path)
             .context("Failed to copy dlls to target directory")?;
+
+        // The repo copy, not the staging directory: staging is an implementation detail
+        // of merging downloaded binaries into a checkout, and the copy in the repo is
+        // what the editor actually loads.
+        let recorded = self.artifact_sync.ledger().record(
+            SyncKind::EditorDlls,
+            SyncRecord {
+                version: self.dll_commit.clone(),
+                target: binaries_destination_path.clone(),
+                staging: Some(binaries_staging_path.clone()),
+                archives: archive_urls.clone(),
+                cache_path: Some(binaries_cache_path.clone()),
+                cache_size_bytes: self.max_cache_size_bytes,
+                recorded_at: Utc::now(),
+            },
+        );
+
+        // The download finished long before this: the binaries had still to be copied out
+        // of staging into the repo. Only now do they match what the ledger records - and
+        // if the record did not reach disk, they do not.
+        if recorded {
+            let _ = self.tx.send(SyncEvent::Installed {
+                kind: SyncKind::EditorDlls,
+            });
+        }
 
         info!("dll download and copy to local repo finished");
 

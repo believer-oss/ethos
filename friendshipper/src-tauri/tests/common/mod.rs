@@ -518,7 +518,9 @@ pub async fn setup_with_repo_config(
 
     info!("[testing module] created app state");
 
-    state.artifact_sync.download_path = LocalDownloadPath(TEST_DIR.join("longtail-downloads"));
+    state
+        .artifact_sync
+        .set_download_path(LocalDownloadPath(TEST_DIR.join("longtail-downloads")));
 
     let mut server = TestServer::new(state, exit_tx);
 

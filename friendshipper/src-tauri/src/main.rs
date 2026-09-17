@@ -226,6 +226,8 @@ fn main() -> Result<(), CoreError> {
                 get_object_count,
                 get_github_status,
                 run_git_gc,
+                verify_artifact,
+                get_artifact_status,
                 open_url,
                 quick_submit,
                 rebase,
@@ -470,6 +472,7 @@ fn main() -> Result<(), CoreError> {
                                 error!("{kind} download failed: {error}")
                             }
                             SyncEvent::Cancelled { kind } => info!("Cancelled {kind} download"),
+                            SyncEvent::Installed { kind } => info!("Installed the {kind}"),
                             // Far too frequent to log; the UI renders these.
                             SyncEvent::Progress { .. } => {}
                         }
