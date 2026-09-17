@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use ethos_core::artifact_sync::{
-    ArtifactSync, CacheControl, CancellationToken, SyncErrorClass, SyncEvent, SyncKind,
+    ArtifactSync, CacheControl, CancellationToken, SyncErrorClass, SyncEvent, SyncKind, SyncMode,
     SyncRequest, SyncSummary,
 };
 use ethos_core::clients::aws::AWSClient;
@@ -87,6 +87,28 @@ async fn sync(
     Result<SyncSummary, ethos_core::artifact_sync::SyncError>,
     Receiver<SyncEvent>,
 ) {
+    run(
+        fixture,
+        target,
+        cache,
+        cancel,
+        cache_target_index,
+        SyncMode::Download,
+    )
+    .await
+}
+
+async fn run(
+    fixture: &Fixture,
+    target: &Path,
+    cache: Option<CacheControl>,
+    cancel: CancellationToken,
+    cache_target_index: bool,
+    mode: SyncMode,
+) -> (
+    Result<SyncSummary, ethos_core::artifact_sync::SyncError>,
+    Receiver<SyncEvent>,
+) {
     let (tx, rx): (Sender<SyncEvent>, Receiver<SyncEvent>) = channel();
     let aws = offline_aws_client().await;
     let artifact_sync = ArtifactSync::new("friendshipper-tests");
@@ -98,9 +120,8 @@ async fn sync(
     )
     .with_cache(cache)
     .with_transfer_acceleration(false);
-    if !cache_target_index {
-        request = request.without_target_index();
-    }
+    request.cache_target_index = cache_target_index;
+    request.mode = mode;
 
     let result = artifact_sync.get_archive(request, tx, &aws, cancel).await;
 
@@ -381,4 +402,131 @@ async fn a_rescan_removes_files_the_version_does_not_name() {
 
     assert!(!stray.exists(), "a rescan cleans the target");
     assert_eq!(summary.assets_removed, 1);
+}
+
+/// Verify re-hashes what it writes, so a block whose bytes no longer match the version
+/// index is reported rather than installed. This is the principled replacement for the
+/// old recovery ladder, which deleted the whole cache on a second failure because it had
+/// no way to tell a corrupt block from anything else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn verify_reports_a_corrupted_block() {
+    let fixture = Fixture::publish().await;
+    let target = fixture.target("client");
+
+    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    result.expect("initial sync succeeds");
+
+    // Corrupt a stored block in place, leaving its name - and so its hash - untouched.
+    let block = find_block(&fixture.root.join("store")).expect("a stored block");
+    let mut bytes = fs::read(&block).unwrap();
+    let tail = bytes.len() - 1;
+    bytes[tail] ^= 0xff;
+    fs::write(&block, bytes).unwrap();
+
+    // Force the blocks to be re-read rather than served from a warm target.
+    fs::remove_dir_all(&target).unwrap();
+
+    let (result, _) = run(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        SyncMode::Verify,
+    )
+    .await;
+
+    let error = result.expect_err("a corrupted block must not be installed silently");
+    assert!(
+        matches!(
+            error.class,
+            SyncErrorClass::Corrupt | SyncErrorClass::Internal
+        ),
+        "expected a corruption class, got {:?}: {}",
+        error.class,
+        error.detail
+    );
+}
+
+/// Verify repairs what the version names and leaves everything else where it is, which
+/// is what makes it safe to run over an install that holds logs or user config.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn verify_repairs_the_version_and_keeps_everything_else() {
+    let fixture = Fixture::publish().await;
+    let target = fixture.target("client");
+
+    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    result.expect("initial sync succeeds");
+
+    // Something the build owns, damaged; and something it does not, which must survive.
+    let owned = target.join("Binaries/game.dll");
+    fs::write(&owned, b"clobbered").unwrap();
+    let user_file = target.join("Saved/user.log");
+    fs::create_dir_all(user_file.parent().unwrap()).unwrap();
+    fs::write(&user_file, b"keep me").unwrap();
+
+    let (result, _) = run(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        SyncMode::Verify,
+    )
+    .await;
+    let summary = result.expect("verify succeeds");
+
+    assert_eq!(
+        fs::read(&owned).unwrap(),
+        fs::read(fixture.source.join("Binaries/game.dll")).unwrap(),
+        "the damaged file was repaired"
+    );
+    assert_eq!(
+        fs::read(&user_file).unwrap(),
+        b"keep me",
+        "a file the version does not name was left alone"
+    );
+    assert_eq!(summary.assets_removed, 0, "verify removes nothing");
+}
+
+/// A verify over an install that is already correct should find nothing to do, rather
+/// than rewriting it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn verify_of_a_healthy_install_changes_nothing() {
+    let fixture = Fixture::publish().await;
+    let target = fixture.target("client");
+
+    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    result.expect("initial sync succeeds");
+    let before = tree(&target);
+
+    let (result, _) = run(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        SyncMode::Verify,
+    )
+    .await;
+    let summary = result.expect("verify succeeds");
+
+    assert_eq!(summary.assets_written, 0, "nothing needed rewriting");
+    assert_eq!(summary.assets_removed, 0);
+    assert_eq!(tree(&target), before, "the install is untouched");
+}
+
+/// The first block file found anywhere under a store, for corrupting.
+fn find_block(store: &Path) -> Option<PathBuf> {
+    for entry in fs::read_dir(store).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_block(&path) {
+                return Some(found);
+            }
+        } else if path.extension().is_some_and(|e| e == "lsb") {
+            return Some(path);
+        }
+    }
+    None
 }

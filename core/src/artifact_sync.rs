@@ -432,6 +432,23 @@ pub struct CacheControl {
     pub max_size_bytes: u64,
 }
 
+/// What a sync is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncMode {
+    /// Make the target match the version, removing anything the version does not name.
+    Download,
+    /// Check an existing install and repair whatever is wrong, touching nothing else.
+    ///
+    /// Two things differ from a download, and both are needed. Chunks are re-hashed
+    /// against the version index as they are written, so a block that decompressed to
+    /// the wrong bytes is reported rather than installed - the principled version of the
+    /// old "delete the cache and try again". And files the version does not name are
+    /// left alone, so running this over an install that holds logs or user config does
+    /// not claim them.
+    Verify,
+}
+
 /// Where downloaded artifacts and their caches live.
 #[derive(Debug, Clone)]
 pub struct ArtifactSync {
@@ -447,10 +464,13 @@ pub struct SyncRequest<'a> {
     /// together; they must share a storage URI.
     pub archives: &'a [String],
     pub cache: Option<CacheControl>,
+    pub mode: SyncMode,
     /// Whether longtail may leave its scan of the target cached in the target.
     ///
     /// Off where the target is copied somewhere else afterwards, so the index does not
-    /// travel with it.
+    /// travel with it. Ignored for [`SyncMode::Verify`], which must always look at the
+    /// disk: a cached index would let it diff the cache, find nothing to do, and report
+    /// success having checked nothing.
     pub cache_target_index: bool,
     pub transfer_acceleration: bool,
 }
@@ -462,8 +482,16 @@ impl<'a> SyncRequest<'a> {
             target,
             archives,
             cache: None,
+            mode: SyncMode::Download,
             cache_target_index: true,
             transfer_acceleration: true,
+        }
+    }
+
+    pub fn verify(kind: SyncKind, target: &'a Path, archives: &'a [String]) -> Self {
+        SyncRequest {
+            mode: SyncMode::Verify,
+            ..Self::download(kind, target, archives)
         }
     }
 
@@ -507,8 +535,8 @@ impl ArtifactSync {
     ) -> Result<SyncSummary, SyncError> {
         let kind = request.kind;
         info!(
-            "Downloading {kind} archives {:?} to {:?}",
-            request.archives, request.target
+            "{:?} of {kind} archives {:?} to {:?}",
+            request.mode, request.archives, request.target
         );
 
         let Some(target) = request.target.to_str() else {
@@ -605,6 +633,15 @@ impl ArtifactSync {
         options.remote_worker_count = BLOCK_WORKER_COUNT;
         options.cache_target_index = request.cache_target_index;
         options.s3_options = aws_client.longtail_s3_options(request.transfer_acceleration);
+
+        if request.mode == SyncMode::Verify {
+            // Both halves matter. Without the re-hash this checks nothing about the bytes
+            // it writes; without disabling the cached index it may not look at the disk
+            // at all, and would report success having repaired nothing.
+            options.verify_chunks = true;
+            options.delete_removed = false;
+            options.cache_target_index = false;
+        }
 
         if let Some(cache) = request.cache.as_ref() {
             options.cache_path = Some(cache.path.clone());
