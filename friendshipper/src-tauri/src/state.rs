@@ -12,7 +12,7 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
 use crate::repo::RepoStatusRef;
-use ethos_core::artifact_sync::ArtifactSync;
+use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::git;
 use ethos_core::clients::github;
 use ethos_core::clients::kube::KubeClient;
@@ -74,7 +74,9 @@ pub struct AppState<T> {
 
     pub engine: T,
 
-    pub cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
+    /// Cancellation for artifact downloads, one token per kind so they stop
+    /// independently of each other.
+    pub downloads: DownloadCancellation,
     pub workflow_log_cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
 }
 
@@ -209,7 +211,7 @@ where
             gameserver_log_tx: server_log_tx,
             workflow_log_tx,
             engine,
-            cancel_tx: Arc::new(TokioRwLock::new(None)),
+            downloads: DownloadCancellation::default(),
             workflow_log_cancel_tx: Arc::new(TokioRwLock::new(None)),
         })
     }

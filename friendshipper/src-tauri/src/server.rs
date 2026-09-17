@@ -140,7 +140,10 @@ impl Server {
 
                 info!("Shutting down server");
 
-                // cancel any longtail downloads
+                // Cancel every download at once. The kill stays alongside it for now:
+                // downloads are still child processes, which cannot observe a token.
+                shared_state.downloads.cancel_all();
+
                 let longtail = shared_state.artifact_sync.clone();
                 let child = longtail.child_process.lock().take();
                 if let Some(mut child) = child {

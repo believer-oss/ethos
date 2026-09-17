@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::fs;
 
 use anyhow::Context;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
-use ethos_core::artifact_sync::CacheControl;
+use ethos_core::artifact_sync::{CacheControl, SyncKind};
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -14,7 +14,6 @@ use ethos_core::utils::junit::JunitOutput;
 use futures::StreamExt;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
@@ -47,7 +46,7 @@ where
         .route("/active", get(get_active_builds))
         .route("/commit", get(get_build))
         .route("/client/sync", post(sync_client))
-        .route("/client/cancel", post(cancel_download))
+        .route("/cancel/:kind", post(cancel_download))
         .route("/client/wipe", post(wipe_client_data))
         .route("/server/verify", get(verify_server_image))
         .route("/workflows", get(get_workflows))
@@ -482,23 +481,26 @@ where
     };
 
     let local_path_clone = local_path.clone();
+    let downloads = state.downloads.clone();
     match fs::create_dir_all(&local_path_clone) {
         Ok(_) => {
-            let (cancel_tx, mut cancel_rx) = oneshot::channel();
-            state.cancel_tx.write().await.replace(cancel_tx);
+            let cancel = downloads.begin(SyncKind::Client);
 
             info!("Starting download...");
             let longtail = state.artifact_sync.clone();
             tokio::select! {
-                cancel_result = &mut cancel_rx => {
-                    info!("Cancel branch hit with result: {:?}", cancel_result);
+                _ = cancel.cancelled() => {
+                    info!("Client sync cancelled");
 
+                    // Still a kill: the download is a child process until it moves
+                    // in-process, and a subprocess cannot observe a token.
                     let mut guard = longtail.child_process.lock();
                     if let Some(mut child) = guard.take() {
                         info!("Killing child process");
                         child.kill().unwrap();
                     }
 
+                    downloads.finish(SyncKind::Client);
                     return Ok(Json(false));
                 }
                 download_result = async move {
@@ -520,8 +522,7 @@ where
         Err(e) => return Err(CoreError::Internal(e.into())),
     }
 
-    // reset cancel_tx to none
-    state.cancel_tx.write().await.take();
+    downloads.finish(SyncKind::Client);
 
     T::post_download(&local_path).await;
 
@@ -615,18 +616,21 @@ where
     Ok(Json(true))
 }
 
-pub async fn cancel_download<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+/// Cancel one download, leaving any others running.
+///
+/// Cancelling something that is not running is not an error - the UI can race a download
+/// finishing on its own, and there is nothing to report when it does.
+pub async fn cancel_download<T>(
+    State(state): State<AppState<T>>,
+    Path(kind): Path<SyncKind>,
+) -> Result<(), CoreError>
 where
     T: EngineProvider,
 {
-    if let Some(cancel_tx) = state.cancel_tx.write().await.take() {
-        info!("Cancelling download");
-        if let Err(e) = cancel_tx.send(()) {
-            return Err(CoreError::Internal(anyhow::anyhow!(
-                "Failed to cancel download: {:?}",
-                e
-            )));
-        }
+    if state.downloads.cancel(kind) {
+        info!("Cancelling {kind} download");
+    } else {
+        info!("No {kind} download in flight to cancel");
     }
 
     Ok(())

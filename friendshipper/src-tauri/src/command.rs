@@ -2,6 +2,7 @@ use ethos_core::utils::junit::JunitOutput;
 use friendshipper::engine::router::OpenUrlForPathRequest;
 use tracing::error;
 
+use ethos_core::artifact_sync::SyncKind;
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
 use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
@@ -433,10 +434,17 @@ pub async fn sync_client(
 }
 
 #[tauri::command]
-pub async fn cancel_download(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn cancel_download(
+    state: tauri::State<'_, State>,
+    kind: SyncKind,
+) -> Result<(), TauriError> {
     let res = state
         .client
-        .post(format!("{}/builds/client/cancel", state.server_url))
+        .post(format!(
+            "{}/builds/cancel/{}",
+            state.server_url,
+            kind.as_str()
+        ))
         .send()
         .await?;
 
