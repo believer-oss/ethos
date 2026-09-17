@@ -14,6 +14,7 @@ use tracing::warn;
 use tracing::{info, instrument};
 
 use ethos_core::artifact_sync;
+use ethos_core::artifact_sync::DownloadCancellation;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::msg::LongtailMsg;
@@ -40,6 +41,7 @@ pub struct UpdateEngineOp<T> {
     pub new_uproject: UProject,
     pub engine_type: EngineType,
     pub artifact_sync: artifact_sync::ArtifactSync,
+    pub downloads: DownloadCancellation,
     pub longtail_tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
     pub git_client: git::Git,
@@ -355,6 +357,7 @@ where
         new_uproject: uproject,
         engine_type: app_config.engine_type,
         artifact_sync: state.artifact_sync.clone(),
+        downloads: state.downloads.clone(),
         longtail_tx: tx_lock.clone(),
         aws_client,
         git_client: state.git(),

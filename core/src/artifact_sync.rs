@@ -1,4 +1,5 @@
 use core::cmp::Ordering;
+use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::prelude::PermissionsExt;
 #[cfg(windows)]
@@ -31,6 +32,108 @@ use crate::clients::aws::AWSClient;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Re-exported so callers can hold a token without depending on `longtail` or
+/// `tokio-util` directly, and without coupling to their versions.
+pub use longtail::CancellationToken;
+
+/// Which artifact a download, and so a cancellation, belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncKind {
+    Client,
+    Engine,
+    EditorDlls,
+}
+
+impl SyncKind {
+    /// The form used on the wire - matches the serde representation, so it is safe in a
+    /// URL path. [`Display`](std::fmt::Display) is the human-readable form, for logs.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SyncKind::Client => "client",
+            SyncKind::Engine => "engine",
+            SyncKind::EditorDlls => "editorDlls",
+        }
+    }
+}
+
+impl std::fmt::Display for SyncKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            SyncKind::Client => "client",
+            SyncKind::Engine => "engine",
+            SyncKind::EditorDlls => "editor DLLs",
+        };
+        f.write_str(name)
+    }
+}
+
+/// The cancellation tokens for whatever downloads are currently in flight.
+///
+/// One token per download, not one shared token. A [`CancellationToken`] never
+/// un-cancels, so a single shared one would mean the first cancel left every later
+/// download cancelled until the app restarted - and it could not express "stop the
+/// engine update but leave the client sync running", which is the point.
+///
+/// The root exists so shutdown can stop everything at once: cancelling it cancels every
+/// child, including downloads started after it.
+#[derive(Debug, Clone)]
+pub struct DownloadCancellation {
+    root: CancellationToken,
+    in_flight: Arc<Mutex<HashMap<SyncKind, CancellationToken>>>,
+}
+
+impl Default for DownloadCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DownloadCancellation {
+    pub fn new() -> Self {
+        DownloadCancellation {
+            root: CancellationToken::new(),
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Register a token for `kind` and hand it back to the download.
+    ///
+    /// Replaces any token already registered for that kind. Each kind has a single
+    /// driver - the client sync endpoint, or the serialized repo worker queue - so two
+    /// downloads of the same kind do not overlap in practice.
+    pub fn begin(&self, kind: SyncKind) -> CancellationToken {
+        let token = self.root.child_token();
+        self.in_flight.lock().insert(kind, token.clone());
+        token
+    }
+
+    /// Forget `kind`'s token. Call when the download ends, however it ended.
+    pub fn finish(&self, kind: SyncKind) {
+        self.in_flight.lock().remove(&kind);
+    }
+
+    /// Cancel one download. Returns whether there was one to cancel.
+    ///
+    /// Leaves every other in-flight download running, and leaves the root untouched so
+    /// later downloads still start uncancelled.
+    pub fn cancel(&self, kind: SyncKind) -> bool {
+        match self.in_flight.lock().remove(&kind) {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Cancel everything in flight, and anything started afterwards. Shutdown only.
+    pub fn cancel_all(&self) {
+        self.root.cancel();
+        self.in_flight.lock().clear();
+    }
+}
 
 // Send a Msg down the transmit channel
 pub fn send_msg(tx: &Sender<LongtailMsg>, msg: LongtailMsg) {
@@ -561,6 +664,77 @@ impl ArtifactSync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The trap a single shared token would fall into: `CancellationToken` never
+    /// un-cancels, so cancelling one download must not poison the next.
+    #[test]
+    fn cancelling_a_download_leaves_the_next_one_runnable() {
+        let downloads = DownloadCancellation::new();
+
+        let first = downloads.begin(SyncKind::Client);
+        assert!(downloads.cancel(SyncKind::Client));
+        assert!(first.is_cancelled());
+
+        let second = downloads.begin(SyncKind::Client);
+        assert!(!second.is_cancelled(), "a new download starts uncancelled");
+    }
+
+    /// The reason there is a registry at all rather than one token.
+    #[test]
+    fn cancelling_one_kind_leaves_the_others_running() {
+        let downloads = DownloadCancellation::new();
+
+        let client = downloads.begin(SyncKind::Client);
+        let engine = downloads.begin(SyncKind::Engine);
+        let dlls = downloads.begin(SyncKind::EditorDlls);
+
+        downloads.cancel(SyncKind::Engine);
+
+        assert!(engine.is_cancelled());
+        assert!(!client.is_cancelled());
+        assert!(!dlls.is_cancelled());
+    }
+
+    /// Shutdown has to stop everything, including anything that starts while it happens.
+    #[test]
+    fn cancel_all_stops_every_kind_and_everything_after() {
+        let downloads = DownloadCancellation::new();
+
+        let client = downloads.begin(SyncKind::Client);
+        let engine = downloads.begin(SyncKind::Engine);
+
+        downloads.cancel_all();
+
+        assert!(client.is_cancelled());
+        assert!(engine.is_cancelled());
+        assert!(
+            downloads.begin(SyncKind::EditorDlls).is_cancelled(),
+            "a download racing shutdown must not start uncancelled"
+        );
+    }
+
+    #[test]
+    fn cancelling_a_download_that_is_not_running_reports_nothing_to_do() {
+        let downloads = DownloadCancellation::new();
+
+        assert!(!downloads.cancel(SyncKind::Client));
+
+        downloads.begin(SyncKind::Client);
+        downloads.finish(SyncKind::Client);
+        assert!(!downloads.cancel(SyncKind::Client));
+    }
+
+    /// Clones share the registry - ops are handed a clone, and cancelling through one
+    /// has to reach a download begun through another.
+    #[test]
+    fn clones_share_the_registry() {
+        let downloads = DownloadCancellation::new();
+        let handed_to_an_op = downloads.clone();
+
+        let token = handed_to_an_op.begin(SyncKind::Engine);
+        assert!(downloads.cancel(SyncKind::Engine));
+        assert!(token.is_cancelled());
+    }
 
     // Shape of a real failure: the progress bar shares the chunk, the cause comes last.
     const LAPSED_MID_DOWNLOAD: &str = concat!(

@@ -15,6 +15,7 @@ use tracing::warn;
 
 use crate::engine::EngineProvider;
 use ethos_core::artifact_sync;
+use ethos_core::artifact_sync::DownloadCancellation;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::msg::LongtailMsg;
@@ -41,6 +42,7 @@ pub struct DownloadDllsOp<T> {
     pub download_symbols: bool,
     pub storage: ArtifactStorage,
     pub artifact_sync: artifact_sync::ArtifactSync,
+    pub downloads: DownloadCancellation,
     pub tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
     pub project: Project,
@@ -243,6 +245,7 @@ where
             download_symbols: state.app_config.read().editor_download_symbols,
             storage,
             artifact_sync: state.artifact_sync.clone(),
+            downloads: state.downloads.clone(),
             tx: tx_lock.clone(),
             aws_client: aws_client.clone(),
             project,

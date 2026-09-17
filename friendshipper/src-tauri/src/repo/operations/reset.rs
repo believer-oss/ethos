@@ -11,7 +11,7 @@ use tracing::{error, info};
 use crate::engine::EngineProvider;
 use crate::repo::operations::{DownloadDllsOp, StatusOp, UpdateEngineOp};
 use crate::state::AppState;
-use ethos_core::artifact_sync::ArtifactSync;
+use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::clients::github::GraphQLClient;
@@ -38,6 +38,7 @@ pub struct ResetToCommitOp<T> {
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
     pub artifact_sync: ArtifactSync,
+    pub downloads: DownloadCancellation,
     pub longtail_tx: Sender<LongtailMsg>,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
@@ -116,6 +117,7 @@ where
                     download_symbols: self.app_config.read().editor_download_symbols,
                     storage: self.storage.clone(),
                     artifact_sync: self.artifact_sync.clone(),
+                    downloads: self.downloads.clone(),
                     tx: self.longtail_tx.clone(),
                     aws_client: self.aws_client.clone(),
                     project,
@@ -176,6 +178,7 @@ where
                     new_uproject: new_uproject.clone(),
                     engine_type: self.app_config.read().engine_type,
                     artifact_sync: self.artifact_sync.clone(),
+                    downloads: self.downloads.clone(),
                     longtail_tx: self.longtail_tx.clone(),
                     aws_client: self.aws_client.clone(),
                     git_client: self.git_client.clone(),
@@ -223,6 +226,7 @@ where
         repo_config: state.repo_config.clone(),
         repo_status: state.repo_status.clone(),
         artifact_sync: state.artifact_sync.clone(),
+        downloads: state.downloads.clone(),
         longtail_tx: state.longtail_tx.clone(),
         aws_client: aws_client.clone(),
         storage,

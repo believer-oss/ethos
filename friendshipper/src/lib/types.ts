@@ -61,6 +61,8 @@ export interface Project {
 	repoUrl: string;
 }
 
+export type SyncKind = 'client' | 'engine' | 'editorDlls';
+
 export interface AppConfig {
 	projects: Record<string, Project>;
 	repoPath: string;
