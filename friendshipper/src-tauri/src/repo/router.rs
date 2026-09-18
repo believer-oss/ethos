@@ -43,6 +43,10 @@ where
             get(operations::diagnostics::artifact_status_handler),
         )
         .route(
+            "/diagnostics/incoming-engine",
+            get(operations::diagnostics::incoming_engine_handler),
+        )
+        .route(
             "/diagnostics/verify/:kind",
             post(operations::diagnostics::verify_handler),
         )

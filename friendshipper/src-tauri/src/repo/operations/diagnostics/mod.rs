@@ -10,5 +10,7 @@ pub use rebase::rebase_handler;
 pub use rebase::rebase_status_handler;
 pub use rebase::remediate_rebase_handler;
 pub use verify::artifact_status_handler;
+pub use verify::incoming_engine_handler;
 pub use verify::verify_handler;
+pub use verify::IncomingEngineChange;
 pub use verify::{ArtifactState, ArtifactStatus, VerifyResponse};

@@ -25,7 +25,9 @@ use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
 };
 use friendshipper::builds::router::{ActiveBuild, GetWorkflowsResponse};
-use friendshipper::repo::operations::diagnostics::{ArtifactStatus, VerifyResponse};
+use friendshipper::repo::operations::diagnostics::{
+    ArtifactStatus, IncomingEngineChange, VerifyResponse,
+};
 use friendshipper::repo::operations::{
     ImportZippedChangesRequest, RestoreFileToRevisionRequest, RestoreSnapshotRequest,
     SaveChangeSetRequest, SaveSnapshotRequest, ZipLocalChangesRequest,
@@ -77,6 +79,26 @@ pub async fn get_object_count(
         .client
         .get(format!(
             "{}/repo/diagnostics/object-count",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_incoming_engine_change(
+    state: tauri::State<'_, State>,
+) -> Result<IncomingEngineChange, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/diagnostics/incoming-engine",
             state.server_url
         ))
         .send()

@@ -8,6 +8,7 @@ import type {
 	GitHubPullRequest,
 	GitHubStatusResponse,
 	ImportZippedChangesResponse,
+	IncomingEngineChange,
 	MergeQueue,
 	ObjectCountResponse,
 	PushRequest,
@@ -229,6 +230,9 @@ export const runGitGc = async (): Promise<void> => invoke('run_git_gc');
 
 export const getArtifactStatus = async (): Promise<ArtifactStatus[]> =>
 	invoke('get_artifact_status');
+
+export const getIncomingEngineChange = async (): Promise<IncomingEngineChange> =>
+	invoke('get_incoming_engine_change');
 
 export const verifyArtifact = async (kind: SyncKind): Promise<VerifyResponse> =>
 	invoke('verify_artifact', { kind });
