@@ -722,6 +722,13 @@ pub struct UProject {
 }
 
 impl UProject {
+    /// Parse a uproject from its contents, for when it comes from somewhere other than
+    /// the working tree - a blob read out of git, for instance.
+    pub fn from_json(data: &str) -> Result<UProject, anyhow::Error> {
+        serde_json::from_str(data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse UProject contents: {}", e))
+    }
+
     pub fn load(uproject_path: &Path) -> Result<UProject, anyhow::Error> {
         let data: String = match fs::read_to_string(uproject_path) {
             Ok(s) => s,

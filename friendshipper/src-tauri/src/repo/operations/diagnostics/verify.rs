@@ -15,10 +15,11 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use ethos_core::artifact_sync::{SyncError, SyncKind, SyncRequest, SyncSummary};
 use ethos_core::clients::aws::ensure_aws_client;
+use ethos_core::clients::git;
 use ethos_core::types::config::{EngineType, UProject};
 use ethos_core::types::errors::CoreError;
 
@@ -468,6 +469,88 @@ where
         repaired: summary.assets_written,
         bytes_written: summary.bytes_written,
         message,
+    }))
+}
+
+/// Whether pulling would change which engine this project wants.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncomingEngineChange {
+    /// True only when we can see a difference. Not knowing looks the same as no change,
+    /// which is the right default: the remote ref is only as fresh as the last fetch, and
+    /// staying quiet when we cannot tell is better than guessing.
+    pub changes: bool,
+    pub current: Option<String>,
+    pub incoming: Option<String>,
+}
+
+/// Does the commit at the top of this branch's remote want a different engine?
+///
+/// Worth asking before a sync rather than after, because the answer can be a hundred
+/// gigabyte download that nobody asked for. Reads a blob out of the local object store,
+/// so it costs a few milliseconds and never touches the network.
+pub async fn incoming_engine_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<IncomingEngineChange>, CoreError>
+where
+    T: EngineProvider,
+{
+    let unchanged = |current, incoming| {
+        Ok(Json(IncomingEngineChange {
+            changes: false,
+            current,
+            incoming,
+        }))
+    };
+
+    // Same guard as everywhere else: a source engine is the user's own business.
+    if state.app_config.read().engine_type != EngineType::Prebuilt {
+        return unchanged(None, None);
+    }
+
+    let uproject_path_relative = state.repo_config.read().uproject_path.clone();
+    let remote_branch = state.repo_status.read().remote_branch.clone();
+    if uproject_path_relative.is_empty() || remote_branch.is_empty() {
+        return unchanged(None, None);
+    }
+
+    let current = UProject::load(
+        &state
+            .app_config
+            .read()
+            .get_uproject_path(&state.repo_config.read()),
+    )
+    .ok()
+    .filter(|u| u.is_custom_engine())
+    .and_then(|u| u.get_custom_engine_sha().ok());
+
+    let reference = format!("{remote_branch}:{uproject_path_relative}");
+    let incoming = match state
+        .git()
+        .run_and_collect_output(&["show", &reference], git::Opts::default())
+        .await
+    {
+        Ok(contents) => UProject::from_json(&contents)
+            .ok()
+            .filter(|u| u.is_custom_engine())
+            .and_then(|u| u.get_custom_engine_sha().ok()),
+        Err(e) => {
+            // Nothing fetched yet, a branch with no upstream, a uproject that moved -
+            // all of these mean we cannot see ahead, which is not a problem to report.
+            debug!("Could not read {reference} to look ahead at the engine: {e}");
+            None
+        }
+    };
+
+    let changes = match (&current, &incoming) {
+        (Some(current), Some(incoming)) => current != incoming,
+        _ => false,
+    };
+
+    Ok(Json(IncomingEngineChange {
+        changes,
+        current,
+        incoming,
     }))
 }
 

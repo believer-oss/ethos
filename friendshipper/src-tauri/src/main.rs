@@ -228,6 +228,7 @@ fn main() -> Result<(), CoreError> {
                 run_git_gc,
                 verify_artifact,
                 get_artifact_status,
+                get_incoming_engine_change,
                 open_url,
                 quick_submit,
                 rebase,
