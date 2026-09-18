@@ -713,6 +713,20 @@ impl CopyOutcome {
 
     /// Something a user can act on: which files, and what to do about them.
     fn describe(&self, destination: &Path) -> String {
+        // Ask the OS which programs actually hold these files, rather than listing the
+        // usual suspects and leaving the user to work out which one it is. Empty when
+        // nothing can be determined, including everywhere that is not Windows.
+        let holders = ethos_core::utils::windows::programs_holding(
+            &self
+                .locked
+                .iter()
+                .map(|relative| destination.join(relative))
+                .collect::<Vec<_>>(),
+        );
+        self.describe_with(destination, &holders)
+    }
+
+    fn describe_with(&self, destination: &Path, holders: &[String]) -> String {
         let mut parts = Vec::new();
 
         if !self.locked.is_empty() {
@@ -721,10 +735,16 @@ impl CopyOutcome {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect();
+
+            let close = if holders.is_empty() {
+                "Close Unreal Editor, the game, and your IDE, then sync again".to_string()
+            } else {
+                format!("Close {}, then sync again", holders.join(", "))
+            };
+
             parts.push(format!(
                 "These files are open in another program, so they could not be updated:\n  {}\n\
-                 Close Unreal Editor, the game, and your IDE, then sync again - the download is \
-                 kept, so it only re-copies these.",
+                 {close} - the download is kept, so it only re-copies these.",
                 names.join("\n  ")
             ));
         }
@@ -1136,6 +1156,14 @@ mod copy_tests {
 
         assert!(message.contains("Game.dll"), "{message}");
         assert!(message.contains("Close Unreal Editor"), "{message}");
+
+        // When the OS can name the programs, say those instead of listing suspects.
+        let named = outcome.describe_with(&destination, &["UnrealEditor.exe".to_string()]);
+        assert!(named.contains("Close UnrealEditor.exe"), "{named}");
+        assert!(
+            !named.contains("and your IDE"),
+            "no need to guess once we know: {named}"
+        );
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
     }
