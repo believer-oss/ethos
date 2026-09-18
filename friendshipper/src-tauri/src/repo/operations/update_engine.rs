@@ -24,6 +24,7 @@ use ethos_core::clients::git;
 use ethos_core::types::config::EngineType;
 use ethos_core::types::config::UProject;
 use ethos_core::types::errors::CoreError;
+use ethos_core::utils::process::describe_blocking_processes;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
@@ -163,19 +164,30 @@ where
 
                 let cache_path = get_engine_cache_path(&self.artifact_sync);
 
+                // The engine download had no pre-flight at all, so a running editor or
+                // game turned into a permission error partway through a very large
+                // transfer. Refusing up front costs nothing; failing at 80% costs the
+                // download.
+                let engine_path = PathBuf::from(&self.engine_path);
+
+                self.engine.check_ready_to_sync_repo().await?;
+                if let Some(blocking) = describe_blocking_processes(&engine_path) {
+                    return Err(CoreError::Internal(anyhow!(
+                        "Close these before updating the engine: {blocking}"
+                    )));
+                }
+
                 let Some(download) = self.downloads.begin(SyncKind::Engine) else {
                     return Err(CoreError::Internal(anyhow!(
                         "An engine download is already running."
                     )));
                 };
-                let engine_target = PathBuf::from(&self.engine_path);
-                let request =
-                    SyncRequest::download(SyncKind::Engine, &engine_target, &archive_urls)
-                        .with_cache(Some(artifact_sync::CacheControl {
-                            path: cache_path,
-                            max_size_bytes: self.max_cache_size_bytes,
-                        }))
-                        .with_transfer_acceleration(self.transfer_acceleration);
+                let request = SyncRequest::download(SyncKind::Engine, &engine_path, &archive_urls)
+                    .with_cache(Some(artifact_sync::CacheControl {
+                        path: cache_path,
+                        max_size_bytes: self.max_cache_size_bytes,
+                    }))
+                    .with_transfer_acceleration(self.transfer_acceleration);
                 let result = self
                     .artifact_sync
                     .get_archive(
@@ -191,7 +203,7 @@ where
                     SyncKind::Engine,
                     SyncRecord {
                         version: commit_sha_short.clone(),
-                        target: engine_target.clone(),
+                        target: engine_path.clone(),
                         staging: None,
                         archives: archive_urls.clone(),
                         cache_path: Some(get_engine_cache_path(&self.artifact_sync)),

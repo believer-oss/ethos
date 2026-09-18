@@ -3,9 +3,9 @@ use retry::delay::Fixed;
 use retry::{retry_with_index, OperationResult};
 use std::collections::HashSet;
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
-use sysinfo::Pid;
+use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -410,5 +410,134 @@ mod tests {
             .expect("cat ran");
         assert!(out.status.success());
         assert_eq!(out.stdout, payload);
+    }
+}
+
+/// A running program, for telling the user what is in the way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningProcess {
+    pub name: String,
+    pub exe: PathBuf,
+}
+
+/// Programs currently running out of `root`.
+///
+/// A process holds its own image open for as long as it runs, so anything executing from
+/// inside a directory we are about to overwrite will refuse to be overwritten - on Windows
+/// as a sharing violation, which arrives as a permission error partway through a download
+/// that has already done most of its work.
+///
+/// Checks by location rather than by name deliberately. A name list would have to be kept
+/// in step with every executable a project ships, and would still miss the one someone
+/// launched by hand; where a program is running from is the thing that actually decides
+/// whether its files can be replaced.
+pub fn processes_running_from(root: &Path) -> Vec<RunningProcess> {
+    let Ok(root) = root.canonicalize() else {
+        // A directory that does not exist yet cannot have anything running from it.
+        return Vec::new();
+    };
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::Always));
+
+    let mut found: Vec<RunningProcess> = system
+        .processes()
+        .values()
+        .filter_map(|process| {
+            let exe = process.exe()?;
+            // Canonicalised on both sides so a mix of short paths, symlinks and casing on
+            // Windows does not read as a different directory.
+            let exe = exe.canonicalize().ok()?;
+            exe.starts_with(&root).then(|| RunningProcess {
+                name: process.name().to_string(),
+                exe,
+            })
+        })
+        .collect();
+
+    // One line per program, not per process: several instances of the editor is still one
+    // thing for the user to close.
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found.dedup_by(|a, b| a.name == b.name);
+    found
+}
+
+/// A sentence naming what is in the way, or `None` when nothing is.
+pub fn describe_blocking_processes(root: &Path) -> Option<String> {
+    let running = processes_running_from(root);
+    if running.is_empty() {
+        return None;
+    }
+
+    let names: Vec<&str> = running.iter().map(|p| p.name.as_str()).collect();
+    Some(format!(
+        "{} running from {}",
+        names.join(", "),
+        root.display()
+    ))
+}
+
+#[cfg(test)]
+mod blocking_process_tests {
+    use super::*;
+
+    /// A directory that does not exist has nothing running from it, and asking must not
+    /// be an error - this runs before a download that would have created it.
+    #[test]
+    fn a_missing_directory_blocks_nothing() {
+        let missing = Path::new("/definitely/not/here/at/all");
+
+        assert!(processes_running_from(missing).is_empty());
+        assert!(describe_blocking_processes(missing).is_none());
+    }
+
+    /// An empty directory is the normal case: nothing is running from a freshly made
+    /// download target, so a sync must not be refused.
+    #[test]
+    fn an_empty_directory_blocks_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(processes_running_from(dir.path()).is_empty());
+        assert!(describe_blocking_processes(dir.path()).is_none());
+    }
+
+    /// The test binary itself is running, so the directory it lives in must be reported.
+    /// This is what proves the check actually looks at running processes rather than
+    /// quietly finding nothing.
+    #[test]
+    fn a_directory_we_are_running_from_is_reported() {
+        let own_exe = std::env::current_exe().expect("test binary path");
+        let own_dir = own_exe.parent().expect("test binary directory");
+
+        let found = processes_running_from(own_dir);
+
+        assert!(
+            !found.is_empty(),
+            "this test process runs from {own_dir:?} and should have been found"
+        );
+        assert!(
+            describe_blocking_processes(own_dir)
+                .expect("something is running from here")
+                .contains(&own_dir.display().to_string()),
+            "the message names the directory so the user knows which one"
+        );
+    }
+
+    /// One line per program. Several editor windows is still one thing to close.
+    #[test]
+    fn each_program_is_reported_once() {
+        let own_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_owned();
+
+        let found = processes_running_from(&own_dir);
+
+        let mut names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicate program names in {found:?}");
     }
 }

@@ -488,6 +488,14 @@ where
         return Err(CoreError::Internal(e.into()));
     }
 
+    // A game running out of the directory we are about to replace will hold its own
+    // executable open, which surfaces as a permission error partway through.
+    if let Some(blocking) = ethos_core::utils::process::describe_blocking_processes(&local_path) {
+        return Err(CoreError::Internal(anyhow::anyhow!(
+            "Close these before syncing the game client: {blocking}"
+        )));
+    }
+
     let Some(download) = downloads.begin(SyncKind::Client) else {
         return Err(CoreError::Internal(anyhow::anyhow!(
             "A game client sync is already running. Wait for it to finish, or cancel it."
