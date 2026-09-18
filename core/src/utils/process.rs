@@ -462,6 +462,40 @@ pub fn processes_running_from(root: &Path) -> Vec<RunningProcess> {
     found
 }
 
+/// Whether a filesystem error means another program has the file, rather than anything
+/// else that could deny a write.
+///
+/// `ErrorKind::PermissionDenied` alone is not enough on Windows, which is the platform
+/// where this actually happens. Rust maps only `ERROR_ACCESS_DENIED` to that kind; a file
+/// held open by another process is `ERROR_SHARING_VIOLATION` (32), which has no kind of
+/// its own and arrives as `Uncategorized` - so the case this exists for, an editor
+/// holding a DLL, would be read as a disk problem and the user told to check free space.
+///
+/// `ERROR_LOCK_VIOLATION` (33) and `ERROR_USER_MAPPED_FILE` (1224) are the same situation
+/// reported differently: a byte range locked, and a file someone has mapped into memory.
+pub fn is_held_by_another_program(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_LOCK_VIOLATION: i32 = 33;
+        const ERROR_USER_MAPPED_FILE: i32 = 1224;
+
+        matches!(
+            error.raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION | ERROR_USER_MAPPED_FILE)
+        )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 /// A sentence naming what is in the way, or `None` when nothing is.
 pub fn describe_blocking_processes(root: &Path) -> Option<String> {
     let running = processes_running_from(root);
@@ -539,5 +573,47 @@ mod blocking_process_tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(before, names.len(), "duplicate program names in {found:?}");
+    }
+}
+
+#[cfg(test)]
+mod held_file_tests {
+    use super::*;
+
+    #[test]
+    fn a_permission_denied_write_counts_as_held() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert!(is_held_by_another_program(&denied));
+    }
+
+    /// Everything else is a different problem with a different remedy, and telling
+    /// someone to close a program they do not have open sends them hunting for nothing.
+    #[test]
+    fn other_failures_do_not_count_as_held() {
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            let error = std::io::Error::from(kind);
+            assert!(!is_held_by_another_program(&error), "{kind:?}");
+        }
+    }
+
+    /// The case this exists for. Rust maps only ERROR_ACCESS_DENIED to PermissionDenied,
+    /// so a file an editor has open - ERROR_SHARING_VIOLATION - arrives with no kind of
+    /// its own and would otherwise read as a disk problem.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_windows_sharing_violation_counts_as_held() {
+        for raw in [32, 33, 1224] {
+            let error = std::io::Error::from_raw_os_error(raw);
+            assert!(is_held_by_another_program(&error), "raw os error {raw}");
+        }
+
+        // A genuinely different Windows failure still is not this.
+        let disk_full = std::io::Error::from_raw_os_error(112); // ERROR_DISK_FULL
+        assert!(!is_held_by_another_program(&disk_full));
     }
 }

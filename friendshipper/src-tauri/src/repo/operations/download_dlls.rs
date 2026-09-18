@@ -5,6 +5,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use anyhow::Context;
@@ -30,6 +31,7 @@ use ethos_core::storage::ArtifactStorage;
 use ethos_core::storage::{ArtifactBuildConfig, ArtifactConfig, ArtifactKind, Platform};
 use ethos_core::types::config::RepoConfig;
 use ethos_core::types::errors::CoreError;
+use ethos_core::utils::process::is_held_by_another_program;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
@@ -205,14 +207,34 @@ where
         let provided = relative_paths(&binaries_staging_path)
             .context("Failed to read the downloaded binaries")?;
 
-        copy_recursively(&binaries_staging_path, &binaries_destination_path)
-            .context("Failed to copy dlls to target directory")?;
+        // Read before anything overwrites it: this is what an earlier sync put in the
+        // repo, and the only thing that makes a file safe to remove later.
+        let manifest_path = copied_manifest_path(&self.artifact_sync.download_path.0);
+        let previous = CopiedFiles::load(&manifest_path);
+
+        let outcome = copy_recursively(&binaries_staging_path, &binaries_destination_path)
+            .context("Failed to read the downloaded binaries")?;
+
+        if !outcome.is_ok() {
+            // Files that did copy stay copied, so the record has to say so or a later
+            // build dropping them would never reconcile them away.
+            let ours = paths_we_wrote(&provided, &outcome, &previous, &binaries_destination_path);
+            record_copied(&manifest_path, &binaries_destination_path, &ours);
+
+            return Err(CoreError::Internal(anyhow!(
+                "{}",
+                outcome.describe(&binaries_destination_path)
+            )));
+        }
+
+        info!(
+            "copied {} editor binaries into {:?}",
+            outcome.copied, binaries_destination_path
+        );
 
         // Copying only ever adds, so a binary that an earlier build had and this one does
         // not would otherwise sit in the repo forever. Nothing loads it, but it
         // accumulates and makes the checkout harder to reason about.
-        let manifest_path = copied_manifest_path(&self.artifact_sync.download_path.0);
-        let previous = CopiedFiles::load(&manifest_path);
         let stale = stale_paths(&previous, &binaries_destination_path, &provided);
         let mut ours = provided.clone();
         if !stale.is_empty() {
@@ -222,11 +244,7 @@ where
             ours.extend(remove_stale(&self.git_client, &binaries_destination_path, &stale).await);
         }
 
-        CopiedFiles {
-            destination: binaries_destination_path.clone(),
-            paths: ours.iter().cloned().collect(),
-        }
-        .save(&manifest_path);
+        record_copied(&manifest_path, &binaries_destination_path, &ours);
 
         // The repo copy, not the staging directory: staging is an implementation detail
         // of merging downloaded binaries into a checkout, and the copy in the repo is
@@ -366,6 +384,36 @@ fn discard_target_index(root: &Path) {
 
 /// Copy files from source to destination recursively.
 /// From: https://nick.groenen.me/notes/recursively-copy-files-in-rust/
+/// Everything this sync has put in the destination, half-written files included.
+///
+/// `fs::copy` truncates the destination before it writes, so a file the copy failed on is
+/// still one we put there - it is just not the one we meant. Leaving it off the record
+/// strands it: no later sync knows it was ours, and once a build stops shipping it,
+/// nothing ever removes it. A locked file is the opposite case - the OS refused the open,
+/// so those bytes are untouched and are not ours unless an earlier sync wrote them.
+///
+/// Paths from a record naming a different destination never come across. The layout
+/// moved, so that record says nothing about what is here, and adopting its paths would
+/// name files we never wrote as ours to delete.
+fn paths_we_wrote(
+    provided: &HashSet<String>,
+    outcome: &CopyOutcome,
+    previous: &CopiedFiles,
+    destination: &Path,
+) -> HashSet<String> {
+    let mut ours: HashSet<String> = provided
+        .iter()
+        .filter(|path| !outcome.locked.contains(&PathBuf::from(path)))
+        .cloned()
+        .collect();
+
+    if previous.destination == destination {
+        ours.extend(previous.paths.iter().cloned());
+    }
+
+    ours
+}
+
 /// What the last sync copied into the repo.
 ///
 /// The bound on what may be deleted. Only a path this recorded is ever a candidate, so a
@@ -403,6 +451,16 @@ impl CopiedFiles {
             warn!("Could not record which binaries were copied to {path:?}: {e}");
         }
     }
+}
+
+/// Write down what is now in the repo from this build, so the next sync can tell a file
+/// it put there from one that was always the user's.
+fn record_copied(manifest_path: &Path, destination: &Path, paths: &HashSet<String>) {
+    CopiedFiles {
+        destination: destination.to_path_buf(),
+        paths: paths.iter().cloned().collect(),
+    }
+    .save(manifest_path);
 }
 
 fn copied_manifest_path(download_path: &Path) -> PathBuf {
@@ -644,18 +702,144 @@ fn tracked_among_output(
         .collect()
 }
 
+/// How many times a locked file is retried before giving up, and how long between.
+///
+/// Short on purpose. This is for the program that is already closing - the editor takes a
+/// moment to release its DLLs - not for waiting out someone who has not closed it yet.
+/// Anything longer is a dialog's job, not a sleep's.
+const LOCK_RETRY_ATTEMPTS: usize = 3;
+const LOCK_RETRY_DELAY: Duration = Duration::from_millis(400);
+
+/// What a copy managed, and what it could not.
+#[derive(Debug, Default)]
+pub struct CopyOutcome {
+    pub copied: usize,
+    /// Files another program has open. Closing that program fixes these, which is why
+    /// they are kept apart from everything else.
+    pub locked: Vec<PathBuf>,
+    /// Failures that closing a program will not fix - a full disk, a read-only volume.
+    pub failed: Vec<(PathBuf, String)>,
+}
+
+impl CopyOutcome {
+    fn is_ok(&self) -> bool {
+        self.locked.is_empty() && self.failed.is_empty()
+    }
+
+    /// Something a user can act on: which files, and what to do about them.
+    fn describe(&self, destination: &Path) -> String {
+        let mut parts = Vec::new();
+
+        if !self.locked.is_empty() {
+            let names: Vec<String> = self
+                .locked
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            parts.push(format!(
+                "These files are open in another program, so they could not be updated:\n  {}\n\
+                 Close Unreal Editor, the game, and your IDE, then sync again - the download is \
+                 kept, so it only re-copies these.",
+                names.join("\n  ")
+            ));
+        }
+
+        if !self.failed.is_empty() {
+            let details: Vec<String> = self
+                .failed
+                .iter()
+                .map(|(path, why)| format!("{}: {why}", path.display()))
+                .collect();
+            parts.push(format!(
+                "These files could not be written to {}:\n  {}",
+                destination.display(),
+                details.join("\n  ")
+            ));
+        }
+
+        parts.join("\n\n")
+    }
+}
+
+/// Copy a tree, reporting every file it could not write rather than stopping at the first.
+///
+/// Stopping at the first is what made this brittle. One locked DLL failed the whole sync,
+/// said nothing about which file, and left the repo half updated - with no way to tell
+/// that from a corrupt download, which is how deleting the block cache on failure came to
+/// look like a reasonable response to a file being open.
+///
+/// Errors reading the source tree are still fatal: that is our own staging directory, and
+/// not being able to read it means something is wrong that carrying on would hide.
 pub fn copy_recursively(
     source: impl AsRef<Path>,
     destination: impl AsRef<Path>,
+) -> std::io::Result<CopyOutcome> {
+    let mut outcome = CopyOutcome::default();
+    copy_tree(source.as_ref(), destination.as_ref(), &mut outcome)?;
+
+    // One short retry pass for anything locked, which catches the program that was already
+    // on its way out while we were copying.
+    for _ in 0..LOCK_RETRY_ATTEMPTS {
+        if outcome.locked.is_empty() {
+            break;
+        }
+
+        std::thread::sleep(LOCK_RETRY_DELAY);
+
+        let still_locked = std::mem::take(&mut outcome.locked);
+        for relative in still_locked {
+            let from = source.as_ref().join(&relative);
+            let to = destination.as_ref().join(&relative);
+            match fs::copy(&from, &to) {
+                Ok(_) => outcome.copied += 1,
+                Err(e) if is_held_by_another_program(&e) => outcome.locked.push(relative),
+                Err(e) => outcome.failed.push((relative, e.to_string())),
+            }
+        }
+    }
+
+    Ok(outcome)
+}
+
+fn copy_tree(source: &Path, destination: &Path, outcome: &mut CopyOutcome) -> std::io::Result<()> {
+    copy_tree_from(source, source, destination, outcome)
+}
+
+fn copy_tree_from(
+    root: &Path,
+    source: &Path,
+    destination: &Path,
+    outcome: &mut CopyOutcome,
 ) -> std::io::Result<()> {
-    fs::create_dir_all(&destination)?;
+    fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let filetype = entry.file_type()?;
         if filetype.is_dir() {
-            copy_recursively(entry.path(), destination.as_ref().join(entry.file_name()))?;
+            copy_tree_from(
+                root,
+                &entry.path(),
+                &destination.join(entry.file_name()),
+                outcome,
+            )?;
         } else {
-            fs::copy(entry.path(), destination.as_ref().join(entry.file_name()))?;
+            let from = entry.path();
+            let to = destination.join(entry.file_name());
+            // Relative, so a retry can rebuild both sides and a message can name
+            // something the user recognises rather than a full staging path.
+            let relative = from.strip_prefix(root).unwrap_or(&from).to_path_buf();
+
+            match fs::copy(&from, &to) {
+                Ok(_) => outcome.copied += 1,
+                Err(e) if is_held_by_another_program(&e) => {
+                    warn!("{to:?} is open in another program");
+                    outcome.locked.push(relative);
+                }
+                Err(e) => {
+                    warn!("Could not write {to:?}: {e}");
+                    outcome.failed.push((relative, e.to_string()));
+                }
+            }
         }
     }
     Ok(())
@@ -881,5 +1065,229 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found.contains("Binaries/Win64/Game.dll"), "{found:?}");
         assert!(found.contains("top.txt"), "{found:?}");
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    fn write(path: &Path, contents: &[u8]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn a_whole_tree_is_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("staging");
+        let destination = dir.path().join("repo");
+        write(&source.join("Binaries/Win64/Game.dll"), b"game");
+        write(&source.join("Binaries/Win64/Editor.dll"), b"editor");
+
+        let outcome = copy_recursively(&source, &destination).unwrap();
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(outcome.copied, 2);
+        assert_eq!(
+            fs::read(destination.join("Binaries/Win64/Game.dll")).unwrap(),
+            b"game"
+        );
+    }
+
+    /// The point of the rewrite: one file nobody can write must not cost the other
+    /// thirty. Before this, the first failure aborted the copy and left the repo in a
+    /// state nothing could describe.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_written_does_not_stop_the_others() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("staging");
+        let destination = dir.path().join("repo");
+
+        write(&source.join("Locked.dll"), b"new");
+        write(&source.join("Fine.dll"), b"new");
+        write(&source.join("AlsoFine.dll"), b"new");
+
+        // Stand-in for a file another program holds open: unwritable, for the same reason
+        // as far as fs::copy is concerned.
+        write(&destination.join("Locked.dll"), b"old");
+        let locked = destination.join("Locked.dll");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let outcome = copy_recursively(&source, &destination).unwrap();
+
+        assert_eq!(outcome.locked, vec![PathBuf::from("Locked.dll")]);
+        assert_eq!(outcome.copied, 2, "the other two still copied");
+        assert_eq!(fs::read(destination.join("Fine.dll")).unwrap(), b"new");
+        assert_eq!(
+            fs::read(&locked).unwrap(),
+            b"old",
+            "the locked file is untouched, not half written"
+        );
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    /// The message has to name the files, because "sync failed" is what sent people
+    /// looking through logs in the first place.
+    #[cfg(unix)]
+    #[test]
+    fn the_failure_names_the_files_and_says_what_to_do() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("staging");
+        let destination = dir.path().join("repo");
+        write(&source.join("Binaries/Win64/Game.dll"), b"new");
+        write(&destination.join("Binaries/Win64/Game.dll"), b"old");
+        let locked = destination.join("Binaries/Win64/Game.dll");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let outcome = copy_recursively(&source, &destination).unwrap();
+        let message = outcome.describe(&destination);
+
+        assert!(message.contains("Game.dll"), "{message}");
+        assert!(message.contains("Close Unreal Editor"), "{message}");
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    /// Reading our own staging directory failing is a different kind of problem, and
+    /// carrying on would hide it.
+    #[test]
+    fn an_unreadable_source_is_still_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(copy_recursively(dir.path().join("missing"), dir.path().join("repo")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+
+    /// A copy that could not finish still wrote most of its files. Forgetting them means
+    /// a later build that drops one can never reconcile it away, because nothing records
+    /// that we put it there.
+    #[test]
+    fn a_partial_copy_still_records_what_it_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("copied.json");
+        let destination = PathBuf::from("/repo/Game");
+
+        let previous: HashSet<String> = ["FromLastTime.dll".to_string()].into_iter().collect();
+        record_copied(&manifest, &destination, &previous);
+
+        // This sync wrote one file and could not write the other.
+        let mut ours: HashSet<String> = ["Written.dll".to_string()].into_iter().collect();
+        ours.extend(CopiedFiles::load(&manifest).paths);
+        record_copied(&manifest, &destination, &ours);
+
+        let recorded = CopiedFiles::load(&manifest);
+        let mut paths = recorded.paths.clone();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec!["FromLastTime.dll".to_string(), "Written.dll".to_string()],
+            "both what we just wrote and what an earlier sync left are ours"
+        );
+        assert_eq!(recorded.destination, destination);
+    }
+}
+
+#[cfg(test)]
+mod partial_copy_bound_tests {
+    use super::*;
+
+    fn provided(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|p| (*p).to_string()).collect()
+    }
+
+    /// A manifest describing another destination - the layout changed, so the binaries
+    /// moved between `repo/` and `repo/<Project>/` - says nothing about this one, and
+    /// merging its paths in would name files we never wrote as ours to delete later.
+    #[test]
+    fn a_partial_copy_does_not_adopt_another_destinations_paths() {
+        let here = PathBuf::from("/repo/Game");
+
+        let previous = CopiedFiles {
+            destination: PathBuf::from("/repo"),
+            paths: vec!["Binaries/Win64/Old.dll".to_string()],
+        };
+        let ours = paths_we_wrote(
+            &provided(&["Binaries/Win64/New.dll"]),
+            &CopyOutcome::default(),
+            &previous,
+            &here,
+        );
+
+        assert_eq!(ours, provided(&["Binaries/Win64/New.dll"]));
+    }
+
+    #[test]
+    fn the_same_destinations_paths_do_come_across() {
+        let here = PathBuf::from("/repo/Game");
+
+        let previous = CopiedFiles {
+            destination: here.clone(),
+            paths: vec!["Binaries/Win64/Old.dll".to_string()],
+        };
+        let ours = paths_we_wrote(
+            &provided(&["Binaries/Win64/New.dll"]),
+            &CopyOutcome::default(),
+            &previous,
+            &here,
+        );
+
+        assert_eq!(
+            ours,
+            provided(&["Binaries/Win64/New.dll", "Binaries/Win64/Old.dll"])
+        );
+    }
+
+    /// The half-written file. The copy truncated it before it failed, so it is ours even
+    /// though it never finished - and only the record makes it ours to clean up.
+    #[test]
+    fn a_file_the_copy_failed_on_is_still_recorded() {
+        let here = PathBuf::from("/repo/Game");
+        let outcome = CopyOutcome {
+            failed: vec![(
+                PathBuf::from("Binaries/Win64/Broken.dll"),
+                "No space left on device".to_string(),
+            )],
+            ..CopyOutcome::default()
+        };
+
+        let ours = paths_we_wrote(
+            &provided(&["Binaries/Win64/Broken.dll", "Binaries/Win64/Game.dll"]),
+            &outcome,
+            &CopiedFiles::default(),
+            &here,
+        );
+
+        assert!(ours.contains("Binaries/Win64/Broken.dll"), "{ours:?}");
+    }
+
+    /// A locked file was never opened for writing, so whatever is there is not ours -
+    /// unless an earlier sync put it there, which the record says separately.
+    #[test]
+    fn a_locked_file_is_not_recorded_as_ours() {
+        let here = PathBuf::from("/repo/Game");
+        let outcome = CopyOutcome {
+            locked: vec![PathBuf::from("Binaries/Win64/Locked.dll")],
+            ..CopyOutcome::default()
+        };
+
+        let ours = paths_we_wrote(
+            &provided(&["Binaries/Win64/Locked.dll", "Binaries/Win64/Game.dll"]),
+            &outcome,
+            &CopiedFiles::default(),
+            &here,
+        );
+
+        assert_eq!(ours, provided(&["Binaries/Win64/Game.dll"]));
     }
 }
