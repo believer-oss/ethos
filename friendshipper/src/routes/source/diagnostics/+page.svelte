@@ -14,14 +14,21 @@
 		getRebaseStatus,
 		getRepoStatus,
 		rebase,
-		runGitGc
+		runGitGc,
+		forceDownloadDlls,
+		forceDownloadEngine,
+		getArtifactStatus,
+		verifyArtifact
 	} from '$lib/repo';
 	import { getUnrealVersionSelectorStatus } from '$lib/system';
 	import {
 		CheckStatus,
 		type GitHubStatusResponse,
 		type ObjectCountResponse,
-		type RebaseStatusResponse
+		type RebaseStatusResponse,
+		type ArtifactStatus,
+		type SyncKind,
+		type VerifyResponse
 	} from '$lib/types';
 	import EmojiStatus from '$lib/components/EmojiStatus.svelte';
 
@@ -39,6 +46,64 @@
 	let updatingRebaseStatus = false;
 	let rebasing = false;
 	let runningGc = false;
+
+	// Two separate questions, deliberately. "Is the right version installed?" is answered
+	// by the checkout - the uproject for the engine, your commit for the editor binaries -
+	// and is fixed by syncing. "Are its bytes intact?" is answered by verifying, which
+	// repairs in place and never removes anything. Verifying across a version change would
+	// merge the two builds rather than replace one, so it refuses.
+	const verifyLabels: Record<SyncKind, string> = {
+		client: 'Game client',
+		engine: 'Engine',
+		editorDlls: 'Editor binaries'
+	};
+	let artifactStatuses: ArtifactStatus[] = [];
+	let verifying: SyncKind | null = null;
+	let syncing: SyncKind | null = null;
+	let verifyResults: Partial<Record<SyncKind, VerifyResponse>> = {};
+
+	const refreshArtifacts = async () => {
+		try {
+			artifactStatuses = await getArtifactStatus();
+		} catch (e) {
+			await emit('error', e);
+		}
+	};
+
+	const handleVerify = async (kind: SyncKind) => {
+		verifying = kind;
+		try {
+			verifyResults[kind] = await verifyArtifact(kind);
+			verifyResults = verifyResults;
+			await refreshArtifacts();
+		} catch (e) {
+			await emit('error', e);
+		} finally {
+			verifying = null;
+		}
+	};
+
+	// Reuses the normal sync, so it queues on the repo worker and reports on the status
+	// bar exactly as it would if you had triggered it any other way.
+	const handleSync = async (kind: SyncKind) => {
+		syncing = kind;
+		try {
+			if (kind === 'engine') {
+				await forceDownloadEngine();
+			} else if (kind === 'editorDlls') {
+				await forceDownloadDlls();
+			}
+			// A sync replaces the artifact, so whatever the last verify said is now stale.
+			verifyResults = Object.fromEntries(
+				Object.entries(verifyResults).filter(([existing]) => existing !== kind)
+			);
+			await refreshArtifacts();
+		} catch (e) {
+			await emit('error', e);
+		} finally {
+			syncing = null;
+		}
+	};
 
 	let rebaseStatus: RebaseStatusResponse = {
 		rebaseMergeExists: false,
@@ -194,6 +259,7 @@
 
 	onMount(() => {
 		void refresh();
+		void refreshArtifacts();
 	});
 </script>
 
@@ -356,6 +422,102 @@
 					>
 				</div>
 			{/if}
+		</AccordionItem>
+		<AccordionItem class="w-full">
+			<div slot="header" class="flex items-center justify-between w-full pr-2">
+				<div class="w-1/3">Downloaded Artifacts</div>
+				<span class="text-xs text-gray-300 font-mono w-3/4">
+					Check an install against the build it came from
+				</span>
+			</div>
+			<div class="flex flex-col gap-3">
+				<span class="text-xs text-gray-300">
+					Syncing makes an artifact exactly the version this checkout needs, removing anything the
+					new version does not contain. Verifying leaves the version alone and repairs files whose
+					contents do not match - it never deletes, so files the build does not know about, like
+					save games and local changes, are safe.
+				</span>
+				{#each artifactStatuses as status (status.kind)}
+					<div class="flex flex-col gap-1 border-t border-secondary-800 dark:border-space-950 pt-2">
+						<div class="flex items-center gap-2 flex-wrap">
+							<span class="text-sm text-primary-300 w-32">{verifyLabels[status.kind]}</span>
+
+							{#if status.state === 'notInstalled'}
+								<span class="text-xs text-gray-400">Not installed</span>
+							{:else}
+								<span class="text-xs text-gray-300 font-mono">
+									on disk: {status.installed}
+								</span>
+								{#if status.expected}
+									<span
+										class="text-xs font-mono {status.state === 'outOfDate'
+											? 'text-yellow-300'
+											: 'text-gray-300'}"
+									>
+										needs: {status.expected}
+									</span>
+								{/if}
+								{#if status.state === 'installed'}
+									<span class="text-xs text-green-400">up to date</span>
+								{:else if status.state === 'outOfDate'}
+									<span class="text-xs text-yellow-300">out of date</span>
+								{:else if status.state === 'unknown'}
+									<span class="text-xs text-gray-400">
+										cannot tell which version this checkout needs
+									</span>
+								{/if}
+							{/if}
+
+							{#if status.state === 'outOfDate' && status.kind !== 'client'}
+								<Button
+									disabled={syncing !== null || verifying !== null}
+									size="sm"
+									primary
+									on:click={() => handleSync(status.kind)}
+								>
+									{#if syncing === status.kind}
+										<Spinner size="4" />
+									{:else}
+										Sync
+									{/if}
+								</Button>
+							{:else if status.state !== 'notInstalled' && status.state !== 'unknown'}
+								<Button
+									disabled={syncing !== null || verifying !== null}
+									size="sm"
+									primary
+									on:click={() => handleVerify(status.kind)}
+								>
+									{#if verifying === status.kind}
+										<Spinner size="4" />
+									{:else}
+										Verify
+									{/if}
+								</Button>
+							{/if}
+						</div>
+
+						{#if status.expectationSource}
+							<span class="text-xs text-gray-500 pl-1">
+								Expected version comes from the {status.expectationSource}.
+							</span>
+						{/if}
+						{#if status.location}
+							<span class="text-xs text-gray-500 font-mono pl-1 truncate">{status.location}</span>
+						{/if}
+						{#if verifyResults[status.kind]}
+							<span
+								class="text-xs pl-1 {verifyResults[status.kind]?.checked &&
+								verifyResults[status.kind]?.repaired === 0
+									? 'text-green-400'
+									: 'text-yellow-300'}"
+							>
+								{verifyResults[status.kind]?.message}
+							</span>
+						{/if}
+					</div>
+				{/each}
+			</div>
 		</AccordionItem>
 		<AccordionItem class="w-full">
 			<div slot="header" class="flex items-center justify-between w-full pr-2">

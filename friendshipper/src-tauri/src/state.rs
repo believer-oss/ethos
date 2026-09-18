@@ -12,11 +12,11 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
 use crate::repo::RepoStatusRef;
+use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::git;
 use ethos_core::clients::github;
 use ethos_core::clients::kube::KubeClient;
-use ethos_core::longtail::Longtail;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::errors::CoreError;
@@ -45,8 +45,8 @@ pub struct AppState<T> {
 
     pub repo_status: RepoStatusRef,
 
-    pub longtail: Longtail,
-    pub longtail_tx: STDSender<LongtailMsg>,
+    pub artifact_sync: ArtifactSync,
+    pub sync_event_tx: STDSender<SyncEvent>,
 
     pub operation_tx: MPSCSender<TaskSequence>,
     pub notification_tx: STDSender<Notification>,
@@ -74,7 +74,9 @@ pub struct AppState<T> {
 
     pub engine: T,
 
-    pub cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
+    /// Cancellation for artifact downloads, one token per kind so they stop
+    /// independently of each other.
+    pub downloads: DownloadCancellation,
     pub workflow_log_cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
 }
 
@@ -90,7 +92,7 @@ where
         dynamic_config: DynamicConfigRef,
         config_file: PathBuf,
         storage: Option<ArtifactStorage>,
-        longtail_tx: STDSender<LongtailMsg>,
+        sync_event_tx: STDSender<SyncEvent>,
         operation_tx: MPSCSender<TaskSequence>,
         notification_tx: STDSender<Notification>,
         frontend_op_tx: STDSender<FrontendOp>,
@@ -104,19 +106,7 @@ where
         server_log_tx: STDSender<String>,
         workflow_log_tx: STDSender<String>,
     ) -> Result<Self> {
-        let mut longtail = Longtail::new(crate::APP_NAME);
-
-        debug!("Checking longtail");
-        if longtail.exec_path.is_none() && longtail.update_exec().is_err() {
-            match longtail.get_longtail(longtail_tx.clone()) {
-                Ok(_) => {
-                    longtail.update_exec()?;
-                }
-                Err(e) => {
-                    return Err(anyhow!("Failed to get longtail exe. Any operations depending on longtail will fail. Reason: {}", e));
-                }
-            }
-        }
+        let artifact_sync = ArtifactSync::new(crate::APP_NAME);
 
         debug!("Creating repo status");
         let repo_status = Arc::new(RwLock::new(RepoStatus {
@@ -191,8 +181,8 @@ where
             config_file,
             storage: Arc::new(RwLock::new(storage)),
             repo_status,
-            longtail,
-            longtail_tx,
+            artifact_sync,
+            sync_event_tx,
             operation_tx,
             notification_tx,
             frontend_op_tx,
@@ -209,7 +199,7 @@ where
             gameserver_log_tx: server_log_tx,
             workflow_log_tx,
             engine,
-            cancel_tx: Arc::new(TokioRwLock::new(None)),
+            downloads: DownloadCancellation::default(),
             workflow_log_cancel_tx: Arc::new(TokioRwLock::new(None)),
         })
     }

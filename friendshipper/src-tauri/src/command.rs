@@ -2,8 +2,10 @@ use ethos_core::utils::junit::JunitOutput;
 use friendshipper::engine::router::OpenUrlForPathRequest;
 use tracing::error;
 
+use ethos_core::artifact_sync::SyncKind;
+
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
-use ethos_core::tauri::command::{check_error, restart};
+use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
 use ethos_core::tauri::State;
 use ethos_core::types::builds::SyncClientRequest;
@@ -23,6 +25,9 @@ use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
 };
 use friendshipper::builds::router::{ActiveBuild, GetWorkflowsResponse};
+use friendshipper::repo::operations::diagnostics::{
+    ArtifactStatus, IncomingEngineChange, VerifyResponse,
+};
 use friendshipper::repo::operations::{
     ImportZippedChangesRequest, RestoreFileToRevisionRequest, RestoreSnapshotRequest,
     SaveChangeSetRequest, SaveSnapshotRequest, ZipLocalChangesRequest,
@@ -75,6 +80,65 @@ pub async fn get_object_count(
         .get(format!(
             "{}/repo/diagnostics/object-count",
             state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_incoming_engine_change(
+    state: tauri::State<'_, State>,
+) -> Result<IncomingEngineChange, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/diagnostics/incoming-engine",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_artifact_status(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<ArtifactStatus>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/diagnostics/artifacts", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn verify_artifact(
+    state: tauri::State<'_, State>,
+    kind: SyncKind,
+) -> Result<VerifyResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/repo/diagnostics/verify/{}",
+            state.server_url,
+            kind.as_str()
         ))
         .send()
         .await?;
@@ -433,10 +497,17 @@ pub async fn sync_client(
 }
 
 #[tauri::command]
-pub async fn cancel_download(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn cancel_download(
+    state: tauri::State<'_, State>,
+    kind: SyncKind,
+) -> Result<(), TauriError> {
     let res = state
         .client
-        .post(format!("{}/builds/client/cancel", state.server_url))
+        .post(format!(
+            "{}/builds/cancel/{}",
+            state.server_url,
+            kind.as_str()
+        ))
         .send()
         .await?;
 
@@ -460,24 +531,6 @@ pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), Taur
         error!("Error wiping client data: {}", err.message);
         return Err(err);
     }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn reset_longtail(state: tauri::State<'_, State>) -> Result<(), TauriError> {
-    let res = state
-        .client
-        .post(format!("{}/builds/longtail/reset", state.server_url))
-        .send()
-        .await?;
-
-    if let Some(err) = check_error(res.status(), res.text().await?).await {
-        error!("Error resetting longtail: {}", err.message);
-        return Err(err);
-    }
-
-    restart(state).await?;
 
     Ok(())
 }

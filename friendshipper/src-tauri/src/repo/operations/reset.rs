@@ -11,11 +11,11 @@ use tracing::{error, info};
 use crate::engine::EngineProvider;
 use crate::repo::operations::{DownloadDllsOp, StatusOp, UpdateEngineOp};
 use crate::state::AppState;
+use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::clients::github::GraphQLClient;
-use ethos_core::longtail::Longtail;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfig, RepoConfigRef, UProject};
 use ethos_core::types::errors::CoreError;
@@ -37,8 +37,9 @@ pub struct ResetToCommitOp<T> {
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
-    pub longtail: Longtail,
-    pub longtail_tx: Sender<LongtailMsg>,
+    pub artifact_sync: ArtifactSync,
+    pub downloads: DownloadCancellation,
+    pub sync_event_tx: Sender<SyncEvent>,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
     pub git_client: git::Git,
@@ -115,12 +116,15 @@ where
                     dll_commit: self.repo_status.read().dll_commit_remote.clone(),
                     download_symbols: self.app_config.read().editor_download_symbols,
                     storage: self.storage.clone(),
-                    longtail: self.longtail.clone(),
-                    tx: self.longtail_tx.clone(),
+                    artifact_sync: self.artifact_sync.clone(),
+                    downloads: self.downloads.clone(),
+                    tx: self.sync_event_tx.clone(),
                     aws_client: self.aws_client.clone(),
                     project,
                     engine: self.engine.clone(),
                     engine_path: engine_path.clone(),
+                    max_cache_size_bytes: self.app_config.read().editor_cache_size_bytes(),
+                    transfer_acceleration: self.app_config.read().s3_transfer_acceleration,
                 };
                 download_dlls_op.execute().await?;
             }
@@ -174,14 +178,17 @@ where
                     old_uproject: Some(old_uproject.clone()),
                     new_uproject: new_uproject.clone(),
                     engine_type: self.app_config.read().engine_type,
-                    longtail: self.longtail.clone(),
-                    longtail_tx: self.longtail_tx.clone(),
+                    artifact_sync: self.artifact_sync.clone(),
+                    downloads: self.downloads.clone(),
+                    sync_event_tx: self.sync_event_tx.clone(),
                     aws_client: self.aws_client.clone(),
                     git_client: self.git_client.clone(),
                     download_symbols: self.app_config.read().engine_download_symbols,
                     storage: self.storage.clone(),
                     project,
                     engine: self.engine.clone(),
+                    max_cache_size_bytes: self.app_config.read().engine_cache_size_bytes(),
+                    transfer_acceleration: self.app_config.read().s3_transfer_acceleration,
                 };
                 update_engine_op.execute().await?;
             }
@@ -220,8 +227,9 @@ where
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
         repo_status: state.repo_status.clone(),
-        longtail: state.longtail.clone(),
-        longtail_tx: state.longtail_tx.clone(),
+        artifact_sync: state.artifact_sync.clone(),
+        downloads: state.downloads.clone(),
+        sync_event_tx: state.sync_event_tx.clone(),
         aws_client: aws_client.clone(),
         storage,
         git_client: state.git(),

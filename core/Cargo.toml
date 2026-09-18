@@ -15,6 +15,7 @@ globset = { workspace = true }
 keyring = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
+longtail = { workspace = true }
 open = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, features = ["http-proto"] }
@@ -76,10 +77,6 @@ pem = "3.0.2"
 schemars = "0.8.12"
 k8s-openapi = { version = "0.20.0", features = ["v1_24"] }
 rand = "0.8.5"
-hex = "0.4"
-sha2 = "0.10.6"
-ureq = "2.6.2"
-which = "4.4.0"
 json-patch = "1.1.0"
 ring = "0.17"
 graphql_client = { version = "0.13.0", features = ["reqwest"] }
@@ -87,7 +84,11 @@ obws = "0.11.5"
 futures = "0.3.29"
 toml = "0.8.8"
 async-trait = "0.1"
-windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows = { version = "0.56.0", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_RestartManager",
+] }
 walkdir = "2.5.0"
 octocrab = "0.39.0"
 bytes = "1.7.2"
@@ -98,3 +99,9 @@ hyper = { version = "0.14.31", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 listeners = "0.2.1"
 tokio-util = "0.7.13"
+
+[dev-dependencies]
+# The end-to-end sync test builds its own longtail store in a temp dir, so it needs the
+# library directly rather than only through ethos-core's API.
+longtail = { workspace = true }
+tempfile = { workspace = true }

@@ -39,6 +39,18 @@ where
             post(operations::diagnostics::remediate_rebase_handler),
         )
         .route(
+            "/diagnostics/artifacts",
+            get(operations::diagnostics::artifact_status_handler),
+        )
+        .route(
+            "/diagnostics/incoming-engine",
+            get(operations::diagnostics::incoming_engine_handler),
+        )
+        .route(
+            "/diagnostics/verify/:kind",
+            post(operations::diagnostics::verify_handler),
+        )
+        .route(
             "/diagnostics/object-count",
             get(operations::diagnostics::object_count_handler),
         )

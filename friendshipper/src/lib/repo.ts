@@ -1,12 +1,14 @@
 import type { ChangeSet, Commit, CommitFileInfo, ModifiedFile } from '@ethos/core';
 import { invoke } from '@tauri-apps/api/core';
 import type {
+	ArtifactStatus,
 	CloneRequest,
 	CommitInfo,
 	FileHistoryResponse,
 	GitHubPullRequest,
 	GitHubStatusResponse,
 	ImportZippedChangesResponse,
+	IncomingEngineChange,
 	MergeQueue,
 	ObjectCountResponse,
 	PushRequest,
@@ -17,6 +19,8 @@ import type {
 	RevertFilesRequest,
 	Snapshot,
 	SnapshotPreviewResponse,
+	SyncKind,
+	VerifyResponse,
 	ZipLocalChangesResponse,
 	ZipPreviewResponse
 } from '$lib/types';
@@ -223,6 +227,15 @@ export const getGithubStatus = async (): Promise<GitHubStatusResponse> =>
 	invoke('get_github_status');
 
 export const runGitGc = async (): Promise<void> => invoke('run_git_gc');
+
+export const getArtifactStatus = async (): Promise<ArtifactStatus[]> =>
+	invoke('get_artifact_status');
+
+export const getIncomingEngineChange = async (): Promise<IncomingEngineChange> =>
+	invoke('get_incoming_engine_change');
+
+export const verifyArtifact = async (kind: SyncKind): Promise<VerifyResponse> =>
+	invoke('verify_artifact', { kind });
 
 export const resetRepo = async (): Promise<void> => invoke('reset_repo');
 
