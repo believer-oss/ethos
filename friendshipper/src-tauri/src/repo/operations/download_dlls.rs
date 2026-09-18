@@ -1,4 +1,7 @@
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -196,8 +199,34 @@ where
             binaries_staging_path, &self.git_client.repo_path
         );
 
+        // What this build provides. longtail keeps the staging directory matching the
+        // build exactly - it deletes what the version does not name - so this is the
+        // authoritative list of what should end up in the repo.
+        let provided = relative_paths(&binaries_staging_path)
+            .context("Failed to read the downloaded binaries")?;
+
         copy_recursively(&binaries_staging_path, &binaries_destination_path)
             .context("Failed to copy dlls to target directory")?;
+
+        // Copying only ever adds, so a binary that an earlier build had and this one does
+        // not would otherwise sit in the repo forever. Nothing loads it, but it
+        // accumulates and makes the checkout harder to reason about.
+        let manifest_path = copied_manifest_path(&self.artifact_sync.download_path.0);
+        let previous = CopiedFiles::load(&manifest_path);
+        let stale = stale_paths(&previous, &binaries_destination_path, &provided);
+        let mut ours = provided.clone();
+        if !stale.is_empty() {
+            // Whatever the removal could not get rid of is still in the repo and still
+            // ours, so it stays on the record and the next sync tries again. Dropping it
+            // would strand it there with nothing saying we put it there.
+            ours.extend(remove_stale(&self.git_client, &binaries_destination_path, &stale).await);
+        }
+
+        CopiedFiles {
+            destination: binaries_destination_path.clone(),
+            paths: ours.iter().cloned().collect(),
+        }
+        .save(&manifest_path);
 
         // The repo copy, not the staging directory: staging is an implementation detail
         // of merging downloaded binaries into a checkout, and the copy in the repo is
@@ -322,6 +351,284 @@ fn discard_target_index(root: &Path) {
 
 /// Copy files from source to destination recursively.
 /// From: https://nick.groenen.me/notes/recursively-copy-files-in-rust/
+/// What the last sync copied into the repo.
+///
+/// The bound on what may be deleted. Only a path this recorded is ever a candidate, so a
+/// file the user or git put there is not one - the reconcile cannot reach outside what it
+/// previously wrote, whatever else the directory happens to contain.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct CopiedFiles {
+    destination: PathBuf,
+    paths: Vec<String>,
+}
+
+impl CopiedFiles {
+    fn load(path: &Path) -> CopiedFiles {
+        let Ok(bytes) = fs::read(path) else {
+            return CopiedFiles::default();
+        };
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            warn!("Ignoring unreadable copied-binaries record at {path:?}: {e}");
+            CopiedFiles::default()
+        })
+    }
+
+    fn save(&self, path: &Path) {
+        let write = || -> std::io::Result<()> {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let bytes = serde_json::to_vec_pretty(self)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            fs::write(path, bytes)
+        };
+
+        // Losing this costs one sync's worth of cleanup, not correctness.
+        if let Err(e) = write() {
+            warn!("Could not record which binaries were copied to {path:?}: {e}");
+        }
+    }
+}
+
+fn copied_manifest_path(download_path: &Path) -> PathBuf {
+    download_path.join("editor-binaries-copied.json")
+}
+
+/// Every file under `root`, named relative to it with forward slashes.
+///
+/// A failure to read any part of the tree is an error rather than a smaller answer. This
+/// list decides what a later sync may delete from the user's repo: a subtree silently
+/// missing from it would make everything under it look like a file this build dropped.
+fn relative_paths(root: &Path) -> std::io::Result<HashSet<String>> {
+    let mut out = HashSet::new();
+    collect_relative_paths(root, root, &mut out)?;
+    Ok(out)
+}
+
+fn collect_relative_paths(
+    root: &Path,
+    dir: &Path,
+    out: &mut HashSet<String>,
+) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_relative_paths(root, &path, out)?;
+        } else if let Ok(relative) = path.strip_prefix(root) {
+            out.push_normalised(relative);
+        }
+    }
+    Ok(())
+}
+
+trait PushNormalised {
+    fn push_normalised(&mut self, path: &Path);
+}
+
+impl PushNormalised for HashSet<String> {
+    fn push_normalised(&mut self, path: &Path) {
+        self.insert(path.to_string_lossy().replace('\\', "/"));
+    }
+}
+
+/// Whether two spellings of a path name the same file on this platform.
+///
+/// Windows and macOS hand back `Foo.dll` when asked for `foo.dll`, so a build that
+/// changed only the case of a name would leave the old spelling looking stale while
+/// pointing at the file just copied - and deleting it would remove that file. Linux keeps
+/// the two apart, where folding case would be the wrong answer instead.
+const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
+
+fn folded(path: &str, ignore_case: bool) -> Cow<'_, str> {
+    if ignore_case {
+        Cow::Owned(path.to_lowercase())
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+/// Paths a previous sync copied that this one does not provide.
+///
+/// Nothing is stale when the destination has changed: the record describes a different
+/// directory, so it says nothing about this one.
+fn stale_paths(
+    previous: &CopiedFiles,
+    destination: &Path,
+    provided: &HashSet<String>,
+) -> Vec<String> {
+    stale_paths_matching(previous, destination, provided, IGNORE_CASE)
+}
+
+fn stale_paths_matching(
+    previous: &CopiedFiles,
+    destination: &Path,
+    provided: &HashSet<String>,
+    ignore_case: bool,
+) -> Vec<String> {
+    if previous.destination != destination {
+        return Vec::new();
+    }
+
+    let provided: HashSet<Cow<str>> = provided.iter().map(|p| folded(p, ignore_case)).collect();
+
+    previous
+        .paths
+        .iter()
+        .filter(|path| !provided.contains(&folded(path, ignore_case)))
+        .filter(|path| is_contained(Path::new(path)))
+        .cloned()
+        .collect()
+}
+
+/// Delete stale binaries, skipping anything git knows about.
+///
+/// The manifest already bounds this to files a previous sync wrote, but a file that has
+/// since been committed is no longer ours to remove - deleting it would show up as an
+/// unexplained deletion in the user's working tree.
+///
+/// Returns the stale paths still on disk afterwards.
+async fn remove_stale(git_client: &git::Git, destination: &Path, stale: &[String]) -> Vec<String> {
+    let tracked = tracked_among(git_client, destination, stale).await;
+    delete_stale(destination, stale, &tracked)
+}
+
+/// Delete each stale binary git does not track, returning the ones still there after.
+///
+/// A file we could not delete - the editor still has it open - is still one we put in the
+/// repo, and dropping it from the manifest would leave it there with nothing recording
+/// where it came from, so no later sync would ever clean it up. The same goes for one git
+/// reported as tracked, because "tracked" is also the answer when git could not be asked
+/// at all. Handing them back keeps them on the list for next time.
+fn delete_stale(destination: &Path, stale: &[String], tracked: &HashSet<String>) -> Vec<String> {
+    let mut remaining = Vec::new();
+
+    for relative in stale {
+        let path = destination.join(relative);
+
+        if tracked.contains(relative) {
+            info!("Leaving {relative} alone: it is tracked by git");
+            if path.exists() {
+                remaining.push(relative.clone());
+            }
+            continue;
+        }
+
+        if !path.exists() {
+            continue;
+        }
+
+        match fs::remove_file(&path) {
+            Ok(()) => info!("Removed {path:?}, which this editor build no longer contains"),
+            // Most likely the editor has it open. It will go on the next sync.
+            Err(e) => {
+                warn!("Could not remove stale binary {path:?}: {e}");
+                remaining.push(relative.clone());
+            }
+        }
+    }
+
+    remaining
+}
+
+/// Whether a recorded path is one we could have written, and so one we may remove.
+///
+/// A manifest is data on disk. An absolute path would replace the destination when
+/// joined, and `..` would climb out of it, so anything that is not a plain relative path
+/// is refused rather than trusted.
+fn is_contained(relative: &Path) -> bool {
+    relative
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// Which of `candidates` git tracks. On any failure, treats them all as tracked: the safe
+/// answer when we cannot tell is to delete nothing.
+async fn tracked_among(
+    git_client: &git::Git,
+    destination: &Path,
+    candidates: &[String],
+) -> HashSet<String> {
+    let all_tracked = || -> HashSet<String> { candidates.iter().cloned().collect() };
+
+    // git reports paths relative to the repo root, so everything below is in those terms.
+    let Ok(within_repo) = destination.strip_prefix(&git_client.repo_path) else {
+        // The binaries are not in this repo at all, so we cannot reason about them.
+        warn!(
+            "{destination:?} is not inside {:?}; removing none",
+            git_client.repo_path
+        );
+        return all_tracked();
+    };
+    let dir = within_repo.to_string_lossy().replace('\\', "/");
+
+    // One pathspec for the directory rather than one per candidate, so that matching a
+    // recorded name against a tracked one happens here, where it can fold case the way the
+    // filesystem does. Handing git the recorded spellings instead would miss a tracked file
+    // whose name differs only in case - and a missed file is the one that gets deleted.
+    //
+    // --literal-pathspecs, because this is a directory name and not a pattern. A path
+    // holding `[` would otherwise be read as a character class and match nothing.
+    let mut args: Vec<&str> = vec!["--literal-pathspecs", "ls-files", "-z", "--"];
+    if !dir.is_empty() {
+        args.push(&dir);
+    }
+
+    // new_without_logs, because the default logs stdout as a single tracing event and -z
+    // output has no newlines to break it up: for a destination at the repo root the
+    // pathspec covers the whole repo, and that is one log line holding every tracked path
+    // in it. The pathspec stays that wide on purpose - narrowing it to the candidates'
+    // own paths is what --icase-pathspecs would be for, and git refuses to combine that
+    // with --literal-pathspecs, which is the one guarding against a name like `Foo[1].dll`
+    // being read as a pattern, matching nothing, and so being taken for untracked.
+    //
+    // -z, because by default git C-quotes any path with non-ASCII or special bytes -
+    // `"Binaries/Win64/\303\244.dll"`, quotes and octal escapes included. Comparing that
+    // against a real path never matches, which would read a tracked file as untracked and
+    // delete it out of the working tree.
+    match git_client
+        .run_and_collect_output(&args, git::Opts::new_without_logs())
+        .await
+    {
+        Ok(output) => tracked_among_output(&dir, candidates, &output, IGNORE_CASE),
+        Err(e) => {
+            warn!("Could not ask git which binaries are tracked, so removing none: {e}");
+            all_tracked()
+        }
+    }
+}
+
+/// Which `candidates`, named relative to `dir`, appear in `git ls-files -z` output.
+///
+/// An exact comparison of whole paths rather than a suffix match: `Foo.dll` must not be
+/// judged by whether some tracked `MyFoo.dll` ends with it.
+fn tracked_among_output(
+    dir: &str,
+    candidates: &[String],
+    output: &str,
+    ignore_case: bool,
+) -> HashSet<String> {
+    // No trimming: -z output is already exact, and a filename may legitimately begin or
+    // end with a space.
+    let tracked: HashSet<Cow<str>> = output
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(|s| folded(s, ignore_case))
+        .collect();
+
+    candidates
+        .iter()
+        .filter(|relative| {
+            let full = if dir.is_empty() {
+                (*relative).clone()
+            } else {
+                format!("{dir}/{relative}")
+            };
+            tracked.contains(&folded(&full, ignore_case))
+        })
+        .cloned()
+        .collect()
+}
+
 pub fn copy_recursively(
     source: impl AsRef<Path>,
     destination: impl AsRef<Path>,
@@ -369,5 +676,195 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         discard_target_index(dir.path());
         assert!(!dir.path().join(TARGET_INDEX_CACHE_NAME).exists());
+    }
+
+    fn set(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|p| (*p).to_string()).collect()
+    }
+
+    fn copied(destination: &str, paths: &[&str]) -> CopiedFiles {
+        CopiedFiles {
+            destination: PathBuf::from(destination),
+            paths: paths.iter().map(|p| (*p).to_string()).collect(),
+        }
+    }
+
+    /// The whole point: a binary an earlier build shipped and this one does not.
+    #[test]
+    fn a_binary_the_new_build_dropped_is_stale() {
+        let previous = copied(
+            "/repo/Game",
+            &["Binaries/Win64/Game.dll", "Binaries/Win64/Old.dll"],
+        );
+        let provided = set(&["Binaries/Win64/Game.dll"]);
+
+        assert_eq!(
+            stale_paths(&previous, Path::new("/repo/Game"), &provided),
+            vec!["Binaries/Win64/Old.dll".to_string()]
+        );
+    }
+
+    #[test]
+    fn nothing_is_stale_when_the_build_still_provides_everything() {
+        let previous = copied("/repo/Game", &["Binaries/Win64/Game.dll"]);
+        let provided = set(&["Binaries/Win64/Game.dll", "Binaries/Win64/New.dll"]);
+
+        assert!(stale_paths(&previous, Path::new("/repo/Game"), &provided).is_empty());
+    }
+
+    /// A record about a different directory says nothing about this one, and guessing
+    /// would mean deleting from a path we never wrote to.
+    #[test]
+    fn a_record_for_another_destination_is_ignored() {
+        let previous = copied("/repo/OtherGame", &["Binaries/Win64/Old.dll"]);
+        let provided = set(&["Binaries/Win64/Game.dll"]);
+
+        assert!(stale_paths(&previous, Path::new("/repo/Game"), &provided).is_empty());
+    }
+
+    /// A manifest is a file on disk. An absolute path would replace the destination when
+    /// joined to it, and `..` would climb out of the repo entirely - so neither is ever a
+    /// candidate for deletion, whatever the file says.
+    #[test]
+    fn a_path_that_escapes_the_destination_is_never_stale() {
+        let previous = copied(
+            "/repo/Game",
+            &[
+                "../../../etc/passwd",
+                "/etc/passwd",
+                "Binaries/Win64/Old.dll",
+            ],
+        );
+        let provided = set(&[]);
+
+        assert_eq!(
+            stale_paths(&previous, Path::new("/repo/Game"), &provided),
+            vec!["Binaries/Win64/Old.dll".to_string()],
+            "only the plain relative path is a candidate"
+        );
+    }
+
+    /// Nothing recorded means nothing was copied by us, so nothing is ours to remove.
+    /// This is the first-run case, and the case where the record was lost.
+    #[test]
+    fn no_record_means_nothing_is_stale() {
+        let provided = set(&["Binaries/Win64/Game.dll"]);
+
+        assert!(
+            stale_paths(&CopiedFiles::default(), Path::new("/repo/Game"), &provided).is_empty()
+        );
+    }
+
+    #[test]
+    fn the_record_survives_a_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("copied.json");
+
+        let record = copied("/repo/Game", &["Binaries/Win64/Game.dll"]);
+        record.save(&path);
+
+        let loaded = CopiedFiles::load(&path);
+        assert_eq!(loaded.destination, record.destination);
+        assert_eq!(loaded.paths, record.paths);
+    }
+
+    /// A record we cannot parse must not be read as "nothing was ever copied" in a way
+    /// that loses data - it simply means this sync cleans nothing.
+    #[test]
+    fn an_unreadable_record_deletes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("copied.json");
+        fs::write(&path, b"{ not json").unwrap();
+
+        let loaded = CopiedFiles::load(&path);
+        assert!(loaded.paths.is_empty());
+        assert!(stale_paths(&loaded, Path::new("/repo/Game"), &set(&[])).is_empty());
+    }
+
+    /// On Windows and macOS a build that re-cased a name still ships the same file, and
+    /// the old spelling points straight at the new one - deleting it would delete what
+    /// was just copied.
+    #[test]
+    fn a_re_cased_name_is_not_stale_where_case_does_not_separate_files() {
+        let previous = copied("/repo/Game", &["Binaries/Win64/Game.dll"]);
+        let provided = set(&["Binaries/Win64/game.dll"]);
+
+        assert!(
+            stale_paths_matching(&previous, Path::new("/repo/Game"), &provided, true).is_empty()
+        );
+        assert_eq!(
+            stale_paths_matching(&previous, Path::new("/repo/Game"), &provided, false),
+            vec!["Binaries/Win64/Game.dll".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_tracked_binary_is_recognised_whatever_its_case() {
+        let candidates = vec!["Binaries/Win64/Game.dll".to_string()];
+        let output = "Game/Binaries/Win64/game.dll\0";
+
+        assert_eq!(
+            tracked_among_output("Game", &candidates, output, true),
+            set(&["Binaries/Win64/Game.dll"])
+        );
+        assert!(tracked_among_output("Game", &candidates, output, false).is_empty());
+    }
+
+    /// The binaries directory is the repo root, so there is no prefix to add.
+    #[test]
+    fn candidates_match_when_the_destination_is_the_repo_root() {
+        let candidates = vec!["Game.dll".to_string()];
+
+        assert_eq!(
+            tracked_among_output("", &candidates, "Game.dll\0", false),
+            set(&["Game.dll"])
+        );
+    }
+
+    /// A tracked `MyGame.dll` must not answer for `Game.dll`.
+    #[test]
+    fn a_longer_tracked_name_does_not_match_a_shorter_candidate() {
+        let candidates = vec!["Binaries/Win64/Game.dll".to_string()];
+        let output = "Game/Binaries/Win64/MyGame.dll\0";
+
+        assert!(tracked_among_output("Game", &candidates, output, false).is_empty());
+    }
+
+    #[test]
+    fn a_stale_binary_that_could_not_be_deleted_stays_on_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path();
+        fs::create_dir_all(destination.join("Binaries/Win64")).unwrap();
+        fs::write(destination.join("Binaries/Win64/Gone.dll"), b"x").unwrap();
+        fs::write(destination.join("Binaries/Win64/Kept.dll"), b"x").unwrap();
+
+        let stale = vec![
+            "Binaries/Win64/Gone.dll".to_string(),
+            "Binaries/Win64/Kept.dll".to_string(),
+            // Already gone: nothing left to record.
+            "Binaries/Win64/Missing.dll".to_string(),
+        ];
+        let tracked = set(&["Binaries/Win64/Kept.dll"]);
+
+        let remaining = delete_stale(destination, &stale, &tracked);
+
+        assert!(!destination.join("Binaries/Win64/Gone.dll").exists());
+        assert!(destination.join("Binaries/Win64/Kept.dll").exists());
+        assert_eq!(remaining, vec!["Binaries/Win64/Kept.dll".to_string()]);
+    }
+
+    #[test]
+    fn relative_paths_are_found_recursively_and_normalised() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("Binaries/Win64")).unwrap();
+        fs::write(root.join("Binaries/Win64/Game.dll"), b"x").unwrap();
+        fs::write(root.join("top.txt"), b"y").unwrap();
+
+        let found = relative_paths(root).unwrap();
+
+        assert_eq!(found.len(), 2);
+        assert!(found.contains("Binaries/Win64/Game.dll"), "{found:?}");
+        assert!(found.contains("top.txt"), "{found:?}");
     }
 }
