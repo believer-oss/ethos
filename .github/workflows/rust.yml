@@ -173,6 +173,18 @@ jobs:
           yarn
           yarn tauri:build
 
+      # Keeps the binary from a branch build reachable. The Rename and Release
+      # steps below only fire for a tag, so until now nothing that CI built was
+      # downloadable - testing a change meant building it yourself. Actions
+      # storage only: this touches no tag, no release and no S3 path.
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-windows-${{ github.sha }}
+          path: target/release/Friendshipper.exe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Rename
         if: ${{ startsWith(github.ref, format('refs/tags/{0}', matrix.app)) }}
         run: |
