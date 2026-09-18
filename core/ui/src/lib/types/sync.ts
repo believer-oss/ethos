@@ -14,6 +14,8 @@ export type SyncErrorClass =
 	| 'transient'
 	| 'invalidInput'
 	| 'corrupt'
+	/** A file is open in another program. Closing it and retrying is the fix. */
+	| 'blocked'
 	| 'io'
 	| 'internal';
 

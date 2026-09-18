@@ -237,8 +237,33 @@ pub enum SyncErrorClass {
     Transient,
     InvalidInput,
     Corrupt,
+    /// A file could not be written because another program has it open.
+    ///
+    /// Split out from `Io` because it is the one failure here with an obvious remedy that
+    /// is not ours: close the program and go again. Lumping it in with "a disk problem"
+    /// is how it used to get mistaken for a corrupt download, which is what the old
+    /// clear-the-cache-and-retry ladder was responding to - at the cost of the entire
+    /// download, and without fixing anything, because the file was still open.
+    Blocked,
     Io,
     Internal,
+}
+
+/// Whether this failure, anywhere in its chain, is a file something else has open.
+///
+/// Both error types carry the underlying `io::Error`, so this is a real check on the
+/// error rather than a search for words in a message. What counts as "held" is more than
+/// `PermissionDenied` on Windows - see `is_held_by_another_program`.
+fn blocked_by_another_program(error: &LongtailError) -> Option<&str> {
+    let locked = crate::utils::process::is_held_by_another_program;
+
+    match error {
+        LongtailError::Io { context, source } if locked(source) => Some(context),
+        LongtailError::Store(longtail::StoreError::Io { context, source }) if locked(source) => {
+            Some(context)
+        }
+        _ => None,
+    }
 }
 
 impl From<ErrorClass> for SyncErrorClass {
@@ -267,7 +292,25 @@ pub struct SyncError {
 }
 
 impl SyncError {
-    fn from_longtail(kind: SyncKind, error: &LongtailError) -> Self {
+    fn from_longtail(kind: SyncKind, target: &Path, error: &LongtailError) -> Self {
+        if let Some(context) = blocked_by_another_program(error) {
+            // The location check knows what is running from the target, so say which
+            // program rather than leaving the user to guess.
+            let culprits = crate::utils::process::describe_blocking_processes(target)
+                .map(|running| format!(" Running from there: {running}."))
+                .unwrap_or_default();
+
+            return SyncError {
+                class: SyncErrorClass::Blocked,
+                summary: format!(
+                    "A {kind} file is open in another program, so it could not be updated.{culprits} \
+                     Close it and sync again - what has already downloaded is kept, so it picks up \
+                     where it left off."
+                ),
+                detail: format!("{context}: {}", error.full_chain()),
+            };
+        }
+
         let class = SyncErrorClass::from(error.class());
         let summary = match class {
             SyncErrorClass::Cancelled => format!("The {kind} download was cancelled."),
@@ -286,9 +329,11 @@ impl SyncError {
                  Retrying will re-fetch it."
             ),
             SyncErrorClass::Io => format!(
-                "Writing the {kind} to disk failed. Check for free space and that no other \
-                 program has the files open."
+                "Writing the {kind} to disk failed. Check that there is free space and that \
+                 the drive is writable."
             ),
+            // Handled above, where the path and the program holding it are still to hand.
+            SyncErrorClass::Blocked => format!("A {kind} file is open in another program."),
             SyncErrorClass::InvalidInput => {
                 format!("The {kind} download was asked for something it cannot do.")
             }
@@ -721,7 +766,7 @@ impl ArtifactSync {
             // the only retry: every other class either cannot be fixed by repeating the
             // request, or is already retried inside longtail.
             if error.class() != ErrorClass::Unauthorized || attempt >= MAX_UNAUTHORIZED_RETRIES {
-                break Err(SyncError::from_longtail(kind, &error));
+                break Err(SyncError::from_longtail(kind, request.target, &error));
             }
 
             attempt += 1;
@@ -995,7 +1040,7 @@ mod tests {
         let empty = longtail::get(longtail::GetOptions::new(vec![], "/tmp/unused"))
             .await
             .expect_err("no source paths is an error");
-        let mapped = SyncError::from_longtail(SyncKind::Client, &empty);
+        let mapped = SyncError::from_longtail(SyncKind::Client, Path::new("/tmp"), &empty);
         assert_eq!(mapped.class, SyncErrorClass::InvalidInput);
         assert_eq!(mapped.detail, empty.full_chain());
 
@@ -1007,7 +1052,7 @@ mod tests {
         ))
         .await
         .expect_err("a missing get-config is an error");
-        let mapped = SyncError::from_longtail(SyncKind::Engine, &missing);
+        let mapped = SyncError::from_longtail(SyncKind::Engine, Path::new("/tmp"), &missing);
         assert_eq!(mapped.class, SyncErrorClass::Io);
         assert_eq!(mapped.detail, missing.full_chain());
         assert!(
@@ -1017,6 +1062,37 @@ mod tests {
             missing.to_string()
         );
         assert!(mapped.summary.contains("engine"), "{}", mapped.summary);
+    }
+
+    /// A locked file must be told apart from a disk problem, because the remedy is
+    /// different and the old code could not tell them apart at all - which is what made
+    /// deleting the block cache look like a reasonable response to an open file.
+    #[test]
+    fn a_file_held_by_another_program_is_its_own_class() {
+        let blocked = LongtailError::Io {
+            context: "writing Engine/Binaries/Win64/UnrealEditor.exe".to_string(),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        let mapped = SyncError::from_longtail(SyncKind::Engine, Path::new("/tmp"), &blocked);
+        assert_eq!(mapped.class, SyncErrorClass::Blocked);
+        assert!(
+            mapped.summary.contains("open in another program"),
+            "{mapped:?}"
+        );
+        assert!(
+            mapped.detail.contains("UnrealEditor.exe"),
+            "the detail names the file: {mapped:?}"
+        );
+
+        // The same variant with a different cause is not a locked file, and telling
+        // someone to close a program would send them looking for one that is not there.
+        let out_of_space = LongtailError::Io {
+            context: "writing Engine/Binaries/Win64/UnrealEditor.exe".to_string(),
+            source: std::io::Error::from(std::io::ErrorKind::StorageFull),
+        };
+        let mapped = SyncError::from_longtail(SyncKind::Engine, Path::new("/tmp"), &out_of_space);
+        assert_eq!(mapped.class, SyncErrorClass::Io);
+        assert!(mapped.summary.contains("free space"), "{mapped:?}");
     }
 
     /// The sink runs on longtail's async task and on rayon workers, so it must never
