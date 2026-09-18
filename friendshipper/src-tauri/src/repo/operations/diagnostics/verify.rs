@@ -19,7 +19,7 @@ use tracing::warn;
 
 use ethos_core::artifact_sync::{SyncError, SyncKind, SyncRequest, SyncSummary};
 use ethos_core::clients::aws::ensure_aws_client;
-use ethos_core::types::config::UProject;
+use ethos_core::types::config::{EngineType, UProject};
 use ethos_core::types::errors::CoreError;
 
 use crate::engine::EngineProvider;
@@ -98,6 +98,13 @@ where
         SyncKind::Client => Expectation::None,
 
         SyncKind::Engine => {
+            // Someone running a source engine builds it themselves; we have no opinion on
+            // what should be there and must not tell them they are out of date. This is
+            // the same switch that decides whether an engine is downloaded at all.
+            if state.app_config.read().engine_type != EngineType::Prebuilt {
+                return Expectation::None;
+            }
+
             let uproject_path = state
                 .app_config
                 .read()
