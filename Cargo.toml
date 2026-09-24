@@ -18,6 +18,11 @@ globset = "0.4"
 keyring = "2"
 lazy_static = { version = "1.4.0", features = [] }
 log = "0.4.20"
+# Pinned by rev: the crate is not published, and an unpinned git dep would
+# silently move the build. To iterate against a local checkout add a [patch]
+# for this URL in ~/.cargo/config.toml rather than editing this line, and
+# restore Cargo.lock before committing.
+longtail = { git = "https://github.com/believer-oss/longtail-rs", rev = "87a3d396f7d0ce78560e37a1bbf2e2438cb279b1" }
 octocrab = "0.39.0"
 open = "5.0.0"
 opentelemetry = "0.21.0"

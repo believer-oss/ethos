@@ -6,7 +6,8 @@ import type {
 	JunitOutput,
 	ArtifactEntry,
 	ActiveBuild,
-	Workflow
+	Workflow,
+	SyncKind
 } from '$lib/types';
 
 export const getBuild = async (commit: string, project?: string): Promise<ArtifactEntry> =>
@@ -20,11 +21,10 @@ export const getActiveBuilds = async (): Promise<ActiveBuild[]> => invoke('get_a
 export const syncClient = async (req: SyncClientRequest): Promise<boolean> =>
 	invoke('sync_client', { req });
 
-export const cancelDownload = async (): Promise<void> => invoke('cancel_download');
+export const cancelDownload = async (kind: SyncKind = 'client'): Promise<void> =>
+	invoke('cancel_download', { kind });
 
 export const wipeClientData = async (): Promise<void> => invoke('wipe_client_data');
-
-export const resetLongtail = async (): Promise<void> => invoke('reset_longtail');
 
 export const getWorkflows = async (
 	engine: boolean = false,

@@ -13,13 +13,18 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::warn;
 use tracing::{info, instrument};
 
+use chrono::Utc;
+use ethos_core::artifact_sync;
+use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::artifact_sync::{
+    DownloadCancellation, SyncError, SyncKind, SyncRecord, SyncRequest,
+};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
-use ethos_core::longtail;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::types::config::EngineType;
 use ethos_core::types::config::UProject;
 use ethos_core::types::errors::CoreError;
+use ethos_core::utils::process::describe_blocking_processes;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
@@ -39,14 +44,17 @@ pub struct UpdateEngineOp<T> {
     pub old_uproject: Option<UProject>,
     pub new_uproject: UProject,
     pub engine_type: EngineType,
-    pub longtail: longtail::Longtail,
-    pub longtail_tx: Sender<LongtailMsg>,
+    pub artifact_sync: artifact_sync::ArtifactSync,
+    pub downloads: DownloadCancellation,
+    pub sync_event_tx: Sender<SyncEvent>,
     pub aws_client: AWSClient,
     pub git_client: git::Git,
     pub download_symbols: bool,
     pub storage: ArtifactStorage,
     pub project: Project,
     pub engine: T,
+    pub max_cache_size_bytes: u64,
+    pub transfer_acceleration: bool,
 }
 
 #[async_trait]
@@ -154,29 +162,66 @@ where
                     };
                 }
 
-                let cache_path = get_engine_cache_path(&self.longtail);
+                let cache_path = get_engine_cache_path(&self.artifact_sync);
 
-                let download_result = self.longtail.get_archive(
-                    &PathBuf::from(&self.engine_path),
-                    Some(longtail::CacheControl {
-                        path: cache_path,
-                        max_size_bytes: 100 * 1024 * 1024 * 1024, // 100 GB
-                    }),
-                    &archive_urls,
-                    self.longtail_tx.clone(),
-                    &self.aws_client,
-                );
-                match download_result {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Err(CoreError::Internal(anyhow!(
-                            "Failed to download engine archive: {:?}",
-                            e
-                        )));
-                    }
+                // The engine download had no pre-flight at all, so a running editor or
+                // game turned into a permission error partway through a very large
+                // transfer. Refusing up front costs nothing; failing at 80% costs the
+                // download.
+                let engine_path = PathBuf::from(&self.engine_path);
+
+                self.engine.check_ready_to_sync_repo().await?;
+                if let Some(blocking) = describe_blocking_processes(&engine_path) {
+                    return Err(CoreError::Internal(anyhow!(
+                        "Close these before updating the engine: {blocking}"
+                    )));
                 }
 
+                let Some(download) = self.downloads.begin(SyncKind::Engine) else {
+                    return Err(CoreError::Internal(anyhow!(
+                        "An engine download is already running."
+                    )));
+                };
+                let request = SyncRequest::download(SyncKind::Engine, &engine_path, &archive_urls)
+                    .with_cache(Some(artifact_sync::CacheControl {
+                        path: cache_path,
+                        max_size_bytes: self.max_cache_size_bytes,
+                    }))
+                    .with_transfer_acceleration(self.transfer_acceleration);
+                let result = self
+                    .artifact_sync
+                    .get_archive(
+                        request,
+                        self.sync_event_tx.clone(),
+                        &self.aws_client,
+                        download.token(),
+                    )
+                    .await;
+                result.map_err(SyncError::into_core_error)?;
+
+                let recorded = self.artifact_sync.ledger().record(
+                    SyncKind::Engine,
+                    SyncRecord {
+                        version: commit_sha_short.clone(),
+                        target: engine_path.clone(),
+                        staging: None,
+                        archives: archive_urls.clone(),
+                        cache_path: Some(get_engine_cache_path(&self.artifact_sync)),
+                        cache_size_bytes: self.max_cache_size_bytes,
+                        recorded_at: Utc::now(),
+                    },
+                );
+
                 T::post_download(&self.engine_path).await;
+
+                // Only now is the engine actually usable, and only now does the ledger
+                // agree - anything reading it earlier reads the version being replaced. A
+                // record that did not reach disk never got that far, so it says nothing.
+                if recorded {
+                    let _ = self.sync_event_tx.send(SyncEvent::Installed {
+                        kind: SyncKind::Engine,
+                    });
+                }
             } else {
                 assert_eq!(self.engine_type, EngineType::Source);
 
@@ -236,7 +281,7 @@ where
     }
 }
 
-fn get_engine_cache_path(longtail: &longtail::Longtail) -> PathBuf {
+fn get_engine_cache_path(longtail: &artifact_sync::ArtifactSync) -> PathBuf {
     longtail.download_path.0.join("engine_cache/")
 }
 
@@ -256,7 +301,7 @@ where
         }
     };
 
-    let tx_lock = state.longtail_tx.clone();
+    let tx_lock = state.sync_event_tx.clone();
     let app_config = state.app_config.read();
 
     let uproject_path =
@@ -353,14 +398,17 @@ where
         old_uproject: None,
         new_uproject: uproject,
         engine_type: app_config.engine_type,
-        longtail: state.longtail.clone(),
-        longtail_tx: tx_lock.clone(),
+        artifact_sync: state.artifact_sync.clone(),
+        downloads: state.downloads.clone(),
+        sync_event_tx: tx_lock.clone(),
         aws_client,
         git_client: state.git(),
         download_symbols: app_config.engine_download_symbols,
         storage,
         project,
         engine: state.engine.clone(),
+        max_cache_size_bytes: app_config.engine_cache_size_bytes(),
+        transfer_acceleration: app_config.s3_transfer_acceleration,
     })
 }
 
@@ -379,7 +427,7 @@ where
 
     let wipe_op = WipeEngineOp {
         engine_path: update_op.engine_path.clone(),
-        engine_cache_path: get_engine_cache_path(&state.longtail),
+        engine_cache_path: get_engine_cache_path(&state.artifact_sync),
     };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();

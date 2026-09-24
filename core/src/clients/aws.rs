@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
-use aws_credential_types::{provider::SharedCredentialsProvider, Credentials};
+use aws_credential_types::provider::{future, ProvideCredentials, SharedCredentialsProvider};
+use aws_credential_types::Credentials;
 use aws_sdk_ecr::{types::ImageIdentifier, Client as EcrClient};
 use aws_sdk_eks::Client as EksClient;
 use aws_sdk_s3::primitives::ByteStream;
@@ -30,16 +31,68 @@ use crate::types::errors::CoreError;
 #[derive(Debug, Clone)]
 pub struct AWSClientContext {
     pub credentials: Credentials,
-    pub sdkconfig: SdkConfig,
     pub login_required: bool,
     pub expires_at: Option<DateTime<Utc>>,
     pub artifact_bucket_name: String,
     pub promoted_artifact_bucket_name: String,
 }
 
+/// How long credentials whose expiry we do not know are served for.
+///
+/// The SDK caches what a provider hands it and only asks again once that has expired;
+/// credentials carrying no expiry at all are held for its own default, which is fifteen
+/// minutes. That is a long time to keep using a session that may already have been
+/// replaced, so an unknown expiry is reported as a short one instead. The cost is one
+/// lock read per minute.
+const UNKNOWN_EXPIRY_TTL: Duration = Duration::from_secs(60);
+
+/// Serves whatever session the client's context holds *now*, rather than a copy taken
+/// when the client was built.
+///
+/// This is what lets a transfer outlive the session it started with: the SDK re-resolves
+/// through here once its cached copy expires, so a re-login that swaps the context is
+/// picked up by the next request without the in-flight operation being handed anything.
+#[derive(Debug, Clone)]
+struct RefreshableCredentials {
+    context: Arc<RwLock<AWSClientContext>>,
+}
+
+impl RefreshableCredentials {
+    fn resolve(&self) -> Credentials {
+        let context = self.context.read();
+
+        // Always report an expiry, even when we do not have one: see UNKNOWN_EXPIRY_TTL.
+        let expiry = context
+            .expires_at
+            .map(SystemTime::from)
+            .unwrap_or_else(|| SystemTime::now() + UNKNOWN_EXPIRY_TTL);
+
+        Credentials::new(
+            context.credentials.access_key_id(),
+            context.credentials.secret_access_key(),
+            context.credentials.session_token().map(str::to_string),
+            Some(expiry),
+            "friendshipper-refreshable",
+        )
+    }
+}
+
+impl ProvideCredentials for RefreshableCredentials {
+    fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+    where
+        Self: 'a,
+    {
+        future::ProvideCredentials::ready(Ok(self.resolve()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AWSClient {
     context: Arc<RwLock<AWSClientContext>>,
+
+    /// Holds the provider above, not a credential snapshot, so it stays valid across a
+    /// refresh and never needs replacing.
+    sdkconfig: SdkConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,26 +144,35 @@ impl AWSClient {
     ) -> Self {
         let session_token = session_token.map(|t| t.to_string());
         let creds = Credentials::from_keys(access_key, secret_key, session_token);
-        let shared_config = SdkConfig::builder()
+
+        // Order matters: the context owns the session, and the config borrows it through
+        // the provider. Building the config from the credentials directly would pin this
+        // session into every client made from it.
+        let context = Arc::new(RwLock::new(AWSClientContext {
+            credentials: creds,
+            login_required: false,
+            expires_at,
+            artifact_bucket_name: bucket_name,
+            promoted_artifact_bucket_name: input_promoted_artifact_bucket_name,
+        }));
+
+        let sdkconfig = SdkConfig::builder()
             .http_client(create_hyper_client())
-            .credentials_provider(SharedCredentialsProvider::new(creds.clone()))
+            .credentials_provider(SharedCredentialsProvider::new(RefreshableCredentials {
+                context: context.clone(),
+            }))
             .region(Region::new(crate::AWS_REGION))
             .build();
 
-        AWSClient {
-            context: Arc::new(RwLock::new(AWSClientContext {
-                credentials: creds,
-                sdkconfig: shared_config.clone(),
-                login_required: false,
-                expires_at,
-                artifact_bucket_name: bucket_name,
-                promoted_artifact_bucket_name: input_promoted_artifact_bucket_name,
-            })),
-        }
+        AWSClient { context, sdkconfig }
     }
 
     /// Adopt another client's session in place, so an operation already in flight picks
     /// up the refreshed credentials rather than the ones it started with.
+    ///
+    /// Only the session moves. Every `SdkConfig` already handed out resolves through the
+    /// provider, which reads this same context, so none of them need replacing - which is
+    /// what makes the refresh reach an operation that is already running.
     pub fn refresh_from(&self, other: &AWSClient) {
         if Arc::ptr_eq(&self.context, &other.context) {
             return;
@@ -118,13 +180,6 @@ impl AWSClient {
 
         let refreshed = other.context.read().clone();
         *self.context.write() = refreshed;
-    }
-
-    /// Credentials and their expiry, read without awaiting: the download path runs on a
-    /// blocking thread and re-reads these between attempts.
-    pub fn current_credentials(&self) -> (Credentials, Option<DateTime<Utc>>) {
-        let context = self.context.read();
-        (context.credentials.clone(), context.expires_at)
     }
 
     pub async fn login_required(&self) -> bool {
@@ -152,7 +207,22 @@ impl AWSClient {
     }
 
     pub async fn get_sdk_config(&self) -> SdkConfig {
-        self.context.read().sdkconfig.clone()
+        self.sdkconfig.clone()
+    }
+
+    /// S3 access for the longtail block store, carrying the same refreshable provider as
+    /// everything else here - so a transfer long enough to outlive its session keeps
+    /// going rather than failing on an expired token.
+    ///
+    /// `transfer_acceleration` is a parameter because this type has no view of the app
+    /// config and the caller does.
+    pub fn longtail_s3_options(&self, transfer_acceleration: bool) -> longtail::S3Options {
+        longtail::S3Options {
+            sdk_config: Some(self.sdkconfig.clone()),
+            region: Some(crate::AWS_REGION.to_string()),
+            transfer_acceleration,
+            ..Default::default()
+        }
     }
 
     pub async fn get_credentials(&self) -> Credentials {
@@ -595,7 +665,99 @@ pub fn create_hyper_client() -> aws_sdk_ssooidc::config::SharedHttpClient {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_metadata_body;
+    use super::*;
+
+    async fn client(
+        access_key: &str,
+        session_token: &str,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> AWSClient {
+        AWSClient::from_static_creds(
+            access_key,
+            "secret",
+            Some(session_token),
+            expires_at,
+            "bucket".to_string(),
+            "promoted-bucket".to_string(),
+        )
+        .await
+    }
+
+    async fn resolve(config: &SdkConfig) -> Credentials {
+        config
+            .credentials_provider()
+            .expect("config carries a credentials provider")
+            .provide_credentials()
+            .await
+            .expect("credentials resolve")
+    }
+
+    /// The property the whole download path depends on: a config captured before a
+    /// re-login serves the session from after it.
+    #[tokio::test]
+    async fn provider_serves_the_current_session() {
+        let aws = client("AKIAONE", "token-one", None).await;
+
+        // Taken before the refresh, and deliberately never re-read from the client.
+        let config = aws.get_sdk_config().await;
+        assert_eq!(resolve(&config).await.access_key_id(), "AKIAONE");
+
+        aws.refresh_from(&client("AKIATWO", "token-two", None).await);
+
+        let after = resolve(&config).await;
+        assert_eq!(after.access_key_id(), "AKIATWO");
+        assert_eq!(after.session_token(), Some("token-two"));
+    }
+
+    /// Resolving straight off the config skips the SDK's credentials cache, so this pins
+    /// "the provider reads live state", not "the SDK re-consults it". The latter is the
+    /// library's own contract and is tested there.
+    #[tokio::test]
+    async fn credentials_always_carry_an_expiry() {
+        let known = Utc::now() + chrono::Duration::hours(1);
+        let with_expiry = client("AKIAONE", "token-one", Some(known)).await;
+        assert_eq!(
+            resolve(&with_expiry.get_sdk_config().await).await.expiry(),
+            Some(SystemTime::from(known))
+        );
+
+        // Without this the SDK caches a no-expiry identity for its own default of fifteen
+        // minutes, and a refresh inside that window goes unnoticed.
+        let without = client("AKIAONE", "token-one", None).await;
+        let expiry = resolve(&without.get_sdk_config().await)
+            .await
+            .expiry()
+            .expect("an unknown expiry is still reported as one");
+        assert!(expiry <= SystemTime::now() + UNKNOWN_EXPIRY_TTL);
+    }
+
+    #[tokio::test]
+    async fn refresh_is_visible_to_clones() {
+        let aws = client("AKIAONE", "token-one", None).await;
+        let clone = aws.clone();
+
+        aws.refresh_from(&client("AKIATWO", "token-two", None).await);
+
+        let credentials = resolve(&clone.get_sdk_config().await).await;
+        assert_eq!(credentials.access_key_id(), "AKIATWO");
+        assert_eq!(clone.get_artifact_bucket(), "bucket");
+    }
+
+    #[tokio::test]
+    async fn s3_options_carry_the_provider_and_leak_nothing() {
+        let aws = client("AKIAONE", "token-one", None).await;
+
+        let options = aws.longtail_s3_options(true);
+        assert!(options.sdk_config.is_some());
+        assert_eq!(options.region.as_deref(), Some(crate::AWS_REGION));
+        assert!(options.transfer_acceleration);
+        assert!(!aws.longtail_s3_options(false).transfer_acceleration);
+
+        // These options cross a crate boundary and end up in longtail's own logs.
+        let rendered = format!("{options:?}");
+        assert!(!rendered.contains("secret"), "{rendered}");
+        assert!(!rendered.contains("token-one"), "{rendered}");
+    }
 
     // Synthetic, not a real SHA: this repo is public.
     fn fake_sha() -> String {
