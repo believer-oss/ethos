@@ -107,6 +107,8 @@ impl CreatePromoteBuildWorkflowRequest {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowStatus {
+    // Argo omits `phase` until the controller first reconciles the workflow.
+    #[serde(default)]
     pub phase: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -123,6 +125,7 @@ pub struct WorkflowNodeStatus {
     pub display_name: String,
     #[serde(rename = "type")]
     pub node_type: Option<String>,
+    #[serde(default)]
     pub phase: String,
     pub started_at: Option<String>,
     pub template_name: Option<String>,
@@ -172,6 +175,13 @@ mod tests {
             commit: SHA.to_string(),
             ..Default::default()
         }
+    }
+
+    /// An unreconciled workflow comes back as `"status":{}` and must still parse.
+    #[test]
+    fn status_without_phase_deserializes() {
+        let status: WorkflowStatus = serde_json::from_str("{}").unwrap();
+        assert_eq!(status.phase, "");
     }
 
     fn find<'a>(params: &'a [WorkflowParameter], name: &str) -> Option<&'a WorkflowParameter> {
