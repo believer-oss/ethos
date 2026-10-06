@@ -6,12 +6,10 @@
 
 use std::thread;
 
-use ethos_core::longtail::Longtail;
 use ethos_core::types::errors::CoreError;
 use friendshipper::server::Server;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WebviewWindow};
@@ -19,7 +17,7 @@ use tauri_plugin_notification::NotificationExt;
 use tracing::{debug, error, info, warn};
 
 use ethos_core::tauri::State;
-use ethos_core::{clients, msg::LongtailMsg, utils, utils::logging};
+use ethos_core::{artifact_sync::SyncEvent, clients, utils, utils::logging};
 use friendshipper::state::{FrontendOp, Notification};
 use friendshipper::APP_NAME;
 
@@ -28,19 +26,9 @@ use ethos_core::tauri::command::*;
 
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Clone, Debug, Serialize)]
-struct LongtailProgressCaptures {
-    progress: String,
-    elapsed: String,
-    remaining: String,
-}
-
 mod command;
 
-// see test_longtail_regex() for examples of matches
 lazy_static! {
-    static ref LONGTAIL_PROGRESS_REGEX: Regex =
-        Regex::new(r"(\d{1,3}%).*?((?:\d+[a-z])+):?((?:\d+[a-z])+)?").unwrap();
     static ref ANSI_REGEX: Regex =
         Regex::new(r"[\u001b\u009b]\[[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]")
             .unwrap();
@@ -238,6 +226,9 @@ fn main() -> Result<(), CoreError> {
                 get_object_count,
                 get_github_status,
                 run_git_gc,
+                verify_artifact,
+                get_artifact_status,
+                get_incoming_engine_change,
                 open_url,
                 quick_submit,
                 rebase,
@@ -270,7 +261,6 @@ fn main() -> Result<(), CoreError> {
                 restart,
                 generate_sln,
                 open_sln,
-                reset_longtail,
                 show_commit_files,
                 list_repo_directory,
                 get_file_history,
@@ -404,9 +394,15 @@ fn main() -> Result<(), CoreError> {
                     });
                 }
 
+                // The forwarders below each block on a std::sync::mpsc receiver for the
+                // life of the app, so they run on their own threads rather than on the
+                // tauri runtime - an async task blocking on a sync recv() parks a tokio
+                // worker permanently, and there are eight of them. That was free while
+                // longtail ran as a child process and contributed no tokio work of its
+                // own; it will not be once downloads run in-process.
                 let (gameserver_log_tx, gameserver_log_rx) = std::sync::mpsc::channel::<String>();
                 let gameserver_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = gameserver_log_rx.recv() {
                         gameserver_handle.emit("gameserver-log", &msg).unwrap();
                     }
@@ -414,7 +410,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (workflow_log_tx, workflow_log_rx) = std::sync::mpsc::channel::<String>();
                 let workflow_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = workflow_log_rx.recv() {
                         debug!(
                             "Emitting workflow-log event - message length: {}",
@@ -430,7 +426,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (git_tx, git_rx) = std::sync::mpsc::channel::<String>();
                 let git_app_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = git_rx.recv() {
                         let msg = ANSI_REGEX.replace_all(&msg, "");
                         git_app_handle.emit("git-log", &msg).unwrap();
@@ -443,7 +439,7 @@ fn main() -> Result<(), CoreError> {
                 // 'git ...'` messages that flow through `git-log`.
                 let (sync_phase_tx, sync_phase_rx) = std::sync::mpsc::channel::<String>();
                 let sync_phase_app_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = sync_phase_rx.recv() {
                         sync_phase_app_handle.emit("sync-phase", &msg).unwrap();
                     }
@@ -451,7 +447,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (build_tools_tx, build_tools_rx) = std::sync::mpsc::channel::<String>();
                 let build_tools_app_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = build_tools_rx.recv() {
                         build_tools_app_handle
                             .emit("installing-build-tools", &msg)
@@ -459,52 +455,36 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
-                let (longtail_tx, longtail_rx) = std::sync::mpsc::channel::<LongtailMsg>();
-                let longtail_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    while let Ok(msg) = longtail_rx.recv() {
-                        Longtail::log_message(msg.clone());
-
-                        if let LongtailMsg::Log(s) = msg {
-                            longtail_handle.emit("longtail-log", &s).unwrap();
-
-                            if let Some(captures) = LONGTAIL_PROGRESS_REGEX.captures(&s) {
-                                let progress: String = captures
-                                    .get(1)
-                                    .map(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let elapsed: String = captures
-                                    .get(2)
-                                    .map(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let remaining: String = captures
-                                    .get(3)
-                                    .map(|m| m.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-
-                                longtail_handle
-                                    .emit(
-                                        "longtail-sync-progress",
-                                        LongtailProgressCaptures {
-                                            progress,
-                                            elapsed,
-                                            remaining,
-                                        },
-                                    )
-                                    .unwrap();
-                            } else {
-                                warn!("failed to parse longtail log: {}", &s);
+                let (sync_event_tx, sync_event_rx) = std::sync::mpsc::channel::<SyncEvent>();
+                let sync_event_handle = handle.clone();
+                thread::spawn(move || {
+                    while let Ok(event) = sync_event_rx.recv() {
+                        match &event {
+                            SyncEvent::Started { kind } => info!("Started {kind} download"),
+                            SyncEvent::Finished { kind, summary } => info!(
+                                "Finished {kind} download: {} bytes across {} assets, \
+                                 {} blocks fetched, {} assets removed",
+                                summary.bytes_written,
+                                summary.assets_written,
+                                summary.blocks_fetched,
+                                summary.assets_removed
+                            ),
+                            SyncEvent::Failed { kind, error } => {
+                                error!("{kind} download failed: {error}")
                             }
+                            SyncEvent::Cancelled { kind } => info!("Cancelled {kind} download"),
+                            SyncEvent::Installed { kind } => info!("Installed the {kind}"),
+                            // Far too frequent to log; the UI renders these.
+                            SyncEvent::Progress { .. } => {}
                         }
+
+                        sync_event_handle.emit("sync-event", &event).unwrap();
                     }
                 });
 
                 let (startup_tx, startup_rx) = std::sync::mpsc::channel::<String>();
                 let startup_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while let Ok(msg) = startup_rx.recv() {
                         startup_handle.emit("startup-message", &msg).unwrap();
 
@@ -525,7 +505,7 @@ fn main() -> Result<(), CoreError> {
 
                 let (refresh_tx, refresh_rx) = std::sync::mpsc::channel::<()>();
                 let refresh_handle = handle.clone();
-                tauri::async_runtime::spawn(async move {
+                thread::spawn(move || {
                     while refresh_rx.recv().is_ok() {
                         refresh_handle.emit("git-refresh", "").unwrap();
                     }
@@ -535,7 +515,7 @@ fn main() -> Result<(), CoreError> {
                 tauri::async_runtime::spawn(async move {
                     let server = friendshipper::server::Server::new(
                         port,
-                        longtail_tx.clone(),
+                        sync_event_tx.clone(),
                         notification_tx.clone(),
                         frontend_op_tx,
                         server_log_path,
@@ -605,20 +585,5 @@ fn main() -> Result<(), CoreError> {
         Err(CoreError::Internal(anyhow::anyhow!(
             "Failed to initialize app config"
         )))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::LONGTAIL_PROGRESS_REGEX;
-
-    #[test]
-    fn test_longtail_regex() {
-        let caps = LONGTAIL_PROGRESS_REGEX.captures("Updating version             9%: |████                                              |: [30s:6m7s]");
-        caps.expect("Failed to match string");
-        let caps = LONGTAIL_PROGRESS_REGEX.captures("Indexing version            55%:|███████████████████████████                       |: [0s]");
-        caps.expect("Failed to match string");
-        let caps = LONGTAIL_PROGRESS_REGEX.captures("Updating version             1%: |                                                  |: [0s]");
-        caps.expect("Failed to match string");
     }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Modal, Spinner, Progressbar, Helper, Button } from 'flowbite-svelte';
+	import { Modal, Spinner, Button } from 'flowbite-svelte';
 	import { listen } from '@tauri-apps/api/event';
 
 	export let showModal: boolean;
@@ -7,9 +7,8 @@
 	export let cancellable: boolean = false;
 	export let onCancel: () => void = () => {};
 
-	let progress = 0;
-	let elapsed = '';
-	let remaining = '';
+	// Artifact download progress is reported per download on the status bar, not here:
+	// this modal is blocking, and a download is not a reason to block the whole app.
 
 	// High-level sync phase label (e.g. "Pulling latest changes from GitHub").
 	// Sent by the backend on the `sync-phase` event. Rendered so users see a
@@ -18,13 +17,6 @@
 
 	// Current build tool being installed (e.g. "Installing Visual Studio Community").
 	let installingTools = '';
-
-	void listen('longtail-sync-progress', (event) => {
-		const captures = event.payload as { progress: string; elapsed: string; remaining: string };
-		progress = parseFloat(captures.progress.replace('%', ''));
-		elapsed = captures.elapsed;
-		remaining = captures.remaining;
-	});
 
 	void listen('sync-phase', (event) => {
 		phase = event.payload as string;
@@ -35,9 +27,6 @@
 	});
 
 	const onOpen = () => {
-		progress = 0;
-		elapsed = '';
-		remaining = '';
 		phase = '';
 		installingTools = '';
 	};
@@ -57,10 +46,6 @@
 		<div class="flex items-center justify-start gap-2 w-full">
 			<Spinner size="4" />
 			<p class="text-xl text-primary-400 whitespace-nowrap">{title}...</p>
-
-			{#if progress > 0}
-				<Progressbar {progress} size="h-4" class="w-full" labelInside />
-			{/if}
 		</div>
 
 		<div class="flex items-center justify-end gap-2">
@@ -77,10 +62,5 @@
 		<div class="rounded-md p-3 bg-secondary-800 dark:bg-space-950">
 			<p class="text-base text-primary-300 dark:text-primary-300 font-medium m-0">{phase}</p>
 		</div>
-	{/if}
-	{#if elapsed && remaining}
-		<Helper class="text-sm text-gray-400 dark:text-gray-400 align-middle text-right">
-			Elapsed: {elapsed} / ETA: {remaining}
-		</Helper>
 	{/if}
 </Modal>

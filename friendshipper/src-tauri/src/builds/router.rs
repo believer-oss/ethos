@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::fs;
 
 use anyhow::Context;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
-use ethos_core::longtail::CacheControl;
+use ethos_core::artifact_sync::{
+    CacheControl, SyncErrorClass, SyncEvent, SyncKind, SyncRecord, SyncRequest,
+};
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -14,7 +16,6 @@ use ethos_core::utils::junit::JunitOutput;
 use futures::StreamExt;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
@@ -47,9 +48,8 @@ where
         .route("/active", get(get_active_builds))
         .route("/commit", get(get_build))
         .route("/client/sync", post(sync_client))
-        .route("/client/cancel", post(cancel_download))
+        .route("/cancel/:kind", post(cancel_download))
         .route("/client/wipe", post(wipe_client_data))
-        .route("/longtail/reset", post(reset_longtail))
         .route("/server/verify", get(verify_server_image))
         .route("/workflows", get(get_workflows))
         .route("/workflows/nodes", get(get_workflow_nodes))
@@ -418,11 +418,11 @@ where
 {
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
 
-    let mut local_path = state.longtail.download_path.0.clone();
+    let mut local_path = state.artifact_sync.download_path.0.clone();
     let remote_path = payload
         .method_prefix
         .get_storage_url(&payload.artifact_entry);
-    let tx = state.longtail_tx.clone();
+    let tx = state.sync_event_tx.clone();
 
     // make a client_cache dir if it doesn't exist
     let client_cache_dir = local_path.join("client_cache");
@@ -478,53 +478,106 @@ where
     }
 
     let cache_control = CacheControl {
-        path: client_cache_dir,
-        max_size_bytes: state.app_config.read().max_client_cache_size_gb * 1024 * 1024 * 1024,
+        path: client_cache_dir.clone(),
+        max_size_bytes: state.app_config.read().client_cache_size_bytes(),
     };
 
     let local_path_clone = local_path.clone();
-    match fs::create_dir_all(&local_path_clone) {
-        Ok(_) => {
-            let (cancel_tx, mut cancel_rx) = oneshot::channel();
-            state.cancel_tx.write().await.replace(cancel_tx);
-
-            info!("Starting download...");
-            let longtail = state.longtail.clone();
-            tokio::select! {
-                cancel_result = &mut cancel_rx => {
-                    info!("Cancel branch hit with result: {:?}", cancel_result);
-
-                    let mut guard = longtail.child_process.lock();
-                    if let Some(mut child) = guard.take() {
-                        info!("Killing child process");
-                        child.kill().unwrap();
-                    }
-
-                    return Ok(Json(false));
-                }
-                download_result = async move {
-                    tokio::task::spawn_blocking(move || {
-                        info!("Starting actual download...");
-                        state.longtail.get_archive(
-                            &local_path_clone,
-                            Some(cache_control),
-                            &archive_urls,
-                            tx,
-                            &aws_client,
-                        )
-                    }).await
-                } => {
-                    info!("Download branch complete with result: {:?}", download_result);
-                }
-            }
-        }
-        Err(e) => return Err(CoreError::Internal(e.into())),
+    let downloads = state.downloads.clone();
+    if let Err(e) = fs::create_dir_all(&local_path_clone) {
+        return Err(CoreError::Internal(e.into()));
     }
 
-    // reset cancel_tx to none
-    state.cancel_tx.write().await.take();
+    // A game running out of the directory we are about to replace will hold its own
+    // executable open, which surfaces as a permission error partway through.
+    if let Some(blocking) = ethos_core::utils::process::describe_blocking_processes(&local_path) {
+        return Err(CoreError::Internal(anyhow::anyhow!(
+            "Close these before syncing the game client: {blocking}"
+        )));
+    }
 
-    T::post_download(&local_path).await;
+    let Some(download) = downloads.begin(SyncKind::Client) else {
+        return Err(CoreError::Internal(anyhow::anyhow!(
+            "A game client sync is already running. Wait for it to finish, or cancel it."
+        )));
+    };
+    let transfer_acceleration = state.app_config.read().s3_transfer_acceleration;
+
+    // On its own task, holding the registration, rather than inline in this handler.
+    // A download can run for hours on one HTTP request, and if the connection dies -
+    // a laptop sleeping is enough - the handler future is dropped. Awaiting inline, that
+    // would abort longtail between blocks with the store never closed, no event emitted,
+    // and the status bar left showing a download that is not running. On a task it
+    // finishes and reports either way.
+    //
+    // longtail runs its CPU work on its own rayon pool and its block IO on the store's
+    // workers, so this does not occupy a runtime thread the way the old blocking call did.
+    // There is no select! either - cancellation is the token.
+    let artifact_sync = state.artifact_sync.clone();
+    let aws = aws_client.clone();
+    let target = local_path_clone.clone();
+    let archives = archive_urls.clone();
+    let token = download.token();
+    let installed_version = payload.artifact_entry.base_name();
+    let cache_dir = client_cache_dir.clone();
+    let cache_size_bytes = state.app_config.read().client_cache_size_bytes();
+    let installed_tx = tx.clone();
+    let handle = tokio::spawn(async move {
+        // The guard moves in, so the registration lasts exactly as long as the download.
+        let _download = download;
+        let request = SyncRequest::download(SyncKind::Client, &target, &archives)
+            .with_cache(Some(cache_control))
+            .with_transfer_acceleration(transfer_acceleration);
+        let result = artifact_sync.get_archive(request, tx, &aws, token).await;
+
+        // Whatever the engine does once the files land belongs with the download, not
+        // with the handler. If the connection dropped, the handler is gone but the files
+        // are on disk and still need it - and so does the record of what is now installed,
+        // or diagnostics would report the previous build and a verify would check the
+        // wrong version.
+        if result.is_ok() {
+            let recorded = artifact_sync.ledger().record(
+                SyncKind::Client,
+                SyncRecord {
+                    version: installed_version,
+                    target: target.clone(),
+                    staging: None,
+                    archives,
+                    cache_path: Some(cache_dir),
+                    cache_size_bytes,
+                    recorded_at: Utc::now(),
+                },
+            );
+            T::post_download(&target).await;
+
+            // Only now is the build actually usable. A record that did not reach disk
+            // leaves the ledger naming the previous build, so saying it is installed
+            // would send everything reading it to the wrong answer.
+            if recorded {
+                let _ = installed_tx.send(SyncEvent::Installed {
+                    kind: SyncKind::Client,
+                });
+            }
+        }
+
+        result
+    });
+
+    let result = match handle.await {
+        Ok(result) => result,
+        Err(e) => {
+            return Err(CoreError::Internal(anyhow::anyhow!(
+                "The game client sync did not finish: {e}"
+            )))
+        }
+    };
+
+    match result {
+        Ok(summary) => info!("Client sync complete: {summary:?}"),
+        // Cancelling is a normal outcome with its own signal to the caller, not a failure.
+        Err(e) if e.class == SyncErrorClass::Cancelled => return Ok(Json(false)),
+        Err(e) => return Err(e.into_core_error()),
+    }
 
     if let Some(launch_options) = payload.launch_options {
         match launch_options.launch_mode {
@@ -616,18 +669,21 @@ where
     Ok(Json(true))
 }
 
-pub async fn cancel_download<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+/// Cancel one download, leaving any others running.
+///
+/// Cancelling something that is not running is not an error - the UI can race a download
+/// finishing on its own, and there is nothing to report when it does.
+pub async fn cancel_download<T>(
+    State(state): State<AppState<T>>,
+    Path(kind): Path<SyncKind>,
+) -> Result<(), CoreError>
 where
     T: EngineProvider,
 {
-    if let Some(cancel_tx) = state.cancel_tx.write().await.take() {
-        info!("Cancelling download");
-        if let Err(e) = cancel_tx.send(()) {
-            return Err(CoreError::Internal(anyhow::anyhow!(
-                "Failed to cancel download: {:?}",
-                e
-            )));
-        }
+    if state.downloads.cancel(kind) {
+        info!("Cancelling {kind} download");
+    } else {
+        info!("No {kind} download in flight to cancel");
     }
 
     Ok(())
@@ -637,7 +693,7 @@ pub async fn wipe_client_data<T>(State(state): State<AppState<T>>) -> Result<(),
 where
     T: EngineProvider,
 {
-    let local_path = state.longtail.download_path.0.clone();
+    let local_path = state.artifact_sync.download_path.0.clone();
 
     // delete all directories in the download path except "logs"
     let entries = fs::read_dir(local_path)
@@ -651,19 +707,6 @@ where
 
     for entry in entries {
         fs::remove_dir_all(entry.path())?;
-    }
-
-    Ok(())
-}
-
-pub async fn reset_longtail<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
-where
-    T: EngineProvider,
-{
-    let longtail_path = state.longtail.exec_path.clone();
-
-    if let Some(longtail_path) = longtail_path {
-        fs::remove_file(longtail_path)?;
     }
 
     Ok(())

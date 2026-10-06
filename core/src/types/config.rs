@@ -134,8 +134,25 @@ pub struct AppConfig {
     #[serde(default, rename = "engineAllowMultipleProcesses")]
     pub engine_allow_multiple_processes: bool,
 
-    #[serde(default, rename = "maxClientCacheSizeGb")]
+    /// Byte budgets for the three longtail block caches, in gigabytes. Each is a cap on
+    /// a cache that is otherwise unbounded, so a value of zero means "keep nothing".
+    #[serde(default = "default_client_cache_gb", rename = "maxClientCacheSizeGb")]
     pub max_client_cache_size_gb: u64,
+
+    #[serde(default = "default_engine_cache_gb", rename = "maxEngineCacheSizeGb")]
+    pub max_engine_cache_size_gb: u64,
+
+    #[serde(default = "default_editor_cache_gb", rename = "maxEditorCacheSizeGb")]
+    pub max_editor_cache_size_gb: u64,
+
+    /// S3 Transfer Acceleration for artifact downloads. On by default because that is
+    /// what we have always used; it needs the bucket to be opted in and costs more per
+    /// gigabyte, so it is worth being able to turn off.
+    #[serde(
+        default = "default_s3_transfer_acceleration",
+        rename = "s3TransferAcceleration"
+    )]
+    pub s3_transfer_acceleration: bool,
 
     #[serde(default, rename = "recordPlay")]
     pub record_play: bool,
@@ -185,6 +202,24 @@ pub struct AppConfig {
     pub disable_background_git_operations: bool,
 }
 
+const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
+
+fn default_client_cache_gb() -> u64 {
+    32
+}
+
+fn default_engine_cache_gb() -> u64 {
+    100
+}
+
+fn default_editor_cache_gb() -> u64 {
+    5
+}
+
+fn default_s3_transfer_acceleration() -> bool {
+    true
+}
+
 fn default_playtest_region() -> String {
     AWS_REGION.to_string()
 }
@@ -231,12 +266,31 @@ impl AppConfig {
             playtest_region: default_playtest_region(),
             otlp_endpoint: None,
             otlp_headers: None,
-            max_client_cache_size_gb: 32,
+            max_client_cache_size_gb: default_client_cache_gb(),
+            max_engine_cache_size_gb: default_engine_cache_gb(),
+            max_editor_cache_size_gb: default_editor_cache_gb(),
+            s3_transfer_acceleration: default_s3_transfer_acceleration(),
             initialized: false,
             last_quick_submit_type: None,
             last_quick_submit_scope: None,
             disable_background_git_operations: false,
         }
+    }
+
+    /// Cache budgets in bytes. Stored as gigabytes because that is the unit the
+    /// preferences UI works in. Saturating, so a hand-edited absurd value clamps to
+    /// "effectively unlimited" rather than wrapping to a tiny budget that would evict
+    /// the cache on every run.
+    pub fn client_cache_size_bytes(&self) -> u64 {
+        self.max_client_cache_size_gb.saturating_mul(BYTES_PER_GB)
+    }
+
+    pub fn engine_cache_size_bytes(&self) -> u64 {
+        self.max_engine_cache_size_gb.saturating_mul(BYTES_PER_GB)
+    }
+
+    pub fn editor_cache_size_bytes(&self) -> u64 {
+        self.max_editor_cache_size_gb.saturating_mul(BYTES_PER_GB)
     }
 
     pub fn initialize_repo_config(&self) -> Result<RepoConfig> {
@@ -668,6 +722,13 @@ pub struct UProject {
 }
 
 impl UProject {
+    /// Parse a uproject from its contents, for when it comes from somewhere other than
+    /// the working tree - a blob read out of git, for instance.
+    pub fn from_json(data: &str) -> Result<UProject, anyhow::Error> {
+        serde_json::from_str(data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse UProject contents: {}", e))
+    }
+
     pub fn load(uproject_path: &Path) -> Result<UProject, anyhow::Error> {
         let data: String = match fs::read_to_string(uproject_path) {
             Ok(s) => s,
@@ -769,6 +830,71 @@ mod tests {
     use crate::types::config::CUSTOM_ENGINE_ASSOCIATION_REGEX;
     use crate::types::config::{AppConfig, ProjectRepoConfig, RepoConfig, TargetBranchConfig};
     use tempfile::TempDir;
+
+    /// The cache budgets and the acceleration toggle all postdate every config.yaml in
+    /// the wild, so their absence has to produce the values we shipped before they were
+    /// configurable - not `Default::default()`.
+    ///
+    /// This is easy to get wrong: a bare `#[serde(default)]`, as most keys in this struct
+    /// use, would give budgets of zero (evicting both caches completely on every
+    /// download) and acceleration off (a silent throughput regression). The 32 GB client
+    /// budget only ever worked because the `config` crate supplies it via `set_default`,
+    /// which is a different mechanism that does not apply to plain deserialization.
+    #[test]
+    fn test_cache_settings_default_to_the_previously_hardcoded_values() {
+        let yaml = r#"
+userDisplayName: someone
+repoPath: /tmp/repo
+targetBranch: main
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).expect("deserialize legacy config");
+
+        assert_eq!(config.max_client_cache_size_gb, 32);
+        assert_eq!(config.max_engine_cache_size_gb, 100);
+        assert_eq!(config.max_editor_cache_size_gb, 5);
+        assert!(
+            config.s3_transfer_acceleration,
+            "acceleration was unconditional before it was configurable"
+        );
+    }
+
+    /// A budget the user did set must survive, or the defaults above would be silently
+    /// overriding real configuration.
+    #[test]
+    fn test_configured_cache_budgets_are_honoured() {
+        let yaml = r#"
+userDisplayName: someone
+repoPath: /tmp/repo
+targetBranch: main
+maxClientCacheSizeGb: 64
+maxEngineCacheSizeGb: 8
+maxEditorCacheSizeGb: 1
+s3TransferAcceleration: false
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).expect("deserialize config");
+
+        assert_eq!(config.client_cache_size_bytes(), 64 * 1024 * 1024 * 1024);
+        assert_eq!(config.engine_cache_size_bytes(), 8 * 1024 * 1024 * 1024);
+        assert_eq!(config.editor_cache_size_bytes(), 1024 * 1024 * 1024);
+        assert!(!config.s3_transfer_acceleration);
+    }
+
+    /// Hand-edited configs happen. Wrapping here would turn "absurdly large" into a tiny
+    /// budget that evicts the cache on every run, which is the opposite of the intent.
+    #[test]
+    fn test_absurd_cache_budget_clamps_instead_of_wrapping() {
+        let yaml = format!(
+            "userDisplayName: someone
+repoPath: /tmp/repo
+targetBranch: main
+maxEngineCacheSizeGb: {}
+",
+            u64::MAX
+        );
+        let config: AppConfig = serde_yaml::from_str(&yaml).expect("deserialize config");
+
+        assert_eq!(config.engine_cache_size_bytes(), u64::MAX);
+    }
 
     /// Every existing user's `config.yaml` predates this key, so its absence must deserialize to
     /// `false` rather than failing. This is the whole backward-compatibility guarantee for the

@@ -3,9 +3,9 @@ use retry::delay::Fixed;
 use retry::{retry_with_index, OperationResult};
 use std::collections::HashSet;
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
-use sysinfo::Pid;
+use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -410,5 +410,210 @@ mod tests {
             .expect("cat ran");
         assert!(out.status.success());
         assert_eq!(out.stdout, payload);
+    }
+}
+
+/// A running program, for telling the user what is in the way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningProcess {
+    pub name: String,
+    pub exe: PathBuf,
+}
+
+/// Programs currently running out of `root`.
+///
+/// A process holds its own image open for as long as it runs, so anything executing from
+/// inside a directory we are about to overwrite will refuse to be overwritten - on Windows
+/// as a sharing violation, which arrives as a permission error partway through a download
+/// that has already done most of its work.
+///
+/// Checks by location rather than by name deliberately. A name list would have to be kept
+/// in step with every executable a project ships, and would still miss the one someone
+/// launched by hand; where a program is running from is the thing that actually decides
+/// whether its files can be replaced.
+pub fn processes_running_from(root: &Path) -> Vec<RunningProcess> {
+    let Ok(root) = root.canonicalize() else {
+        // A directory that does not exist yet cannot have anything running from it.
+        return Vec::new();
+    };
+
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessRefreshKind::new().with_exe(UpdateKind::Always));
+
+    let mut found: Vec<RunningProcess> = system
+        .processes()
+        .values()
+        .filter_map(|process| {
+            let exe = process.exe()?;
+            // Canonicalised on both sides so a mix of short paths, symlinks and casing on
+            // Windows does not read as a different directory.
+            let exe = exe.canonicalize().ok()?;
+            exe.starts_with(&root).then(|| RunningProcess {
+                name: process.name().to_string(),
+                exe,
+            })
+        })
+        .collect();
+
+    // One line per program, not per process: several instances of the editor is still one
+    // thing for the user to close.
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found.dedup_by(|a, b| a.name == b.name);
+    found
+}
+
+/// Whether a filesystem error means another program has the file, rather than anything
+/// else that could deny a write.
+///
+/// `ErrorKind::PermissionDenied` alone is not enough on Windows, which is the platform
+/// where this actually happens. Rust maps only `ERROR_ACCESS_DENIED` to that kind; a file
+/// held open by another process is `ERROR_SHARING_VIOLATION` (32), which has no kind of
+/// its own and arrives as `Uncategorized` - so the case this exists for, an editor
+/// holding a DLL, would be read as a disk problem and the user told to check free space.
+///
+/// `ERROR_LOCK_VIOLATION` (33) and `ERROR_USER_MAPPED_FILE` (1224) are the same situation
+/// reported differently: a byte range locked, and a file someone has mapped into memory.
+pub fn is_held_by_another_program(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_LOCK_VIOLATION: i32 = 33;
+        const ERROR_USER_MAPPED_FILE: i32 = 1224;
+
+        matches!(
+            error.raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION | ERROR_USER_MAPPED_FILE)
+        )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+/// A sentence naming what is in the way, or `None` when nothing is.
+pub fn describe_blocking_processes(root: &Path) -> Option<String> {
+    let running = processes_running_from(root);
+    if running.is_empty() {
+        return None;
+    }
+
+    let names: Vec<&str> = running.iter().map(|p| p.name.as_str()).collect();
+    Some(format!(
+        "{} running from {}",
+        names.join(", "),
+        root.display()
+    ))
+}
+
+#[cfg(test)]
+mod blocking_process_tests {
+    use super::*;
+
+    /// A directory that does not exist has nothing running from it, and asking must not
+    /// be an error - this runs before a download that would have created it.
+    #[test]
+    fn a_missing_directory_blocks_nothing() {
+        let missing = Path::new("/definitely/not/here/at/all");
+
+        assert!(processes_running_from(missing).is_empty());
+        assert!(describe_blocking_processes(missing).is_none());
+    }
+
+    /// An empty directory is the normal case: nothing is running from a freshly made
+    /// download target, so a sync must not be refused.
+    #[test]
+    fn an_empty_directory_blocks_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(processes_running_from(dir.path()).is_empty());
+        assert!(describe_blocking_processes(dir.path()).is_none());
+    }
+
+    /// The test binary itself is running, so the directory it lives in must be reported.
+    /// This is what proves the check actually looks at running processes rather than
+    /// quietly finding nothing.
+    #[test]
+    fn a_directory_we_are_running_from_is_reported() {
+        let own_exe = std::env::current_exe().expect("test binary path");
+        let own_dir = own_exe.parent().expect("test binary directory");
+
+        let found = processes_running_from(own_dir);
+
+        assert!(
+            !found.is_empty(),
+            "this test process runs from {own_dir:?} and should have been found"
+        );
+        assert!(
+            describe_blocking_processes(own_dir)
+                .expect("something is running from here")
+                .contains(&own_dir.display().to_string()),
+            "the message names the directory so the user knows which one"
+        );
+    }
+
+    /// One line per program. Several editor windows is still one thing to close.
+    #[test]
+    fn each_program_is_reported_once() {
+        let own_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_owned();
+
+        let found = processes_running_from(&own_dir);
+
+        let mut names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicate program names in {found:?}");
+    }
+}
+
+#[cfg(test)]
+mod held_file_tests {
+    use super::*;
+
+    #[test]
+    fn a_permission_denied_write_counts_as_held() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert!(is_held_by_another_program(&denied));
+    }
+
+    /// Everything else is a different problem with a different remedy, and telling
+    /// someone to close a program they do not have open sends them hunting for nothing.
+    #[test]
+    fn other_failures_do_not_count_as_held() {
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            let error = std::io::Error::from(kind);
+            assert!(!is_held_by_another_program(&error), "{kind:?}");
+        }
+    }
+
+    /// The case this exists for. Rust maps only ERROR_ACCESS_DENIED to PermissionDenied,
+    /// so a file an editor has open - ERROR_SHARING_VIOLATION - arrives with no kind of
+    /// its own and would otherwise read as a disk problem.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_windows_sharing_violation_counts_as_held() {
+        for raw in [32, 33, 1224] {
+            let error = std::io::Error::from_raw_os_error(raw);
+            assert!(is_held_by_another_program(&error), "raw os error {raw}");
+        }
+
+        // A genuinely different Windows failure still is not this.
+        let disk_full = std::io::Error::from_raw_os_error(112); // ERROR_DISK_FULL
+        assert!(!is_held_by_another_program(&disk_full));
     }
 }

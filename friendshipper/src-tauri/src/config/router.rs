@@ -238,7 +238,9 @@ where
             // TODO(sylviacx): guard this because we don't have a way to test cloning a new project AND setting up dlls and engine stuff
             if !params.new_project {
                 // call the DLL download handler
-                let _ = download_dlls_handler(State(state.clone())).await?;
+                // Default: this is first-time setup, so whatever a pull would fetch.
+                let _ =
+                    download_dlls_handler(State(state.clone()), Query(Default::default())).await?;
 
                 // call the engine update handler
                 update_engine_handler(State(state.clone())).await?;

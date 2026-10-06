@@ -5,7 +5,7 @@
 
 Friendshipper is a desktop application for managing Unreal Engine project source control through Git.
 
-- Uses [longtail](https://github.com/DanEngelbrecht/golongtail) to download builds of the game client.
+- Uses [longtail-rs](https://github.com/believer-oss/longtail-rs) to download builds of the game client.
 - Interacts with [f11r-operator](https://github.com/believer-oss/f11r-operator) to create game servers and facilitate
   playtests.
 - [Git repo management](docs/sourcecontrol.md) with a corresponding [Unreal plugin](https://github.com/believer-oss/FriendshipperSourceControl).
@@ -142,6 +142,21 @@ before checking in.
 yarn format
 yarn lint
 ```
+
+### Working against a local longtail checkout
+
+`longtail` is pinned by commit in the workspace `Cargo.toml`, because the crate is not
+published and an unpinned git dependency would silently move the build. To build against a
+local checkout instead, override it in your **user** cargo config (`~/.cargo/config.toml`) -
+not in the repo:
+
+```toml
+[patch."https://github.com/believer-oss/longtail-rs"]
+longtail = { path = "/path/to/longtail-rs/crates/longtail" }
+```
+
+The override rewrites `Cargo.lock`, so restore it (`git checkout -- Cargo.lock`) before
+committing, or CI will resolve the dependency from your local path and fail.
 
 # Release Process
 

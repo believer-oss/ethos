@@ -1,0 +1,9 @@
+# Pinned so every CI job and every developer builds with the same compiler.
+#
+# The floor is Rust 1.88: the `longtail` dependency is edition 2024 and uses
+# let-chains. Pinned exactly rather than tracking `stable` because CI lints with
+# `-D warnings`, so a new stable's lints would otherwise turn CI red on a day
+# nobody touched the code.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

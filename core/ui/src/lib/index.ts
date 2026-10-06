@@ -6,11 +6,13 @@ import ProgressModal from '$lib/components/ProgressModal.svelte';
 import Pizza from '$lib/components/Pizza.svelte';
 import ModifiedFilesCard from '$lib/components/repo/ModifiedFilesCard.svelte';
 import CommitTable from '$lib/components/repo/CommitTable.svelte';
+import DownloadStatusBar from '$lib/components/DownloadStatusBar.svelte';
 
 export * from '$lib/types/index.js';
 
 export {
 	CommitTable,
+	DownloadStatusBar,
 	ErrorToast,
 	ErrorToastStack,
 	ModifiedFilesCard,

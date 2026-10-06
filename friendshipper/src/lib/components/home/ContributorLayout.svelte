@@ -4,6 +4,7 @@
 		Button,
 		ButtonGroup,
 		Card,
+		Modal,
 		Spinner,
 		Table,
 		TableBody,
@@ -25,6 +26,7 @@
 		syncLatest,
 		getRepoStatus,
 		getBranchComparison,
+		getIncomingEngineChange,
 		AllowOfflineCommunication,
 		SkipDllCheck
 	} from '$lib/repo';
@@ -34,6 +36,7 @@
 		MergeQueue,
 		MergeQueueEntry,
 		Commit,
+		IncomingEngineChange,
 		SyncClientRequest,
 		Playtest
 	} from '$lib/types';
@@ -212,7 +215,14 @@
 		return 'bg-secondary-500 dark:bg-secondary-500';
 	};
 
-	const handleSyncClicked = async () => {
+	// Asked before the sync rather than during it, because the answer can be a hundred
+	// gigabyte engine download. The check reads a blob out of the local git object store,
+	// so it is cheap enough to sit in front of every sync, and it says nothing at all when
+	// it cannot see ahead - an unfetched branch is not a reason to interrupt anyone.
+	let engineChange: IncomingEngineChange | null = null;
+	let showEngineChangeModal = false;
+
+	const runSync = async () => {
 		try {
 			syncing = true;
 			progressModalText = 'Pulling latest with git';
@@ -236,6 +246,32 @@
 		}
 
 		syncing = false;
+	};
+
+	const handleSyncClicked = async () => {
+		try {
+			const incoming = await getIncomingEngineChange();
+			if (incoming.changes) {
+				engineChange = incoming;
+				showEngineChangeModal = true;
+				return;
+			}
+		} catch {
+			// Looking ahead is a courtesy - an unfetched branch, a moved uproject - and
+			// failing at it must not stop the sync the user actually asked for, nor put an
+			// error in front of them for a question they did not ask.
+		}
+
+		await runSync();
+	};
+
+	const handleEngineChangeConfirmed = async () => {
+		showEngineChangeModal = false;
+		await runSync();
+	};
+
+	const handleEngineChangeCancelled = () => {
+		showEngineChangeModal = false;
 	};
 
 	const handleOpenUprojectClicked = async () => {
@@ -656,3 +692,30 @@
 	cancellable={progressModalCancellable}
 	on:cancel={handleSyncCancelled}
 />
+
+<Modal
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	bodyClass="!border-t-0"
+	title="This sync will change your engine"
+	bind:open={showEngineChangeModal}
+	autoclose={false}
+	size="sm"
+>
+	<div class="flex flex-col gap-2">
+		<p class="text-sm text-gray-300">
+			The latest commit on your branch uses a different engine, so syncing will download it. Engine
+			downloads are large and can take a while.
+		</p>
+		<div class="flex flex-col gap-1 font-mono text-xs text-gray-300">
+			<span>you have: {engineChange?.current ?? 'unknown'}</span>
+			<span>branch wants: {engineChange?.incoming ?? 'unknown'}</span>
+		</div>
+		<p class="text-xs text-gray-400">
+			Cancelling leaves everything as it is. You can sync whenever suits you.
+		</p>
+	</div>
+	<svelte:fragment slot="footer">
+		<Button color="primary" on:click={handleEngineChangeConfirmed}>Sync anyway</Button>
+		<Button color="alternative" on:click={handleEngineChangeCancelled}>Cancel</Button>
+	</svelte:fragment>
+</Modal>

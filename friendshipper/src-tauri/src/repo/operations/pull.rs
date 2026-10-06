@@ -7,12 +7,12 @@ use ethos_core::storage::config::Project;
 use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info, instrument};
 
+use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
 use ethos_core::clients::git::{PullStashStrategy, PullStrategy};
 use ethos_core::clients::github::GraphQLClient;
-use ethos_core::longtail::Longtail;
-use ethos_core::msg::LongtailMsg;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfig, UProject};
 use ethos_core::types::errors::CoreError;
@@ -34,8 +34,9 @@ pub struct PullOp<T> {
     pub app_config: AppConfigRef,
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
-    pub longtail: Longtail,
-    pub longtail_tx: Sender<LongtailMsg>,
+    pub artifact_sync: ArtifactSync,
+    pub downloads: DownloadCancellation,
+    pub sync_event_tx: Sender<SyncEvent>,
     pub aws_client: AWSClient,
     pub storage: ArtifactStorage,
     pub git_client: git::Git,
@@ -323,9 +324,11 @@ where
             }
         }
 
-        // Collect any errors from the following operations, but continue where possible
-        // This needs to remain serial because we don't have support for multiple concurrent
-        // progress bars, and longtail already saturates most connections.
+        // Collect any errors from the following operations, but continue where possible.
+        // This stays serial because longtail already saturates most connections, so
+        // overlapping two downloads makes both slower rather than finishing sooner. The
+        // progress reporting no longer requires it - events carry which download they
+        // came from - but the bandwidth argument still holds.
         let mut errors: Vec<Option<CoreError>> = Vec::new();
 
         // Attempt to restore any snapshots that were made above.
@@ -401,12 +404,21 @@ where
                                 dll_commit: self.repo_status.read().dll_commit_remote.clone(),
                                 download_symbols: self.app_config.read().editor_download_symbols,
                                 storage: self.storage.clone(),
-                                longtail: self.longtail.clone(),
-                                tx: self.longtail_tx.clone(),
+                                artifact_sync: self.artifact_sync.clone(),
+                                downloads: self.downloads.clone(),
+                                tx: self.sync_event_tx.clone(),
                                 aws_client: self.aws_client.clone(),
                                 project,
                                 engine: self.engine.clone(),
                                 engine_path,
+                                max_cache_size_bytes: self
+                                    .app_config
+                                    .read()
+                                    .editor_cache_size_bytes(),
+                                transfer_acceleration: self
+                                    .app_config
+                                    .read()
+                                    .s3_transfer_acceleration,
                             };
                             self.emit_phase("Downloading latest binaries");
                             errors.push(download_op.execute().await.err())
@@ -434,14 +446,17 @@ where
                             old_uproject: Some(old_uproject.clone()),
                             new_uproject: uproject.clone(),
                             engine_type: app_config.engine_type,
-                            longtail: self.longtail.clone(),
-                            longtail_tx: self.longtail_tx.clone(),
+                            artifact_sync: self.artifact_sync.clone(),
+                            downloads: self.downloads.clone(),
+                            sync_event_tx: self.sync_event_tx.clone(),
                             aws_client: self.aws_client.clone(),
                             git_client: self.git_client.clone(),
                             download_symbols: app_config.engine_download_symbols,
                             storage: self.storage.clone(),
                             project,
                             engine: self.engine.clone(),
+                            max_cache_size_bytes: app_config.engine_cache_size_bytes(),
+                            transfer_acceleration: app_config.s3_transfer_acceleration,
                         };
                         self.emit_phase("Updating engine");
                         errors.push(update_engine_op.execute().await.err());
@@ -531,8 +546,9 @@ where
         app_config: state.app_config.clone(),
         repo_config: state.repo_config.clone(),
         repo_status: state.repo_status.clone(),
-        longtail: state.longtail.clone(),
-        longtail_tx: state.longtail_tx.clone(),
+        artifact_sync: state.artifact_sync.clone(),
+        downloads: state.downloads.clone(),
+        sync_event_tx: state.sync_event_tx.clone(),
         aws_client: aws_client.clone(),
         storage,
         git_client: state.git(),

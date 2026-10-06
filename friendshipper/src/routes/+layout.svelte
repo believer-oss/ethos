@@ -36,7 +36,14 @@
 	import { type } from '@tauri-apps/plugin-os';
 	import { invoke } from '@tauri-apps/api/core';
 
-	import { ErrorToastStack, Pizza, ProgressModal, SuccessToast } from '@ethos/core';
+	import {
+		DownloadStatusBar,
+		ErrorToastStack,
+		Pizza,
+		ProgressModal,
+		SuccessToast,
+		type SyncKind
+	} from '@ethos/core';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 	import { relaunch } from '@tauri-apps/plugin-process';
@@ -69,6 +76,7 @@
 	import { getPlaytests } from '$lib/playtests';
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
 	import { refreshLogin, exitApp } from '$lib/auth';
+	import ArtifactWarnings from '$lib/components/ArtifactWarnings.svelte';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import TraceDeepLinkModal from '$lib/components/servers/TraceDeepLinkModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
@@ -135,25 +143,20 @@
 	let updateAvailable = false;
 	let updateProgress = 0;
 
-	// Background sync
-	let backgroundSyncProgress = 0;
-	let backgroundSyncElapsed = '';
-	let backgroundSyncRemaining = '';
-
 	// Reset config confirmation at startup
 	let showResetConfirmModal = false;
 
-	const handleCancelBackgroundSync = async () => {
+	const handleCancelDownload = async (kind: SyncKind) => {
 		try {
-			await cancelDownload();
+			await cancelDownload(kind);
 
-			backgroundSyncProgress = 0;
-			backgroundSyncElapsed = '';
-			backgroundSyncRemaining = '';
-
-			await emit('background-sync-cancel');
+			// The background-sync flow tracks the client download specifically, so only
+			// that one ends it; cancelling an engine or DLL download leaves it running.
+			if (kind === 'client') {
+				await emit('background-sync-cancel');
+			}
 		} catch (e) {
-			await logError('Background sync cancel failed', e);
+			await logError(`Cancelling the ${kind} download failed`, e);
 		}
 	};
 
@@ -912,17 +915,6 @@
 
 	void listen('background-sync-start', () => {
 		backgroundSyncInProgress.set(true);
-
-		backgroundSyncProgress = 0;
-		backgroundSyncElapsed = '';
-		backgroundSyncRemaining = '';
-
-		void listen('longtail-sync-progress', (event) => {
-			const captures = event.payload as { progress: string; elapsed: string; remaining: string };
-			backgroundSyncProgress = parseFloat(captures.progress.replace('%', ''));
-			backgroundSyncElapsed = captures.elapsed;
-			backgroundSyncRemaining = captures.remaining;
-		});
 	});
 
 	void listen('background-sync-end', () => {
@@ -1484,27 +1476,8 @@
 			</div>
 		</div>
 	{/if}
-	{#if $backgroundSyncInProgress}
-		<div
-			class="flex gap-1 items-center bg-secondary-700 dark:bg-space-900 h-6 max-h-6 w-full py-1 px-2 z-50"
-		>
-			<code class="text-xs text-gray-400 dark:text-gray-400">Syncing... </code>
-			<Spinner size="2" />
-			<Progressbar progress={backgroundSyncProgress} size="h-1" />
-			<code class="text-xs text-gray-400 dark:text-gray-400 text-nowrap">
-				{backgroundSyncElapsed} / {backgroundSyncRemaining}
-			</code>
-			<Button
-				outline
-				color="dark"
-				size="xs"
-				class="p-1 my-1 hover:bg-secondary-800 text-gray-400 dark:hover:bg-space-950 border-0 focus-within:ring-0 dark:focus-within:ring-0 focus-within:bg-secondary-800 dark:focus-within:bg-space-950"
-				on:click={handleCancelBackgroundSync}
-			>
-				<CloseOutline class="h-3 w-3" />
-			</Button>
-		</div>
-	{/if}
+	<ArtifactWarnings />
+	<DownloadStatusBar onCancel={handleCancelDownload} />
 	<div
 		class="flex items-center bg-secondary-800 dark:bg-space-950 h-6 max-h-6 w-full px-2 z-50 border-t border-secondary-700 dark:border-space-900"
 		title={lastGitLogMessage}

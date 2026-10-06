@@ -450,31 +450,33 @@ pub async fn setup_with_repo_config(
     });
 
     info!("Started operation worker. Creating channels for longtail, git, and gameserver.");
-    let (longtail_tx, longtail_rx) = std::sync::mpsc::channel();
+    let (sync_event_tx, sync_event_rx) = std::sync::mpsc::channel();
     let (git_tx, git_rx) = std::sync::mpsc::channel();
     let (sync_phase_tx, _sync_phase_rx) = std::sync::mpsc::channel::<String>();
     let (build_tools_tx, _build_tools_rx) = std::sync::mpsc::channel();
     let (gs_tx, _gs_rx) = std::sync::mpsc::channel();
     let (workflow_tx, _workflow_rx) = std::sync::mpsc::channel();
 
-    // start a notification logger
+    // On threads, not the runtime: each of these blocks on recv() for the life of the
+    // test, and longtail now runs in-process here, so a parked tokio worker is one the
+    // download cannot have.
     info!("Starting notification logger");
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         while let Ok(msg) = notification_rx.recv() {
             info!("notification: {:?}", msg);
         }
     });
 
     info!("Started notification logger. Creating git logger.");
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         while let Ok(msg) = git_rx.recv() {
             info!("git: {}", msg);
         }
     });
 
     info!("Started git logger. Creating longtail logger.");
-    tokio::spawn(async move {
-        while let Ok(msg) = longtail_rx.recv() {
+    std::thread::spawn(move || {
+        while let Ok(msg) = sync_event_rx.recv() {
             info!("longtail: {:?}", msg);
         }
     });
@@ -498,7 +500,7 @@ pub async fn setup_with_repo_config(
         dynamic_config,
         config_file,
         Some(storage),
-        longtail_tx,
+        sync_event_tx,
         op_tx,
         notification_tx,
         frontend_op_tx,
@@ -516,24 +518,9 @@ pub async fn setup_with_repo_config(
 
     info!("[testing module] created app state");
 
-    state.longtail.download_path = LocalDownloadPath(TEST_DIR.join("longtail-downloads"));
-
-    if state.longtail.exec_path.is_none() && state.longtail.update_exec().is_err() {
-        let tx_lock = state.longtail_tx.clone();
-        if let Err(e) = state.longtail.get_longtail(tx_lock.clone()) {
-            info!("failed to get longtail executable: {:?}", e);
-            info!(
-                "[testing module] failed to get longtail executable: {:?}",
-                e
-            );
-        }
-        _ = state.longtail.update_exec();
-    };
-
-    info!(
-        "[testing module] longtail update done. exe path: {:?}",
-        &state.longtail.exec_path
-    );
+    state
+        .artifact_sync
+        .set_download_path(LocalDownloadPath(TEST_DIR.join("longtail-downloads")));
 
     let mut server = TestServer::new(state, exit_tx);
 
