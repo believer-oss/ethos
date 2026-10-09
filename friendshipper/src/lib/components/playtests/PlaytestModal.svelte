@@ -10,10 +10,19 @@
 		PlaytestSpec,
 		PlaytestProfile
 	} from '$lib/types';
-	import { createPlaytest, deletePlaytest, ModalState, updatePlaytest } from '$lib/playtests';
+	import {
+		createPlaytest,
+		deletePlaytest,
+		getCaptureState,
+		isCaptureAnnotated,
+		ModalState,
+		splitLaunchArgs,
+		updatePlaytest
+	} from '$lib/playtests';
 	import {
 		appConfig,
 		repoConfig,
+		dynamicConfig,
 		activeProjectConfig,
 		allProjects,
 		workflowMap,
@@ -187,6 +196,18 @@
 		return item.metadata.annotations['believer.dev/project'] ?? '';
 	};
 
+	$: captureConfig = $repoConfig?.clientCapture;
+	$: uploadConfigured = ($dynamicConfig?.clientCaptureUpload?.watch?.length ?? 0) > 0;
+	$: wasCapture = mode === ModalState.Editing && isCaptureAnnotated(playtest);
+
+	const profileNameFor = (
+		item: Nullable<Playtest>,
+		available: { value: PlaytestProfile; name: string }[] | null | undefined
+	): string => {
+		const current = (item?.spec.gameServerCmdArgs ?? []).join(' ');
+		return available?.find((p) => splitLaunchArgs(p.value.args).join(' ') === current)?.name ?? '';
+	};
+
 	const inputClass = 'bg-secondary-700 dark:bg-space-900 text-white';
 
 	const validatePlaytestName = (name: string): boolean => {
@@ -237,12 +258,32 @@
 		const needsBuildPreflight = !knownVersions.some((v) => v.commit === submitVersion);
 
 		let gameServerCmdArgs: string[] = [];
-		if (data.profile !== undefined) {
+		if (submitMode === ModalState.Editing) {
+			gameServerCmdArgs = submitPlaytest?.spec.gameServerCmdArgs ?? [];
+		} else if (data.profile !== undefined) {
 			const selectedProfileName = data.profile;
 			const selectedProfile = profiles.find((p) => p.name === selectedProfileName);
 			if (selectedProfile) {
-				gameServerCmdArgs = selectedProfile.value.args.split(' ');
+				gameServerCmdArgs = splitLaunchArgs(selectedProfile.value.args);
 			}
+		}
+
+		const clientCapture = 'clientCapture' in data;
+		const captureState = getCaptureState(submitPlaytest);
+		let gameClientCmdArgs: Nullable<string[]> = submitPlaytest?.spec.gameClientCmdArgs ?? null;
+		if (clientCapture) {
+			if (captureState !== 'on') {
+				const fromConfig = splitLaunchArgs(captureConfig?.args ?? '');
+				if (fromConfig.length === 0) {
+					playtestError =
+						'Your friendshipper.yaml has no clientCapture entry, so capture args cannot be set. Untick capture or update the repo.';
+					submitting = false;
+					return;
+				}
+				gameClientCmdArgs = fromConfig;
+			}
+		} else if (captureState !== 'off') {
+			gameClientCmdArgs = null;
 		}
 
 		if (submitMode === ModalState.Editing && submitPlaytest != null) {
@@ -258,6 +299,7 @@
 				feedbackURL: data.feedbackURL,
 				includeReadinessProbe: submitPlaytest.spec.includeReadinessProbe ?? false,
 				gameServerCmdArgs,
+				gameClientCmdArgs,
 				disableGameServers: submitPlaytest.spec.disableGameServers ?? false
 			};
 
@@ -268,7 +310,13 @@
 					await getBuild(submitVersion, submitProject || undefined);
 				}
 
-				await updatePlaytest(submitPlaytest.metadata.name, submitProject, doNotPrune, spec);
+				await updatePlaytest(
+					submitPlaytest.metadata.name,
+					submitProject,
+					doNotPrune,
+					spec,
+					clientCapture
+				);
 			} catch (updateError) {
 				playtestError = (updateError as Error).message;
 				submitting = false;
@@ -289,6 +337,7 @@
 				feedbackURL: data.feedbackURL,
 				includeReadinessProbe,
 				gameServerCmdArgs,
+				gameClientCmdArgs,
 				disableGameServers
 			};
 
@@ -300,7 +349,7 @@
 					// only one-way bound, so `project` does not track the user's choice.
 					await getBuild(submitVersion, data.project || undefined);
 				}
-				await createPlaytest(name, data.project, doNotPrune, spec);
+				await createPlaytest(name, data.project, doNotPrune, spec, clientCapture);
 			} catch (createError) {
 				playtestError = (createError as Error).message;
 				submitting = false;
@@ -568,9 +617,12 @@
 						name="profile"
 						class={inputClass}
 						required
-						value={playtest ? playtest.spec.gameServerCmdArgs : profiles[0].name}
+						value={playtest ? profileNameFor(playtest, profiles) : profiles[0].name}
 						disabled={mode === ModalState.Editing}
 					>
+						{#if mode === ModalState.Editing && profileNameFor(playtest, profiles) === ''}
+							<option value="">Custom</option>
+						{/if}
 						{#each profiles as profile}
 							<option value={profile.name}>
 								<span>{profile.name}</span>
@@ -592,6 +644,16 @@
 				<span>Auto Cleanup</span>
 				<Tooltip>If toggled, this playtest will automatically delete in 24 hours.</Tooltip>
 			</Label>
+			{#if !$appConfig.serverless && ((captureConfig && uploadConfigured) || wasCapture)}
+				<Label class="flex flex-row text-xs text-white">
+					<Checkbox name="clientCapture" checked={wasCapture} />
+					<span>{captureConfig?.label ?? 'Capture client traces'}</span>
+					<Tooltip>
+						Everyone who joins this playtest uploads their client trace and log files after the
+						session. Players see a badge before they join.
+					</Tooltip>
+				</Label>
+			{/if}
 			<Label class="flex flex-row text-xs text-white">
 				<Checkbox
 					name="includeReadinessProbe"

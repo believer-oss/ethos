@@ -20,6 +20,7 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::{debug, error, info, instrument, warn};
 
 use ethos_core::artifact_sync::SyncEvent;
+use ethos_core::capture::types::CaptureStatus;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfig, DynamicConfig, ProjectRepoConfig};
 use ethos_core::types::errors::CoreError;
@@ -46,6 +47,7 @@ pub struct Server {
     build_tools_tx: STDSender<String>,
     gameserver_log_tx: STDSender<String>,
     workflow_log_tx: STDSender<String>,
+    capture_event_tx: STDSender<CaptureStatus>,
     otel_reload_handle: OtelReloadHandle,
 }
 
@@ -62,6 +64,7 @@ impl Server {
         build_tools_tx: STDSender<String>,
         gameserver_log_tx: STDSender<String>,
         workflow_log_tx: STDSender<String>,
+        capture_event_tx: STDSender<CaptureStatus>,
         otel_reload_handle: OtelReloadHandle,
     ) -> Self {
         Server {
@@ -75,6 +78,7 @@ impl Server {
             build_tools_tx,
             gameserver_log_tx,
             workflow_log_tx,
+            capture_event_tx,
             otel_reload_handle,
         }
     }
@@ -139,6 +143,8 @@ impl Server {
                 shutdown_rx.recv().await;
 
                 info!("Shutting down server");
+
+                shared_state.capture.shutdown();
 
                 // Stop every download. Cancellation is block-granular - it stops the
                 // next block rather than aborting one in flight - so give it a moment
@@ -402,6 +408,12 @@ impl Server {
                 };
             });
         }
+
+        shared_state.capture.start(
+            pause_background_tasks.clone(),
+            crate::capture::notification_forwarder(self.notification_tx.clone()),
+            self.capture_event_tx.clone(),
+        );
 
         let span = tracing::info_span!("create_router").entered();
         let app = crate::router(&shared_state.log_path, self.port)?

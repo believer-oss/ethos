@@ -29,7 +29,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { onDestroy } from 'svelte';
-	import { ProgressModal } from '@ethos/core';
+	import { ProgressModal, formatBytes } from '@ethos/core';
 	import {
 		appConfig,
 		repoConfig,
@@ -45,6 +45,8 @@
 	} from '$lib/stores';
 	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { wipeClientData, getWorkflows } from '$lib/builds';
+	import { getCapturePending } from '$lib/capture';
+	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import { openTerminalToPath, restart } from '$lib/system';
 	import {
 		resetRepo,
@@ -359,9 +361,12 @@
 		}
 	};
 
-	const handleWipeClientData = async () => {
+	let showWipeConfirm = false;
+	let wipeConfirmTitle = '';
+
+	const runWipe = async (acknowledgePending: boolean) => {
 		try {
-			await wipeClientData();
+			await wipeClientData(acknowledgePending);
 
 			showModal = false;
 
@@ -369,6 +374,23 @@
 		} catch (e) {
 			await emit('error', e);
 		}
+	};
+
+	const handleWipeClientData = async () => {
+		try {
+			const pending = await getCapturePending();
+			if (pending) {
+				wipeConfirmTitle = `Delete ${pending.files} un-uploaded capture files (${formatBytes(
+					pending.bytes
+				)}) and all downloaded clients? Pending trace uploads will be lost.`;
+				showWipeConfirm = true;
+				return;
+			}
+		} catch (e) {
+			await emit('error', e);
+			return;
+		}
+		await runWipe(false);
 	};
 
 	const handleResetEngine = async () => {
@@ -1104,6 +1126,14 @@
 </Modal>
 
 <ProgressModal title={progressModalTitle} showModal={showProgressModal} />
+
+<ConfirmModal
+	bind:showModal={showWipeConfirm}
+	title={wipeConfirmTitle}
+	resultCallback={(yes) => {
+		if (yes) void runWipe(true);
+	}}
+/>
 
 <!-- Follows the inline-Modal confirmation pattern in +layout.svelte rather than
 	ConfirmModal.svelte, which takes only a title string and has no slot for a body. -->

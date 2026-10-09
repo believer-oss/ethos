@@ -17,7 +17,9 @@ use tauri_plugin_notification::NotificationExt;
 use tracing::{debug, error, info, warn};
 
 use ethos_core::tauri::State;
-use ethos_core::{artifact_sync::SyncEvent, clients, utils, utils::logging};
+use ethos_core::{
+    artifact_sync::SyncEvent, capture::types::CaptureStatus, clients, utils, utils::logging,
+};
 use friendshipper::state::{FrontendOp, Notification};
 use friendshipper::APP_NAME;
 
@@ -172,6 +174,7 @@ fn main() -> Result<(), CoreError> {
                 check_engine_ready,
                 check_login_required,
                 create_oauth_popup,
+                cancel_capture,
                 checkout_trunk,
                 checkout_target_branch,
                 clone_repo,
@@ -186,6 +189,8 @@ fn main() -> Result<(), CoreError> {
                 get_active_builds,
                 get_build,
                 get_builds,
+                get_capture_pending,
+                get_capture_status,
                 get_commits,
                 get_branch_comparison,
                 get_dynamic_config,
@@ -482,6 +487,17 @@ fn main() -> Result<(), CoreError> {
                     }
                 });
 
+                let (capture_event_tx, capture_event_rx) =
+                    std::sync::mpsc::channel::<CaptureStatus>();
+                let capture_event_handle = handle.clone();
+                thread::spawn(move || {
+                    while let Ok(status) = capture_event_rx.recv() {
+                        if let Err(e) = capture_event_handle.emit("capture-event", &status) {
+                            warn!("Failed to emit capture-event: {:?}", e);
+                        }
+                    }
+                });
+
                 let (startup_tx, startup_rx) = std::sync::mpsc::channel::<String>();
                 let startup_handle = handle.clone();
                 thread::spawn(move || {
@@ -524,6 +540,7 @@ fn main() -> Result<(), CoreError> {
                         build_tools_tx.clone(),
                         gameserver_log_tx.clone(),
                         workflow_log_tx.clone(),
+                        capture_event_tx,
                         otel_reload_handle,
                     );
 

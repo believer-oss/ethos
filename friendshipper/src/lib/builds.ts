@@ -24,7 +24,8 @@ export const syncClient = async (req: SyncClientRequest): Promise<boolean> =>
 export const cancelDownload = async (kind: SyncKind = 'client'): Promise<void> =>
 	invoke('cancel_download', { kind });
 
-export const wipeClientData = async (): Promise<void> => invoke('wipe_client_data');
+export const wipeClientData = async (acknowledgePending: boolean = false): Promise<void> =>
+	invoke('wipe_client_data', { acknowledgePending });
 
 export const getWorkflows = async (
 	engine: boolean = false,

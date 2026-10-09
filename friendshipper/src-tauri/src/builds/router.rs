@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::extract::{Path, Query, State};
@@ -8,7 +9,11 @@ use axum::{Json, Router};
 use chrono::{DateTime, Local, Utc};
 use ethos_core::artifact_sync::{
     CacheControl, SyncErrorClass, SyncEvent, SyncKind, SyncRecord, SyncRequest,
+    UNREAL_SAVED_EXCLUDE,
 };
+use ethos_core::capture::service::format_size;
+use ethos_core::capture::types::RegisterSession;
+use ethos_core::capture::watcher::wait_for_exit;
 use ethos_core::storage::{
     ArtifactBuildConfig, ArtifactConfig, ArtifactEntry, ArtifactKind, ArtifactList, Platform,
 };
@@ -30,14 +35,86 @@ use ethos_core::clients::obs;
 use ethos_core::types::argo::workflow::{
     CreatePromoteBuildWorkflowRequest, Workflow, WorkflowStatus,
 };
-use ethos_core::types::builds::{LaunchMode, SyncClientRequest};
+use ethos_core::types::builds::{LaunchMode, LaunchOptions, SyncClientRequest};
 use ethos_core::types::config::PromoteBuildShard;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::gameserver::GameServerResults;
+use ethos_core::types::playtests::{capture_launch_args, find_capture_playtest};
 
 use crate::state::AppState;
 
 const UNKNOWN_PUSHER: &str = "unknown";
+
+struct CaptureLaunch {
+    playtest: String,
+    args: Vec<String>,
+}
+
+/// Best-effort: a failed lookup must never block play.
+async fn resolve_capture<T>(
+    state: &AppState<T>,
+    launch: Option<&LaunchOptions>,
+) -> Option<CaptureLaunch>
+where
+    T: EngineProvider,
+{
+    let launch = launch?;
+    if state.app_config.read().serverless {
+        return None;
+    }
+    let kube_client = state.kube_client.read().clone()?;
+
+    let playtests = match kube_client.get_playtests().await {
+        Ok(playtests) => playtests,
+        Err(e) => {
+            warn!("Could not look up playtests for client capture: {e}");
+            return None;
+        }
+    };
+
+    let playtest = find_capture_playtest(&playtests, launch)?;
+    if !playtest.client_capture_enabled() {
+        return None;
+    }
+    let name = playtest.metadata.name.clone()?;
+
+    let args = capture_launch_args(playtest);
+    if args.is_empty() {
+        warn!("Playtest {name} has client capture enabled but no usable capture arguments");
+        return None;
+    }
+
+    Some(CaptureLaunch {
+        playtest: name,
+        args,
+    })
+}
+
+fn register_capture<T>(
+    state: &AppState<T>,
+    capture: &CaptureLaunch,
+    install_dir: PathBuf,
+    sha: Option<String>,
+    launched_at: DateTime<Utc>,
+) where
+    T: EngineProvider,
+{
+    let user = state.app_config.read().user_display_name.clone();
+    let session = state.capture.register_session(RegisterSession {
+        install_dir,
+        sha,
+        user,
+        playtest: capture.playtest.clone(),
+        launched_at,
+    });
+    match session {
+        Some(id) => info!("Registered capture session {id} for {}", capture.playtest),
+        None => debug!(
+            "Capture inactive for {}; nothing registered",
+            capture.playtest
+        ),
+    }
+}
 
 pub fn router<T>() -> Router<AppState<T>>
 where
@@ -440,6 +517,8 @@ where
 
     local_path = local_path.join(payload.artifact_entry.base_name());
 
+    let capture = resolve_capture(&state, payload.launch_options.as_ref()).await;
+
     let mut archive_urls: Vec<String> = vec![remote_path];
 
     if state.app_config.read().game_client_download_symbols {
@@ -526,6 +605,7 @@ where
         // The guard moves in, so the registration lasts exactly as long as the download.
         let _download = download;
         let request = SyncRequest::download(SyncKind::Client, &target, &archives)
+            .excluding(UNREAL_SAVED_EXCLUDE)
             .with_cache(Some(cache_control))
             .with_transfer_acceleration(transfer_acceleration);
         let result = artifact_sync.get_archive(request, tx, &aws, token).await;
@@ -611,11 +691,16 @@ where
                             ready: status.ready.unwrap_or(false),
                         };
 
-                        let args = state.engine.create_launch_args(
+                        let mut args = state.engine.create_launch_args(
                             state.app_config.read().clone(),
                             state.repo_config.read().clone(),
                             game_server_results,
                         );
+                        if let Some(capture) = &capture {
+                            args.extend(capture.args.iter().cloned());
+                        }
+                        let install_dir = local_path.clone();
+                        let launched_at = Utc::now();
                         let child = match state.engine.launch(local_path, args) {
                             Ok(child) => child,
                             Err(e) => {
@@ -624,7 +709,17 @@ where
                             }
                         };
 
-                        if let Some(mut child) = child {
+                        if child.is_some() {
+                            if let Some(capture) = &capture {
+                                register_capture(
+                                    &state,
+                                    capture,
+                                    install_dir.clone(),
+                                    payload.artifact_entry.commit.clone(),
+                                    launched_at,
+                                );
+                            }
+
                             if state.app_config.read().record_play {
                                 let client = obs::Client::default();
                                 match client.start_recording().await {
@@ -635,12 +730,7 @@ where
                                 };
 
                                 tokio::spawn(async move {
-                                    match child.wait() {
-                                        Ok(_) => {}
-                                        Err(e) => {
-                                            error!("Error waiting for child: {}", e);
-                                        }
-                                    }
+                                    wait_for_exit(install_dir).await;
                                     match client.stop_recording().await {
                                         Ok(_) => {}
                                         Err(_) => {
@@ -654,14 +744,26 @@ where
                 }
             }
             LaunchMode::WithoutServer => {
-                let empty_args: Vec<String> = Vec::new();
-                let _child = match state.engine.launch(local_path, empty_args) {
-                    Ok(_child) => _child,
+                let args = capture.as_ref().map(|c| c.args.clone()).unwrap_or_default();
+                let install_dir = local_path.clone();
+                let launched_at = Utc::now();
+                let child = match state.engine.launch(local_path, args) {
+                    Ok(child) => child,
                     Err(e) => {
                         error!("Failed to launch game client with error: {}", e);
                         return Err(CoreError::Internal(e));
                     }
                 };
+
+                if let (Some(capture), Some(_)) = (&capture, &child) {
+                    register_capture(
+                        &state,
+                        capture,
+                        install_dir,
+                        payload.artifact_entry.commit.clone(),
+                        launched_at,
+                    );
+                }
             }
         }
     }
@@ -689,10 +791,35 @@ where
     Ok(())
 }
 
-pub async fn wipe_client_data<T>(State(state): State<AppState<T>>) -> Result<(), CoreError>
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WipeParams {
+    #[serde(default)]
+    pub acknowledge_pending: bool,
+}
+
+pub async fn wipe_client_data<T>(
+    State(state): State<AppState<T>>,
+    params: Query<WipeParams>,
+) -> Result<(), CoreError>
 where
     T: EngineProvider,
 {
+    if params.acknowledge_pending {
+        state.capture.cancel_all();
+    } else if let Some(pending) = crate::capture::pending_all(&state).await? {
+        let game = if pending.game_running {
+            "; a game is running"
+        } else {
+            ""
+        };
+        return Err(CoreError::Input(anyhow::anyhow!(
+            "Capture files are waiting to upload: {} files, {}{game}. Wiping deletes all installs, caches and these files.",
+            pending.files,
+            format_size(pending.bytes),
+        )));
+    }
+
     let local_path = state.artifact_sync.download_path.0.clone();
 
     // delete all directories in the download path except "logs"
@@ -1493,5 +1620,13 @@ mod tests {
             resolve_promoted_bucket(Some("  spaced-bucket  "), ""),
             "spaced-bucket"
         );
+    }
+
+    #[test]
+    fn wipe_params_default_to_unacknowledged() {
+        let params: WipeParams = serde_json::from_str("{}").unwrap();
+        assert!(!params.acknowledge_pending);
+        let params: WipeParams = serde_json::from_str(r#"{"acknowledgePending":true}"#).unwrap();
+        assert!(params.acknowledge_pending);
     }
 }
