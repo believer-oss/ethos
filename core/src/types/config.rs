@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::capture::config::ClientCaptureUploadConfig;
 #[cfg(not(target_os = "windows"))]
 use crate::fs::LocalDownloadPath;
 use crate::storage::StorageSchemaVersion;
@@ -17,6 +18,8 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+use crate::types::playtests::{disallowed_capture_args, split_capture_args};
 
 pub use ethos_types::config::{FriendshipperConfig, OktaConfig};
 
@@ -342,6 +345,20 @@ impl AppConfig {
             None => repo_config.playtest_profiles = Some(vec![default_profile]),
         };
 
+        if let Some(capture) = repo_config.client_capture.as_ref() {
+            let args = split_capture_args(&capture.args);
+            let disallowed = disallowed_capture_args(&args);
+            if args.is_empty() {
+                tracing::warn!("ignoring clientCapture in friendshipper.yaml: args is empty");
+                repo_config.client_capture = None;
+            } else if !disallowed.is_empty() {
+                tracing::warn!(
+                    "ignoring clientCapture in friendshipper.yaml: disallowed args {disallowed:?}"
+                );
+                repo_config.client_capture = None;
+            }
+        }
+
         // Validate blocked-file globs for every target branch. This never fails
         // the load — `friendshipper.yaml` is committed to the project repo, so
         // a bad glob failing the load would brick app startup for every user of
@@ -595,6 +612,38 @@ impl Default for TargetBranchConfig {
     }
 }
 
+fn default_client_capture_label() -> String {
+    "Capture client traces".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientCaptureRepoConfig {
+    #[serde(default = "default_client_capture_label")]
+    pub label: String,
+
+    #[serde(default)]
+    pub args: String,
+}
+
+/// `friendshipper.yaml` is committed to the project repo, so a malformed `clientCapture` must
+/// hide the checkbox rather than fail the whole repo config load for every user.
+fn lenient_client_capture<'de, D>(d: D) -> Result<Option<ClientCaptureRepoConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(d)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    match serde_json::from_value::<ClientCaptureRepoConfig>(value) {
+        Ok(capture) => Ok(Some(capture)),
+        Err(e) => {
+            tracing::warn!("ignoring invalid clientCapture in friendshipper.yaml: {e}");
+            Ok(None)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
     #[serde(default, rename = "uprojectPath")]
@@ -633,6 +682,14 @@ pub struct RepoConfig {
 
     #[serde(default, rename = "serversEnabled")]
     pub servers_enabled: bool,
+
+    #[serde(
+        default,
+        rename = "clientCapture",
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_client_capture"
+    )]
+    pub client_capture: Option<ClientCaptureRepoConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -669,6 +726,7 @@ impl Default for RepoConfig {
             editor_url_scheme: None,
             builds_enabled: false,
             servers_enabled: false,
+            client_capture: None,
         }
     }
 }
@@ -815,6 +873,14 @@ pub struct DynamicConfig {
     /// `PROMOTED_ARTIFACT_BUCKET_NAME` constant, either of which may be absent.
     #[serde(default, rename = "promotedArtifactBucketName")]
     pub promoted_artifact_bucket_name: Option<String>,
+
+    #[serde(
+        default,
+        rename = "clientCaptureUpload",
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::capture::config::lenient_capture_config"
+    )]
+    pub client_capture_upload: Option<ClientCaptureUploadConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -953,6 +1019,56 @@ targetBranch: main
 
         let result = app_config.initialize_repo_config();
         (dir, result)
+    }
+
+    #[test]
+    fn test_client_capture_populates() {
+        let yaml = "clientCapture:\n  label: Trace it\n  args: \"-trace=default -tracefile=FellowshipTrace\"\n";
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        let capture = result.unwrap().client_capture.expect("populated");
+        assert_eq!(capture.label, "Trace it");
+        assert_eq!(capture.args, "-trace=default -tracefile=FellowshipTrace");
+    }
+
+    #[test]
+    fn test_client_capture_missing_block_is_none() {
+        let (_dir, result) = load_repo_config_from_yaml("uprojectPath: \"Game.uproject\"\n");
+        assert!(result.unwrap().client_capture.is_none());
+    }
+
+    #[test]
+    fn test_client_capture_missing_label_uses_default() {
+        let yaml = "clientCapture:\n  args: \"-statnamedevents\"\n";
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        let capture = result.unwrap().client_capture.expect("populated");
+        assert_eq!(capture.label, "Capture client traces");
+    }
+
+    #[test]
+    fn test_client_capture_empty_args_normalises_to_none() {
+        let yaml = "clientCapture:\n  label: x\n  args: \"\"\n";
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        assert!(result.unwrap().client_capture.is_none());
+    }
+
+    #[test]
+    fn test_client_capture_disallowed_arg_normalises_to_none() {
+        let yaml = "clientCapture:\n  args: \"-trace=default -ExecCmds=quit\"\n";
+        let (_dir, result) = load_repo_config_from_yaml(yaml);
+        assert!(result.unwrap().client_capture.is_none());
+    }
+
+    #[test]
+    fn test_client_capture_wrong_type_does_not_fail_the_load() {
+        for yaml in [
+            "uprojectPath: \"Game.uproject\"\nclientCapture: true\n",
+            "uprojectPath: \"Game.uproject\"\nclientCapture:\n  args:\n    - \"-trace=default\"\n",
+        ] {
+            let (_dir, result) = load_repo_config_from_yaml(yaml);
+            let config = result.expect("load succeeds");
+            assert!(config.client_capture.is_none(), "{yaml}");
+            assert_eq!(config.uproject_path, "Game.uproject", "{yaml}");
+        }
     }
 
     #[test]

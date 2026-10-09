@@ -4,6 +4,7 @@ use tracing::error;
 
 use ethos_core::artifact_sync::SyncKind;
 
+use ethos_core::capture::types::{CaptureStatus, PendingSummary};
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
 use ethos_core::tauri::command::check_error;
 use ethos_core::tauri::error::TauriError;
@@ -25,6 +26,7 @@ use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
 };
 use friendshipper::builds::router::{ActiveBuild, GetWorkflowsResponse};
+use friendshipper::capture::router::CancelCaptureResponse;
 use friendshipper::repo::operations::diagnostics::{
     ArtifactStatus, IncomingEngineChange, VerifyResponse,
 };
@@ -520,10 +522,14 @@ pub async fn cancel_download(
 }
 
 #[tauri::command]
-pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), TauriError> {
+pub async fn wipe_client_data(
+    state: tauri::State<'_, State>,
+    acknowledge_pending: bool,
+) -> Result<(), TauriError> {
     let res = state
         .client
         .post(format!("{}/builds/client/wipe", state.server_url))
+        .query(&[("acknowledgePending", acknowledge_pending)])
         .send()
         .await?;
 
@@ -533,6 +539,59 @@ pub async fn wipe_client_data(state: tauri::State<'_, State>) -> Result<(), Taur
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_capture_status(
+    state: tauri::State<'_, State>,
+) -> Result<CaptureStatus, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/capture/status", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_capture_pending(
+    state: tauri::State<'_, State>,
+) -> Result<Option<PendingSummary>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/capture/pending", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn cancel_capture(
+    state: tauri::State<'_, State>,
+    session_id: String,
+) -> Result<CancelCaptureResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/capture/cancel", state.server_url))
+        .query(&[("sessionId", session_id)])
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
 }
 
 #[tauri::command]
@@ -1338,12 +1397,17 @@ pub async fn create_playtest(
     state: tauri::State<'_, State>,
     req: CreatePlaytestRequest,
 ) -> Result<(), TauriError> {
-    state
+    let res = state
         .client
         .post(format!("{}/playtests", state.server_url))
         .json(&req)
         .send()
         .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
     Ok(())
 }
 
@@ -1353,12 +1417,17 @@ pub async fn update_playtest(
     playtest: String,
     req: UpdatePlaytestRequest,
 ) -> Result<(), TauriError> {
-    state
+    let res = state
         .client
         .put(format!("{}/playtests/{}", state.server_url, playtest))
         .json(&req)
         .send()
         .await?;
+
+    if let Some(err) = check_error(res.status(), res.text().await?).await {
+        return Err(err);
+    }
+
     Ok(())
 }
 

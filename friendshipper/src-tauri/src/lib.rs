@@ -14,6 +14,7 @@ use ethos_core::middleware::nonce::NONCE;
 
 pub mod auth;
 pub mod builds;
+pub mod capture;
 pub mod client;
 pub mod config;
 pub mod engine;
@@ -66,6 +67,7 @@ where
     Ok(Router::new()
         .nest("/auth", auth::router())
         .nest("/builds", builds::router())
+        .nest("/capture", capture::router())
         .nest("/config", config::router())
         .nest("/obs", obs::router())
         .nest("/playtests", playtests::router())

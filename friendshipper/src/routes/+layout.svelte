@@ -77,6 +77,7 @@
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
 	import { refreshLogin, exitApp } from '$lib/auth';
 	import ArtifactWarnings from '$lib/components/ArtifactWarnings.svelte';
+	import CaptureUploadPanel from '$lib/components/CaptureUploadPanel.svelte';
 	import QuickLaunchModal from '$lib/components/servers/QuickLaunchModal.svelte';
 	import TraceDeepLinkModal from '$lib/components/servers/TraceDeepLinkModal.svelte';
 	import PreferencesModal from '$lib/components/preferences/PreferencesModal.svelte';
@@ -1477,6 +1478,7 @@
 		</div>
 	{/if}
 	<ArtifactWarnings />
+	<CaptureUploadPanel />
 	<DownloadStatusBar onCancel={handleCancelDownload} />
 	<div
 		class="flex items-center bg-secondary-800 dark:bg-space-950 h-6 max-h-6 w-full px-2 z-50 border-t border-secondary-700 dark:border-space-900"

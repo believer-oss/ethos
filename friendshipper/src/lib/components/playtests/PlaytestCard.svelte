@@ -24,6 +24,7 @@
 	import Countdown from '$lib/components/playtests/Countdown.svelte';
 	import {
 		assignUserToGroup,
+		getCaptureState,
 		getPlaytestGroupForUser,
 		getPlaytests,
 		unassignUserFromPlaytest
@@ -233,7 +234,8 @@
 						methodPrefix: $builds.methodPrefix,
 						launchOptions: {
 							name: '',
-							launchMode: LaunchMode.WithoutServer
+							launchMode: LaunchMode.WithoutServer,
+							playtest: playtest.metadata.name
 						}
 					};
 
@@ -419,6 +421,15 @@
 			{/key}
 		</div>
 	</div>
+	{#if getCaptureState(playtest) === 'on' && ($dynamicConfig.clientCaptureUpload?.watch?.length ?? 0) > 0 && !$appConfig.serverless}
+		<span class="text-xs text-yellow-300">Trace capture on: logs and traces will be uploaded</span>
+	{/if}
+	{#if getCaptureState(playtest) === 'args-lost'}
+		<span class="text-xs text-red-400"
+			>Capture args lost (an older Friendshipper changed this playtest). Edit and save it to restore
+			trace capture.</span
+		>
+	{/if}
 	<div class="flex items-center justify-between gap-2 mb-4">
 		<div class="flex items-center gap-2">
 			<span class="text-center text-sm font-bold"
