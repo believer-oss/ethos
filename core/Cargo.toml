@@ -61,7 +61,7 @@ aws-smithy-runtime = { version = "1.1.1", features = ["client"] }
 aws-credential-types = { version = "1.1.1", features = [
     "hardcoded-credentials",
 ] }
-aws-sigv4 = { version = "1.1.1" }
+aws-sigv4 = { version = "1.1.1", features = ["http0-compat"] }
 
 kube = { version = "0.87.2", default-features = false, features = [
     "derive",
