@@ -37,6 +37,74 @@ export interface DynamicConfig {
 	// the build-time constant, so changing buckets needs no Friendshipper release.
 	promotedArtifactBucketName?: string;
 	gameServerClusters?: GameServerCluster[];
+	clientCaptureUpload?: ClientCaptureUploadConfig;
+}
+
+export interface CaptureWatchEntry {
+	dir: string;
+	patterns: string[];
+	keyPrefix: string;
+}
+
+export interface ClientCaptureUploadConfig {
+	watch: CaptureWatchEntry[];
+	quiescenceSeconds: number;
+	bucket?: string | null;
+	pauseWhileGameRunning: boolean;
+	maxUploadMbps?: number | null;
+	keepUploadedTraces: number;
+	ledgerRetentionDays: number;
+	partSizeMib: number;
+	partConcurrency: number;
+}
+
+export type CaptureSessionState = 'launched' | 'running' | 'exited' | 'closed';
+export type CaptureFileKind = 'trace' | 'log';
+export type CaptureFileState =
+	| 'waiting'
+	| 'queued'
+	| 'hashing'
+	| 'uploading'
+	| 'paused'
+	| 'retrying'
+	| 'uploaded'
+	| 'failed';
+export type CapturePauseLevel = 'none' | 'soft' | 'hard' | 'blocked';
+
+export interface CaptureFileStatus {
+	name: string;
+	kind: CaptureFileKind;
+	size: number;
+	state: CaptureFileState;
+	uploadedBytes: number;
+	bytesPerSec: number | null;
+	message: string | null;
+	nextAttemptAt: string | null;
+}
+
+export interface CaptureSessionStatus {
+	id: string;
+	playtest: string;
+	state: CaptureSessionState;
+	launchedAt: string;
+	exitedAt: string | null;
+	files: CaptureFileStatus[];
+}
+
+export interface CaptureStatus {
+	sessions: CaptureSessionStatus[];
+	pause: CapturePauseLevel;
+	blockedReason: string | null;
+	persistFailed: boolean;
+}
+
+export interface CapturePendingSummary {
+	sessionIds: string[];
+	playtests: string[];
+	files: number;
+	bytes: number;
+	gameRunning: boolean;
+	uploading: boolean;
 }
 
 export interface ProjectConfig {
@@ -142,6 +210,11 @@ export interface PlaytestProfile {
 	args: string;
 }
 
+export interface ClientCaptureRepoConfig {
+	label: string;
+	args: string;
+}
+
 export interface TargetBranchConfig {
 	name: string;
 	usesMergeQueue: boolean;
@@ -172,6 +245,7 @@ export interface RepoConfig {
 	playtestProfiles: PlaytestProfile[];
 	buildsEnabled: boolean;
 	serversEnabled: boolean;
+	clientCapture?: ClientCaptureRepoConfig;
 }
 
 // Kubernetes API types
@@ -220,6 +294,7 @@ export enum LaunchMode {
 export interface LaunchOptions {
 	name: string;
 	launchMode: LaunchMode;
+	playtest?: string;
 }
 
 export interface SyncClientRequest {
@@ -268,6 +343,7 @@ export interface PlaytestSpec {
 	groups?: Nullable<Group[]>;
 	includeReadinessProbe: boolean;
 	gameServerCmdArgs: Nullable<string[]>;
+	gameClientCmdArgs?: Nullable<string[]>;
 	disableGameServers?: boolean;
 }
 

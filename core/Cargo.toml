@@ -105,3 +105,4 @@ tokio-util = "0.7.13"
 # library directly rather than only through ethos-core's API.
 longtail = { workspace = true }
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

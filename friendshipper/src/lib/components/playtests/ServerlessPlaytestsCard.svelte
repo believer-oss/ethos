@@ -91,7 +91,8 @@
 							methodPrefix: $builds.methodPrefix,
 							launchOptions: {
 								name: '',
-								launchMode: LaunchMode.WithoutServer
+								launchMode: LaunchMode.WithoutServer,
+								playtest: playtest.metadata.name
 							}
 						};
 

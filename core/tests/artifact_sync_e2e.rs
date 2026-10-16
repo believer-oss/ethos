@@ -13,7 +13,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use ethos_core::artifact_sync::{
     ArtifactSync, CacheControl, CancellationToken, SyncErrorClass, SyncEvent, SyncKind, SyncMode,
-    SyncRequest, SyncSummary,
+    SyncRequest, SyncSummary, UNREAL_SAVED_EXCLUDE,
 };
 use ethos_core::clients::aws::AWSClient;
 
@@ -83,6 +83,7 @@ async fn sync(
     cache: Option<CacheControl>,
     cancel: CancellationToken,
     cache_target_index: bool,
+    exclude: Option<&'static str>,
 ) -> (
     Result<SyncSummary, ethos_core::artifact_sync::SyncError>,
     Receiver<SyncEvent>,
@@ -94,6 +95,7 @@ async fn sync(
         cancel,
         cache_target_index,
         SyncMode::Download,
+        exclude,
     )
     .await
 }
@@ -105,6 +107,7 @@ async fn run(
     cancel: CancellationToken,
     cache_target_index: bool,
     mode: SyncMode,
+    exclude: Option<&'static str>,
 ) -> (
     Result<SyncSummary, ethos_core::artifact_sync::SyncError>,
     Receiver<SyncEvent>,
@@ -122,6 +125,7 @@ async fn run(
     .with_transfer_acceleration(false);
     request.cache_target_index = cache_target_index;
     request.mode = mode;
+    request.exclude_regex = exclude;
 
     let result = artifact_sync.get_archive(request, tx, &aws, cancel).await;
 
@@ -178,6 +182,7 @@ async fn syncs_a_store_and_reports_progress() {
         Some(fixture.cache("cache", 64 * 1024 * 1024)),
         CancellationToken::new(),
         true,
+        None,
     )
     .await;
 
@@ -252,6 +257,7 @@ async fn a_warm_cache_serves_the_second_download() {
         Some(fixture.cache("cache", 64 * 1024 * 1024)),
         CancellationToken::new(),
         true,
+        None,
     )
     .await;
     assert!(first.expect("first sync").blocks_fetched > 0);
@@ -268,6 +274,7 @@ async fn a_warm_cache_serves_the_second_download() {
         Some(fixture.cache("cache", 64 * 1024 * 1024)),
         CancellationToken::new(),
         true,
+        None,
     )
     .await;
     let summary = second.expect("second sync");
@@ -292,6 +299,7 @@ async fn the_cache_budget_is_enforced() {
         Some(fixture.cache("cache", budget)),
         CancellationToken::new(),
         true,
+        None,
     )
     .await;
     result.expect("sync succeeds");
@@ -309,6 +317,7 @@ async fn the_cache_budget_is_enforced() {
         Some(fixture.cache("cache", budget)),
         CancellationToken::new(),
         true,
+        None,
     )
     .await;
     again.expect("a download after eviction still succeeds");
@@ -328,6 +337,7 @@ async fn a_cancelled_download_can_be_resumed() {
         Some(fixture.cache("cache", 64 * 1024 * 1024)),
         cancel,
         true,
+        None,
     )
     .await;
 
@@ -346,6 +356,7 @@ async fn a_cancelled_download_can_be_resumed() {
         Some(fixture.cache("cache", 64 * 1024 * 1024)),
         CancellationToken::new(),
         true,
+        None,
     )
     .await;
     resumed.expect("a cancelled download resumes cleanly");
@@ -367,7 +378,15 @@ async fn the_target_index_cache_can_be_suppressed() {
     let fixture = Fixture::publish().await;
 
     let with_cache = fixture.target("with-index");
-    let (result, _) = sync(&fixture, &with_cache, None, CancellationToken::new(), true).await;
+    let (result, _) = sync(
+        &fixture,
+        &with_cache,
+        None,
+        CancellationToken::new(),
+        true,
+        None,
+    )
+    .await;
     result.expect("sync succeeds");
     assert!(
         with_cache.join(longtail::TARGET_INDEX_CACHE_NAME).exists(),
@@ -375,7 +394,15 @@ async fn the_target_index_cache_can_be_suppressed() {
     );
 
     let without = fixture.target("without-index");
-    let (result, _) = sync(&fixture, &without, None, CancellationToken::new(), false).await;
+    let (result, _) = sync(
+        &fixture,
+        &without,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
     result.expect("sync succeeds");
     assert!(
         !without.join(longtail::TARGET_INDEX_CACHE_NAME).exists(),
@@ -391,16 +418,76 @@ async fn a_rescan_removes_files_the_version_does_not_name() {
     let fixture = Fixture::publish().await;
     let target = fixture.target("client");
 
-    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
     result.expect("sync succeeds");
 
     let stray = target.join("Binaries/left-behind.log");
     fs::write(&stray, b"from an older build").unwrap();
 
-    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
     let summary = result.expect("sync succeeds");
 
     assert!(!stray.exists(), "a rescan cleans the target");
+    assert_eq!(summary.assets_removed, 1);
+}
+
+/// Unreal's `Saved/` holds pending traces, logs and config that no version names, so a
+/// rescan with the exclude must leave it alone while still cleaning everything else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rescan_keeps_unreal_saved() {
+    let fixture = Fixture::publish().await;
+    let target = fixture.target("client");
+
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
+    result.expect("sync succeeds");
+
+    let stray = target.join("Binaries/left-behind.log");
+    let trace = target.join("Fellowship/Saved/Profiling/x.utrace");
+    let log = target.join("Saved/Logs/y.log");
+    fs::write(&stray, b"from an older build").unwrap();
+    fs::create_dir_all(trace.parent().unwrap()).unwrap();
+    fs::write(&trace, b"trace bytes").unwrap();
+    fs::create_dir_all(log.parent().unwrap()).unwrap();
+    fs::write(&log, b"log bytes").unwrap();
+
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        Some(UNREAL_SAVED_EXCLUDE),
+    )
+    .await;
+    let summary = result.expect("sync succeeds");
+
+    assert!(!stray.exists(), "the rest of the target is still cleaned");
+    assert_eq!(fs::read(&trace).unwrap(), b"trace bytes");
+    assert_eq!(fs::read(&log).unwrap(), b"log bytes");
     assert_eq!(summary.assets_removed, 1);
 }
 
@@ -413,7 +500,15 @@ async fn verify_reports_a_corrupted_block() {
     let fixture = Fixture::publish().await;
     let target = fixture.target("client");
 
-    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
     result.expect("initial sync succeeds");
 
     // Corrupt a stored block in place, leaving its name - and so its hash - untouched.
@@ -433,6 +528,7 @@ async fn verify_reports_a_corrupted_block() {
         CancellationToken::new(),
         false,
         SyncMode::Verify,
+        None,
     )
     .await;
 
@@ -455,7 +551,15 @@ async fn verify_repairs_the_version_and_keeps_everything_else() {
     let fixture = Fixture::publish().await;
     let target = fixture.target("client");
 
-    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
     result.expect("initial sync succeeds");
 
     // Something the build owns, damaged; and something it does not, which must survive.
@@ -472,6 +576,7 @@ async fn verify_repairs_the_version_and_keeps_everything_else() {
         CancellationToken::new(),
         false,
         SyncMode::Verify,
+        None,
     )
     .await;
     let summary = result.expect("verify succeeds");
@@ -496,7 +601,15 @@ async fn verify_of_a_healthy_install_changes_nothing() {
     let fixture = Fixture::publish().await;
     let target = fixture.target("client");
 
-    let (result, _) = sync(&fixture, &target, None, CancellationToken::new(), false).await;
+    let (result, _) = sync(
+        &fixture,
+        &target,
+        None,
+        CancellationToken::new(),
+        false,
+        None,
+    )
+    .await;
     result.expect("initial sync succeeds");
     let before = tree(&target);
 
@@ -507,6 +620,7 @@ async fn verify_of_a_healthy_install_changes_nothing() {
         CancellationToken::new(),
         false,
         SyncMode::Verify,
+        None,
     )
     .await;
     let summary = result.expect("verify succeeds");

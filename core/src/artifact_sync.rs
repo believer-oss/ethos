@@ -505,6 +505,12 @@ pub enum SyncMode {
     Verify,
 }
 
+/// Longtail exclude regex for Unreal's `Saved/` at any depth (`Saved/` and
+/// `Fellowship/Saved/`). Longtail matches unanchored against root-relative `/` paths, so
+/// `Fellowship/NotSaved/` and `Saved.txt` do not match. A client sync that scans the
+/// target would otherwise delete pending traces, logs and `Saved/Config`.
+pub const UNREAL_SAVED_EXCLUDE: &str = r"(^|/)Saved/";
+
 /// One sync, described.
 pub struct SyncRequest<'a> {
     pub kind: SyncKind,
@@ -523,6 +529,8 @@ pub struct SyncRequest<'a> {
     /// success having checked nothing.
     pub cache_target_index: bool,
     pub transfer_acceleration: bool,
+    /// Longtail exclude regex: matching paths are neither scanned nor removed.
+    pub exclude_regex: Option<&'static str>,
 }
 
 impl<'a> SyncRequest<'a> {
@@ -535,6 +543,7 @@ impl<'a> SyncRequest<'a> {
             mode: SyncMode::Download,
             cache_target_index: true,
             transfer_acceleration: true,
+            exclude_regex: None,
         }
     }
 
@@ -552,6 +561,11 @@ impl<'a> SyncRequest<'a> {
 
     pub fn with_transfer_acceleration(mut self, enabled: bool) -> Self {
         self.transfer_acceleration = enabled;
+        self
+    }
+
+    pub fn excluding(mut self, regex: &'static str) -> Self {
+        self.exclude_regex = Some(regex);
         self
     }
 
@@ -834,6 +848,7 @@ impl ArtifactSync {
         options.remote_worker_count = BLOCK_WORKER_COUNT;
         options.cache_target_index = request.cache_target_index;
         options.s3_options = aws_client.longtail_s3_options(request.transfer_acceleration);
+        options.exclude_filter_regex = request.exclude_regex.map(str::to_owned);
 
         if request.mode == SyncMode::Verify {
             // Both halves matter. Without the re-hash this checks nothing about the bytes
@@ -865,6 +880,19 @@ impl ArtifactSync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_exclude_matches_saved_directories_only() {
+        let filter = longtail::RegexPathFilter::new(None, Some(UNREAL_SAVED_EXCLUDE)).unwrap();
+
+        assert!(!filter.include("Fellowship/Saved/Logs/a.log", false));
+        assert!(!filter.include("Saved/x", false));
+        assert!(!filter.include("Fellowship/Saved", true));
+
+        assert!(filter.include("Fellowship/Content/Paks/p.pak", false));
+        assert!(filter.include("Fellowship/NotSaved/x", false));
+        assert!(filter.include("Fellowship/Saved.txt", false));
+    }
 
     /// The trap a single shared token would fall into: `CancellationToken` never
     /// un-cancels, so cancelling one download must not poison the next.

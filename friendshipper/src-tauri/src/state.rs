@@ -14,6 +14,7 @@ use crate::engine::EngineProvider;
 use crate::repo::RepoStatusRef;
 use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
+use ethos_core::capture::service::CaptureService;
 use ethos_core::clients::git;
 use ethos_core::clients::github;
 use ethos_core::clients::kube::KubeClient;
@@ -53,6 +54,7 @@ pub struct AppState<T> {
     pub frontend_op_tx: STDSender<FrontendOp>,
 
     pub aws_client: Arc<TokioRwLock<Option<AWSClient>>>,
+    pub capture: CaptureService,
     pub kube_client: Arc<RwLock<Option<KubeClient>>>,
     pub additional_kube_clients: Arc<RwLock<HashMap<String, KubeClient>>>,
 
@@ -173,6 +175,14 @@ where
         let mut engine = T::new_from_config(app_config.read().clone(), repo_config.read().clone());
         engine.load_caches().await;
 
+        let aws_client = Arc::new(TokioRwLock::new(aws_client));
+        let capture = CaptureService::new(
+            app_config.clone(),
+            dynamic_config.clone(),
+            artifact_sync.download_path.0.clone(),
+            aws_client.clone(),
+        );
+
         debug!("AppState preparation complete.");
         Ok(Self {
             app_config,
@@ -186,7 +196,8 @@ where
             operation_tx,
             notification_tx,
             frontend_op_tx,
-            aws_client: Arc::new(TokioRwLock::new(aws_client)),
+            aws_client,
+            capture,
             kube_client,
             additional_kube_clients: Arc::new(RwLock::new(HashMap::new())),
             github_client,

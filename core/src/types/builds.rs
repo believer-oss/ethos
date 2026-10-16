@@ -24,4 +24,7 @@ pub enum LaunchMode {
 pub struct LaunchOptions {
     pub name: String,
     pub launch_mode: LaunchMode,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playtest: Option<String>,
 }

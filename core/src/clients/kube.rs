@@ -28,7 +28,8 @@ use crate::types::argo::workflow::{
 use crate::types::errors::CoreError;
 use crate::types::gameserver::{GameServer, GameServerResults, GameServerSpec};
 use crate::types::playtests::{
-    CreatePlaytestRequest, Group, GroupFullError, Playtest, UpdatePlaytestRequest,
+    validate_capture_request, CreatePlaytestRequest, Group, GroupFullError, Playtest,
+    UpdatePlaytestRequest, CLIENT_CAPTURE_ANNOTATION,
 };
 use crate::types::project::ProjectConfig;
 use crate::utils::junit::JunitOutput;
@@ -56,6 +57,20 @@ pub struct KubeConfig {
     kubeconfig: kube::Config,
     expires_at: Instant,
     last_retry_time: Option<Instant>,
+}
+
+fn ensure_capture_args_kept(client_capture: bool, res: Playtest) -> Result<Playtest, CoreError> {
+    let kept = res
+        .spec
+        .game_client_cmd_args
+        .as_ref()
+        .is_some_and(|a| !a.is_empty());
+    if client_capture && !kept {
+        return Err(CoreError::Internal(anyhow!(
+            "Saved, but the cluster dropped gameClientCmdArgs (operator CRD not updated). Capture is not active for this playtest."
+        )));
+    }
+    Ok(res)
 }
 
 impl KubeClient {
@@ -516,6 +531,9 @@ impl KubeClient {
         input: CreatePlaytestRequest,
         owner: String,
     ) -> Result<Playtest, CoreError> {
+        validate_capture_request(input.client_capture, &input.spec.game_client_cmd_args)?;
+        let client_capture = input.client_capture;
+
         let client = Client::try_from(self.kubeconfig().await?)?;
         let api: Api<Playtest> = Api::default_namespaced(client);
 
@@ -532,10 +550,13 @@ impl KubeClient {
                 "true".to_string(),
             );
         }
+        if client_capture {
+            annotations.insert(CLIENT_CAPTURE_ANNOTATION.to_string(), "true".to_string());
+        }
         playtest.metadata.annotations = Some(annotations);
 
         match api.create(&pp, &playtest).await {
-            Ok(res) => Ok(res),
+            Ok(res) => ensure_capture_args_kept(client_capture, res),
             Err(e) => Err(self.handle_kube_error(e).await),
         }
     }
@@ -547,6 +568,9 @@ impl KubeClient {
         input: UpdatePlaytestRequest,
         owner: String,
     ) -> Result<Playtest, CoreError> {
+        validate_capture_request(input.client_capture, &input.spec.game_client_cmd_args)?;
+        let client_capture = input.client_capture;
+
         let client = Client::try_from(self.kubeconfig().await?)?;
         let api: Api<Playtest> = Api::default_namespaced(client);
 
@@ -554,31 +578,10 @@ impl KubeClient {
             Ok(existing) => {
                 let pp = PostParams::default();
 
-                let mut playtest = Playtest::new(name, input.spec);
-                playtest.metadata.resource_version = existing.metadata.resource_version;
-                let mut annotations =
-                    BTreeMap::from([(String::from("believer.dev/project"), input.project)]);
-                if let Some(existing_annotations) = existing.metadata.annotations {
-                    match existing_annotations.get("believer.dev/owner") {
-                        Some(o) => {
-                            annotations.insert(String::from("believer.dev/owner"), o.to_string())
-                        }
-                        None => annotations.insert(String::from("believer.dev/owner"), owner),
-                    };
-                } else {
-                    annotations.insert(String::from("believer.dev/owner"), owner);
-                }
-                if input.do_not_prune {
-                    annotations.insert(
-                        String::from("believer.dev/do-not-prune"),
-                        "true".to_string(),
-                    );
-                }
-                playtest.metadata.annotations = Some(annotations);
-                playtest.spec.groups = existing.spec.groups;
+                let playtest = Playtest::for_update(name, existing, input, owner);
 
                 match api.replace(name, &pp, &playtest).await {
-                    Ok(res) => Ok(res),
+                    Ok(res) => ensure_capture_args_kept(client_capture, res),
                     Err(e) => Err(self.handle_kube_error(e).await),
                 }
             }
