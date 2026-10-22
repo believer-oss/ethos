@@ -112,17 +112,26 @@ impl Server {
         )?;
 
         let repo_path = shared_state.app_config.read().repo_path.clone();
+        let uproject_path = shared_state.repo_config.read().uproject_path.clone();
         if !repo_path.is_empty() {
-            let mut content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone());
-            content_dir.push(shared_state.repo_config.read().uproject_path.clone());
+            let mut content_dir = PathBuf::from(repo_path);
+            content_dir.push(&uproject_path);
             content_dir.pop(); // pop off uproject filename
             content_dir.push(shared_state.engine.get_default_content_subdir());
 
-            let inner_span = tracing::info_span!("watcher_start_watch").entered();
-            debouncer
-                .watcher()
-                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
-            inner_span.exit();
+            // A checkout without friendshipper.yaml must not block startup.
+            if uproject_path.is_empty() || !content_dir.is_dir() {
+                warn!(
+                    "Content directory {} not found, skipping file watcher",
+                    content_dir.display()
+                );
+            } else {
+                let inner_span = tracing::info_span!("watcher_start_watch").entered();
+                debouncer
+                    .watcher()
+                    .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
+                inner_span.exit();
+            }
         }
 
         info!("starting server at {}", address);

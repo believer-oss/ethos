@@ -818,6 +818,16 @@
 					<Tooltip class="text-sm" placement="bottom">
 						Copy and paste your GitHub Personal Access Token (PAT) here.
 					</Tooltip>
+
+					<div class="flex flex-row gap-2 items-center">
+						<Label class="text-white">Show all branches</Label>
+						<Toggle bind:checked={localAppConfig.showAllBranches} class="w-8 h-8 text-4xl" />
+					</div>
+					<Helper class="text-sm text-gray-300 dark:text-gray-300">
+						By default the branch selector lists only <code>f11r-branch-*</code> branches. Turn this
+						on to list every branch on origin, including <code>main</code> and branches created outside
+						Friendshipper. Takes effect when you press Apply.
+					</Helper>
 				</div>
 			</div>
 		</div>

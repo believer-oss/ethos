@@ -1361,6 +1361,14 @@
 									active={activeUrl === '/source/repository'}
 								/>
 								<SidebarItem
+									label="Branch Management"
+									activeClass={sidebarSubItemActiveClass}
+									nonActiveClass={sidebarSubItemInactiveClass}
+									spanClass={sidebarSubItemClass}
+									href="/source/branches"
+									active={activeUrl === '/source/branches'}
+								/>
+								<SidebarItem
 									label="Locks"
 									activeClass={sidebarSubItemActiveClass}
 									nonActiveClass={sidebarSubItemInactiveClass}

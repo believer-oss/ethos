@@ -2,8 +2,10 @@ import type { ChangeSet, Commit, CommitFileInfo, ModifiedFile } from '@ethos/cor
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	ArtifactStatus,
+	BranchInfo,
 	CloneRequest,
 	CommitInfo,
+	CreateBranchResponse,
 	FileHistoryResponse,
 	GitHubPullRequest,
 	GitHubStatusResponse,
@@ -19,6 +21,7 @@ import type {
 	RevertFilesRequest,
 	Snapshot,
 	SnapshotPreviewResponse,
+	SwitchBranchResponse,
 	SyncKind,
 	VerifyResponse,
 	ZipLocalChangesResponse,
@@ -279,6 +282,15 @@ export const getCommitFileTextClass = (action: string) => {
 export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');
 
 export const checkoutTargetBranch = async (): Promise<void> => invoke('checkout_target_branch');
+
+export const listBranches = async (all: boolean): Promise<BranchInfo[]> =>
+	invoke('list_branches', { all });
+
+export const createBranch = async (slug: string): Promise<CreateBranchResponse> =>
+	invoke('create_branch', { slug });
+
+export const switchBranch = async (branch: string): Promise<SwitchBranchResponse> =>
+	invoke('switch_branch', { branch });
 
 export const listRepoDirectory = async (path: string): Promise<RepoDirectoryListing> =>
 	invoke('list_repo_directory', { path });
