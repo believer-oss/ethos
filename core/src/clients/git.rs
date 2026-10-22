@@ -22,6 +22,7 @@ use tracing::{debug, error, info, instrument};
 
 use crate::types::errors::CoreError;
 use crate::types::locks::VerifyLocksResponse;
+use crate::types::repo::BranchInfo;
 use crate::types::repo::File;
 use crate::types::repo::FileState;
 use crate::types::repo::Snapshot;
@@ -61,6 +62,12 @@ pub enum MergeType {
     FF,
     FFOnly,
     NoFF,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateRemoteBranchOutcome {
+    Created,
+    AlreadyExists,
 }
 
 #[derive(Eq, PartialEq)]
@@ -182,6 +189,44 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     }
 
     bail!("Unable to parse string")
+}
+
+/// Parses `for-each-ref` output written with `%1f` field and `%1e` record separators.
+pub(crate) fn parse_branch_records(output: &str) -> Vec<BranchInfo> {
+    output
+        .split('\x1e')
+        .map(|record| record.trim_start_matches('\n'))
+        .filter(|record| !record.is_empty())
+        .filter_map(|record| {
+            let fields: Vec<&str> = record.split('\x1f').collect();
+            let [name, sha, short_sha, commit_date, author, subject, contents] = fields[..] else {
+                return None;
+            };
+            if name == "HEAD" {
+                return None;
+            }
+            Some(BranchInfo {
+                name: name.to_string(),
+                sha: sha.to_string(),
+                short_sha: short_sha.to_string(),
+                commit_date: commit_date.to_string(),
+                author: author.to_string(),
+                subject: subject.to_string(),
+                message: contents.trim_end().to_string(),
+                is_feature_branch: false,
+                is_protected: false,
+                is_current: false,
+            })
+        })
+        .collect()
+}
+
+/// Whether `git push --porcelain` output reports `refs/heads/<name>` as a newly created ref.
+pub(crate) fn push_created_new_ref(porcelain_stdout: &str, name: &str) -> bool {
+    let target = format!(":refs/heads/{name}\t");
+    porcelain_stdout
+        .lines()
+        .any(|line| line.starts_with("*\t") && line.contains(&target))
 }
 
 impl Git {
@@ -1273,6 +1318,80 @@ impl Git {
             .await?;
 
         Ok(!output.is_empty())
+    }
+
+    /// Lists `refs/remotes/origin/*`, newest commit first. Reads local refs only.
+    pub async fn list_remote_branches(&self) -> anyhow::Result<Vec<BranchInfo>> {
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "for-each-ref",
+                    "--sort=-committerdate",
+                    "refs/remotes/origin",
+                    "--format=%(refname:lstrip=3)%1f%(objectname)%1f%(objectname:short)%1f%(committerdate:iso-strict)%1f%(authorname)%1f%(subject)%1f%(contents)%1e",
+                ],
+                Opts {
+                    skip_notify_frontend: true,
+                    should_log_stdout: false,
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        Ok(parse_branch_records(&output))
+    }
+
+    /// Whether `refs/heads/<name>` exists on origin.
+    ///
+    /// The single fully qualified ls-remote check for branch existence. Use it instead of
+    /// `has_remote_branch`, which tail-matches (`foo` also matches `refs/heads/team/foo`).
+    pub async fn has_remote_branch_exact(&self, name: &str) -> anyhow::Result<bool> {
+        let refname = format!("refs/heads/{name}");
+        let output = self
+            .run_and_collect_output(
+                &["ls-remote", "--heads", "origin", &refname],
+                Opts::default(),
+            )
+            .await?;
+
+        Ok(output
+            .lines()
+            .any(|line| line.split_whitespace().nth(1) == Some(refname.as_str())))
+    }
+
+    /// Creates `name` on origin at `refs/remotes/origin/<base>`, failing if it already exists.
+    ///
+    /// The empty lease makes the push atomic: git rejects it if the ref exists at another SHA,
+    /// and reports "up to date" (no `*` line) if it exists at the same SHA.
+    pub async fn create_remote_branch(
+        &self,
+        name: &str,
+        base: &str,
+    ) -> anyhow::Result<CreateRemoteBranchOutcome> {
+        let lease = format!("--force-with-lease=refs/heads/{name}:");
+        let refspec = format!("refs/remotes/origin/{base}:refs/heads/{name}");
+        let result = self
+            .run_and_collect_output(
+                &["push", "--porcelain", &lease, "origin", &refspec],
+                Opts::default().with_complete_error(),
+            )
+            .await;
+
+        match result {
+            Ok(stdout) => {
+                if push_created_new_ref(&stdout, name) {
+                    Ok(CreateRemoteBranchOutcome::Created)
+                } else {
+                    Ok(CreateRemoteBranchOutcome::AlreadyExists)
+                }
+            }
+            Err(e) => match self.has_remote_branch_exact(name).await {
+                Ok(true) => Ok(CreateRemoteBranchOutcome::AlreadyExists),
+                Ok(false) | Err(_) => {
+                    Err(anyhow!("Failed to create branch '{name}' on origin: {e}"))
+                }
+            },
+        }
     }
 
     /// Check whether `refs/remotes/origin/<branch>` exists locally.
@@ -2610,5 +2729,291 @@ mod tests {
                 .exists(),
             "localcopy was not cleaned up after identical restore"
         );
+    }
+
+    /// Runs git in `dir`, asserts success and returns trimmed stdout.
+    fn git_ok(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = StdCommand::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// `setup_repo()` plus a local bare repo as `origin` with `main` pushed and fetched.
+    /// Returns (git, repo dir guard, origin dir guard).
+    fn setup_repo_with_bare_origin() -> (Git, TempDir, TempDir) {
+        let (git, dir) = setup_repo();
+        let origin = tempfile::tempdir().expect("create origin tempdir");
+        git_ok(origin.path(), &["init", "--bare"]);
+        let origin_path = origin.path().to_string_lossy().to_string();
+        git_ok(&git.repo_path, &["remote", "add", "origin", &origin_path]);
+        git_ok(&git.repo_path, &["push", "origin", "HEAD:refs/heads/main"]);
+        git_ok(&git.repo_path, &["fetch", "origin"]);
+        (git, dir, origin)
+    }
+
+    fn remote_sha(origin: &std::path::Path, refname: &str) -> String {
+        git_ok(origin, &["rev-parse", "--verify", refname])
+    }
+
+    #[test]
+    fn test_parse_branch_records() {
+        let output = concat!(
+            "f11r-branch-new\x1faaaa1111\x1faaaa111\x1f2026-10-21T13:01:46-07:00\x1fAlice\x1fAdd thing\x1fAdd thing\n\nBody line one\nBody line two\n\n\x1e\n",
+            "HEAD\x1fbbbb2222\x1fbbbb222\x1f2026-10-20T10:00:00-07:00\x1fBob\x1fHead\x1fHead\n\x1e\n",
+            "broken\x1fcccc\x1fccc\x1f2026-10-19T10:00:00-07:00\x1fCarol\x1e\n",
+            "main\x1fdddd4444\x1fdddd444\x1f2026-10-18T09:00:00-07:00\x1fDan\x1fOne-liner\x1fOne-liner\n\x1e"
+        );
+
+        let records = parse_branch_records(output);
+        let names: Vec<&str> = records.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, vec!["f11r-branch-new", "main"]);
+
+        let first = &records[0];
+        assert_eq!(first.sha, "aaaa1111");
+        assert_eq!(first.short_sha, "aaaa111");
+        assert_eq!(first.commit_date, "2026-10-21T13:01:46-07:00");
+        assert_eq!(first.author, "Alice");
+        assert_eq!(first.subject, "Add thing");
+        assert_eq!(first.message, "Add thing\n\nBody line one\nBody line two");
+        assert!(!first.is_feature_branch && !first.is_protected && !first.is_current);
+
+        assert_eq!(records[1].message, "One-liner");
+        assert!(parse_branch_records("").is_empty());
+        assert!(parse_branch_records("\n").is_empty());
+    }
+
+    #[test]
+    fn test_push_created_new_ref() {
+        let name = "f11r-branch-x";
+        assert!(push_created_new_ref(
+            "To C:/origin\n*\trefs/remotes/origin/main:refs/heads/f11r-branch-x\t[new branch]\nDone",
+            name
+        ));
+        assert!(!push_created_new_ref(
+            "To C:/origin\n=\trefs/remotes/origin/main:refs/heads/f11r-branch-x\t[up to date]\nDone",
+            name
+        ));
+        assert!(!push_created_new_ref(
+            "!\trefs/remotes/origin/main:refs/heads/f11r-branch-x\t[rejected] (stale info)",
+            name
+        ));
+        assert!(!push_created_new_ref("", name));
+        assert!(!push_created_new_ref(
+            "*\trefs/remotes/origin/main:refs/heads/f11r-branch-xy\t[new branch]",
+            name
+        ));
+        assert!(!push_created_new_ref(
+            "*\trefs/remotes/origin/main:refs/heads/team/f11r-branch-x\t[new branch]",
+            name
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_list_remote_branches_reads_origin_refs_and_skips_head() {
+        let (git, _dir) = setup_repo();
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/a", "HEAD"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/feature/b", "HEAD"],
+        );
+        git_ok(
+            &git.repo_path,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/a",
+            ],
+        );
+
+        let branches = git
+            .list_remote_branches()
+            .await
+            .expect("list_remote_branches");
+        let mut names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a", "feature/b"]);
+
+        let head_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        for b in &branches {
+            assert_eq!(b.sha, head_sha);
+            assert!(head_sha.starts_with(&b.short_sha));
+            assert_eq!(b.subject, "seed");
+            assert_eq!(b.message, "seed");
+            assert_eq!(b.author, "test");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_new_then_up_to_date() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+        let main_sha = git_ok(&git.repo_path, &["rev-parse", "refs/remotes/origin/main"]);
+
+        let outcome = git
+            .create_remote_branch("f11r-branch-x", "main")
+            .await
+            .expect("create_remote_branch");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::Created);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-x"),
+            main_sha
+        );
+
+        // Same name at the same SHA: git reports "up to date" and exits 0.
+        let outcome = git
+            .create_remote_branch("f11r-branch-x", "main")
+            .await
+            .expect("create_remote_branch again");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::AlreadyExists);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-x"),
+            main_sha
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_existing_at_different_sha() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+        let first_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+
+        std::fs::write(git.repo_path.join("seed.txt"), "second").unwrap();
+        git_ok(&git.repo_path, &["commit", "-am", "second"]);
+        let second_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/f11r-branch-y"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/main", &first_sha],
+        );
+
+        let outcome = git
+            .create_remote_branch("f11r-branch-y", "main")
+            .await
+            .expect("create_remote_branch");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::AlreadyExists);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-y"),
+            second_sha
+        );
+    }
+
+    // A plain push would fast-forward an existing branch; the empty lease must refuse it.
+    #[tokio::test]
+    async fn test_create_remote_branch_does_not_fast_forward_existing() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+        let first_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/f11r-branch-z"],
+        );
+
+        std::fs::write(git.repo_path.join("seed.txt"), "second").unwrap();
+        git_ok(&git.repo_path, &["commit", "-am", "second"]);
+        git_ok(&git.repo_path, &["push", "origin", "HEAD:refs/heads/main"]);
+        git_ok(&git.repo_path, &["fetch", "origin"]);
+
+        let outcome = git
+            .create_remote_branch("f11r-branch-z", "main")
+            .await
+            .expect("create_remote_branch");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::AlreadyExists);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-z"),
+            first_sha
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_reports_push_failure() {
+        let (git, _dir) = setup_repo();
+        let missing = tempfile::tempdir().expect("create tempdir");
+        let missing_origin = missing.path().join("does-not-exist");
+        git_ok(
+            &git.repo_path,
+            &["remote", "add", "origin", &missing_origin.to_string_lossy()],
+        );
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+
+        let err = git
+            .create_remote_branch("f11r-branch-x", "main")
+            .await
+            .expect_err("push to a missing origin must fail");
+        let msg = err.to_string();
+        // The existence re-check also fails here, so the original push error is returned.
+        assert!(
+            msg.contains("Git command failed:"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_wraps_error_when_branch_absent() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+
+        // Base ref missing locally: push fails, origin is reachable, branch absent.
+        let err = git
+            .create_remote_branch("f11r-branch-x", "no-such-base")
+            .await
+            .expect_err("push from a missing base must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("Failed to create branch 'f11r-branch-x' on origin:"),
+            "unexpected error: {msg}"
+        );
+        // git's stderr names the missing source ref.
+        assert!(msg.contains("no-such-base"), "unexpected error: {msg}");
+        assert!(
+            StdCommand::new("git")
+                .args(["rev-parse", "--verify", "refs/heads/f11r-branch-x"])
+                .current_dir(origin.path())
+                .output()
+                .map(|o| !o.status.success())
+                .unwrap(),
+            "branch must not exist on origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_remote_branch_exact() {
+        let (git, _dir, _origin) = setup_repo_with_bare_origin();
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/f11r-branch-x"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/team/f11r-branch-x"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/team/f11r-branch-z"],
+        );
+
+        assert!(git.has_remote_branch_exact("f11r-branch-x").await.unwrap());
+        assert!(git.has_remote_branch_exact("main").await.unwrap());
+        assert!(!git.has_remote_branch_exact("branch-x").await.unwrap());
+        assert!(!git
+            .has_remote_branch_exact("f11r-branch-nope")
+            .await
+            .unwrap());
+        // Only `team/f11r-branch-z` exists; the tail-matching helper would say yes.
+        assert!(!git.has_remote_branch_exact("f11r-branch-z").await.unwrap());
+        assert!(git.has_remote_branch("f11r-branch-z").await.unwrap());
     }
 }

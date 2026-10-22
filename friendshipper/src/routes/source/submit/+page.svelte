@@ -100,6 +100,7 @@
 		appConfig,
 		changeSets,
 		commitMessage,
+		dynamicConfig,
 		repoConfig,
 		repoStatus,
 		selectedFiles
@@ -109,6 +110,14 @@
 	import UnrealEngineLogoNoCircle from '$lib/icons/UnrealEngineLogoNoCircle.svelte';
 	import { checkEngineReady, openUrlForPath } from '$lib/engine';
 	import FileHistoryModal from '$lib/components/FileHistoryModal.svelte';
+	import BranchSelector from '$lib/components/BranchSelector.svelte';
+	import CommitTagPicker from '$lib/components/CommitTagPicker.svelte';
+	import {
+		canQuickSubmitOn,
+		composeCommitMessage,
+		performSwitch,
+		selectedTags
+	} from '$lib/branches';
 
 	let fileHistoryModalOpen = false;
 	let fileHistoryPath: string | null = null;
@@ -130,6 +139,7 @@
 	let tempCommitType = '';
 	let tempCommitScope = '';
 	let tempCommitMessage = '';
+	let selectedCommitTags: string[] = [];
 	let commitMessageValid = false;
 
 	// commit file details
@@ -169,6 +179,19 @@
 	// progress modal
 	let showProgressModal = false;
 	let progressModalTitle = '';
+
+	const handleBranchSelected = async (branch: string) => {
+		if (branch === $repoStatus?.branch) return;
+		loading = true;
+		showProgressModal = true;
+		progressModalTitle = `Switching to ${branch}`;
+		try {
+			await performSwitch(branch);
+		} finally {
+			showProgressModal = false;
+			loading = false;
+		}
+	};
 
 	let selectAll = false;
 	let pulls: GitHubPullRequest[] = [];
@@ -259,6 +282,11 @@
 		typeof $commitMessage === 'string'
 			? $commitMessage
 			: `${$commitMessage.type}(${$commitMessage.scope}): ${$commitMessage.message}`;
+	$: composedCommitMessage = composeCommitMessage(
+		selectedTags($dynamicConfig?.commitTags ?? [], selectedCommitTags),
+		formattedCommitMessage
+	);
+	$: quickSubmitBranchAllowed = canQuickSubmitOn($repoStatus?.branch, $repoConfig);
 	$: hasUnsubmittableFiles = $selectedFiles.some(
 		(file) => file.submitStatus !== SubmitStatus.Ok && file.submitStatus !== SubmitStatus.Unknown
 	);
@@ -593,10 +621,12 @@
 		const message = get(commitMessage);
 
 		const req: PushRequest = {
-			commitMessage:
+			commitMessage: composeCommitMessage(
+				selectedTags($dynamicConfig?.commitTags ?? [], selectedCommitTags),
 				typeof message === 'string'
 					? message
-					: `${message.type}(${message.scope}): ${message.message}`,
+					: `${message.type}(${message.scope}): ${message.message}`
+			),
 			files: $selectedFiles.map((file) => file.path)
 		};
 
@@ -623,6 +653,7 @@
 
 			// note that we don't reset tempCommitType or tempCommitScope because the UI already has values selected
 			tempCommitMessage = '';
+			selectedCommitTags = selectedCommitTags.map(() => '');
 
 			$selectedFiles = [];
 			selectAll = false;
@@ -1426,9 +1457,11 @@
 			class="w-full h-full p-4 sm:p-4 max-w-full max-h-16 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 		>
 			<div class="flex flex-row items-center justify-between gap-2">
-				<p class="font-semibold text-sm text-gray-400">
-					On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
-				</p>
+				<BranchSelector
+					current={$repoStatus?.branch ?? ''}
+					disabled={loading || quickSubmitting || syncing}
+					on:select={(e) => handleBranchSelected(e.detail)}
+				/>
 			</div>
 		</Card>
 		<Card
@@ -1514,12 +1547,17 @@
 					}}
 					class="text-white bg-secondary-800 dark:bg-space-950 min-h-[4rem] h-full border-gray-400"
 				/>
+				<CommitTagPicker
+					categories={$dynamicConfig?.commitTags ?? []}
+					bind:selected={selectedCommitTags}
+					disabled={loading || quickSubmitting}
+				/>
 				<div class="flex flex-row w-full align-middle justify-end">
 					<ButtonGroup class="space-x-px">
 						<Button
 							id="quick-submit"
 							color="primary"
-							disabled={!canSubmit || loading}
+							disabled={!canSubmit || loading || !quickSubmitBranchAllowed}
 							on:click={async () => {
 								await handleQuickSubmitClicked();
 							}}
@@ -1702,6 +1740,12 @@
 	class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
 	placement="bottom"
 	><p>
+		{#if !quickSubmitBranchAllowed}
+			<span class="text-red-400"
+				>Submitting to a branch isn't supported yet — switch back to {$appConfig.targetBranch} with the
+				reset button</span
+			><br /><br />
+		{/if}
 		{#if hasUnsubmittableFiles}
 			<span class="text-red-400"
 				>Some selected files require checkout (lock) before submitting. Deselect them or lock them
@@ -1824,7 +1868,7 @@
 >
 	<div class="flex flex-col gap-3">
 		<h3 class="text-lg font-semibold text-white">Quick Submit Preview</h3>
-		<p class="text-sm text-gray-300 break-words">{formattedCommitMessage}</p>
+		<p class="text-sm text-gray-300 break-words">{composedCommitMessage}</p>
 		<p class="text-sm text-gray-400">
 			{$selectedFiles.length} file{$selectedFiles.length === 1 ? '' : 's'}
 		</p>

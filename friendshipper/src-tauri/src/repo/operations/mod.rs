@@ -1,3 +1,7 @@
+pub use branch::{
+    create_branch_handler, list_branches_handler, switch_branch_handler, CreateBranchOp,
+    SwitchBranchOp,
+};
 pub use branch_compare::branch_compare_handler;
 pub use browse::list_directory_handler;
 pub use changeset::{load_changeset, save_changeset, SaveChangeSetRequest};
@@ -155,6 +159,7 @@ mod tests {
     }
 }
 
+mod branch;
 mod branch_compare;
 mod browse;
 mod changeset;

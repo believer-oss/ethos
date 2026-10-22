@@ -23,7 +23,7 @@ use ethos_core::clients::github;
 use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
-use ethos_core::types::config::RepoConfigRef;
+use ethos_core::types::config::{RepoConfig, RepoConfigRef};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::github::TokenNotFoundError;
 use ethos_core::types::locks::LockOperation;
@@ -810,6 +810,13 @@ where
         // some submit-specific behavior.
         status_op.execute().await?;
 
+        // refuse before the snapshot so nothing is mutated
+        {
+            let branch = self.repo_status.read().branch.clone();
+            let target = self.app_config.read().target_branch.clone();
+            ensure_quick_submit_allowed(&branch, &self.repo_config.read(), &target)?;
+        }
+
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {
             let repo_status = self.repo_status.read().clone();
@@ -1503,8 +1510,24 @@ where
     Ok(Json("ok".to_string()))
 }
 
+/// A Quick Submit branch (e.g. `f11r-main-Jane-1761000000`); `f11r-branch-*` feature branches are excluded.
 pub fn is_quicksubmit_branch(branch: &str) -> bool {
-    branch.starts_with("f11r")
+    branch.starts_with("f11r") && !ethos_core::types::repo::is_feature_branch(branch)
+}
+
+/// Quick Submit is only allowed from a protected branch or a Quick Submit branch.
+fn ensure_quick_submit_allowed(
+    branch: &str,
+    repo_config: &RepoConfig,
+    target_branch: &str,
+) -> Result<(), CoreError> {
+    if repo_config.is_protected_branch(branch) || is_quicksubmit_branch(branch) {
+        return Ok(());
+    }
+
+    Err(CoreError::Input(anyhow!(
+        "Quick Submit is only available on a target branch or a Quick Submit branch, but you are on '{branch}'. Switch back to '{target_branch}' with the reset button on the submit page."
+    )))
 }
 
 #[cfg(test)]
@@ -2086,5 +2109,54 @@ mod tests {
             result.is_empty(),
             "lone === divider should not be flagged, got {result:?}"
         );
+    }
+
+    #[test]
+    fn quicksubmit_branch_excludes_feature_branches() {
+        assert!(is_quicksubmit_branch("f11r-main-Jane-1761000000"));
+        assert!(is_quicksubmit_branch("f11r-main-Jane-1761000000-wt"));
+        assert!(!is_quicksubmit_branch("f11r-branch-foo"));
+        assert!(!is_quicksubmit_branch("f11r-branch-"));
+        assert!(!is_quicksubmit_branch("main"));
+        assert!(is_quicksubmit_branch("f11r"));
+        assert!(!is_quicksubmit_branch("my-f11r-branch-x"));
+    }
+
+    fn guard_repo_config() -> RepoConfig {
+        RepoConfig {
+            trunk_branch: "main".to_string(),
+            target_branches: vec![ethos_core::types::config::TargetBranchConfig {
+                name: "release".to_string(),
+                uses_merge_queue: true,
+                blocked_file_globs: Vec::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn quick_submit_allowed_on_protected_and_quicksubmit_branches() {
+        let config = guard_repo_config();
+        for branch in ["main", "release", "f11r-main-Jane-1"] {
+            assert!(
+                ensure_quick_submit_allowed(branch, &config, "main").is_ok(),
+                "{branch} should be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_submit_refused_on_other_branches() {
+        let config = guard_repo_config();
+        for branch in ["f11r-branch-foo", "someone/topic"] {
+            match ensure_quick_submit_allowed(branch, &config, "main") {
+                Err(CoreError::Input(e)) => {
+                    let msg = e.to_string();
+                    assert!(msg.contains(&format!("'{branch}'")), "{msg}");
+                    assert!(msg.contains("'main'"), "{msg}");
+                }
+                other => panic!("{branch} should be refused with Input, got {other:?}"),
+            }
+        }
     }
 }

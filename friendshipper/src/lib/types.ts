@@ -37,6 +37,7 @@ export interface DynamicConfig {
 	// the build-time constant, so changing buckets needs no Friendshipper release.
 	promotedArtifactBucketName?: string;
 	gameServerClusters?: GameServerCluster[];
+	commitTags?: CommitTagCategory[];
 }
 
 export interface ProjectConfig {
@@ -134,6 +135,42 @@ export interface AppConfig {
 	lastQuickSubmitType?: string;
 	lastQuickSubmitScope?: string;
 	disableBackgroundGitOperations: boolean;
+	showAllBranches: boolean;
+}
+
+export interface BranchInfo {
+	name: string;
+	sha: string;
+	shortSha: string;
+	commitDate: string;
+	author: string;
+	subject: string;
+	message: string;
+	isFeatureBranch: boolean;
+	isProtected: boolean;
+	isCurrent: boolean;
+}
+
+export interface CreateBranchResponse {
+	branch: string;
+	switched: boolean;
+	message: Nullable<string>;
+}
+
+export interface SwitchBranchResponse {
+	branch: string;
+	warning: Nullable<string>;
+}
+
+export interface CommitTagOption {
+	tag: string;
+	label: string;
+	description: string;
+}
+
+export interface CommitTagCategory {
+	name: string;
+	options: CommitTagOption[];
 }
 
 export interface PlaytestProfile {
