@@ -31,6 +31,8 @@ it essentially replaces workflows that UGS and P4V support.
   Options) to list every branch on origin except Quick Submit branches.
 - Quick Submit is available on target branches and Quick Submit branches. From a Quick Submit branch, Sync returns you
   to your target branch; the selector and reset button are disabled there.
+- On any other branch, the submit page offers **Submit to branch** instead: it commits the selected files to the current
+  branch and pushes them to origin, and your locks are kept. See [Submit to branch](#submit-to-branch).
 - Branches are deleted on GitHub, not in Friendshipper.
 
 ### Limitations
@@ -80,6 +82,18 @@ operation to switch the user back to the trunk branch if they're not on it alrea
 It should be noted that this process is mainly intended to be used by nontechnical users, or for
 content-only submits. Engineers may want to have more control over their submission process and
 are empowered to do so.
+
+## Submit to branch
+
+On a branch that is neither a target branch nor a Quick Submit branch, the submit page offers **Submit to branch**.
+A banner appears when the branch was not created by Friendshipper. Submit to branch commits the selected files, then
+fast-forward pushes to `origin/<branch>`, but only if origin has not changed since the up-to-date check. It never
+force-pushes, and a pre-submit snapshot is kept.
+
+- **Locks:** they are kept, and freed when the branch merges to main. On a branch that never merges, release them by hand.
+- **Behind origin:** Sync first. If someone pushed in the meantime, your commit is kept locally; Sync, then use "Push N commits".
+- **Files changed on main:** they show a yellow "will conflict at rebase" badge and do not block the submit.
+- **Detached HEAD or rebase in progress:** submitting is unavailable. Open Branch Management.
 
 # [Unreal Plugin](https://github.com/believer-oss/FriendshipperSourceControl)
 
