@@ -40,6 +40,7 @@ export interface DynamicConfig {
 	// Promote through the fleet coordinator (Promotion objects) instead of creating the
 	// promote workflow directly from promotableBuildShards.
 	promotionViaCoordinator?: boolean;
+	commitTags?: CommitTagCategory[];
 }
 
 export interface ProjectConfig {
@@ -138,6 +139,42 @@ export interface AppConfig {
 	lastQuickSubmitScope?: string;
 	disableBackgroundGitOperations: boolean;
 	releaseControlsEnabled?: boolean;
+	showAllBranches: boolean;
+}
+
+export interface BranchInfo {
+	name: string;
+	sha: string;
+	shortSha: string;
+	commitDate: string;
+	author: string;
+	subject: string;
+	message: string;
+	isFeatureBranch: boolean;
+	isProtected: boolean;
+	isCurrent: boolean;
+}
+
+export interface CreateBranchResponse {
+	branch: string;
+	switched: boolean;
+	message: Nullable<string>;
+}
+
+export interface SwitchBranchResponse {
+	branch: string;
+	warning: Nullable<string>;
+}
+
+export interface CommitTagOption {
+	tag: string;
+	label: string;
+	description: string;
+}
+
+export interface CommitTagCategory {
+	name: string;
+	options: CommitTagOption[];
 }
 
 export interface PlaytestProfile {

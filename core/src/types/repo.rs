@@ -431,6 +431,64 @@ pub struct RepoDirectoryListing {
     pub entries: Vec<RepoDirectoryEntry>,
 }
 
+/// Prefix of branches created by Friendshipper's branch support.
+pub const FEATURE_BRANCH_PREFIX: &str = "f11r-branch-";
+
+pub fn is_feature_branch(name: &str) -> bool {
+    name.starts_with(FEATURE_BRANCH_PREFIX)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchInfo {
+    /// Bare name, e.g. `f11r-branch-foo` or `release/1.2`.
+    pub name: String,
+    /// Full object id.
+    pub sha: String,
+    pub short_sha: String,
+    /// ISO 8601 strict, e.g. `2026-10-21T13:01:46-07:00`.
+    pub commit_date: String,
+    pub author: String,
+    /// First line of the commit message.
+    pub subject: String,
+    /// Full commit message, trailing whitespace trimmed.
+    pub message: String,
+    pub is_feature_branch: bool,
+    pub is_protected: bool,
+    pub is_current: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateBranchRequest {
+    pub slug: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchBranchRequest {
+    pub branch: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateBranchResponse {
+    /// Full name, `f11r-branch-<slug>`.
+    pub branch: String,
+    /// True when HEAD is now on the new branch.
+    pub switched: bool,
+    /// Explains why when `switched` is false; null otherwise.
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchBranchResponse {
+    pub branch: String,
+    /// Set when the local branch diverged from origin.
+    pub warning: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {

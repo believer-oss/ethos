@@ -205,6 +205,9 @@ pub struct AppConfig {
     /// changes to shared shards are deliberate; not a security boundary.
     #[serde(default, rename = "releaseControlsEnabled")]
     pub release_controls_enabled: bool,
+    /// Lists every branch on origin in the branch selector, not just `f11r-branch-*`.
+    #[serde(default, rename = "showAllBranches")]
+    pub show_all_branches: bool,
 }
 
 const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
@@ -280,6 +283,7 @@ impl AppConfig {
             last_quick_submit_scope: None,
             disable_background_git_operations: false,
             release_controls_enabled: false,
+            show_all_branches: false,
         }
     }
 
@@ -719,6 +723,13 @@ impl RepoConfig {
             .map(|b| b.blocked_file_globs.as_slice())
             .unwrap_or(&[])
     }
+
+    /// Whether `branch` is the trunk branch or one of the configured target branches.
+    /// An empty `trunk_branch` (absent from the repo config) never matches.
+    pub fn is_protected_branch(&self, branch: &str) -> bool {
+        (!self.trunk_branch.is_empty() && branch == self.trunk_branch)
+            || self.target_branches.iter().any(|b| b.name == branch)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -784,6 +795,23 @@ pub struct GameServerCluster {
     pub region: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommitTagCategory {
+    pub name: String,
+    #[serde(default)]
+    pub options: Vec<CommitTagOption>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommitTagOption {
+    /// Used verbatim in the commit message, e.g. `[ci:linux]`.
+    pub tag: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DynamicConfig {
     #[serde(default, rename = "playtestDiscordChannels")]
@@ -826,6 +854,10 @@ pub struct DynamicConfig {
     /// `PROMOTED_ARTIFACT_BUCKET_NAME` constant, either of which may be absent.
     #[serde(default, rename = "promotedArtifactBucketName")]
     pub promoted_artifact_bucket_name: Option<String>,
+
+    /// CI pipeline tags offered on Quick Submit.
+    #[serde(default, rename = "commitTags")]
+    pub commit_tags: Vec<CommitTagCategory>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -839,7 +871,9 @@ pub struct UnrealVerSelDiagResponse {
 #[cfg(test)]
 mod tests {
     use crate::types::config::CUSTOM_ENGINE_ASSOCIATION_REGEX;
-    use crate::types::config::{AppConfig, ProjectRepoConfig, RepoConfig, TargetBranchConfig};
+    use crate::types::config::{
+        AppConfig, DynamicConfig, ProjectRepoConfig, RepoConfig, TargetBranchConfig,
+    };
     use tempfile::TempDir;
 
     /// The cache budgets and the acceleration toggle all postdate every config.yaml in
@@ -1158,5 +1192,93 @@ targetBranches:
         assert!(!CUSTOM_ENGINE_ASSOCIATION_REGEX.is_match("looking for a dash 63c321a2"));
         assert!(!CUSTOM_ENGINE_ASSOCIATION_REGEX.is_match("believer-5.2-no_underscores"));
         assert!(!CUSTOM_ENGINE_ASSOCIATION_REGEX.is_match("believer-5.2-63c321a2!"));
+    }
+
+    #[test]
+    fn test_is_protected_branch() {
+        let yaml = r#"
+trunkBranch: main
+targetBranches:
+  - name: content-main
+  - name: code-main
+"#;
+        let config: RepoConfig = serde_yaml::from_str(yaml).expect("deserialize repo config");
+
+        assert!(config.is_protected_branch("main"));
+        assert!(config.is_protected_branch("content-main"));
+        assert!(config.is_protected_branch("code-main"));
+        assert!(!config.is_protected_branch("f11r-branch-x"));
+        assert!(!config.is_protected_branch("f11r-main-x-1"));
+        assert!(!config.is_protected_branch(""));
+    }
+
+    #[test]
+    fn test_is_protected_branch_ignores_empty_trunk() {
+        let yaml = r#"
+targetBranches:
+  - name: main
+"#;
+        let config: RepoConfig = serde_yaml::from_str(yaml).expect("deserialize repo config");
+
+        assert!(config.trunk_branch.is_empty());
+        assert!(!config.is_protected_branch(""));
+        assert!(config.is_protected_branch("main"));
+    }
+
+    #[test]
+    fn test_show_all_branches_defaults_false_when_absent() {
+        let yaml = r#"
+userDisplayName: someone
+repoPath: /tmp/repo
+targetBranch: main
+"#;
+        let config: AppConfig = serde_yaml::from_str(yaml).expect("deserialize legacy config");
+        assert!(!config.show_all_branches);
+    }
+
+    #[test]
+    fn test_show_all_branches_round_trips() {
+        let mut config = AppConfig::new("test");
+        config.user_display_name = "someone".to_string();
+        config.show_all_branches = true;
+
+        let yaml = serde_yaml::to_string(&config).expect("serialize");
+        assert!(
+            yaml.contains("showAllBranches: true"),
+            "expected the camelCase key in the serialized form, got:
+{yaml}"
+        );
+
+        let restored: AppConfig = serde_yaml::from_str(&yaml).expect("deserialize");
+        assert!(restored.show_all_branches);
+    }
+
+    #[test]
+    fn test_commit_tags_default_empty_when_absent() {
+        let config: DynamicConfig = serde_json::from_str("{}").expect("deserialize");
+        assert!(config.commit_tags.is_empty());
+    }
+
+    #[test]
+    fn test_commit_tags_deserialize() {
+        let json = r#"{ "commitTags": [{ "name": "CI", "options": [{ "tag": "[ci]", "label": "CI", "description": "Build and test on every platform" }] }] }"#;
+        let config: DynamicConfig = serde_json::from_str(json).expect("deserialize");
+
+        assert_eq!(config.commit_tags.len(), 1);
+        assert_eq!(config.commit_tags[0].name, "CI");
+        assert_eq!(config.commit_tags[0].options.len(), 1);
+        assert_eq!(config.commit_tags[0].options[0].tag, "[ci]");
+        assert_eq!(config.commit_tags[0].options[0].label, "CI");
+    }
+
+    #[test]
+    fn test_commit_tag_option_label_and_description_default_empty() {
+        let json = r#"{ "commitTags": [{ "name": "CI", "options": [{ "tag": "[ci]" }] }] }"#;
+        let config: DynamicConfig = serde_json::from_str(json).expect("deserialize");
+
+        let option = &config.commit_tags[0].options[0];
+        assert_eq!(option.tag, "[ci]");
+        assert!(option.label.is_empty());
+        assert!(option.description.is_empty());
     }
 }
