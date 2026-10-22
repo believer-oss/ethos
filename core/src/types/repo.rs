@@ -188,6 +188,16 @@ pub struct RepoStatus {
 
     pub modified_upstream: Vec<String>,
 
+    /// Lockable files changed on both origin/<trunk> and this branch since their merge-base.
+    /// Non-blocking. Always empty unless the current branch is in branch mode.
+    #[serde(default)]
+    pub will_conflict_on_rebase: Vec<String>,
+
+    /// Locally modified tracked files also changed on origin/<branch>; Sync may leave conflict
+    /// markers in them. Non-blocking. Always empty unless the current branch is in branch mode.
+    #[serde(default)]
+    pub will_conflict_on_sync: Vec<String>,
+
     // locks
     pub lock_user: String,
     pub locks_ours: Vec<Lock>,
@@ -220,6 +230,8 @@ impl RepoStatus {
             conflict_upstream: false,
             conflicts: vec![],
             modified_upstream: vec![],
+            will_conflict_on_rebase: vec![],
+            will_conflict_on_sync: vec![],
             lock_user: String::new(),
             locks_ours: vec![],
             locks_theirs: vec![],
@@ -308,6 +320,12 @@ pub struct PushRequest {
     #[serde(rename = "commitMessage")]
     pub commit_message: String,
     pub files: Vec<String>,
+    #[serde(
+        rename = "expectedBranch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,6 +564,31 @@ pub type ShowCommitFilesResponse = Vec<CommitFileInfo>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_status_serializes_will_conflict_on_sync() {
+        let value = serde_json::to_value(RepoStatus::new()).unwrap();
+        assert_eq!(value["willConflictOnSync"], serde_json::json!([]));
+
+        let mut legacy = value;
+        legacy.as_object_mut().unwrap().remove("willConflictOnSync");
+        let status: RepoStatus = serde_json::from_value(legacy).unwrap();
+        assert!(status.will_conflict_on_sync.is_empty());
+    }
+
+    #[test]
+    fn repo_status_serializes_will_conflict_on_rebase() {
+        let value = serde_json::to_value(RepoStatus::new()).unwrap();
+        assert_eq!(value["willConflictOnRebase"], serde_json::json!([]));
+
+        let mut legacy = value;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("willConflictOnRebase");
+        let status: RepoStatus = serde_json::from_value(legacy).unwrap();
+        assert!(status.will_conflict_on_rebase.is_empty());
+    }
 
     #[test]
     fn test_parse_branch_success() {

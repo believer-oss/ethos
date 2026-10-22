@@ -234,6 +234,7 @@ fn main() -> Result<(), CoreError> {
                 get_incoming_engine_change,
                 open_url,
                 quick_submit,
+                submit_to_branch,
                 rebase,
                 refresh_login,
                 acquire_locks,

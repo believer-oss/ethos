@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -68,6 +68,119 @@ pub enum MergeType {
 pub enum CreateRemoteBranchOutcome {
     Created,
     AlreadyExists,
+}
+
+/// Files that git's autostash apply left conflicted after a pull, and how each was settled.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutostashConflict {
+    /// Text files left with git's conflict markers.
+    pub marker_files: Vec<String>,
+    /// Files whose local version replaced the pulled one.
+    pub kept_local_files: Vec<String>,
+    /// Files deleted locally whose pulled version was removed again.
+    pub kept_deleted_files: Vec<String>,
+    /// Files in a state the settling did not recognize, left as git wrote them.
+    pub unresolved_files: Vec<String>,
+    /// A pre-pull snapshot holds the local versions.
+    pub snapshot_saved: bool,
+    /// Git's `autostash` stash entry was dropped because the snapshot covers it.
+    pub autostash_dropped: bool,
+}
+
+impl AutostashConflict {
+    /// What the pull left to the user, starting lower-case after "Synced, but".
+    pub fn details(&self) -> String {
+        let mut out = "some files changed both locally and on origin.".to_string();
+        if !self.marker_files.is_empty() {
+            out.push_str(&format!(
+                " Resolve the conflict markers in {} before submitting.",
+                self.marker_files.join(", ")
+            ));
+        }
+        let kept: Vec<String> = self
+            .kept_local_files
+            .iter()
+            .cloned()
+            .chain(
+                self.kept_deleted_files
+                    .iter()
+                    .map(|p| format!("{p} (deleted)")),
+            )
+            .collect();
+        if !kept.is_empty() {
+            out.push_str(&format!(
+                " Kept your local version of {}; submitting will overwrite origin's changes to them.",
+                kept.join(", ")
+            ));
+        }
+        if !self.unresolved_files.is_empty() {
+            out.push_str(&format!(
+                " Could not merge {}; check them before submitting.",
+                self.unresolved_files.join(", ")
+            ));
+        }
+        let saved_in = match (self.snapshot_saved, self.autostash_dropped) {
+            (true, true) => "the 'pre-pull' snapshot",
+            (true, false) => "the 'pre-pull' snapshot and in git's 'autostash' stash entry",
+            (false, _) => "git's 'autostash' stash entry",
+        };
+        out.push_str(&format!(" Your local versions are saved in {saved_in}."));
+        out
+    }
+}
+
+impl std::fmt::Display for AutostashConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Synced, but {}", self.details())
+    }
+}
+
+impl std::error::Error for AutostashConflict {}
+
+/// An unmerged index path with the blob id at stages 1-3 (base, ours, theirs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmergedEntry {
+    pub path: String,
+    pub stages: [Option<String>; 3],
+}
+
+/// Parses `git ls-files -u -z` output into one entry per path, in output order.
+fn parse_unmerged_entries(output: &str) -> Vec<UnmergedEntry> {
+    let mut entries: Vec<UnmergedEntry> = Vec::new();
+    for record in output.split('\0') {
+        let record = record.trim_start_matches('\n');
+        let Some((meta, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let mut fields = meta.split_whitespace();
+        let (Some(_mode), Some(blob), Some(stage)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let Some(slot) = stage.parse::<usize>().ok().and_then(|s| s.checked_sub(1)) else {
+            continue;
+        };
+        if slot > 2 {
+            continue;
+        }
+        if entries.last().is_none_or(|e| e.path != path) {
+            entries.push(UnmergedEntry {
+                path: path.to_string(),
+                stages: Default::default(),
+            });
+        }
+        if let Some(entry) = entries.last_mut() {
+            entry.stages[slot] = Some(blob.to_string());
+        }
+    }
+    entries
+}
+
+enum UnmergedOutcome {
+    Markers,
+    KeptLocal,
+    KeptDeletion,
+    Unresolved,
 }
 
 #[derive(Eq, PartialEq)]
@@ -880,7 +993,7 @@ impl Git {
                 .collect();
 
             let conflict_message = format!(
-                "{} untracked file conflicts were found during snapshot restore:\n{}\n\nYour local untracked files have been preserved. The snapshot versions have been saved with '.snapshotcopy' extensions. Please review and resolve these conflicts manually.",
+                "{} local file conflicts were found during snapshot restore:\n{}\n\nYour local files have been preserved. The snapshot versions have been saved with '.snapshotcopy' extensions. Please review and resolve these conflicts manually.",
                 conflicts.len(),
                 conflict_details.join("\n")
             );
@@ -913,6 +1026,317 @@ impl Git {
             bail!(error_msg);
         }
         Ok(())
+    }
+
+    /// The commit at the top of `refs/stash`, if any.
+    pub async fn stash_top(&self) -> anyhow::Result<Option<String>> {
+        let output = self
+            .run_and_collect_output(
+                &["stash", "list", "-n1", "--format=%H"],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .find(|s| !s.is_empty())
+            .map(str::to_string))
+    }
+
+    /// Runs a `-z` name-only command and returns its paths.
+    async fn collect_nul_paths(&self, args: &[&str]) -> anyhow::Result<Vec<String>> {
+        let output = self
+            .run_and_collect_output(args, Opts::new_without_logs())
+            .await?;
+        Ok(output
+            .split('\0')
+            .map(|s| s.trim_matches('\n'))
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Unmerged index entries, read from the index only.
+    pub async fn unmerged_entries(&self) -> anyhow::Result<Vec<UnmergedEntry>> {
+        let output = self
+            .run_and_collect_output(&["ls-files", "-u", "-z"], Opts::new_without_logs())
+            .await?;
+        Ok(parse_unmerged_entries(&output))
+    }
+
+    /// Paths with unmerged index entries.
+    pub async fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .unmerged_entries()
+            .await?
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect())
+    }
+
+    /// Blob id of the working-tree file at `path` after clean filters, or `None` if it is
+    /// missing.
+    async fn worktree_blob(&self, path: &str) -> anyhow::Result<Option<String>> {
+        if std::fs::symlink_metadata(self.repo_path.join(path)).is_err() {
+            return Ok(None);
+        }
+        let output = self
+            .run_and_collect_output(&["hash-object", "--", path], Opts::new_without_logs())
+            .await?;
+        Ok(Some(output.trim().to_string()))
+    }
+
+    fn has_conflict_markers(&self, path: &str) -> bool {
+        std::fs::read(self.repo_path.join(path)).is_ok_and(|bytes| {
+            bytes.starts_with(b"<<<<<<<") || bytes.windows(8).any(|w| w == b"\n<<<<<<<")
+        })
+    }
+
+    async fn is_lfs_file(&self, path: &str) -> anyhow::Result<bool> {
+        let output = self
+            .run_and_collect_output(
+                &["check-attr", "-z", "filter", "--", path],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        Ok(output.split('\0').nth(2) == Some("lfs"))
+    }
+
+    async fn checkout_theirs(&self, path: &str) -> UnmergedOutcome {
+        let pathspec = format!(":(literal){path}");
+        match self
+            .run(&["checkout", "--theirs", "--", &pathspec], Opts::default())
+            .await
+        {
+            Ok(()) => UnmergedOutcome::KeptLocal,
+            Err(e) => {
+                warn!(path, "Could not restore the local version: {e}");
+                UnmergedOutcome::Unresolved
+            }
+        }
+    }
+
+    /// Settles one path that git's autostash apply left unmerged. Stage 2 is the pulled
+    /// version and stage 3 the stashed local one. Where git could not merge textually, the
+    /// local version or deletion is put back: binary files and modify/delete conflicts hold
+    /// the pulled version, and LFS pointers hold a pointer with conflict markers.
+    async fn settle_unmerged_entry(&self, entry: &UnmergedEntry) -> UnmergedOutcome {
+        let path = entry.path.as_str();
+        let ours = entry.stages[1].as_deref();
+        let theirs = entry.stages[2].as_deref();
+        if theirs.is_some() {
+            match self.is_lfs_file(path).await {
+                Ok(true) => return self.checkout_theirs(path).await,
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(path, "Could not read attributes of conflicted file: {e}");
+                    return UnmergedOutcome::Unresolved;
+                }
+            }
+        }
+        let worktree = match self.worktree_blob(path).await {
+            Ok(blob) => blob,
+            Err(e) => {
+                warn!(path, "Could not hash conflicted file: {e}");
+                return UnmergedOutcome::Unresolved;
+            }
+        };
+        match (theirs, worktree.as_deref()) {
+            (Some(theirs), Some(w)) if w == theirs => UnmergedOutcome::KeptLocal,
+            (Some(_), Some(w)) if Some(w) == ours => self.checkout_theirs(path).await,
+            (Some(_), Some(_)) if self.has_conflict_markers(path) => UnmergedOutcome::Markers,
+            (None, None) => UnmergedOutcome::KeptDeletion,
+            (None, Some(w)) if Some(w) == ours => {
+                match std::fs::remove_file(self.repo_path.join(path)) {
+                    Ok(()) => UnmergedOutcome::KeptDeletion,
+                    Err(e) => {
+                        warn!(path, "Could not restore the local deletion: {e}");
+                        UnmergedOutcome::Unresolved
+                    }
+                }
+            }
+            _ => UnmergedOutcome::Unresolved,
+        }
+    }
+
+    /// Settles the conflicts git's autostash apply left after a pull, or returns `None` if
+    /// there are none.
+    ///
+    /// Text conflicts keep git's markers. Binary and modify/delete conflicts get the local
+    /// version or deletion back in the working tree. Conflicted and staged paths are then
+    /// reset to `HEAD` so they show as plain local edits. Git's leftover `autostash` entry is
+    /// dropped only when every path was settled and `snapshot_commit` holds the same content.
+    pub async fn settle_autostash_conflicts(
+        &self,
+        snapshot_commit: Option<&str>,
+        stash_before: Option<&str>,
+    ) -> anyhow::Result<Option<AutostashConflict>> {
+        let entries = self.unmerged_entries().await?;
+        if entries.is_empty() {
+            return Ok(None);
+        }
+
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        warn!(?paths, "Autostash apply after pull left conflicts");
+
+        let mut conflict = AutostashConflict {
+            snapshot_saved: snapshot_commit.is_some(),
+            ..Default::default()
+        };
+        for entry in &entries {
+            let list = match self.settle_unmerged_entry(entry).await {
+                UnmergedOutcome::Markers => &mut conflict.marker_files,
+                UnmergedOutcome::KeptLocal => &mut conflict.kept_local_files,
+                UnmergedOutcome::KeptDeletion => &mut conflict.kept_deleted_files,
+                UnmergedOutcome::Unresolved => &mut conflict.unresolved_files,
+            };
+            list.push(entry.path.clone());
+        }
+
+        let mut reset: Vec<String> = self
+            .collect_nul_paths(&["diff", "--cached", "--name-only", "-z"])
+            .await?;
+        reset.extend(entries.into_iter().map(|e| e.path));
+        reset.sort();
+        reset.dedup();
+        let reset_path = Self::write_pathspec_file(&reset)?;
+        self.run(
+            &[
+                "reset",
+                "-q",
+                "--pathspec-from-file",
+                reset_path.to_str().expect("temp file path is non-UTF-8"),
+            ],
+            Opts::default(),
+        )
+        .await?;
+
+        conflict.autostash_dropped = match snapshot_commit {
+            Some(commit) if conflict.unresolved_files.is_empty() => {
+                self.drop_autostash_covered_by(commit, stash_before).await
+            }
+            _ => false,
+        };
+        Ok(Some(conflict))
+    }
+
+    /// Finishes a `pull --autostash` that started with `stash_before` at the top of `refs/stash`.
+    ///
+    /// If git's autostash apply conflicted, the conflicts are settled as in
+    /// `settle_autostash_conflicts` and `snapshot` is not applied on top. Otherwise, or if
+    /// settling fails, `snapshot` is restored as usual, calling `on_restore` first.
+    pub async fn finish_autostash_pull(
+        &self,
+        snapshot: Option<&Snapshot>,
+        stash_before: Option<&str>,
+        modified_files: Vec<File>,
+        on_restore: impl FnOnce() + Send,
+    ) -> anyhow::Result<Option<AutostashConflict>> {
+        let snapshot_commit = snapshot.map(|s| s.commit.as_str());
+        match self
+            .settle_autostash_conflicts(snapshot_commit, stash_before)
+            .await
+        {
+            Ok(Some(conflict)) => return Ok(Some(conflict)),
+            Ok(None) => {}
+            Err(e) if snapshot.is_some() => {
+                warn!("Could not settle autostash conflicts, restoring the snapshot: {e:#}");
+            }
+            Err(e) => return Err(e),
+        }
+        if let Some(snapshot) = snapshot {
+            on_restore();
+            self.restore_snapshot_via_cherry_pick(&snapshot.commit, modified_files)
+                .await?;
+        }
+        Ok(None)
+    }
+
+    /// Drops `stash@{0}` if it is the `autostash` entry pushed directly on top of `stash_before`
+    /// and every path it changes, in its worktree and index trees, has the same content in
+    /// `snapshot_commit`.
+    async fn drop_autostash_covered_by(
+        &self,
+        snapshot_commit: &str,
+        stash_before: Option<&str>,
+    ) -> bool {
+        let autostash = match self
+            .autostash_covered_by(snapshot_commit, stash_before)
+            .await
+        {
+            Ok(Some(autostash)) => autostash,
+            Ok(None) => {
+                warn!("Keeping the autostash entry: the snapshot does not provably cover it");
+                return false;
+            }
+            Err(e) => {
+                warn!("Keeping the autostash entry: {e}");
+                return false;
+            }
+        };
+        match self
+            .run(&["stash", "drop", "-q", "stash@{0}"], Opts::default())
+            .await
+        {
+            Ok(()) => {
+                info!(%autostash, "Dropped the autostash entry covered by the snapshot");
+                true
+            }
+            Err(e) => {
+                warn!("Failed to drop autostash entry {autostash}: {e}");
+                false
+            }
+        }
+    }
+
+    /// The autostash commit when `drop_autostash_covered_by` may drop it.
+    async fn autostash_covered_by(
+        &self,
+        snapshot_commit: &str,
+        stash_before: Option<&str>,
+    ) -> anyhow::Result<Option<String>> {
+        let output = self
+            .run_and_collect_output(
+                &["stash", "list", "-n2", "--format=%H%x1f%gs"],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        let entries: Vec<(&str, &str)> = output
+            .lines()
+            .filter_map(|line| line.split_once('\x1f'))
+            .collect();
+
+        let Some(&(autostash, subject)) = entries.first() else {
+            return Ok(None);
+        };
+        let below = entries.get(1).map(|(sha, _)| *sha);
+        if subject.trim() != "autostash" || below != stash_before {
+            return Ok(None);
+        }
+
+        for tree in [autostash.to_string(), format!("{autostash}^2")] {
+            let base = format!("{autostash}^1");
+            let changed = self
+                .collect_nul_paths(&["diff", "--name-only", "-z", "--no-renames", &base, &tree])
+                .await?;
+            let differs: HashSet<String> = self
+                .collect_nul_paths(&[
+                    "diff",
+                    "--name-only",
+                    "-z",
+                    "--no-renames",
+                    snapshot_commit,
+                    &tree,
+                ])
+                .await?
+                .into_iter()
+                .collect();
+            if changed.iter().any(|path| differs.contains(path)) {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(autostash.to_string()))
     }
 
     /// Restore only the requested subset of paths from a snapshot. The
@@ -2670,6 +3094,10 @@ mod tests {
             msg.contains("foo.py.snapshotcopy"),
             "error message should name the .snapshotcopy file; got: {msg}"
         );
+        assert!(
+            msg.contains("1 local file conflicts") && !msg.contains("untracked"),
+            "a tracked file must not be described as untracked; got: {msg}"
+        );
 
         // foo.py on disk should hold the local edit (content B).
         let on_disk = std::fs::read_to_string(git.repo_path.join("foo.py")).unwrap();
@@ -3015,5 +3443,645 @@ mod tests {
         // Only `team/f11r-branch-z` exists; the tail-matching helper would say yes.
         assert!(!git.has_remote_branch_exact("f11r-branch-z").await.unwrap());
         assert!(git.has_remote_branch("f11r-branch-z").await.unwrap());
+    }
+
+    /// Commits `file` with `content` and message `msg` in `dir`.
+    fn commit_file(dir: &std::path::Path, file: &str, content: &str, msg: &str) {
+        std::fs::write(dir.join(file), content).unwrap();
+        git_ok(dir, &["add", file]);
+        git_ok(dir, &["commit", "-m", msg]);
+    }
+
+    /// User repo on `feat` (one pushed commit F, upstream set) plus a collaborator clone
+    /// that advances `main` and force-pushes `feat` rebased onto it, rewriting F.
+    /// Returns (git, user dir guard, origin dir guard, collaborator dir guard).
+    fn setup_remote_force_pushed_feat() -> (Git, TempDir, TempDir, TempDir) {
+        let (git, dir, origin) = setup_repo_with_bare_origin();
+        let repo = git.repo_path.clone();
+        git_ok(&repo, &["switch", "-c", "feat"]);
+        commit_file(&repo, "feat.txt", "feat", "F");
+        git_ok(&repo, &["push", "-u", "origin", "feat"]);
+
+        let collab = tempfile::tempdir().expect("create collaborator tempdir");
+        let origin_path = origin.path().to_string_lossy().to_string();
+        git_ok(
+            collab.path().parent().unwrap(),
+            &["clone", &origin_path, &collab.path().to_string_lossy()],
+        );
+        let c = collab.path();
+        git_ok(c, &["config", "user.email", "collab@example.com"]);
+        git_ok(c, &["config", "user.name", "collab"]);
+        git_ok(c, &["config", "commit.gpgsign", "false"]);
+        git_ok(c, &["config", "core.autocrlf", "false"]);
+
+        git_ok(c, &["switch", "-c", "feat", "origin/feat"]);
+        git_ok(c, &["switch", "-c", "trunk", "origin/main"]);
+        commit_file(c, "main.txt", "main", "M");
+        git_ok(c, &["push", "origin", "trunk:refs/heads/main"]);
+        git_ok(c, &["switch", "feat"]);
+        git_ok(c, &["rebase", "trunk"]);
+        // Reword the patch too, so only the fork point (not patch-id matching) can drop F.
+        std::fs::write(c.join("feat.txt"), "feat rewritten").unwrap();
+        git_ok(c, &["commit", "-a", "--amend", "--no-edit"]);
+        git_ok(c, &["push", "--force", "origin", "feat"]);
+
+        // The user's origin/feat still points at F; the pull fetches the rewrite.
+        (git, dir, origin, collab)
+    }
+
+    #[tokio::test]
+    async fn test_pull_rebase_after_remote_force_push_drops_old_commits() {
+        let (git, _dir, origin, _collab) = setup_remote_force_pushed_feat();
+        let repo = &git.repo_path;
+
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .expect("pull");
+
+        assert_eq!(
+            git_ok(repo, &["log", "--format=%s", "origin/feat..HEAD"]),
+            ""
+        );
+        let head = git_ok(repo, &["rev-parse", "HEAD"]);
+        assert_eq!(head, git_ok(repo, &["rev-parse", "origin/feat"]));
+        assert_eq!(head, remote_sha(origin.path(), "refs/heads/feat"));
+        assert_eq!(git_ok(repo, &["log", "--format=%s", "-3"]), "F\nM\nseed");
+    }
+
+    #[tokio::test]
+    async fn test_pull_rebase_after_remote_force_push_keeps_unpushed_local_commit() {
+        let (git, _dir, origin, _collab) = setup_remote_force_pushed_feat();
+        let repo = &git.repo_path;
+        commit_file(repo, "local.txt", "local", "L");
+        std::fs::write(repo.join("seed.txt"), "seed\ndirty edit").unwrap();
+        let stashes_before = git_ok(repo, &["stash", "list"]);
+
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .expect("pull");
+
+        assert_eq!(
+            git_ok(repo, &["log", "--format=%s", "origin/feat..HEAD"]),
+            "L"
+        );
+        assert_eq!(
+            git_ok(repo, &["rev-parse", "origin/feat"]),
+            remote_sha(origin.path(), "refs/heads/feat")
+        );
+        assert_eq!(
+            std::fs::read(repo.join("seed.txt")).unwrap(),
+            b"seed\ndirty edit"
+        );
+        assert_eq!(git_ok(repo, &["stash", "list"]), stashes_before);
+        assert_eq!(git_ok(repo, &["log", "--format=%s", "-4"]), "L\nF\nM\nseed");
+    }
+
+    const DUMMY_BASE: &str = "line1\nline2\nline3\n";
+
+    /// User repo on `feat` (pushed, upstream set) with `dummy.txt` and `other.txt`, plus a
+    /// collaborator commit on `origin/feat` writing `collab_content` to `collab_file`.
+    /// Returns (git, user dir guard, origin dir guard, collaborator dir guard).
+    fn setup_feat_with_collab_commit(
+        collab_file: &str,
+        collab_content: &str,
+    ) -> (Git, TempDir, TempDir, TempDir) {
+        setup_feat_with_collab(&[], |c| {
+            std::fs::write(c.join(collab_file), collab_content).unwrap();
+        })
+    }
+
+    /// Turns off any globally configured `lfs` filter so LFS pointers stay plain blobs.
+    fn disable_lfs_filter(dir: &std::path::Path) {
+        for key in ["process", "clean", "smudge"] {
+            git_ok(dir, &["config", &format!("filter.lfs.{key}"), ""]);
+        }
+        git_ok(dir, &["config", "filter.lfs.required", "false"]);
+    }
+
+    /// `setup_feat_with_collab_commit` with `seed` files in the base commit and a collaborator
+    /// commit of whatever `collab_edit` does to its working tree.
+    fn setup_feat_with_collab(
+        seed: &[(&str, &[u8])],
+        collab_edit: impl FnOnce(&std::path::Path),
+    ) -> (Git, TempDir, TempDir, TempDir) {
+        let (git, dir, origin) = setup_repo_with_bare_origin();
+        let repo = git.repo_path.clone();
+        disable_lfs_filter(&repo);
+        git_ok(&repo, &["switch", "-c", "feat"]);
+        std::fs::write(repo.join("other.txt"), "other\n").unwrap();
+        git_ok(&repo, &["add", "other.txt"]);
+        for (path, content) in seed {
+            std::fs::write(repo.join(path), content).unwrap();
+            git_ok(&repo, &["add", path]);
+        }
+        commit_file(&repo, "dummy.txt", DUMMY_BASE, "base");
+        git_ok(&repo, &["push", "-u", "origin", "feat"]);
+
+        let collab = tempfile::tempdir().expect("create collaborator tempdir");
+        let origin_path = origin.path().to_string_lossy().to_string();
+        git_ok(
+            collab.path().parent().unwrap(),
+            &["clone", &origin_path, &collab.path().to_string_lossy()],
+        );
+        let c = collab.path();
+        git_ok(c, &["config", "user.email", "collab@example.com"]);
+        git_ok(c, &["config", "user.name", "collab"]);
+        git_ok(c, &["config", "commit.gpgsign", "false"]);
+        git_ok(c, &["config", "core.autocrlf", "false"]);
+        disable_lfs_filter(c);
+        git_ok(c, &["switch", "-c", "feat", "origin/feat"]);
+        collab_edit(c);
+        git_ok(c, &["add", "-A"]);
+        git_ok(c, &["commit", "-m", "collab"]);
+        git_ok(c, &["push", "origin", "feat"]);
+
+        (git, dir, origin, collab)
+    }
+
+    fn modified(paths: &[&str]) -> Vec<File> {
+        paths
+            .iter()
+            .map(|path| File {
+                path: path.to_string(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// The git half of `PullOp`: pre-pull snapshot, `pull --rebase --autostash`, then finish.
+    async fn snapshot_pull_finish(
+        git: &Git,
+        modified_paths: &[&str],
+        untracked_paths: &[&str],
+    ) -> (Snapshot, anyhow::Result<Option<AutostashConflict>>) {
+        let snapshot_paths = modified_paths
+            .iter()
+            .chain(untracked_paths)
+            .map(|p| p.to_string())
+            .collect();
+        let snapshot = git
+            .save_snapshot("pre-pull", snapshot_paths)
+            .await
+            .expect("save_snapshot");
+        let stash_before = git.stash_top().await.expect("stash_top");
+        assert_eq!(stash_before.as_deref(), Some(snapshot.commit.as_str()));
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .expect("pull");
+        let result = git
+            .finish_autostash_pull(
+                Some(&snapshot),
+                stash_before.as_deref(),
+                modified(modified_paths),
+                || {},
+            )
+            .await;
+        (snapshot, result)
+    }
+
+    fn stash_entries(repo: &std::path::Path) -> Vec<String> {
+        git_ok(repo, &["stash", "list", "--format=%H %gs"])
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn assert_no_restore_leftovers(repo: &std::path::Path) {
+        for name in [
+            "dummy.txt.snapshotcopy",
+            "dummy.txt.localcopy",
+            "other.txt.snapshotcopy",
+            "other.txt.localcopy",
+            "new.txt.localcopy",
+        ] {
+            assert!(!repo.join(name).exists(), "{name} must not exist");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_clean_restores_snapshot() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("other.txt", "collab other\n");
+        let repo = git.repo_path.clone();
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+
+        let (snapshot, result) = snapshot_pull_finish(&git, &["dummy.txt"], &["new.txt"]).await;
+
+        assert_eq!(result.expect("finish"), None);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("dummy.txt")).unwrap(),
+            "line1\nmine\nline3\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("other.txt")).unwrap(),
+            "collab other\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("new.txt")).unwrap(),
+            "new\n"
+        );
+        assert_no_restore_leftovers(&repo);
+        assert_eq!(git_ok(&repo, &["diff", "--cached", "--name-only"]), "");
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+    }
+
+    async fn assert_overlapping_edit_leaves_markers_only(local_commit: bool) {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        if local_commit {
+            commit_file(&repo, "local.txt", "local\n", "local");
+        }
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        std::fs::write(repo.join("other.txt"), "my other\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+
+        let (snapshot, result) =
+            snapshot_pull_finish(&git, &["dummy.txt", "other.txt"], &["new.txt"]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert_eq!(
+            conflict,
+            AutostashConflict {
+                marker_files: vec!["dummy.txt".to_string()],
+                snapshot_saved: true,
+                autostash_dropped: true,
+                ..Default::default()
+            }
+        );
+
+        let dummy = std::fs::read_to_string(repo.join("dummy.txt")).unwrap();
+        assert_eq!(dummy.matches("<<<<<<<").count(), 1, "{dummy}");
+        assert!(
+            dummy.contains("collab") && dummy.contains("mine"),
+            "{dummy}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("other.txt")).unwrap(),
+            "my other\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("new.txt")).unwrap(),
+            "new\n"
+        );
+        assert_no_restore_leftovers(&repo);
+
+        assert!(git.unmerged_paths().await.unwrap().is_empty());
+        assert_eq!(git_ok(&repo, &["diff", "--cached", "--name-only"]), "");
+        assert_eq!(
+            git_ok(&repo, &["show", "HEAD:dummy.txt"]),
+            "line1\ncollab\nline3"
+        );
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+        assert_eq!(
+            git_ok(&repo, &["show", &format!("{}:dummy.txt", snapshot.commit)]),
+            "line1\nmine\nline3"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_fast_forward_conflict_leaves_markers_only() {
+        assert_overlapping_edit_leaves_markers_only(false).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_rebase_conflict_leaves_markers_only() {
+        assert_overlapping_edit_leaves_markers_only(true).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_keeps_autostash_not_in_snapshot() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        // The staged version exists only in git's autostash index commit.
+        std::fs::write(repo.join("dummy.txt"), "line1\nstaged\nline3\n").unwrap();
+        git_ok(&repo, &["add", "dummy.txt"]);
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+
+        let (snapshot, result) = snapshot_pull_finish(&git, &["dummy.txt"], &[]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert!(conflict.snapshot_saved && !conflict.autostash_dropped);
+        assert!(conflict.to_string().contains("'autostash' stash entry"));
+        let entries = stash_entries(&repo);
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert!(entries[0].ends_with(" autostash"), "{entries:?}");
+        assert_eq!(entries[1], format!("{} snapshot pre-pull", snapshot.commit));
+        assert!(!repo.join("dummy.txt.snapshotcopy").exists());
+    }
+
+    const LFS_ATTRS: &str = "*.uasset filter=lfs diff=lfs merge=lfs -text\n";
+
+    fn lfs_pointer(oid: &str) -> String {
+        format!("version test-lfs\noid sha256:{oid}\nsize 10\n")
+    }
+
+    /// Seeds a binary file, an LFS pointer, `ud.txt` and `du.txt`; the collaborator changes the
+    /// binary, the pointer and `ud.txt`, deletes `du.txt` and changes `dummy.txt` when `text`.
+    fn setup_feat_with_mixed_collab(text: bool) -> (Git, TempDir, TempDir, TempDir) {
+        let base_pointer = lfs_pointer("base");
+        setup_feat_with_collab(
+            &[
+                (".gitattributes", LFS_ATTRS.as_bytes()),
+                ("a.bin", b"base\0bin"),
+                ("a.uasset", base_pointer.as_bytes()),
+                ("ud.txt", b"ud\n"),
+                ("du.txt", b"du\n"),
+            ],
+            |c| {
+                std::fs::write(c.join("a.bin"), b"remote\0bin").unwrap();
+                std::fs::write(c.join("a.uasset"), lfs_pointer("remote")).unwrap();
+                std::fs::write(c.join("ud.txt"), "ud remote\n").unwrap();
+                std::fs::remove_file(c.join("du.txt")).unwrap();
+                if text {
+                    std::fs::write(c.join("dummy.txt"), "line1\ncollab\nline3\n").unwrap();
+                }
+            },
+        )
+    }
+
+    /// Local edits that conflict with every change of `setup_feat_with_mixed_collab`.
+    fn write_mixed_local_edits(repo: &std::path::Path, text: bool) {
+        std::fs::write(repo.join("a.bin"), b"local\0bin").unwrap();
+        std::fs::write(repo.join("a.uasset"), lfs_pointer("local")).unwrap();
+        std::fs::remove_file(repo.join("ud.txt")).unwrap();
+        std::fs::write(repo.join("du.txt"), "du local\n").unwrap();
+        if text {
+            std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        }
+    }
+
+    fn assert_mixed_local_edits_kept(repo: &std::path::Path) {
+        assert_eq!(std::fs::read(repo.join("a.bin")).unwrap(), b"local\0bin");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.uasset")).unwrap(),
+            lfs_pointer("local")
+        );
+        assert!(!repo.join("ud.txt").exists(), "ud.txt must stay deleted");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("du.txt")).unwrap(),
+            "du local\n"
+        );
+        assert_eq!(git_ok(repo, &["show", "HEAD:a.bin"]), "remote\0bin");
+        assert_eq!(git_ok(repo, &["show", "HEAD:ud.txt"]), "ud remote");
+        assert_eq!(git_ok(repo, &["ls-files", "-u"]), "");
+        assert_eq!(git_ok(repo, &["diff", "--cached", "--name-only"]), "");
+        let status = git_ok(
+            repo,
+            &[
+                "status",
+                "--porcelain",
+                "--",
+                "a.bin",
+                "a.uasset",
+                "ud.txt",
+                "du.txt",
+            ],
+        );
+        // `git_ok` trims the leading space of the first line, so compare trimmed lines.
+        let mut status: Vec<&str> = status.lines().map(str::trim).collect();
+        status.sort();
+        assert_eq!(
+            status,
+            vec!["?? du.txt", "D ud.txt", "M a.bin", "M a.uasset"]
+        );
+    }
+
+    async fn assert_binary_and_delete_conflicts_keep_local(local_commit: bool) {
+        let (git, _dir, _origin, _collab) = setup_feat_with_mixed_collab(false);
+        let repo = git.repo_path.clone();
+        if local_commit {
+            commit_file(&repo, "local.txt", "local\n", "local");
+        }
+        write_mixed_local_edits(&repo, false);
+
+        let (snapshot, result) =
+            snapshot_pull_finish(&git, &["a.bin", "a.uasset", "ud.txt", "du.txt"], &[]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert_eq!(
+            conflict,
+            AutostashConflict {
+                kept_local_files: vec![
+                    "a.bin".to_string(),
+                    "a.uasset".to_string(),
+                    "du.txt".to_string()
+                ],
+                kept_deleted_files: vec!["ud.txt".to_string()],
+                snapshot_saved: true,
+                autostash_dropped: true,
+                ..Default::default()
+            }
+        );
+        assert_mixed_local_edits_kept(&repo);
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+        assert_eq!(
+            git_ok(&repo, &["show", &format!("{}:a.bin", snapshot.commit)]),
+            "local\0bin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_fast_forward_binary_and_delete_conflicts_keep_local() {
+        assert_binary_and_delete_conflicts_keep_local(false).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_rebase_binary_and_delete_conflicts_keep_local() {
+        assert_binary_and_delete_conflicts_keep_local(true).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_mixed_conflicts() {
+        let (git, _dir, _origin, _collab) = setup_feat_with_mixed_collab(true);
+        let repo = git.repo_path.clone();
+        commit_file(&repo, "local.txt", "local\n", "local");
+        write_mixed_local_edits(&repo, true);
+
+        let (snapshot, result) = snapshot_pull_finish(
+            &git,
+            &["a.bin", "a.uasset", "ud.txt", "du.txt", "dummy.txt"],
+            &[],
+        )
+        .await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert_eq!(
+            conflict,
+            AutostashConflict {
+                marker_files: vec!["dummy.txt".to_string()],
+                kept_local_files: vec![
+                    "a.bin".to_string(),
+                    "a.uasset".to_string(),
+                    "du.txt".to_string()
+                ],
+                kept_deleted_files: vec!["ud.txt".to_string()],
+                unresolved_files: vec![],
+                snapshot_saved: true,
+                autostash_dropped: true,
+            }
+        );
+        assert_mixed_local_edits_kept(&repo);
+        let dummy = std::fs::read_to_string(repo.join("dummy.txt")).unwrap();
+        assert!(
+            dummy.contains("<<<<<<<") && dummy.contains("collab") && dummy.contains("mine"),
+            "{dummy}"
+        );
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+        assert_eq!(
+            conflict.to_string(),
+            "Synced, but some files changed both locally and on origin. Resolve the conflict markers in dummy.txt before submitting. Kept your local version of a.bin, a.uasset, du.txt, ud.txt (deleted); submitting will overwrite origin's changes to them. Your local versions are saved in the 'pre-pull' snapshot."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_settle_autostash_conflicts_keeps_autostash_when_unresolved() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        let snapshot = git
+            .save_snapshot("pre-pull", vec!["dummy.txt".to_string()])
+            .await
+            .unwrap();
+        let stash_before = git.stash_top().await.unwrap();
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .unwrap();
+        // Neither side's version and no markers: not a state settling recognizes.
+        std::fs::write(repo.join("dummy.txt"), "edited\n").unwrap();
+
+        let conflict = git
+            .settle_autostash_conflicts(Some(&snapshot.commit), stash_before.as_deref())
+            .await
+            .unwrap()
+            .expect("autostash conflict");
+
+        assert_eq!(conflict.unresolved_files, vec!["dummy.txt".to_string()]);
+        assert!(!conflict.autostash_dropped);
+        assert!(conflict.to_string().contains("Could not merge dummy.txt"));
+        let entries = stash_entries(&repo);
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert!(entries[0].ends_with(" autostash"), "{entries:?}");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("dummy.txt")).unwrap(),
+            "edited\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_falls_back_to_snapshot_restore() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        let snapshot = git
+            .save_snapshot("pre-pull", vec!["dummy.txt".to_string()])
+            .await
+            .unwrap();
+        let stash_before = git.stash_top().await.unwrap();
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .unwrap();
+
+        // A held index lock makes the reset fail.
+        let lock = repo.join(".git").join("index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let settled = git
+            .settle_autostash_conflicts(Some(&snapshot.commit), stash_before.as_deref())
+            .await;
+        assert!(settled.is_err(), "{settled:?}");
+
+        let mut no_snapshot_restore = false;
+        let result = git
+            .finish_autostash_pull(None, stash_before.as_deref(), vec![], || {
+                no_snapshot_restore = true
+            })
+            .await;
+        assert!(!no_snapshot_restore);
+        assert!(result.is_err(), "{result:?}");
+
+        // The restore waits for the index lock, so release it when the restore starts.
+        let mut restore_started = false;
+        let result = git
+            .finish_autostash_pull(
+                Some(&snapshot),
+                stash_before.as_deref(),
+                modified(&["dummy.txt"]),
+                || {
+                    restore_started = true;
+                    std::fs::remove_file(&lock).unwrap();
+                },
+            )
+            .await;
+        assert!(restore_started, "the snapshot restore must run: {result:?}");
+        assert!(!lock.exists());
+    }
+
+    #[test]
+    fn test_parse_unmerged_entries() {
+        let output = concat!(
+            "100644 aaaa 1\ta b.txt\x00100644 bbbb 2\ta b.txt\x00100644 cccc 3\ta b.txt\x00",
+            "100644 dddd 1\tud.txt\x00100644 eeee 2\tud.txt\x00",
+            "100644 ffff 1\tdu.txt\x00100644 9999 3\tdu.txt\x00"
+        );
+        let entries = parse_unmerged_entries(output);
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            entries,
+            vec![
+                UnmergedEntry {
+                    path: "a b.txt".to_string(),
+                    stages: [s("aaaa"), s("bbbb"), s("cccc")],
+                },
+                UnmergedEntry {
+                    path: "ud.txt".to_string(),
+                    stages: [s("dddd"), s("eeee"), None],
+                },
+                UnmergedEntry {
+                    path: "du.txt".to_string(),
+                    stages: [s("ffff"), None, s("9999")],
+                },
+            ]
+        );
+        assert!(parse_unmerged_entries("").is_empty());
+    }
+
+    #[test]
+    fn test_autostash_conflict_message() {
+        let conflict = AutostashConflict {
+            marker_files: vec!["a.txt".to_string(), "b.txt".to_string()],
+            snapshot_saved: true,
+            autostash_dropped: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            conflict.to_string(),
+            "Synced, but some files changed both locally and on origin. Resolve the conflict markers in a.txt, b.txt before submitting. Your local versions are saved in the 'pre-pull' snapshot."
+        );
+        let conflict = AutostashConflict {
+            kept_local_files: vec!["a.uasset".to_string()],
+            kept_deleted_files: vec!["b.txt".to_string()],
+            unresolved_files: vec!["c.txt".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            conflict.details(),
+            "some files changed both locally and on origin. Kept your local version of a.uasset, b.txt (deleted); submitting will overwrite origin's changes to them. Could not merge c.txt; check them before submitting. Your local versions are saved in git's 'autostash' stash entry."
+        );
     }
 }

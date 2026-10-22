@@ -11,10 +11,12 @@ use ethos_core::AWSClient;
 mod create;
 mod list;
 mod post_head_change;
+mod submit;
 mod switch;
 
 pub use create::{create_branch_handler, CreateBranchOp};
 pub use list::list_branches_handler;
+pub use submit::{branch_submit_handler, BranchSubmitOp};
 pub use switch::{switch_branch_handler, SwitchBranchOp};
 
 const MAX_SLUG_LEN: usize = 48;
