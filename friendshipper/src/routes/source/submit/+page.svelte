@@ -1,5 +1,6 @@
 <script lang="ts">
 	import {
+		Alert,
 		Badge,
 		Button,
 		ButtonGroup,
@@ -33,6 +34,7 @@
 		PlusOutline,
 		PenSolid,
 		CloseCircleSolid,
+		ExclamationCircleSolid,
 		FileCopySolid
 	} from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
@@ -52,6 +54,7 @@
 	} from '@ethos/core';
 	import { get } from 'svelte/store';
 	import { Menu, MenuItem } from '@tauri-apps/api/menu';
+	import { goto } from '$app/navigation';
 	import {
 		type GitHubPullRequest,
 		type Nullable,
@@ -87,6 +90,7 @@
 		saveChangeSet,
 		saveSnapshot,
 		showCommitFiles,
+		submitToBranch,
 		syncEngineCommitWithUproject,
 		syncLatest,
 		syncUprojectWithEngineCommit,
@@ -113,8 +117,11 @@
 	import BranchSelector from '$lib/components/BranchSelector.svelte';
 	import CommitTagPicker from '$lib/components/CommitTagPicker.svelte';
 	import {
-		canQuickSubmitOn,
+		type SubmitMode,
+		branchSubmitBlockReason,
 		composeCommitMessage,
+		deriveSubmitMode,
+		isFeatureBranch,
 		performSwitch,
 		selectedTags
 	} from '$lib/branches';
@@ -149,6 +156,10 @@
 
 	// quick submit preview
 	let showQuickSubmitPreview = false;
+	// What the open preview shows; the confirm refuses to run if the state has changed since.
+	let previewMode: SubmitMode | null = null;
+	let previewPushOnly = false;
+	let previewBranch = '';
 
 	// new files detected by the pre-submit refresh
 	let showNewFilesPrompt = false;
@@ -200,6 +211,7 @@
 	let snapshots: Snapshot[] = [];
 
 	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
+	$: syncConflictPaths = $repoStatus?.willConflictOnSync ?? [];
 	$: canSync = !quickSubmitting && !syncing;
 
 	const onModifiedFileRightClick = async (e: MouseEvent, file: ModifiedFile) => {
@@ -286,15 +298,40 @@
 		selectedTags($dynamicConfig?.commitTags ?? [], selectedCommitTags),
 		formattedCommitMessage
 	);
-	$: quickSubmitBranchAllowed = canQuickSubmitOn($repoStatus?.branch, $repoConfig);
 	$: hasUnsubmittableFiles = $selectedFiles.some(
 		(file) => file.submitStatus !== SubmitStatus.Ok && file.submitStatus !== SubmitStatus.Unknown
 	);
+	$: modeInfo = deriveSubmitMode($repoStatus, $repoConfig);
 	$: canSubmit =
 		$selectedFiles.length > 0 &&
 		get(commitMessage) !== '' &&
 		commitMessageValid &&
-		!hasUnsubmittableFiles;
+		!hasUnsubmittableFiles &&
+		modeInfo.mode !== 'unavailable';
+	$: branchBlockReason =
+		modeInfo.mode === 'branch' && $repoStatus ? branchSubmitBlockReason($repoStatus) : null;
+	$: unpushedCommits = $repoStatus?.commitsAhead ?? 0;
+	// Branch mode, nothing selected, local commits waiting to be pushed.
+	$: pushOnly = modeInfo.mode === 'branch' && $selectedFiles.length === 0 && unpushedCommits > 0;
+	$: canSubmitBranch =
+		modeInfo.mode === 'branch' && branchBlockReason === null && (canSubmit || pushOnly);
+	$: showTagPicker = modeInfo.mode === 'quick' || (modeInfo.mode === 'branch' && !pushOnly);
+	$: submitLabel = modeInfo.mode === 'branch' ? 'Submit to branch' : 'Quick Submit';
+	// Branch mode pushes HEAD, so earlier unpushed commits go out with the new one.
+	$: previewUnpushedSuffix =
+		modeInfo.mode === 'branch' && unpushedCommits > 0
+			? `, plus ${unpushedCommits} unpushed commit${unpushedCommits === 1 ? '' : 's'}`
+			: '';
+	$: previewFileSummary = `${$selectedFiles.length} file${
+		$selectedFiles.length === 1 ? '' : 's'
+	}${previewUnpushedSuffix}`;
+
+	const openSubmitPreview = () => {
+		previewMode = modeInfo.mode;
+		previewPushOnly = pushOnly;
+		previewBranch = $repoStatus?.branch ?? '';
+		showQuickSubmitPreview = true;
+	};
 
 	const handleOpenDirectory = async (path: string) => {
 		const parent = path.split('/').slice(0, -1).join('/');
@@ -562,14 +599,19 @@
 		syncing = false;
 	};
 
-	const handleQuickSubmitClicked = async () => {
+	const handleSubmitClicked = async () => {
+		if (pushOnly) {
+			openSubmitPreview();
+			return;
+		}
+
 		// The modified file list can be stale (e.g. saving in Unreal and immediately
 		// hitting Quick Submit), so do one final refresh and surface anything new
 		// before showing the preview.
 		const knownPaths = new Set($allModifiedFiles.map((file) => file.path));
 
 		showProgressModal = true;
-		progressModalTitle = 'Preparing Quick Submit preview';
+		progressModalTitle = `Preparing ${submitLabel} preview`;
 
 		let refreshSucceeded = false;
 		try {
@@ -585,7 +627,7 @@
 		if (!refreshSucceeded) {
 			await emit(
 				'error',
-				'Quick Submit was cancelled because the file list could not be refreshed. Please try again.'
+				`${submitLabel} was cancelled because the file list could not be refreshed. Please try again.`
 			);
 			return;
 		}
@@ -609,34 +651,40 @@
 			return;
 		}
 
-		showQuickSubmitPreview = true;
+		openSubmitPreview();
 	};
 
-	const handleQuickSubmit = async () => {
+	const handleSubmit = async () => {
+		// Captured up front; the reactive values can change during the awaits below.
+		const { mode } = modeInfo;
+		const isPushOnly = pushOnly;
+		const branch = $repoStatus?.branch ?? '';
+		const n = unpushedCommits;
+
+		if (mode === 'unavailable') return;
+		if (mode !== previewMode || isPushOnly !== previewPushOnly || branch !== previewBranch) {
+			await emit('error', 'The branch state changed after the preview. Review the submit again.');
+			return;
+		}
+
 		loading = true;
 		quickSubmitting = true;
 		showProgressModal = true;
-		progressModalTitle = 'Submitting changes';
-
-		const message = get(commitMessage);
+		progressModalTitle = isPushOnly ? `Pushing to ${branch}` : 'Submitting changes';
 
 		const req: PushRequest = {
-			commitMessage: composeCommitMessage(
-				selectedTags($dynamicConfig?.commitTags ?? [], selectedCommitTags),
-				typeof message === 'string'
-					? message
-					: `${message.type}(${message.scope}): ${message.message}`
-			),
-			files: $selectedFiles.map((file) => file.path)
+			commitMessage: isPushOnly ? '' : composedCommitMessage,
+			files: isPushOnly ? [] : $selectedFiles.map((file) => file.path),
+			...(mode === 'branch' ? { expectedBranch: previewBranch } : {})
 		};
 
 		let quickSubmitSucceeded = false;
 
 		try {
-			await quickSubmit(req);
+			await (mode === 'branch' ? submitToBranch(req) : quickSubmit(req));
 
 			// Save last used type and scope to config for next session
-			if ($repoConfig?.useConventionalCommits) {
+			if (!isPushOnly && $repoConfig?.useConventionalCommits) {
 				const updatedConfig = {
 					...$appConfig,
 					lastQuickSubmitType: tempCommitType,
@@ -649,16 +697,20 @@
 				$appConfig = updatedConfig;
 			}
 
-			$commitMessage = '';
+			if (!isPushOnly) {
+				$commitMessage = '';
 
-			// note that we don't reset tempCommitType or tempCommitScope because the UI already has values selected
-			tempCommitMessage = '';
-			selectedCommitTags = selectedCommitTags.map(() => '');
+				// note that we don't reset tempCommitType or tempCommitScope because the UI already has values selected
+				tempCommitMessage = '';
+				selectedCommitTags = selectedCommitTags.map(() => '');
 
-			$selectedFiles = [];
-			selectAll = false;
+				$selectedFiles = [];
+				selectAll = false;
+			}
 
-			await refreshPulls();
+			if (mode === 'quick') {
+				await refreshPulls();
+			}
 
 			quickSubmitSucceeded = true;
 		} catch (e) {
@@ -670,7 +722,13 @@
 		await refreshFiles(true);
 
 		if (quickSubmitSucceeded) {
-			await emit('success', 'Changes submitted successfully!');
+			let successMessage = 'Changes submitted successfully!';
+			if (isPushOnly) {
+				successMessage = `Pushed ${n} commit${n === 1 ? '' : 's'} to ${branch}.`;
+			} else if (mode === 'branch') {
+				successMessage = `Changes submitted to ${branch}.`;
+			}
+			await emit('success', successMessage);
 		}
 
 		showProgressModal = false;
@@ -1310,12 +1368,25 @@
 		>
 			<RefreshOutline class="w-3 h-3 mr-2" />
 			Sync
+			{#if syncConflictPaths.length > 0}
+				<ExclamationCircleSolid class="w-3 h-3 ml-2 text-orange-300" />
+				<span class="ml-1 text-orange-300">{syncConflictPaths.length}</span>
+			{/if}
 		</Button>
 		{#if conflictsDetected}
 			<Tooltip
 				class="ml-2 w-36 text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
 				placement="bottom"
 				>Conflicts detected!
+			</Tooltip>
+		{:else if syncConflictPaths.length > 0}
+			<Tooltip class="text-xs w-[22rem]" placement="bottom">
+				{syncConflictPaths.length === 1
+					? '1 local file was'
+					: `${syncConflictPaths.length} local files were`}
+				also changed on {$repoStatus?.remoteBranch || 'the remote branch'}. Sync merges text files,
+				leaving conflict markers where the same lines changed; for binary files it keeps your
+				version.
 			</Tooltip>
 		{/if}
 		<Button
@@ -1413,6 +1484,10 @@
 			onLockSelected={handleLockSelected}
 			onRightClick={onModifiedFileRightClick}
 			onShowFileHistory={showFileHistory}
+			rebaseWarningPaths={$repoStatus?.willConflictOnRebase ?? []}
+			trunkBranch={$repoConfig?.trunkBranch || 'main'}
+			{syncConflictPaths}
+			remoteBranch={$repoStatus?.remoteBranch ?? ''}
 		>
 			<Button
 				slot="actions-dropdown-trigger"
@@ -1457,13 +1532,31 @@
 			class="w-full h-full p-4 sm:p-4 max-w-full max-h-16 bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 		>
 			<div class="flex flex-row items-center justify-between gap-2">
-				<BranchSelector
-					current={$repoStatus?.branch ?? ''}
-					disabled={loading || quickSubmitting || syncing}
-					on:select={(e) => handleBranchSelected(e.detail)}
-				/>
+				<div class="flex flex-row items-center gap-2">
+					<BranchSelector
+						current={$repoStatus?.branch ?? ''}
+						disabled={loading || quickSubmitting || syncing}
+						on:select={(e) => handleBranchSelected(e.detail)}
+					/>
+					{#if modeInfo.mode === 'quick'}
+						<Badge>Quick Submit</Badge>
+					{:else if modeInfo.mode === 'branch'}
+						<Badge>Submit to branch</Badge>
+					{:else if modeInfo.reason !== ''}
+						<Badge color="yellow">Unavailable</Badge>
+					{/if}
+				</div>
 			</div>
 		</Card>
+		{#if modeInfo.mode === 'branch' && $repoStatus && !isFeatureBranch($repoStatus.branch)}
+			<Alert
+				class="bg-yellow-900 dark:bg-yellow-900 border border-yellow-700 text-yellow-100 dark:text-yellow-100"
+			>
+				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
+				<code>{$repoStatus.branch}</code> was not created by Friendshipper. It may be shared or protected
+				differently, but actions are allowed.
+			</Alert>
+		{/if}
 		<Card
 			class="w-full p-4 sm:p-4 max-w-full h-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 		>
@@ -1547,24 +1640,49 @@
 					}}
 					class="text-white bg-secondary-800 dark:bg-space-950 min-h-[4rem] h-full border-gray-400"
 				/>
-				<CommitTagPicker
-					categories={$dynamicConfig?.commitTags ?? []}
-					bind:selected={selectedCommitTags}
-					disabled={loading || quickSubmitting}
-				/>
+				<!-- Hidden rather than unmounted: the picker clears its selection when it mounts. -->
+				<div class={showTagPicker ? 'contents' : 'hidden'}>
+					<CommitTagPicker
+						categories={$dynamicConfig?.commitTags ?? []}
+						bind:selected={selectedCommitTags}
+						disabled={loading || quickSubmitting}
+					/>
+				</div>
 				<div class="flex flex-row w-full align-middle justify-end">
-					<ButtonGroup class="space-x-px">
+					{#if modeInfo.mode === 'quick'}
+						<ButtonGroup class="space-x-px">
+							<Button
+								id="quick-submit"
+								color="primary"
+								disabled={!canSubmit || loading}
+								on:click={async () => {
+									await handleSubmitClicked();
+								}}
+								>Quick Submit
+								<QuestionCircleOutline class="w-6 pl-2 align-middle" />
+							</Button>
+						</ButtonGroup>
+					{:else if modeInfo.mode === 'branch'}
 						<Button
-							id="quick-submit"
+							id="submit-to-branch"
 							color="primary"
-							disabled={!canSubmit || loading || !quickSubmitBranchAllowed}
+							disabled={!canSubmitBranch || loading}
 							on:click={async () => {
-								await handleQuickSubmitClicked();
+								await handleSubmitClicked();
 							}}
-							>Quick Submit
+							>{pushOnly
+								? `Push ${unpushedCommits} commit${unpushedCommits === 1 ? '' : 's'}`
+								: 'Submit to branch'}
 							<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 						</Button>
-					</ButtonGroup>
+					{:else if modeInfo.reason !== ''}
+						<div class="flex flex-col w-full items-end gap-2">
+							<p class="text-sm text-yellow-300">{modeInfo.reason}</p>
+							<Button size="sm" on:click={() => goto('/source/branches')}
+								>Open Branch Management</Button
+							>
+						</div>
+					{/if}
 				</div>
 			</div>
 		</Card>
@@ -1735,33 +1853,50 @@
 		</TabItem>
 	</Tabs>
 </Card>
-<Tooltip
-	triggeredBy="#quick-submit"
-	class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
-	placement="bottom"
-	><p>
-		{#if !quickSubmitBranchAllowed}
-			<span class="text-red-400"
-				>Submitting to a branch isn't supported yet — switch back to {$appConfig.targetBranch} with the
-				reset button</span
-			><br /><br />
-		{/if}
-		{#if hasUnsubmittableFiles}
-			<span class="text-red-400"
-				>Some selected files require checkout (lock) before submitting. Deselect them or lock them
-				first.</span
-			><br /><br />
-		{/if}
-		<span class="text-primary-400">Quick Submit</span> allows you to submit changes without syncing
-		latest from <span class="font-mono text-primary-400">main</span>.<br /><br />
-		This will open a pull request on GitHub and automatically merge it, putting your changes into the
-		merge queue. Because of this, you may need to wait for other builds in the merge queue to finish
-		before your changes will appear on
-		<span class="font-mono text-primary-400">main</span>.<br /><br />
-		You may only <span class="text-primary-400">Quick Submit</span> when on
-		<span class="text-primary-400">main</span>.
-	</p>
-</Tooltip>
+<!-- Tooltips bind to their trigger on mount, so they mount with the matching button. -->
+{#if modeInfo.mode === 'quick'}
+	<Tooltip
+		triggeredBy="#quick-submit"
+		class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
+		placement="bottom"
+		><p>
+			{#if hasUnsubmittableFiles}
+				<span class="text-red-400"
+					>Some selected files require checkout (lock) before submitting. Deselect them or lock them
+					first.</span
+				><br /><br />
+			{/if}
+			<span class="text-primary-400">Quick Submit</span> allows you to submit changes without
+			syncing latest from <span class="font-mono text-primary-400">main</span>.<br /><br />
+			This will open a pull request on GitHub and automatically merge it, putting your changes into the
+			merge queue. Because of this, you may need to wait for other builds in the merge queue to finish
+			before your changes will appear on
+			<span class="font-mono text-primary-400">main</span>.<br /><br />
+			You may only <span class="text-primary-400">Quick Submit</span> when on
+			<span class="text-primary-400">main</span>.
+		</p>
+	</Tooltip>
+{:else if modeInfo.mode === 'branch'}
+	<Tooltip
+		triggeredBy="#submit-to-branch"
+		class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
+		placement="bottom"
+		><p>
+			{#if hasUnsubmittableFiles}
+				<span class="text-red-400"
+					>Some selected files require checkout (lock) before submitting. Deselect them or lock them
+					first.</span
+				><br /><br />
+			{/if}
+			{#if branchBlockReason}
+				<span class="text-red-400">{branchBlockReason}</span>
+			{:else}
+				Commits the selected files to {$repoStatus?.branch} and pushes to origin. Your locks are kept.
+				Quick Submit is not available on this branch.
+			{/if}
+		</p>
+	</Tooltip>
+{/if}
 
 <Modal
 	open={promptForPAT}
@@ -1809,7 +1944,7 @@
 		<p class="text-sm text-gray-300">
 			{newlyDetectedFiles.length} file{newlyDetectedFiles.length === 1 ? ' has' : 's have'} changed since
 			the file list was last refreshed. {newlyDetectedFiles.length === 1 ? 'It' : 'They'} will not be
-			included in this Quick Submit.
+			included in this {submitLabel}.
 		</p>
 		<div
 			class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
@@ -1848,7 +1983,7 @@
 				color="primary"
 				on:click={() => {
 					showNewFilesPrompt = false;
-					showQuickSubmitPreview = true;
+					openSubmitPreview();
 				}}>Continue Without New Files</Button
 			>
 		</div>
@@ -1867,31 +2002,41 @@
 	size="md"
 >
 	<div class="flex flex-col gap-3">
-		<h3 class="text-lg font-semibold text-white">Quick Submit Preview</h3>
-		<p class="text-sm text-gray-300 break-words">{composedCommitMessage}</p>
-		<p class="text-sm text-gray-400">
-			{$selectedFiles.length} file{$selectedFiles.length === 1 ? '' : 's'}
-		</p>
-		<div
-			class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
-		>
-			{#each $selectedFiles as file}
-				<div class="flex gap-2 items-center" role="listitem">
-					{#if file.state === ModifiedFileState.Added}
-						<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
-					{:else if file.state === ModifiedFileState.Modified}
-						<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
-					{:else if file.state === ModifiedFileState.Deleted}
-						<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
-					{:else if file.state === ModifiedFileState.Unmerged}
-						<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
-					{/if}
-					<span class="truncate {getFileTextClass(file)}" title={file.path}
-						>{getFileDisplayString(file)}</span
-					>
-				</div>
-			{/each}
-		</div>
+		<h3 class="text-lg font-semibold text-white">{submitLabel} Preview</h3>
+		{#if pushOnly}
+			<p class="text-sm text-gray-300">
+				Push {unpushedCommits} unpushed commit{unpushedCommits === 1 ? '' : 's'} on {previewBranch}
+				to origin.
+			</p>
+		{:else}
+			<p class="text-sm text-gray-300 break-words">{composedCommitMessage}</p>
+			{#if modeInfo.mode === 'branch'}
+				<p class="text-sm text-gray-400">Branch: {previewBranch}. Your locks are kept.</p>
+			{/if}
+			<p class="text-sm text-gray-400">
+				{previewFileSummary}
+			</p>
+			<div
+				class="bg-secondary-800 dark:bg-space-950 p-2 max-h-64 overflow-y-auto rounded text-nowrap"
+			>
+				{#each $selectedFiles as file}
+					<div class="flex gap-2 items-center" role="listitem">
+						{#if file.state === ModifiedFileState.Added}
+							<PlusOutline class="w-4 h-4 text-lime-500 shrink-0" />
+						{:else if file.state === ModifiedFileState.Modified}
+							<PenSolid class="w-4 h-4 text-yellow-300 shrink-0" />
+						{:else if file.state === ModifiedFileState.Deleted}
+							<CloseCircleSolid class="w-4 h-4 text-red-700 shrink-0" />
+						{:else if file.state === ModifiedFileState.Unmerged}
+							<FileCopySolid class="w-4 h-4 text-red-700 shrink-0" />
+						{/if}
+						<span class="truncate {getFileTextClass(file)}" title={file.path}
+							>{getFileDisplayString(file)}</span
+						>
+					</div>
+				{/each}
+			</div>
+		{/if}
 		<div class="flex justify-end gap-2">
 			<Button
 				size="sm"
@@ -1905,7 +2050,7 @@
 				color="primary"
 				on:click={async () => {
 					showQuickSubmitPreview = false;
-					await handleQuickSubmit();
+					await handleSubmit();
 				}}>Confirm Submit</Button
 			>
 		</div>
