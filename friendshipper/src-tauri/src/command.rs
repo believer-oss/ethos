@@ -18,8 +18,9 @@ use ethos_core::types::playtests::{
 };
 use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::{
-    ChangeSet, CommitFileInfo, CommitInfo, FileHistoryResponse, PushRequest, RepoDirectoryListing,
-    RepoStatus, Snapshot,
+    BranchInfo, ChangeSet, CommitFileInfo, CommitInfo, CreateBranchRequest, CreateBranchResponse,
+    FileHistoryResponse, PushRequest, RepoDirectoryListing, RepoStatus, Snapshot,
+    SwitchBranchRequest, SwitchBranchResponse,
 };
 use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
@@ -600,6 +601,62 @@ pub async fn reset_repo_to_commit(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_branches(
+    state: tauri::State<'_, State>,
+    all: bool,
+) -> Result<Vec<BranchInfo>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/branch/list?all={}", state.server_url, all))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn create_branch(
+    state: tauri::State<'_, State>,
+    slug: String,
+) -> Result<CreateBranchResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/create", state.server_url))
+        .json(&CreateBranchRequest { slug })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn switch_branch(
+    state: tauri::State<'_, State>,
+    branch: String,
+) -> Result<SwitchBranchResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/switch", state.server_url))
+        .json(&SwitchBranchRequest { branch })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
 }
 
 // Argo

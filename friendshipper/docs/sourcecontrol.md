@@ -20,10 +20,22 @@ it essentially replaces workflows that UGS and P4V support.
 - Must be hosted on Github with merge queue enabled
 - LFS server with locking support (see [lfs-rs](https://github.com/believer-oss/lfs-rs))
 
+### Feature branches
+
+- Create a branch from Branch Management with "New branch". The name becomes `f11r-branch-<slug>` and must be unique.
+  New branches start from the latest `origin/main` (your repository's trunk branch) and are pushed to origin immediately.
+- Switch branches with the branch selector on the submit page or on Branch Management. Switching requires no local
+  changes and Unreal Editor closed. Binaries and the engine update as they do after a Sync.
+- The reset button returns you to your configured target branch.
+- By default the selector lists `f11r-branch-*` branches; turn on "Show all branches" in Preferences (Source Control
+  Options) to list every branch on origin except Quick Submit branches.
+- Quick Submit is available on target branches and Quick Submit branches. From a Quick Submit branch, Sync returns you
+  to your target branch; the selector and reset button are disabled there.
+- Branches are deleted on GitHub, not in Friendshipper.
+
 ### Limitations
 
 - Assumes all development happens on a single trunk branch
-- Creating and switching between branches is not supported
 - Only supports a single project at a time
 
 # Setup
