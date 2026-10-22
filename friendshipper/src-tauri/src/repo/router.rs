@@ -73,6 +73,7 @@ where
         .route("/branch/list", get(operations::list_branches_handler))
         .route("/branch/create", post(operations::create_branch_handler))
         .route("/branch/switch", post(operations::switch_branch_handler))
+        .route("/branch/submit", post(operations::branch_submit_handler))
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
         .route("/maintenance", post(operations::run_maintenance_handler))

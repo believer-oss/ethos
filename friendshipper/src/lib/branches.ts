@@ -2,7 +2,7 @@ import { emit } from '@tauri-apps/api/event';
 import { derived, type Readable } from 'svelte/store';
 import { commits, repoConfig, repoStatus } from '$lib/stores';
 import { getAllCommits, getRepoStatus, switchBranch } from '$lib/repo';
-import type { CommitTagCategory, Nullable, RepoConfig } from '$lib/types';
+import type { CommitTagCategory, Nullable, RepoConfig, RepoStatus } from '$lib/types';
 
 export const FEATURE_BRANCH_PREFIX = 'f11r-branch-';
 const MAX_SLUG_LEN = 48;
@@ -48,12 +48,45 @@ export const validateSlug = (slug: string): string | null => {
 	return null;
 };
 
-// Mirrors the backend Quick Submit guard; unknown state (no branch or config) is allowed.
-export const canQuickSubmitOn = (
-	branch: string | undefined,
-	config: Nullable<RepoConfig>
-): boolean =>
-	!branch || !config || isProtectedBranch(branch, config) || isQuickSubmitBranch(branch);
+export type SubmitMode = 'quick' | 'branch' | 'unavailable';
+
+// Always false: RepoStatus does not report guided rebase state yet.
+export const isGuidedRebaseActive = (_status: RepoStatus): boolean => false;
+
+// Mirrors the Rust `is_branch_mode`: branch mode is any branch that is neither protected nor Quick Submit.
+export const deriveSubmitMode = (
+	status: Nullable<RepoStatus>,
+	cfg: Nullable<RepoConfig>
+): { mode: SubmitMode; reason: string } => {
+	if (!status || !cfg) {
+		return { mode: 'unavailable', reason: '' };
+	}
+	if (status.detachedHead || status.branch === '' || isGuidedRebaseActive(status)) {
+		return {
+			mode: 'unavailable',
+			reason:
+				'Submitting is unavailable while the repository is in a detached HEAD state or a rebase is in progress. Open Branch Management to resolve it.'
+		};
+	}
+	if (isProtectedBranch(status.branch, cfg) || isQuickSubmitBranch(status.branch)) {
+		return { mode: 'quick', reason: '' };
+	}
+	return { mode: 'branch', reason: '' };
+};
+
+// Advisory gate for branch submit; the backend check against origin is authoritative.
+export const branchSubmitBlockReason = (status: RepoStatus): string | null => {
+	if (status.remoteBranch === '') {
+		return 'This branch has no upstream on origin. Create feature branches with New branch in Branch Management.';
+	}
+	if (status.remoteBranch !== `origin/${status.branch}`) {
+		return `This branch tracks ${status.remoteBranch}, not origin/${status.branch}. Switch to it from the branch selector.`;
+	}
+	if (status.commitsBehind > 0) {
+		return 'Your branch is behind origin — Sync first';
+	}
+	return null;
+};
 
 // Chosen tag per category in category order; empty choices and option-less categories are dropped.
 export const selectedTags = (categories: CommitTagCategory[], selected: string[]): string[] =>

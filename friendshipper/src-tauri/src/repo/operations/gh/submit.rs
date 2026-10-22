@@ -207,7 +207,7 @@ async fn filter_to_textlike_paths(
 ///   deliberately contains both a `<<<<<<<` and a `>>>>>>>` line (e.g. a
 ///   merge tutorial) carries the full shape and will be caught. That's far
 ///   rarer than the lone-divider case and is the accepted residual.
-async fn find_files_with_conflict_markers(
+pub(crate) async fn find_files_with_conflict_markers(
     git_client: &git::Git,
     paths: &[String],
 ) -> Result<Vec<String>, CoreError> {
@@ -340,7 +340,7 @@ async fn find_files_with_conflict_markers(
 /// GitHub interaction, and keeping it free of that dependency lets it be
 /// exercised in tests without a live, authenticated GitHub client (which
 /// `GraphQLClient::new` requires — see `core/src/clients/github.rs`).
-async fn reject_unsubmittable_files<T: EngineProvider>(
+pub(crate) async fn reject_unsubmittable_files<T: EngineProvider>(
     requested_files: &[String],
     repo_status: &RepoStatus,
     app_config: &AppConfigRef,
@@ -442,6 +442,131 @@ async fn reject_unsubmittable_files<T: EngineProvider>(
     }
 
     Err(CoreError::Input(anyhow!(message)))
+}
+
+/// Returns an `Input` error naming every requested file that still contains
+/// unresolved merge conflict markers.
+pub(crate) async fn reject_files_with_conflict_markers(
+    git_client: &git::Git,
+    files: &[String],
+) -> Result<(), CoreError> {
+    let conflicted = find_files_with_conflict_markers(git_client, files).await?;
+    if !conflicted.is_empty() {
+        for path in &conflicted {
+            tracing::error!("Unresolved conflict markers in {}", path);
+        }
+        return Err(CoreError::Input(anyhow!(
+            "Cannot submit: {} file(s) still contain unresolved merge conflict markers:\n  - {}\n\nResolve the conflict markers (the <<<<<<<, =======, >>>>>>> lines) before submitting.",
+            conflicted.len(),
+            conflicted.join("\n  - ")
+        )));
+    }
+    Ok(())
+}
+
+/// Stages `files`, unstages anything else that was staged, and commits them
+/// with `message` on the current branch.
+pub(crate) async fn commit_files(
+    git_client: &git::Git,
+    repo_status: &RepoStatusRef,
+    files: &[String],
+    message: &str,
+) -> Result<(), CoreError> {
+    let add_op = AddOp {
+        files: files.to_vec(),
+        git_client: git_client.clone(),
+    };
+
+    add_op.execute().await?;
+
+    // unstage any files that are staged but not in the request
+    let mut staged_files = Vec::new();
+    {
+        let repo_status = repo_status.read();
+        let modified = repo_status.modified_files.clone();
+        for file in modified.into_iter() {
+            if file.is_staged {
+                staged_files.push(file.path.clone());
+            }
+        }
+    }
+
+    let files_to_unstage: Vec<String> = staged_files
+        .into_iter()
+        .filter(|file| !files.contains(file))
+        .collect();
+
+    if !files_to_unstage.is_empty() {
+        let restore_op = RestoreOp {
+            files: files_to_unstage,
+            git_client: git_client.clone(),
+        };
+
+        restore_op.execute().await?;
+    }
+
+    // Debug logging to diagnose commit failures
+    let current_branch = git_client.current_branch().await?;
+    debug!("About to commit on branch: {}", current_branch);
+
+    // Check what's actually staged before committing
+    let status_output = git_client
+        .run_and_collect_output(&["status", "--short"], git::Opts::default())
+        .await
+        .unwrap_or_else(|_| "Failed to get status".to_string());
+    debug!("Git status before commit:\n{}", status_output);
+
+    // We can skip the status check because we know for a fact that there are staged files
+    let commit_op = CommitOp {
+        message: message.to_string(),
+        repo_status: repo_status.clone(),
+        git_client: git_client.clone(),
+        skip_status_check: true,
+    };
+
+    match commit_op.execute().await {
+        Ok(_) => debug!("Commit succeeded"),
+        Err(e) => {
+            error!(
+                "Commit failed on branch '{}' with error: {}",
+                current_branch, e
+            );
+            error!("Status was:\n{}", status_output);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Hard-resets to `branch` and restores the pre-submit snapshot, unless the
+/// editor is running.
+pub(crate) async fn restore_pre_submit_state<T: EngineProvider>(
+    git_client: &git::Git,
+    engine: &T,
+    branch: &str,
+    snapshot_commit: &str,
+) -> Result<(), CoreError> {
+    // can't touch the working tree unless the engine isn't running
+    if engine.check_ready_to_sync_repo().await.is_ok() {
+        // attempt to reset to original branch and restore snapshot
+        // if this fails for any reason, we should simply log, then return the original error
+        git_client.hard_reset(branch).await?;
+
+        match git_client
+            .restore_snapshot_via_cherry_pick(snapshot_commit, vec![])
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                // log the error, but don't return it
+                warn!("Failed to restore snapshot after failed submit: {}", e);
+            }
+        }
+    } else {
+        warn!("Unable to automatically restore pre-submit state due to editor running.")
+    }
+    Ok(())
 }
 
 /// Count the leading run of byte `c` at the start of `s`. Used to recognize a
@@ -837,20 +962,7 @@ where
         // and only complains about markers in changes being introduced (not
         // pre-existing markers in unrelated content). Runs before the
         // snapshot so a doomed submit doesn't waste one.
-        {
-            let conflicted =
-                find_files_with_conflict_markers(&self.git_client, &self.files).await?;
-            if !conflicted.is_empty() {
-                for path in &conflicted {
-                    tracing::error!("Unresolved conflict markers in {}", path);
-                }
-                return Err(CoreError::Input(anyhow!(
-                    "Cannot submit: {} file(s) still contain unresolved merge conflict markers:\n  - {}\n\nResolve the conflict markers (the <<<<<<<, =======, >>>>>>> lines) before submitting.",
-                    conflicted.len(),
-                    conflicted.join("\n  - ")
-                )));
-            }
-        }
+        reject_files_with_conflict_markers(&self.git_client, &self.files).await?;
 
         // save a snapshot before submitting with all modified/added files
         // make sure we have a temp dir for copying our files
@@ -873,27 +985,9 @@ where
         match self.execute_internal().await {
             Ok(_) => Ok(()),
             Err(e) => {
-                // can't touch the working tree unless the engine isn't running
-                if self.engine.check_ready_to_sync_repo().await.is_ok() {
-                    // attempt to reset to original branch and restore snapshot
-                    // if this fails for any reason, we should simply log, then return the original error
-                    let branch = self.repo_status.read().branch.clone();
-                    self.git_client.hard_reset(&branch).await?;
-
-                    match self
-                        .git_client
-                        .restore_snapshot_via_cherry_pick(&snapshot.commit, vec![])
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            // log the error, but don't return it
-                            warn!("Failed to restore snapshot after failed submit: {}", e);
-                        }
-                    }
-                } else {
-                    warn!("Unable to automatically restore pre-submit state due to editor running.")
-                }
+                let branch = self.repo_status.read().branch.clone();
+                restore_pre_submit_state(&self.git_client, &self.engine, &branch, &snapshot.commit)
+                    .await?;
                 Err(e)
             }
         }
@@ -1064,72 +1158,13 @@ where
 
         // commit changes
         self.emit_phase("Committing changes");
-        {
-            let add_op = AddOp {
-                files: self.files.clone(),
-                git_client: self.git_client.clone(),
-            };
-
-            add_op.execute().await?;
-
-            // unstage any files that are staged but not in the request
-            let mut staged_files = Vec::new();
-            {
-                let repo_status = self.repo_status.read();
-                let modified = repo_status.modified_files.clone();
-                for file in modified.into_iter() {
-                    if file.is_staged {
-                        staged_files.push(file.path.clone());
-                    }
-                }
-            }
-
-            let files_to_unstage: Vec<String> = staged_files
-                .into_iter()
-                .filter(|file| !self.files.contains(file))
-                .collect();
-
-            if !files_to_unstage.is_empty() {
-                let restore_op = RestoreOp {
-                    files: files_to_unstage,
-                    git_client: self.git_client.clone(),
-                };
-
-                restore_op.execute().await?;
-            }
-
-            // Debug logging to diagnose commit failures
-            let current_branch = self.git_client.current_branch().await?;
-            debug!("About to commit on branch: {}", current_branch);
-
-            // Check what's actually staged before committing
-            let status_output = self
-                .git_client
-                .run_and_collect_output(&["status", "--short"], git::Opts::default())
-                .await
-                .unwrap_or_else(|_| "Failed to get status".to_string());
-            debug!("Git status before commit:\n{}", status_output);
-
-            // We can skip the status check because we know for a fact that there are staged files
-            let commit_op = CommitOp {
-                message: self.commit_message.clone(),
-                repo_status: self.repo_status.clone(),
-                git_client: self.git_client.clone(),
-                skip_status_check: true,
-            };
-
-            match commit_op.execute().await {
-                Ok(_) => debug!("Commit succeeded"),
-                Err(e) => {
-                    error!(
-                        "Commit failed on branch '{}' with error: {}",
-                        current_branch, e
-                    );
-                    error!("Status was:\n{}", status_output);
-                    return Err(e);
-                }
-            }
-        }
+        commit_files(
+            &self.git_client,
+            &self.repo_status,
+            &self.files,
+            &self.commit_message,
+        )
+        .await?;
 
         self.emit_phase("Pushing to GitHub");
         let worktree_path: PathBuf = 'path: {
@@ -1372,14 +1407,29 @@ where
                                         // Don't return Err here — the commit/push/merge all
                                         // succeeded, and returning Err would trigger the
                                         // destructive snapshot-restore in execute().
-                                        let msg = format!(
-                                            "Your changes were submitted successfully! \
-                                            Auto-sync back to the target branch failed: {}. \
-                                            If you see conflicts with your local files, you can \
-                                            restore them from the pre-submit snapshot in the \
-                                            Snapshots tab. Otherwise, just Sync manually when ready.",
-                                            e
-                                        );
+                                        let conflict = match &e {
+                                            CoreError::Input(e) => {
+                                                e.downcast_ref::<git::AutostashConflict>()
+                                            }
+                                            _ => None,
+                                        };
+                                        let msg = if let Some(conflict) = conflict {
+                                            format!(
+                                                "Your changes were submitted and synced back to \
+                                                the target branch, but {}",
+                                                conflict.details()
+                                            )
+                                        } else {
+                                            format!(
+                                                "Your changes were submitted successfully! \
+                                                Auto-sync back to the target branch failed: {}. \
+                                                If you see conflicts with your local files, you \
+                                                can restore them from the pre-submit snapshot in \
+                                                the Snapshots tab. Otherwise, just Sync manually \
+                                                when ready.",
+                                                e
+                                            )
+                                        };
                                         error!("{}", msg);
                                         let _ = self.notification_tx.send(Notification::Error(msg));
                                         return Ok(());
@@ -1513,6 +1563,11 @@ where
 /// A Quick Submit branch (e.g. `f11r-main-Jane-1761000000`); `f11r-branch-*` feature branches are excluded.
 pub fn is_quicksubmit_branch(branch: &str) -> bool {
     branch.starts_with("f11r") && !ethos_core::types::repo::is_feature_branch(branch)
+}
+
+/// A branch that submits with Submit to branch: named, not protected, not a Quick Submit branch.
+pub fn is_branch_mode(repo_config: &RepoConfig, branch: &str) -> bool {
+    !branch.is_empty() && !repo_config.is_protected_branch(branch) && !is_quicksubmit_branch(branch)
 }
 
 /// Quick Submit is only allowed from a protected branch or a Quick Submit branch.
@@ -2132,6 +2187,27 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn is_branch_mode_cases() {
+        let config = guard_repo_config();
+        for (branch, expected) in [
+            ("main", false),
+            ("release", false),
+            ("f11r-main-alice-123", false),
+            ("f11r-branch-x", true),
+            ("ar/foo", true),
+            ("", false),
+        ] {
+            assert_eq!(is_branch_mode(&config, branch), expected, "{branch:?}");
+        }
+
+        let no_trunk = RepoConfig {
+            trunk_branch: String::new(),
+            ..guard_repo_config()
+        };
+        assert!(!is_branch_mode(&no_trunk, ""));
     }
 
     #[test]

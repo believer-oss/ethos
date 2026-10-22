@@ -3,6 +3,7 @@ use axum::{extract::State, Json};
 use tracing::{info, instrument};
 
 use crate::engine::EngineProvider;
+use crate::repo::operations::gh::submit::is_branch_mode;
 use ethos_core::operations::LockOp;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::locks::{LockOperation, LockResponse};
@@ -20,6 +21,12 @@ where
     T: EngineProvider,
 {
     info!("lock request: {:?}", request);
+
+    let (branch, branch_mode) = {
+        let branch = state.repo_status.read().branch.clone();
+        let branch_mode = is_branch_mode(&state.repo_config.read(), &branch);
+        (branch, branch_mode)
+    };
 
     let mut paths: Vec<String> = Vec::new();
     for path in request.paths {
@@ -46,9 +53,10 @@ where
             .any(|p| p == &path)
         {
             // do not attempt to lock any files modified upstream by other users, instead log an error and abort
-            return Err(CoreError::Input(anyhow!(
-                "Files are modified upstream by other users. Sync and try again."
-            )));
+            return Err(CoreError::Input(anyhow!(modified_upstream_message(
+                branch_mode,
+                &branch
+            ))));
         } else {
             paths.push(path);
         }
@@ -60,6 +68,14 @@ where
     };
 
     internal_lock_handler(state, request_data, LockOperation::Lock).await
+}
+
+fn modified_upstream_message(branch_mode: bool, branch: &str) -> String {
+    if branch_mode {
+        format!("Files are modified on origin/{branch} by other users. Sync to get your collaborators' changes, then try again.")
+    } else {
+        "Files are modified upstream by other users. Sync and try again.".to_string()
+    }
 }
 
 #[instrument(skip(state, request))]
@@ -140,5 +156,26 @@ where
     match response_rx.recv().await {
         Some(response) => Ok(Json(response)),
         None => Err(CoreError::Internal(anyhow!("Failed to get lock response"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modified_upstream_message_names_branch_in_branch_mode() {
+        assert_eq!(
+            modified_upstream_message(true, "f11r-branch-x"),
+            "Files are modified on origin/f11r-branch-x by other users. Sync to get your collaborators' changes, then try again."
+        );
+    }
+
+    #[test]
+    fn modified_upstream_message_is_unchanged_off_branch_mode() {
+        assert_eq!(
+            modified_upstream_message(false, "main"),
+            "Files are modified upstream by other users. Sync and try again."
+        );
     }
 }

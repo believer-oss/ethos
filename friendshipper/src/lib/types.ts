@@ -368,6 +368,8 @@ export interface RepoStatus {
 	conflictUpstream: boolean;
 	conflicts: string[];
 	modifiedUpstream: string[];
+	willConflictOnRebase: string[];
+	willConflictOnSync?: string[];
 	lastPullRequest?: PullRequestStatus;
 	lockUser: string;
 	locksOurs: Lock[];
@@ -445,6 +447,7 @@ export interface CloneRequest {
 export interface PushRequest {
 	commitMessage: string;
 	files: string[];
+	expectedBranch?: string;
 }
 
 export interface RevertFilesRequest {

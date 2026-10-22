@@ -99,6 +99,9 @@ export const submit = async (req: PushRequest): Promise<void> => invoke('submit'
 export const quickSubmit = async (req: PushRequest): Promise<void> =>
 	invoke('quick_submit', { req });
 
+export const submitToBranch = async (req: PushRequest): Promise<void> =>
+	invoke('submit_to_branch', { req });
+
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 
 export const restoreSnapshot = async (

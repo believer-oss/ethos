@@ -310,6 +310,7 @@ where
 
         // run git pull but retry one time if it fails
         self.emit_phase("Pulling latest changes from GitHub");
+        let stash_before = self.git_client.stash_top().await.ok().flatten();
         match self
             .git_client
             .pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
@@ -331,16 +332,21 @@ where
         // came from - but the bandwidth argument still holds.
         let mut errors: Vec<Option<CoreError>> = Vec::new();
 
-        // Attempt to restore any snapshots that were made above.
-        if let Some(snapshot) = snapshot {
-            self.emit_phase("Restoring local changes from temporary snapshot");
-            errors.push(
-                self.git_client
-                    .restore_snapshot_via_cherry_pick(&snapshot.commit, snapshot_modified_files)
-                    .await
-                    .map_err(|e| e.into())
-                    .err(),
-            );
+        // Restore the snapshot made above, unless git's autostash apply already conflicted:
+        // applying the snapshot on top would only add a second round of conflicts.
+        let mut autostash_conflict = None;
+        match self
+            .git_client
+            .finish_autostash_pull(
+                snapshot.as_ref(),
+                stash_before.as_deref(),
+                snapshot_modified_files,
+                || self.emit_phase("Restoring local changes from temporary snapshot"),
+            )
+            .await
+        {
+            Ok(conflict) => autostash_conflict = conflict,
+            Err(e) => errors.push(Some(e.into())),
         }
 
         // Refresh the repo status with new information from the pull
@@ -466,7 +472,14 @@ where
         }
 
         // Check if there are any actual errors (not just None values)
-        let actual_errors: Vec<String> = errors.iter().flatten().map(|e| format!("{e}")).collect();
+        let mut actual_errors: Vec<String> =
+            errors.iter().flatten().map(|e| format!("{e}")).collect();
+        if let Some(conflict) = autostash_conflict {
+            if actual_errors.is_empty() {
+                return Err(CoreError::Input(conflict.into()));
+            }
+            actual_errors.insert(0, conflict.to_string());
+        }
         if !actual_errors.is_empty() {
             error!("Failures during repo pull: {}", actual_errors.join("\n"));
             return Err(CoreError::Internal(anyhow!(

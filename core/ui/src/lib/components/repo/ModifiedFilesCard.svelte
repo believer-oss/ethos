@@ -26,7 +26,8 @@
 		TrashBinSolid,
 		ChevronSortOutline,
 		ClockSolid,
-		EditOutline
+		EditOutline,
+		RefreshOutline
 	} from 'flowbite-svelte-icons';
 	import { onMount, tick } from 'svelte';
 	import {
@@ -54,6 +55,15 @@
 	// Optional: when provided, renders a history button per row that invokes this handler with
 	// the file path. When not provided, the column is hidden.
 	export let onShowFileHistory: ((path: string) => void) | null = null;
+	// Paths also changed on the trunk since the branch diverged; shown as a non-blocking warning.
+	export let rebaseWarningPaths: string[] = [];
+	export let trunkBranch: string = 'main';
+	// Local changes also changed on the branch's remote; Sync may leave conflict markers in them.
+	export let syncConflictPaths: string[] = [];
+	export let remoteBranch: string = '';
+
+	$: rebaseWarningSet = new Set(rebaseWarningPaths);
+	$: syncConflictSet = new Set(syncConflictPaths);
 
 	let hoveringSetIndex: number = -1;
 	let hoveringCreateNewChangeset: boolean = false;
@@ -851,6 +861,25 @@
 													class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
 												>
 													{getFileTooltip(file)}
+												</Tooltip>
+											{/if}
+											{#if rebaseWarningSet.has(file.path) && file.submitStatus !== SubmitStatus.Conflicted}
+												<ExclamationCircleSolid class="w-5 h-5 text-yellow-400" />
+												<Tooltip
+													class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												>
+													Also changed on {trunkBranch} since this branch diverged. It will conflict
+													when the branch is rebased onto {trunkBranch}.
+												</Tooltip>
+											{/if}
+											{#if syncConflictSet.has(file.path) && file.submitStatus !== SubmitStatus.Conflicted}
+												<RefreshOutline class="w-5 h-5 text-orange-400" />
+												<Tooltip
+													class="w-auto bg-secondary-600 dark:bg-space-800 font-semibold shadow-2xl"
+												>
+													Also changed on {remoteBranch || 'the remote branch'}. Sync merges text
+													files, leaving conflict markers where the same lines changed; for binary
+													files it keeps your version.
 												</Tooltip>
 											{/if}
 										</div>
