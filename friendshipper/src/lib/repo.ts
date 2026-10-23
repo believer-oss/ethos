@@ -2,9 +2,15 @@ import type { ChangeSet, Commit, CommitFileInfo, ModifiedFile } from '@ethos/cor
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	ArtifactStatus,
+	BranchAnalysis,
+	BranchCleanupCandidates,
+	BranchCleanupRequest,
+	BranchCleanupResult,
 	BranchInfo,
+	BranchPullRequestResult,
 	CloneRequest,
 	CommitInfo,
+	CreateBranchPullRequestRequest,
 	CreateBranchResponse,
 	FileHistoryResponse,
 	GitHubPullRequest,
@@ -101,6 +107,21 @@ export const quickSubmit = async (req: PushRequest): Promise<void> =>
 
 export const submitToBranch = async (req: PushRequest): Promise<void> =>
 	invoke('submit_to_branch', { req });
+
+export const getBranchAnalysis = async (): Promise<BranchAnalysis> => invoke('get_branch_analysis');
+
+export const createBranchPullRequest = async (
+	req: CreateBranchPullRequestRequest
+): Promise<BranchPullRequestResult> => invoke('create_branch_pull_request', { req });
+
+export const enqueueBranchPullRequest = async (): Promise<BranchPullRequestResult> =>
+	invoke('enqueue_branch_pull_request');
+
+export const getBranchCleanupCandidates = async (): Promise<BranchCleanupCandidates> =>
+	invoke('get_branch_cleanup_candidates');
+
+export const cleanupBranches = async (req: BranchCleanupRequest): Promise<BranchCleanupResult[]> =>
+	invoke('cleanup_branches', { req });
 
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 

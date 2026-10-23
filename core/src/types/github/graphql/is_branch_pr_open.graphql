@@ -1,13 +1,26 @@
 query IsBranchPrOpen($owner: String!, $name: String!, $branch: String!, $limit: Int!) {
     repository(name: $name, owner: $owner) {
         pullRequests(
-            states: [OPEN]
+            states: [OPEN, MERGED]
             orderBy: { field: CREATED_AT, direction: DESC }
             first: $limit
             headRefName: $branch
         ) {
             nodes {
                 id
+                number
+                url
+                headRefOid
+                baseRefName
+                headRepository {
+                    nameWithOwner
+                }
+                state
+                mergeable
+                mergeQueueEntry {
+                    state
+                    position
+                }
             }
         }
     }

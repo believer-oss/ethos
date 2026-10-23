@@ -22,7 +22,11 @@ query GetMergeQueue($owner: String!, $name: String!) {
                     state
                     pullRequest {
                         id
+                        number
+                        url
                         title
+                        baseRefName
+                        headRefName
                     }
                 }
 

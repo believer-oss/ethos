@@ -29,11 +29,22 @@ it essentially replaces workflows that UGS and P4V support.
 - The reset button returns you to your configured target branch.
 - By default the selector lists `f11r-branch-*` branches; turn on "Show all branches" in Preferences (Source Control
   Options) to list every branch on origin except Quick Submit branches.
-- Quick Submit is available on target branches and Quick Submit branches. From a Quick Submit branch, Sync returns you
-  to your target branch; the selector and reset button are disabled there.
+- Quick Submit is available on your target branch and its Quick Submit branches. On another target branch, or on a Quick
+  Submit branch made for another target, it is blocked. From a Quick Submit branch, Sync returns you to your target
+  branch; the selector and reset button are disabled there.
 - On any other branch, the submit page offers **Submit to branch** instead: it commits the selected files to the current
   branch and pushes them to origin, and your locks are kept. See [Submit to branch](#submit-to-branch).
-- Branches are deleted on GitHub, not in Friendshipper.
+- Branch Management (Git 2.38 or newer) shows how the current branch compares with the trunk: commits ahead and behind,
+  sync with origin and predicted conflicts. Under **Changes on branch**, which covers pushed commits only, the Lockable
+  files tab flags files also changed on the trunk ("will conflict at rebase"), and the Commits tab lists the branch's
+  commits. **Create PR** opens a pull request into the trunk and shows it in your browser; it does not queue it. Once
+  the branch has an open pull request, **Add to merge queue** queues it as soon as GitHub reports it mergeable, and a
+  notification reports the result. Both are disabled while the branch is behind origin, has unpushed commits or is
+  predicted to conflict. After the branch is merged or deleted, a banner offers "Return to <target branch>".
+- Branches are deleted on GitHub, not in Friendshipper. **Clean up deleted branches** on Branch Management then removes
+  your local copies of `f11r-branch-*` branches deleted on origin, after a preview that shows each branch's SHA and
+  flags commits that are not on the trunk. **Clean up all merged** removes only merged branches; a branch with commits
+  not on the trunk is removed only when you pick it and confirm.
 
 ### Limitations
 
@@ -78,6 +89,12 @@ The way this works:
 
 Because the Quick Submit process leaves the user on a leaf branch, Friendshipper uses the Sync
 operation to switch the user back to the trunk branch if they're not on it already.
+
+Quick Submit always sends to the target branch set in Preferences. The submit button and the colored
+mode badge (one color per target branch) read "Quick Submit to <target>". The preview names the target and says
+whether it merges via the merge queue or directly. If you're on a different target branch (for example on `main`
+while the target is `content-main`), Quick Submit is blocked and a red banner offers "Switch to <target>" (or
+"Sync to <target>" when you're on a Quick Submit branch) and "Open Preferences".
 
 It should be noted that this process is mainly intended to be used by nontechnical users, or for
 content-only submits. Engineers may want to have more control over their submission process and

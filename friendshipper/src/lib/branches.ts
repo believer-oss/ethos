@@ -1,8 +1,16 @@
 import { emit } from '@tauri-apps/api/event';
-import { derived, type Readable } from 'svelte/store';
+import { derived, writable, type Readable } from 'svelte/store';
 import { commits, repoConfig, repoStatus } from '$lib/stores';
 import { getAllCommits, getRepoStatus, switchBranch } from '$lib/repo';
-import type { CommitTagCategory, Nullable, RepoConfig, RepoStatus } from '$lib/types';
+import type {
+	BranchAnalysis,
+	BranchCleanupCandidate,
+	BranchCleanupResult,
+	CommitTagCategory,
+	Nullable,
+	RepoConfig,
+	RepoStatus
+} from '$lib/types';
 
 export const FEATURE_BRANCH_PREFIX = 'f11r-branch-';
 const MAX_SLUG_LEN = 48;
@@ -48,34 +56,124 @@ export const validateSlug = (slug: string): string | null => {
 	return null;
 };
 
+// The name of the user's Quick Submit branches for `target`, up to the timestamp. Mirrors the
+// Rust `quick_submit_branch_prefix`.
+export const quickSubmitBranchPrefix = (target: string, displayName: string): string =>
+	`f11r-${target}-${displayName.replace(/ /g, '-')}-`;
+
+// The target a Quick Submit branch (`f11r-<target>-<name>-<ts>`) was made for. Targets and display
+// names can both contain '-', so the longest matching candidate wins. Mirrors the Rust
+// `quick_submit_branch_target`.
+export const quickSubmitBranchTarget = (branch: string, candidates: string[]): string | null => {
+	if (!branch.startsWith('f11r-')) {
+		return null;
+	}
+	const rest = branch.slice('f11r-'.length);
+	return candidates
+		.filter((t) => t !== '' && rest.startsWith(`${t}-`))
+		.reduce<string | null>((best, t) => (best === null || t.length > best.length ? t : best), null);
+};
+
+// Mirrors the Rust `quick_submit_target_mismatch`: on another protected branch, or on a Quick
+// Submit branch made for another target. The user's own branch for the target always matches;
+// unparseable names (e.g. a target removed from config) are allowed.
+export const quickSubmitTargetMismatch = (
+	branch: string,
+	target: string,
+	cfg: Nullable<RepoConfig>,
+	displayName: string
+): boolean => {
+	if (!cfg || target === '' || branch === target) {
+		return false;
+	}
+	if (isQuickSubmitBranch(branch)) {
+		if (branch.startsWith(quickSubmitBranchPrefix(target, displayName))) {
+			return false;
+		}
+		const found = quickSubmitBranchTarget(branch, [
+			...cfg.targetBranches.map((b) => b.name),
+			target
+		]);
+		return found !== null && found !== target;
+	}
+	return isProtectedBranch(branch, cfg);
+};
+
+export interface TargetColor {
+	chip: string;
+	text: string;
+}
+
+// One color per configured target, by its index in targetBranches.
+const TARGET_PALETTE: TargetColor[] = [
+	{ chip: 'bg-primary-600 text-white', text: 'text-primary-400' },
+	{ chip: 'bg-cyan-700 text-white', text: 'text-cyan-400' },
+	{ chip: 'bg-purple-700 text-white', text: 'text-purple-400' }
+];
+const TARGET_FALLBACK: TargetColor = { chip: 'bg-gray-600 text-white', text: 'text-gray-300' };
+
+export const targetBranchColor = (target: string, cfg: Nullable<RepoConfig>): TargetColor =>
+	TARGET_PALETTE[cfg?.targetBranches.findIndex((b) => b.name === target) ?? -1] ?? TARGET_FALLBACK;
+
+// Null when the target is not in the repo config.
+export const targetUsesMergeQueue = (target: string, cfg: Nullable<RepoConfig>): boolean | null =>
+	cfg?.targetBranches.find((b) => b.name === target)?.usesMergeQueue ?? null;
+
 export type SubmitMode = 'quick' | 'branch' | 'unavailable';
 
 // Always false: RepoStatus does not report guided rebase state yet.
 export const isGuidedRebaseActive = (_status: RepoStatus): boolean => false;
 
 // Mirrors the Rust `is_branch_mode`: branch mode is any branch that is neither protected nor Quick Submit.
+// `targetMismatch` blocks Quick Submit, as the backend's `ensure_quick_submit_allowed` does.
 export const deriveSubmitMode = (
 	status: Nullable<RepoStatus>,
-	cfg: Nullable<RepoConfig>
-): { mode: SubmitMode; reason: string } => {
+	cfg: Nullable<RepoConfig>,
+	target: string,
+	displayName: string
+): { mode: SubmitMode; reason: string; targetMismatch: boolean } => {
 	if (!status || !cfg) {
-		return { mode: 'unavailable', reason: '' };
+		return { mode: 'unavailable', reason: '', targetMismatch: false };
 	}
 	if (status.detachedHead || status.branch === '' || isGuidedRebaseActive(status)) {
 		return {
 			mode: 'unavailable',
 			reason:
-				'Submitting is unavailable while the repository is in a detached HEAD state or a rebase is in progress. Open Branch Management to resolve it.'
+				'Submitting is unavailable while the repository is in a detached HEAD state or a rebase is in progress. Open Branch Management to resolve it.',
+			targetMismatch: false
 		};
 	}
 	if (isProtectedBranch(status.branch, cfg) || isQuickSubmitBranch(status.branch)) {
-		return { mode: 'quick', reason: '' };
+		return {
+			mode: 'quick',
+			reason: '',
+			targetMismatch: quickSubmitTargetMismatch(status.branch, target, cfg, displayName)
+		};
 	}
-	return { mode: 'branch', reason: '' };
+	return { mode: 'branch', reason: '', targetMismatch: false };
 };
 
+export interface BranchLifecycle {
+	branch: string;
+	merged: boolean;
+	gone: boolean;
+}
+
+// Set by Branch Management after each analysis; null until then or after an analysis error.
+export const branchLifecycle = writable<Nullable<BranchLifecycle>>(null);
+
 // Advisory gate for branch submit; the backend check against origin is authoritative.
-export const branchSubmitBlockReason = (status: RepoStatus): string | null => {
+export const branchSubmitBlockReason = (
+	status: RepoStatus,
+	lifecycle: Nullable<BranchLifecycle> = null
+): string | null => {
+	if (
+		lifecycle !== null &&
+		lifecycle.branch === status.branch &&
+		(lifecycle.merged || lifecycle.gone)
+	) {
+		return 'This branch was merged or deleted. Use Branch Management to return to your target branch.';
+	}
 	if (status.remoteBranch === '') {
 		return 'This branch has no upstream on origin. Create feature branches with New branch in Branch Management.';
 	}
@@ -86,6 +184,139 @@ export const branchSubmitBlockReason = (status: RepoStatus): string | null => {
 		return 'Your branch is behind origin — Sync first';
 	}
 	return null;
+};
+
+// `<slug> to <trunk>`; branches without the feature prefix keep their full name.
+export const defaultPrTitle = (branch: string, trunk: string): string =>
+	`${isFeatureBranch(branch) ? branch.slice(FEATURE_BRANCH_PREFIX.length) : branch} to ${trunk}`;
+
+export const PR_TITLE_MAX = 256;
+
+// Mirrors the Rust `validate_pr_title`: trimmed, non-empty, at most 256 code points.
+export const prTitleError = (title: string): string | null => {
+	const trimmed = title.trim();
+	if (trimmed === '') {
+		return 'Pull request title is required.';
+	}
+	if ([...trimmed].length > PR_TITLE_MAX) {
+		return 'Pull request title must be 256 characters or fewer.';
+	}
+	return null;
+};
+
+export type PrAction = 'create' | 'enqueue' | 'none';
+
+// Which pull request button the analysis allows: none for a queued or merged PR.
+export const prAction = (a: BranchAnalysis): PrAction => {
+	if (a.pr === null) {
+		return 'create';
+	}
+	return a.pr.state === 'OPEN' && a.pr.mergeQueueEntry === null ? 'enqueue' : 'none';
+};
+
+// Why local and origin differ, or null when they are in sync.
+export const localSyncBlocker = (a: BranchAnalysis): string | null => {
+	switch (a.localSync) {
+		case 'inSync':
+			return null;
+		case 'ahead':
+			return `${a.localAheadOfOrigin} local commit(s) not pushed`;
+		case 'behind':
+			return `${a.localBehindOrigin} commit(s) on origin not in your local branch — Sync`;
+		case 'diverged':
+			return 'Local and origin have diverged — Sync';
+		default:
+			return 'Local branch state is unknown — Refresh';
+	}
+};
+
+// Reasons Create PR / Add to merge queue is disabled, in the backend's gate order; the backend
+// re-checks each one. Being behind the trunk is not a blocker.
+export const createPrBlockers = (a: BranchAnalysis): string[] => {
+	if (!a.gitSupported) {
+		return ['Update git to use Branch Management'];
+	}
+	const blockers: string[] = [];
+	if (a.pr?.state === 'MERGED' || a.upstream === 'gone') {
+		blockers.push('This branch was merged or deleted');
+	}
+	if (a.upstream === 'notPushed') {
+		blockers.push('Push this branch to origin first');
+	}
+	const sync = localSyncBlocker(a);
+	if (sync !== null) {
+		blockers.push(sync);
+	}
+	if (a.commitsAhead === 0) {
+		blockers.push(`No commits ahead of ${a.trunkBranch}`);
+	}
+	if (a.predictedConflicts.length > 0) {
+		blockers.push(`Predicted conflicts with ${a.trunkBranch} — rebase first`);
+	}
+	if (a.prError !== null) {
+		blockers.push(`Could not check GitHub: ${a.prError}`);
+	}
+	if (!a.usesMergeQueue) {
+		blockers.push(`The merge queue is not enabled for ${a.trunkBranch} in this repo's config`);
+	}
+	return blockers;
+};
+
+export const shortSha = (sha: string): string => sha.substring(0, 8);
+
+export const localBranchCount = (n: number): string => `${n} local branch${n === 1 ? '' : 'es'}`;
+
+export type CleanupTone = 'safe' | 'warning' | 'unknown';
+
+export interface CleanupNote {
+	tone: CleanupTone;
+	text: string;
+}
+
+// Safety note for a branch-cleanup candidate; anything but 'safe' needs the SHA acknowledgement.
+export const cleanupNote = (c: BranchCleanupCandidate, trunk: string): CleanupNote => {
+	const unmerged = `${c.unmergedCommitCount} commit${
+		c.unmergedCommitCount === 1 ? '' : 's'
+	} not on ${trunk}`;
+	if (c.mergedIntoTrunk) return { tone: 'safe', text: `Merged into ${trunk}` };
+	if (c.patchEquivalent) return { tone: 'safe', text: `Merged into ${trunk} (same changes)` };
+	if (c.mergedViaPr && c.safe)
+		return {
+			tone: 'safe',
+			text: `Merged via PR #${c.mergedViaPr.number} into ${c.mergedViaPr.baseRefName}`
+		};
+	if (c.mergedViaPr) {
+		return {
+			tone: 'warning',
+			text: `Merged via PR #${c.mergedViaPr.number} into ${c.mergedViaPr.baseRefName}, not a target branch; ${unmerged}`
+		};
+	}
+	if (c.prUnknown) return { tone: 'unknown', text: `Unknown (GitHub unavailable); ${unmerged}` };
+	return { tone: 'warning', text: unmerged };
+};
+
+// True when the branch is safe only because of a merged pull request, which can't be rechecked offline.
+export const cleanupSafeViaPr = (c: BranchCleanupCandidate): boolean =>
+	c.safe && !c.mergedIntoTrunk && !c.patchEquivalent;
+
+// Toast texts for a cleanup response: deleted branches with their SHAs, then failures.
+export const cleanupResultMessages = (
+	results: BranchCleanupResult[]
+): { success: string | null; failure: string | null } => {
+	const deleted = results.filter((r) => r.deleted);
+	const failed = results.filter((r) => !r.deleted);
+	return {
+		success:
+			deleted.length > 0
+				? `Deleted ${localBranchCount(deleted.length)}: ${deleted
+						.map((r) => `${r.name} (${r.sha})`)
+						.join(', ')}`
+				: null,
+		failure:
+			failed.length > 0
+				? `Not deleted: ${failed.map((r) => `${r.name}: ${r.error ?? 'unknown error'}`).join('; ')}`
+				: null
+	};
 };
 
 // Chosen tag per category in category order; empty choices and option-less categories are dropped.
