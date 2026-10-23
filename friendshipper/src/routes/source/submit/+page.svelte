@@ -107,7 +107,8 @@
 		dynamicConfig,
 		repoConfig,
 		repoStatus,
-		selectedFiles
+		selectedFiles,
+		showPreferences
 	} from '$lib/stores';
 	import { updateAppConfig } from '$lib/config';
 	import { openUrl } from '$lib/utils';
@@ -118,12 +119,16 @@
 	import CommitTagPicker from '$lib/components/CommitTagPicker.svelte';
 	import {
 		type SubmitMode,
+		branchLifecycle,
 		branchSubmitBlockReason,
 		composeCommitMessage,
 		deriveSubmitMode,
 		isFeatureBranch,
+		isQuickSubmitBranch,
 		performSwitch,
-		selectedTags
+		selectedTags,
+		targetBranchColor,
+		targetUsesMergeQueue
 	} from '$lib/branches';
 
 	let fileHistoryModalOpen = false;
@@ -160,6 +165,7 @@
 	let previewMode: SubmitMode | null = null;
 	let previewPushOnly = false;
 	let previewBranch = '';
+	let previewTarget = '';
 
 	// new files detected by the pre-submit refresh
 	let showNewFilesPrompt = false;
@@ -301,22 +307,29 @@
 	$: hasUnsubmittableFiles = $selectedFiles.some(
 		(file) => file.submitStatus !== SubmitStatus.Ok && file.submitStatus !== SubmitStatus.Unknown
 	);
-	$: modeInfo = deriveSubmitMode($repoStatus, $repoConfig);
+	$: quickTarget = $appConfig.targetBranch;
+	$: modeInfo = deriveSubmitMode($repoStatus, $repoConfig, quickTarget, $appConfig.userDisplayName);
+	$: targetColor = targetBranchColor(quickTarget, $repoConfig);
+	$: targetMergeQueue = targetUsesMergeQueue(quickTarget, $repoConfig);
 	$: canSubmit =
 		$selectedFiles.length > 0 &&
 		get(commitMessage) !== '' &&
 		commitMessageValid &&
 		!hasUnsubmittableFiles &&
-		modeInfo.mode !== 'unavailable';
+		modeInfo.mode !== 'unavailable' &&
+		!modeInfo.targetMismatch;
 	$: branchBlockReason =
-		modeInfo.mode === 'branch' && $repoStatus ? branchSubmitBlockReason($repoStatus) : null;
+		modeInfo.mode === 'branch' && $repoStatus
+			? branchSubmitBlockReason($repoStatus, $branchLifecycle)
+			: null;
 	$: unpushedCommits = $repoStatus?.commitsAhead ?? 0;
 	// Branch mode, nothing selected, local commits waiting to be pushed.
 	$: pushOnly = modeInfo.mode === 'branch' && $selectedFiles.length === 0 && unpushedCommits > 0;
 	$: canSubmitBranch =
 		modeInfo.mode === 'branch' && branchBlockReason === null && (canSubmit || pushOnly);
 	$: showTagPicker = modeInfo.mode === 'quick' || (modeInfo.mode === 'branch' && !pushOnly);
-	$: submitLabel = modeInfo.mode === 'branch' ? 'Submit to branch' : 'Quick Submit';
+	$: quickSubmitLabel = quickTarget === '' ? 'Quick Submit' : `Quick Submit to ${quickTarget}`;
+	$: submitLabel = modeInfo.mode === 'branch' ? 'Submit to branch' : quickSubmitLabel;
 	// Branch mode pushes HEAD, so earlier unpushed commits go out with the new one.
 	$: previewUnpushedSuffix =
 		modeInfo.mode === 'branch' && unpushedCommits > 0
@@ -330,6 +343,7 @@
 		previewMode = modeInfo.mode;
 		previewPushOnly = pushOnly;
 		previewBranch = $repoStatus?.branch ?? '';
+		previewTarget = quickTarget;
 		showQuickSubmitPreview = true;
 	};
 
@@ -661,8 +675,13 @@
 		const branch = $repoStatus?.branch ?? '';
 		const n = unpushedCommits;
 
-		if (mode === 'unavailable') return;
-		if (mode !== previewMode || isPushOnly !== previewPushOnly || branch !== previewBranch) {
+		if (mode === 'unavailable' || (mode === 'quick' && modeInfo.targetMismatch)) return;
+		if (
+			mode !== previewMode ||
+			isPushOnly !== previewPushOnly ||
+			branch !== previewBranch ||
+			(mode === 'quick' && quickTarget !== previewTarget)
+		) {
 			await emit('error', 'The branch state changed after the preview. Review the submit again.');
 			return;
 		}
@@ -1539,7 +1558,7 @@
 						on:select={(e) => handleBranchSelected(e.detail)}
 					/>
 					{#if modeInfo.mode === 'quick'}
-						<Badge>Quick Submit</Badge>
+						<Badge class={targetColor.chip}>{quickSubmitLabel}</Badge>
 					{:else if modeInfo.mode === 'branch'}
 						<Badge>Submit to branch</Badge>
 					{:else if modeInfo.reason !== ''}
@@ -1555,6 +1574,45 @@
 				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
 				<code>{$repoStatus.branch}</code> was not created by Friendshipper. It may be shared or protected
 				differently, but actions are allowed.
+			</Alert>
+		{/if}
+		{#if modeInfo.mode === 'quick' && modeInfo.targetMismatch && $repoStatus}
+			<Alert
+				class="bg-red-900 dark:bg-red-900 border border-red-700 text-red-100 dark:text-red-100"
+			>
+				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-red-300" />
+				<div class="flex flex-col gap-2">
+					<span
+						>You're on <code>{$repoStatus.branch}</code>, but Quick Submit sends to
+						<code>{quickTarget}</code>.</span
+					>
+					<div class="flex flex-row flex-wrap gap-2">
+						{#if isQuickSubmitBranch($repoStatus.branch)}
+							<!-- Switching away from a Quick Submit branch is refused; Sync returns to the target. -->
+							<Button
+								size="xs"
+								color="red"
+								disabled={loading || conflictsDetected || !canSync}
+								on:click={async () => handleSyncClicked()}>Sync to {quickTarget}</Button
+							>
+						{:else}
+							<Button
+								size="xs"
+								color="red"
+								disabled={loading || quickSubmitting || syncing}
+								on:click={async () => handleBranchSelected(quickTarget)}
+								>Switch to {quickTarget}</Button
+							>
+						{/if}
+						<Button
+							size="xs"
+							color="alternative"
+							on:click={() => {
+								$showPreferences = true;
+							}}>Open Preferences</Button
+						>
+					</div>
+				</div>
 			</Alert>
 		{/if}
 		<Card
@@ -1658,7 +1716,7 @@
 								on:click={async () => {
 									await handleSubmitClicked();
 								}}
-								>Quick Submit
+								>{quickSubmitLabel}
 								<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 							</Button>
 						</ButtonGroup>
@@ -1866,14 +1924,25 @@
 					first.</span
 				><br /><br />
 			{/if}
+			{#if modeInfo.targetMismatch}
+				<span class="text-red-400"
+					>You're on {$repoStatus?.branch}, but Quick Submit sends to {quickTarget}.</span
+				><br /><br />
+			{/if}
 			<span class="text-primary-400">Quick Submit</span> allows you to submit changes without
-			syncing latest from <span class="font-mono text-primary-400">main</span>.<br /><br />
-			This will open a pull request on GitHub and automatically merge it, putting your changes into the
-			merge queue. Because of this, you may need to wait for other builds in the merge queue to finish
-			before your changes will appear on
-			<span class="font-mono text-primary-400">main</span>.<br /><br />
+			syncing latest from <span class="font-mono {targetColor.text}">{quickTarget}</span>.<br /><br
+			/>
+			{#if targetMergeQueue === false}
+				This will open a pull request on GitHub and merge it directly into
+				<span class="font-mono {targetColor.text}">{quickTarget}</span>.<br /><br />
+			{:else}
+				This will open a pull request on GitHub and automatically merge it, putting your changes
+				into the merge queue. Because of this, you may need to wait for other builds in the merge
+				queue to finish before your changes will appear on
+				<span class="font-mono {targetColor.text}">{quickTarget}</span>.<br /><br />
+			{/if}
 			You may only <span class="text-primary-400">Quick Submit</span> when on
-			<span class="text-primary-400">main</span>.
+			<span class="font-mono {targetColor.text}">{quickTarget}</span> (change it in Preferences).
 		</p>
 	</Tooltip>
 {:else if modeInfo.mode === 'branch'}
@@ -2002,7 +2071,22 @@
 	size="md"
 >
 	<div class="flex flex-col gap-3">
-		<h3 class="text-lg font-semibold text-white">{submitLabel} Preview</h3>
+		{#if previewMode === 'quick'}
+			<h3 class="text-lg font-semibold text-white">
+				Quick Submit to <span class="font-mono {targetColor.text}">{previewTarget}</span>
+			</h3>
+			<p class="text-sm text-gray-400">
+				{#if targetMergeQueue === false}
+					Merged directly
+				{:else if targetMergeQueue === true}
+					Merged via the merge queue
+				{:else}
+					{previewTarget} is not in this repo's target branches
+				{/if}
+			</p>
+		{:else}
+			<h3 class="text-lg font-semibold text-white">{submitLabel} Preview</h3>
+		{/if}
 		{#if pushOnly}
 			<p class="text-sm text-gray-300">
 				Push {unpushedCommits} unpushed commit{unpushedCommits === 1 ? '' : 's'} on {previewBranch}

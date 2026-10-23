@@ -1,6 +1,8 @@
 pub use branch::{
-    branch_submit_handler, create_branch_handler, list_branches_handler, switch_branch_handler,
-    BranchSubmitOp, CreateBranchOp, SwitchBranchOp,
+    branch_analysis_handler, branch_cleanup_candidates_handler, branch_cleanup_handler,
+    branch_pull_request_enqueue_handler, branch_pull_request_handler, branch_submit_handler,
+    create_branch_handler, list_branches_handler, switch_branch_handler, BranchAnalysisOp,
+    BranchPullRequestOp, BranchSubmitOp, CreateBranchOp, SwitchBranchOp,
 };
 pub use branch_compare::branch_compare_handler;
 pub use browse::list_directory_handler;

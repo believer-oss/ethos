@@ -1,4 +1,4 @@
-import type { ModifiedFile } from '@ethos/core';
+import type { Commit as CoreCommit, ModifiedFile } from '@ethos/core';
 
 export type Nullable<T> = T | null;
 
@@ -346,6 +346,7 @@ export interface RepoStatus {
 	remoteBranch: string;
 	repoOwner: string;
 	repoName: string;
+	commitHead: string;
 	commitsAhead: number;
 	commitsBehind: number;
 	commitsAheadOfTrunk: number;
@@ -722,4 +723,122 @@ export interface TraceEntry {
 export interface RecentTracesResponse {
 	traces: TraceEntry[];
 	nextCursor: string | null;
+}
+
+export type BranchUpstream = 'present' | 'gone' | 'notPushed';
+
+export type BranchLocalSync = 'inSync' | 'ahead' | 'behind' | 'diverged' | 'unknown';
+
+export interface FileTouch {
+	sha: string;
+	author: string;
+	date: string;
+}
+
+export interface LockableFileRow {
+	path: string;
+	displayName: string;
+	branchCommit: Nullable<FileTouch>;
+	changedOnMain: boolean;
+	mainCommit: Nullable<FileTouch>;
+}
+
+export interface BranchMergeQueueEntry {
+	state: string;
+	position: number;
+}
+
+export interface BranchPullRequest {
+	number: number;
+	id: string;
+	url: string;
+	headRefOid: string;
+	baseRefName: string;
+	headRepository: Nullable<string>;
+	state: 'OPEN' | 'MERGED';
+	mergeable: string;
+	mergeQueueEntry: Nullable<BranchMergeQueueEntry>;
+}
+
+export interface BranchAnalysis {
+	gitSupported: boolean;
+	gitVersion: string;
+	branch: string;
+	trunkBranch: string;
+	usesMergeQueue: boolean;
+	upstream: BranchUpstream;
+	localSync: BranchLocalSync;
+	localAheadOfOrigin: number;
+	localBehindOrigin: number;
+	commitsAhead: number;
+	commitsBehind: number;
+	mergeBase: Nullable<string>;
+	predictedConflicts: string[];
+	lockableFiles: LockableFileRow[];
+	lockableFileCount: number;
+	commits: CoreCommit[];
+	pr: Nullable<BranchPullRequest>;
+	prError: Nullable<string>;
+}
+
+export interface CreateBranchPullRequestRequest {
+	title: string;
+}
+
+export interface BranchPullRequestResult {
+	number: number;
+	url: string;
+	created: boolean;
+	alreadyQueued: boolean;
+}
+
+export interface BranchCleanupPr {
+	number: number;
+	url: string;
+	baseRefName: string;
+}
+
+export interface BranchCleanupCommit {
+	sha: string;
+	subject: string;
+}
+
+export interface BranchCleanupCandidate {
+	name: string;
+	sha: string;
+	subject: string;
+	author: string;
+	date: string;
+	mergedIntoTrunk: boolean;
+	patchEquivalent: boolean;
+	mergedViaPr: Nullable<BranchCleanupPr>;
+	prUnknown: boolean;
+	unmergedCommitCount: number;
+	unmergedCommits: BranchCleanupCommit[];
+	safe: boolean;
+}
+
+export interface BranchCleanupCandidates {
+	trunkBranch: string;
+	candidates: BranchCleanupCandidate[];
+	prError: Nullable<string>;
+}
+
+export interface BranchCleanupTarget {
+	name: string;
+	sha: string;
+	// Safety the user saw; a branch safe by git checks is rechecked before deletion.
+	safe: boolean;
+	safeViaPr: boolean;
+}
+
+export interface BranchCleanupRequest {
+	branches: BranchCleanupTarget[];
+}
+
+export interface BranchCleanupResult {
+	name: string;
+	sha: string;
+	deleted: boolean;
+	error: Nullable<string>;
 }
