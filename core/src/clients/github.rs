@@ -16,6 +16,7 @@ use crate::types::github::pulls::{
     IsBranchPrOpen,
 };
 use crate::types::github::user::{get_username, GetUsername};
+use crate::types::repo::{BranchMergeQueueEntry, BranchPullRequest};
 use anyhow::{anyhow, Result};
 use graphql_client::reqwest::post_graphql;
 use graphql_client::{GraphQLQuery, Response};
@@ -109,6 +110,23 @@ fn missing_data_error<T: std::fmt::Debug>(op: &str, res: &Response<T>) -> anyhow
     anyhow!("Failed to get valid response data for {op}: {errors_msg}")
 }
 
+/// Maps a GraphQL mutation response to `Ok(())` only when GitHub returned data and no errors.
+pub fn mutation_result<T>(op: &str, res: Result<Response<T>, reqwest::Error>) -> Result<()> {
+    let res = res.map_err(|e| anyhow!("Error {op}: {e}"))?;
+    if let Some(errors) = res.errors.filter(|errs| !errs.is_empty()) {
+        let msgs = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(anyhow!("Error {op}: {msgs}"));
+    }
+    if res.data.is_none() {
+        return Err(anyhow!("Error {op}: GitHub returned an empty response"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct GraphQLClient {
     pub username: String,
@@ -117,6 +135,98 @@ pub struct GraphQLClient {
 
 pub type CommitStatusMap = HashMap<String, String>;
 pub type MergeTimestampMap = HashMap<String, String>;
+
+/// The first OPEN pull request, else the first MERGED one, keeping the query order.
+fn first_open_else_merged(prs: Vec<BranchPullRequest>) -> Option<BranchPullRequest> {
+    let mut merged = None;
+    for pr in prs {
+        match pr.state.as_str() {
+            "OPEN" => return Some(pr),
+            "MERGED" if merged.is_none() => merged = Some(pr),
+            _ => {}
+        }
+    }
+    merged
+}
+
+/// Picks from the PRs that merge `head_repo` (`owner/name`) into `base` first, then from the
+/// rest; within each, the first OPEN, else the first MERGED, keeping the query order.
+pub fn select_branch_pull_request(
+    prs: Vec<BranchPullRequest>,
+    base: &str,
+    head_repo: &str,
+) -> Option<BranchPullRequest> {
+    let (matching, other): (Vec<_>, Vec<_>) = prs.into_iter().partition(|pr| {
+        pr.base_ref_name == base
+            && pr
+                .head_repository
+                .as_deref()
+                .is_some_and(|repo| repo.eq_ignore_ascii_case(head_repo))
+    });
+    first_open_else_merged(matching).or_else(|| first_open_else_merged(other))
+}
+
+fn branch_pull_request_from_node(
+    node: is_branch_pr_open::IsBranchPrOpenRepositoryPullRequestsNodes,
+) -> Option<BranchPullRequest> {
+    let state = match node.state {
+        is_branch_pr_open::PullRequestState::OPEN => "OPEN",
+        is_branch_pr_open::PullRequestState::MERGED => "MERGED",
+        _ => return None,
+    };
+    let mergeable = match node.mergeable {
+        is_branch_pr_open::MergeableState::MERGEABLE => "MERGEABLE".to_string(),
+        is_branch_pr_open::MergeableState::CONFLICTING => "CONFLICTING".to_string(),
+        is_branch_pr_open::MergeableState::UNKNOWN => "UNKNOWN".to_string(),
+        is_branch_pr_open::MergeableState::Other(s) => s,
+    };
+    let merge_queue_entry = node.merge_queue_entry.map(|e| BranchMergeQueueEntry {
+        state: match e.state {
+            is_branch_pr_open::MergeQueueEntryState::AWAITING_CHECKS => {
+                "AWAITING_CHECKS".to_string()
+            }
+            is_branch_pr_open::MergeQueueEntryState::LOCKED => "LOCKED".to_string(),
+            is_branch_pr_open::MergeQueueEntryState::MERGEABLE => "MERGEABLE".to_string(),
+            is_branch_pr_open::MergeQueueEntryState::QUEUED => "QUEUED".to_string(),
+            is_branch_pr_open::MergeQueueEntryState::UNMERGEABLE => "UNMERGEABLE".to_string(),
+            is_branch_pr_open::MergeQueueEntryState::Other(s) => s,
+        },
+        position: e.position,
+    });
+    Some(BranchPullRequest {
+        number: node.number,
+        id: node.id,
+        url: node.url,
+        head_ref_oid: node.head_ref_oid,
+        base_ref_name: node.base_ref_name,
+        head_repository: node.head_repository.map(|repo| repo.name_with_owner),
+        state: state.to_string(),
+        mergeable,
+        merge_queue_entry,
+    })
+}
+
+fn branch_pull_request_from_data(
+    data: is_branch_pr_open::ResponseData,
+    base: &str,
+    head_repo: &str,
+) -> Result<Option<BranchPullRequest>> {
+    let Some(repo) = data.repository else {
+        error!("Failed to get valid repository: repository is null");
+        return Err(anyhow!("Failed to get valid repository"));
+    };
+
+    let Some(nodes) = repo.pull_requests.nodes else {
+        return Ok(None);
+    };
+
+    let prs = nodes
+        .into_iter()
+        .flatten()
+        .filter_map(branch_pull_request_from_node)
+        .collect();
+    Ok(select_branch_pull_request(prs, base, head_repo))
+}
 
 impl GraphQLClient {
     #[instrument(skip(token))]
@@ -308,49 +418,49 @@ impl GraphQLClient {
 
     #[instrument(skip(self))]
     pub async fn enqueue_pull_request(&self, id: String) -> Result<()> {
-        match post_graphql::<EnqueuePullRequest, _>(
-            &self.client,
-            GITHUB_GRAPHQL_URL,
-            enqueue_pull_request::Variables { id },
+        mutation_result(
+            "enqueuing PR",
+            post_graphql::<EnqueuePullRequest, _>(
+                &self.client,
+                GITHUB_GRAPHQL_URL,
+                enqueue_pull_request::Variables { id },
+            )
+            .await,
         )
-        .await
-        {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow!("Error enqueuing PR: {}", e)),
-        }
     }
 
     #[instrument(skip(self))]
     pub async fn dequeue_pull_request(&self, id: String) -> Result<()> {
-        match post_graphql::<DequeuePullRequest, _>(
-            &self.client,
-            GITHUB_GRAPHQL_URL,
-            dequeue_pull_request::Variables { id },
+        mutation_result(
+            "dequeueing PR",
+            post_graphql::<DequeuePullRequest, _>(
+                &self.client,
+                GITHUB_GRAPHQL_URL,
+                dequeue_pull_request::Variables { id },
+            )
+            .await,
         )
-        .await
-        {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow!("Error dequeueing PR: {}", e)),
-        }
     }
 
+    /// Returns the branch's newest open pull request, else its newest merged one, preferring
+    /// PRs from `owner/repo` into `base`.
     #[instrument(skip(self))]
-    pub async fn is_branch_pr_open(
+    pub async fn get_branch_pull_request(
         &self,
         owner: &str,
         repo: &str,
         branch: &str,
-        limit: i64,
-    ) -> Result<bool> {
+        base: &str,
+    ) -> Result<Option<BranchPullRequest>> {
         let res = match post_graphql_with_retry::<IsBranchPrOpen>(
             &self.client,
-            "is_branch_pr_open",
+            "get_branch_pull_request",
             RETRY_DEFAULT_ATTEMPTS,
             || is_branch_pr_open::Variables {
                 owner: owner.to_string(),
                 name: repo.to_string(),
                 branch: branch.to_string(),
-                limit,
+                limit: 10,
             },
         )
         .await
@@ -358,32 +468,16 @@ impl GraphQLClient {
             Ok(res) => res,
             Err(e) => {
                 error!("Request to get PR failed: {}", e);
-                return Err(anyhow!("Request to get PR failed"));
+                return Err(anyhow!("Request to get PR failed: {e}"));
             }
         };
 
         let data = match res.data {
             Some(data) => data,
-            None => return Err(missing_data_error("is_branch_pr_open", &res)),
+            None => return Err(missing_data_error("get_branch_pull_request", &res)),
         };
 
-        let repo = match &data.repository {
-            Some(repo) => repo,
-            None => {
-                error!("Failed to get valid repository: {:?}", data);
-                return Err(anyhow!("Failed to get valid repository"));
-            }
-        };
-
-        let nodes = match &repo.pull_requests.nodes {
-            Some(pr) => pr,
-            None => {
-                error!("Failed to get valid PR: {:?}", data);
-                return Err(anyhow!("Failed to get valid PR"));
-            }
-        };
-
-        Ok(!nodes.is_empty())
+        branch_pull_request_from_data(data, base, &format!("{owner}/{repo}"))
     }
 
     #[instrument(skip(self))]
@@ -650,5 +744,349 @@ impl GraphQLClient {
             }
         }
         Ok(map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dequeue_response(json: &str) -> Response<dequeue_pull_request::ResponseData> {
+        serde_json::from_str(json).expect("parse dequeue response")
+    }
+
+    fn enqueue_response(json: &str) -> Response<enqueue_pull_request::ResponseData> {
+        serde_json::from_str(json).expect("parse enqueue response")
+    }
+
+    #[test]
+    fn mutation_result_errors_on_graphql_errors() {
+        let res = dequeue_response(
+            r#"{"data":null,"errors":[{"message":"Pull request is already merged"}]}"#,
+        );
+        let err = mutation_result("dequeueing PR", Ok(res))
+            .expect_err("graphql errors must fail")
+            .to_string();
+        assert!(err.starts_with("Error dequeueing PR:"), "{err}");
+        assert!(err.contains("already merged"), "{err}");
+    }
+
+    #[test]
+    fn mutation_result_ok_with_data() {
+        let res = dequeue_response(r#"{"data":{"dequeuePullRequest":{"clientMutationId":null}}}"#);
+        assert!(mutation_result("dequeueing PR", Ok(res)).is_ok());
+    }
+
+    #[test]
+    fn mutation_result_errors_on_empty_response() {
+        let res = dequeue_response(r#"{"data":null}"#);
+        let err = mutation_result("dequeueing PR", Ok(res))
+            .expect_err("missing data must fail")
+            .to_string();
+        assert!(err.contains("empty response"), "{err}");
+    }
+
+    #[test]
+    fn mutation_result_errors_on_enqueue_graphql_errors() {
+        let res = enqueue_response(
+            r#"{"data":null,"errors":[{"message":"Pull request is already merged"}]}"#,
+        );
+        let err = mutation_result("enqueuing PR", Ok(res))
+            .expect_err("graphql errors must fail")
+            .to_string();
+        assert!(err.starts_with("Error enqueuing PR:"), "{err}");
+        assert!(err.contains("already merged"), "{err}");
+    }
+
+    #[test]
+    fn mutation_result_errors_take_precedence_over_data() {
+        let res = enqueue_response(
+            r#"{"data":{"enqueuePullRequest":{"clientMutationId":null}},"errors":[{"message":"x"}]}"#,
+        );
+        let err = mutation_result("enqueuing PR", Ok(res))
+            .expect_err("errors must fail even with data")
+            .to_string();
+        assert!(err.contains('x'), "{err}");
+    }
+
+    #[test]
+    fn mutation_result_joins_multiple_errors() {
+        let res = dequeue_response(
+            r#"{"data":null,"errors":[{"message":"first"},{"message":"second"}]}"#,
+        );
+        let err = mutation_result("dequeueing PR", Ok(res))
+            .expect_err("graphql errors must fail")
+            .to_string();
+        assert!(err.contains("first; "), "{err}");
+        assert!(err.contains("second"), "{err}");
+    }
+
+    fn pr(number: i64, state: &str) -> BranchPullRequest {
+        BranchPullRequest {
+            number,
+            state: state.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn numbers(pr: Option<BranchPullRequest>) -> Option<i64> {
+        pr.map(|p| p.number)
+    }
+
+    #[test]
+    fn select_prefers_open_over_newer_merged() {
+        let prs = vec![pr(3, "MERGED"), pr(2, "OPEN"), pr(1, "MERGED")];
+        assert_eq!(
+            numbers(select_branch_pull_request(prs, "main", "o/r")),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn select_merged_only() {
+        assert_eq!(
+            numbers(select_branch_pull_request(
+                vec![pr(5, "MERGED")],
+                "main",
+                "o/r"
+            )),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn select_first_of_two_merged() {
+        let prs = vec![pr(7, "MERGED"), pr(4, "MERGED")];
+        assert_eq!(
+            numbers(select_branch_pull_request(prs, "main", "o/r")),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn select_empty_is_none() {
+        assert_eq!(select_branch_pull_request(vec![], "main", "o/r"), None);
+    }
+
+    #[test]
+    fn select_first_of_two_open() {
+        let prs = vec![pr(9, "OPEN"), pr(8, "OPEN")];
+        assert_eq!(
+            numbers(select_branch_pull_request(prs, "main", "o/r")),
+            Some(9)
+        );
+    }
+
+    fn pr_into(number: i64, state: &str, base: &str, head_repo: Option<&str>) -> BranchPullRequest {
+        BranchPullRequest {
+            base_ref_name: base.to_string(),
+            head_repository: head_repo.map(str::to_string),
+            ..pr(number, state)
+        }
+    }
+
+    #[test]
+    fn select_prefers_this_repo_into_the_trunk() {
+        let prs = vec![
+            pr_into(9, "OPEN", "release", Some("o/r")),
+            pr_into(8, "OPEN", "main", Some("fork/r")),
+            pr_into(7, "OPEN", "main", None),
+            pr_into(6, "MERGED", "main", Some("O/R")),
+            pr_into(5, "OPEN", "main", Some("o/r")),
+        ];
+        assert_eq!(
+            numbers(select_branch_pull_request(prs, "main", "o/r")),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn select_matching_merged_beats_other_open() {
+        let prs = vec![
+            pr_into(9, "OPEN", "release", Some("o/r")),
+            pr_into(6, "MERGED", "main", Some("o/r")),
+        ];
+        assert_eq!(
+            numbers(select_branch_pull_request(prs, "main", "o/r")),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn select_falls_back_to_other_prs() {
+        let prs = vec![
+            pr_into(9, "MERGED", "main", Some("fork/r")),
+            pr_into(8, "OPEN", "release", Some("o/r")),
+        ];
+        assert_eq!(
+            numbers(select_branch_pull_request(prs, "main", "o/r")),
+            Some(8)
+        );
+    }
+
+    #[test]
+    fn select_ignores_other_states() {
+        assert_eq!(
+            select_branch_pull_request(vec![pr(1, "CLOSED")], "main", "o/r"),
+            None
+        );
+    }
+
+    fn branch_pr_data(json: &str) -> is_branch_pr_open::ResponseData {
+        serde_json::from_str(json).expect("parse IsBranchPrOpen response data")
+    }
+
+    fn node(state: &str, mergeable: &str, queue: &str) -> String {
+        format!(
+            r#"{{"id":"PR_kw{state}","number":12,"url":"https://github.com/o/r/pull/12","headRefOid":"0123456789abcdef0123456789abcdef01234567","baseRefName":"main","headRepository":{{"nameWithOwner":"o/r"}},"state":"{state}","mergeable":"{mergeable}","mergeQueueEntry":{queue}}}"#
+        )
+    }
+
+    fn nodes_json(nodes: &str) -> String {
+        format!(r#"{{"repository":{{"pullRequests":{{"nodes":{nodes}}}}}}}"#)
+    }
+
+    #[test]
+    fn from_data_converts_open_queued_node() {
+        let json = nodes_json(&format!(
+            "[{}]",
+            node("OPEN", "MERGEABLE", r#"{"state":"QUEUED","position":2}"#)
+        ));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(
+            pr,
+            BranchPullRequest {
+                number: 12,
+                id: "PR_kwOPEN".to_string(),
+                url: "https://github.com/o/r/pull/12".to_string(),
+                head_ref_oid: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                base_ref_name: "main".to_string(),
+                head_repository: Some("o/r".to_string()),
+                state: "OPEN".to_string(),
+                mergeable: "MERGEABLE".to_string(),
+                merge_queue_entry: Some(BranchMergeQueueEntry {
+                    state: "QUEUED".to_string(),
+                    position: 2,
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn from_data_null_queue_entry() {
+        let json = nodes_json(&format!("[{}]", node("MERGED", "UNKNOWN", "null")));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(pr.state, "MERGED");
+        assert_eq!(pr.mergeable, "UNKNOWN");
+        assert_eq!(pr.merge_queue_entry, None);
+    }
+
+    #[test]
+    fn from_data_drops_closed() {
+        let json = nodes_json(&format!("[{}]", node("CLOSED", "CONFLICTING", "null")));
+        assert_eq!(
+            branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r").expect("ok"),
+            None
+        );
+    }
+
+    #[test]
+    fn from_data_passes_unknown_enum_values_through() {
+        let json = nodes_json(&format!(
+            "[{}]",
+            node(
+                "OPEN",
+                "SOMETHING_NEW",
+                r#"{"state":"SOMETHING_ELSE","position":0}"#
+            )
+        ));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(pr.mergeable, "SOMETHING_NEW");
+        assert_eq!(
+            pr.merge_queue_entry.map(|e| e.state),
+            Some("SOMETHING_ELSE".to_string())
+        );
+    }
+
+    #[test]
+    fn from_data_null_nodes_is_none() {
+        let json = nodes_json("null");
+        assert_eq!(
+            branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r").expect("ok"),
+            None
+        );
+    }
+
+    #[test]
+    fn from_data_empty_nodes_is_none() {
+        let json = nodes_json("[]");
+        assert_eq!(
+            branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r").expect("ok"),
+            None
+        );
+    }
+
+    #[test]
+    fn from_data_null_repository_errors() {
+        let err =
+            branch_pull_request_from_data(branch_pr_data(r#"{"repository":null}"#), "main", "o/r")
+                .expect_err("null repository must fail")
+                .to_string();
+        assert!(err.contains("Failed to get valid repository"), "{err}");
+    }
+
+    #[test]
+    fn from_data_skips_null_nodes() {
+        let json = nodes_json(&format!("[null,{}]", node("OPEN", "CONFLICTING", "null")));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(pr.state, "OPEN");
+        assert_eq!(pr.mergeable, "CONFLICTING");
+    }
+
+    #[test]
+    fn from_data_open_wins_over_newer_merged() {
+        let json = nodes_json(&format!(
+            "[{},{}]",
+            node("MERGED", "UNKNOWN", "null"),
+            node("OPEN", "MERGEABLE", "null")
+        ));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(pr.state, "OPEN");
+        assert_eq!(pr.id, "PR_kwOPEN");
+    }
+
+    #[test]
+    fn from_data_prefers_this_repo_into_the_trunk() {
+        let fork = node("OPEN", "MERGEABLE", "null").replace("o/r", "fork/r");
+        let other_base = node("OPEN", "MERGEABLE", "null")
+            .replace(r#""baseRefName":"main""#, r#""baseRefName":"release""#);
+        let ours = node("OPEN", "MERGEABLE", "null").replace("PR_kwOPEN", "PR_ours");
+        let json = nodes_json(&format!("[{fork},{other_base},{ours}]"));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(pr.id, "PR_ours");
+    }
+
+    #[test]
+    fn from_data_null_head_repository() {
+        let json = nodes_json(&format!(
+            "[{}]",
+            node("OPEN", "MERGEABLE", "null").replace(r#"{"nameWithOwner":"o/r"}"#, "null")
+        ));
+        let pr = branch_pull_request_from_data(branch_pr_data(&json), "main", "o/r")
+            .expect("ok")
+            .expect("some");
+        assert_eq!(pr.head_repository, None);
     }
 }

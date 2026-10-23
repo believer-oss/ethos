@@ -74,6 +74,17 @@ where
         .route("/branch/create", post(operations::create_branch_handler))
         .route("/branch/switch", post(operations::switch_branch_handler))
         .route("/branch/submit", post(operations::branch_submit_handler))
+        .route("/branch/analysis", get(operations::branch_analysis_handler))
+        .route("/branch/pr", post(operations::branch_pull_request_handler))
+        .route(
+            "/branch/pr/enqueue",
+            post(operations::branch_pull_request_enqueue_handler),
+        )
+        .route(
+            "/branch/cleanup/candidates",
+            get(operations::branch_cleanup_candidates_handler),
+        )
+        .route("/branch/cleanup", post(operations::branch_cleanup_handler))
         .route("/reset", post(operations::reset_repo))
         .route("/refetch", post(operations::refetch_repo))
         .route("/maintenance", post(operations::run_maintenance_handler))
