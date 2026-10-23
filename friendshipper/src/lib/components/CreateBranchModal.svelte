@@ -19,6 +19,7 @@
 	let input = '';
 	let touched = false;
 	let creating = false;
+	let progressTitle = '';
 	let serverError = '';
 	let inputWrapper: HTMLElement;
 	let wasOpen = false;
@@ -53,14 +54,17 @@
 	const handleCreate = async () => {
 		if (!canCreate) return;
 		creating = true;
+		progressTitle = `Creating ${FEATURE_BRANCH_PREFIX}${slug}`;
 		serverError = '';
 		try {
 			const res = await createBranch(slug);
+			// Stay blocked until the status reflects the new branch.
+			progressTitle = res.switched ? `Switching to ${res.branch}` : 'Refreshing status';
+			await refreshAfterBranchChange();
 			creating = false;
 			open = false;
 			input = '';
 			touched = false;
-			await refreshAfterBranchChange();
 			if (res.switched && res.message) {
 				await emit('error', res.message);
 			} else {
@@ -68,14 +72,15 @@
 			}
 			dispatch('created', res);
 		} catch (e) {
-			creating = false;
 			const err = e as TauriError;
+			progressTitle = 'Refreshing status';
+			await refreshAfterBranchChange();
+			creating = false;
 			if (err?.status_code === 400) {
 				serverError = err.message;
 			} else {
 				await emit('error', e);
 			}
-			await refreshAfterBranchChange();
 		}
 	};
 
@@ -122,4 +127,4 @@
 	</div>
 </Modal>
 
-<ProgressModal showModal={creating} title="Creating branch" />
+<ProgressModal showModal={creating} title={progressTitle} />

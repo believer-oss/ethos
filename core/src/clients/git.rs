@@ -4,6 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, Utc};
@@ -25,6 +26,7 @@ use crate::types::locks::VerifyLocksResponse;
 use crate::types::repo::BranchInfo;
 use crate::types::repo::File;
 use crate::types::repo::FileState;
+use crate::types::repo::FileTouch;
 use crate::types::repo::Snapshot;
 
 static SNAPSHOT_PREFIX: &str = "snapshot";
@@ -33,6 +35,7 @@ lazy_static! {
     static ref WORKTREE_DIR_REGEX: Regex = Regex::new(r"^worktree (.+)").unwrap();
     static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
     static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
+    static ref GIT_VERSION_REGEX: Regex = Regex::new(r"^git version (\d+)\.(\d+)").unwrap();
     static ref GIT_FETCH_LOCK: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 }
 
@@ -68,6 +71,127 @@ pub enum MergeType {
 pub enum CreateRemoteBranchOutcome {
     Created,
     AlreadyExists,
+}
+
+/// Oldest git with `merge-tree --write-tree`.
+pub const MIN_BRANCH_GIT: (u32, u32) = (2, 38);
+
+/// Version string of a git already found to be supported; unsupported results are never cached.
+static SUPPORTED_GIT: OnceLock<String> = OnceLock::new();
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitVersionCheck {
+    pub version: String,
+    pub supported: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergeTreeOutcome {
+    Clean,
+    Conflicts(Vec<String>),
+}
+
+/// Parses `(major, minor)` from the first line of `git version` output.
+pub fn parse_git_version(output: &str) -> Option<(u32, u32)> {
+    let first_line = output.trim().lines().next()?;
+    let caps = GIT_VERSION_REGEX.captures(first_line)?;
+    let major = caps[1].parse().ok()?;
+    let minor = caps[2].parse().ok()?;
+    Some((major, minor))
+}
+
+/// `version` is the token after `git version `, or the trimmed raw output when unparseable.
+fn version_check_from_output(raw: &str) -> GitVersionCheck {
+    let trimmed = raw.trim();
+    let Some(parsed) = parse_git_version(trimmed) else {
+        return GitVersionCheck {
+            version: trimmed.to_string(),
+            supported: false,
+        };
+    };
+    let version = trimmed
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("git version "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or(trimmed)
+        .to_string();
+    GitVersionCheck {
+        version,
+        supported: parsed >= MIN_BRANCH_GIT,
+    }
+}
+
+fn is_tree_oid(record: &[u8]) -> bool {
+    (record.len() == 40 || record.len() == 64)
+        && record
+            .iter()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+}
+
+/// Interprets `git merge-tree --write-tree --name-only --no-messages -z` output. Exit 1 alone is
+/// not a conflict: a bad ref also exits 1, so a conflict requires a leading tree OID and paths.
+pub fn parse_merge_tree_output(
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &str,
+) -> anyhow::Result<MergeTreeOutcome> {
+    let code = exit_code.map_or_else(|| "signal".to_string(), |c| c.to_string());
+    let stderr = stderr.trim();
+
+    let mut records: Vec<&[u8]> = stdout.split(|b| *b == b'\0').collect();
+    if records.last().is_some_and(|r| r.is_empty()) {
+        records.pop();
+    }
+
+    if !records.first().is_some_and(|r| is_tree_oid(r)) {
+        bail!("git merge-tree did not return a tree OID (exit {code}): {stderr}");
+    }
+
+    match exit_code {
+        Some(0) => Ok(MergeTreeOutcome::Clean),
+        Some(1) => {
+            let paths: Vec<String> = records[1..]
+                .iter()
+                .take_while(|r| !r.is_empty())
+                .map(|r| String::from_utf8_lossy(r).into_owned())
+                .collect();
+            if paths.is_empty() {
+                bail!("git merge-tree reported conflicts but listed no paths");
+            }
+            Ok(MergeTreeOutcome::Conflicts(paths))
+        }
+        _ => bail!("git merge-tree failed (exit {code}): {stderr}"),
+    }
+}
+
+/// Parses `log --name-only --format=%x1e%H%x1f%an%x1f%aI` output into each path's newest touch.
+pub fn parse_last_touch(output: &str) -> HashMap<String, FileTouch> {
+    let mut touches: HashMap<String, FileTouch> = HashMap::new();
+    for record in output.split('\x1e') {
+        if record.trim().is_empty() {
+            continue;
+        }
+        let mut lines = record.lines();
+        let Some(header) = lines.next() else {
+            continue;
+        };
+        let fields: Vec<&str> = header.split('\x1f').collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        let sha: String = fields[0].chars().take(8).collect();
+        for path in lines.filter(|l| !l.is_empty()) {
+            touches
+                .entry(path.to_string())
+                .or_insert_with(|| FileTouch {
+                    sha: sha.clone(),
+                    author: fields[1].to_string(),
+                    date: fields[2].to_string(),
+                });
+        }
+    }
+    touches
 }
 
 /// Files that git's autostash apply left conflicted after a pull, and how each was settled.
@@ -1894,6 +2018,94 @@ impl Git {
     pub async fn version(&self) -> anyhow::Result<String> {
         self.run_and_collect_output(&["version"], Opts::default())
             .await
+    }
+
+    /// Checks git against `MIN_BRANCH_GIT`. Only a supported result is cached, so an upgrade
+    /// is picked up on the next check.
+    pub async fn check_min_version(&self) -> anyhow::Result<GitVersionCheck> {
+        if let Some(version) = SUPPORTED_GIT.get() {
+            return Ok(GitVersionCheck {
+                version: version.clone(),
+                supported: true,
+            });
+        }
+
+        let raw = self.version().await?;
+        let check = version_check_from_output(&raw);
+        if check.supported {
+            let _ = SUPPORTED_GIT.set(check.version.clone());
+        }
+        Ok(check)
+    }
+
+    /// Predicts whether merging `head_ref` into `base_ref` conflicts, without touching the
+    /// working tree, index or refs. Spawned directly because the exit code and NUL-separated
+    /// stdout are both needed.
+    pub async fn predict_merge_conflicts(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> anyhow::Result<MergeTreeOutcome> {
+        if base_ref.starts_with('-') || head_ref.starts_with('-') {
+            bail!("Invalid ref for merge-tree: {base_ref} {head_ref}");
+        }
+
+        let args = [
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "-z",
+            base_ref,
+            head_ref,
+        ];
+        let mut cmd = Command::new("git");
+        cmd.args(args);
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+        cmd.env("LC_ALL", "C");
+        if !self.repo_path.as_os_str().is_empty() {
+            cmd.current_dir(self.repo_path.canonicalize()?);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        info!("Running: git {}", args.join(" "));
+
+        let output = cmd.output().await?;
+        parse_merge_tree_output(
+            output.status.code(),
+            &output.stdout,
+            &String::from_utf8_lossy(&output.stderr),
+        )
+    }
+
+    /// Maps each path changed in `range` (newest `limit` commits) to its newest commit.
+    pub async fn last_touch_by_path(
+        &self,
+        range: &str,
+        limit: usize,
+    ) -> anyhow::Result<HashMap<String, FileTouch>> {
+        if range.starts_with('-') {
+            bail!("Invalid log range: {range}");
+        }
+
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "-c",
+                    "core.quotePath=false",
+                    "log",
+                    "--no-renames",
+                    "--name-only",
+                    "--format=%x1e%H%x1f%an%x1f%aI",
+                    &format!("-{limit}"),
+                    range,
+                    "--",
+                ],
+                Opts::new_without_logs().with_skip_notify_frontend(),
+            )
+            .await?;
+        Ok(parse_last_touch(&output))
     }
 
     pub async fn status(&self, paths: Vec<String>) -> anyhow::Result<String> {
@@ -4083,5 +4295,317 @@ mod tests {
             conflict.details(),
             "some files changed both locally and on origin. Kept your local version of a.uasset, b.txt (deleted); submitting will overwrite origin's changes to them. Could not merge c.txt; check them before submitting. Your local versions are saved in git's 'autostash' stash entry."
         );
+    }
+
+    const OID40: &str = "0de5581443506c8d04fe12dacf3f30ebce63da91";
+
+    fn merge_tree_stdout(records: &[&str]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for r in records {
+            out.extend_from_slice(r.as_bytes());
+            out.push(b'\0');
+        }
+        out
+    }
+
+    #[test]
+    fn test_merge_tree_clean() {
+        let stdout = merge_tree_stdout(&[OID40]);
+        assert_eq!(
+            parse_merge_tree_output(Some(0), &stdout, "").unwrap(),
+            MergeTreeOutcome::Clean
+        );
+    }
+
+    #[test]
+    fn test_merge_tree_conflicts_in_order() {
+        let stdout = merge_tree_stdout(&[OID40, "dir/a b.uasset", "Content/Ünï.umap"]);
+        assert_eq!(
+            parse_merge_tree_output(Some(1), &stdout, "").unwrap(),
+            MergeTreeOutcome::Conflicts(vec![
+                "dir/a b.uasset".to_string(),
+                "Content/Ünï.umap".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_merge_tree_missing_ref_is_error() {
+        let stderr = "merge-tree: origin/x - not something we can merge";
+        let err = parse_merge_tree_output(Some(1), b"", stderr).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("did not return a tree OID"), "{msg}");
+        assert!(msg.contains(stderr), "{msg}");
+    }
+
+    #[test]
+    fn test_merge_tree_rejects_bad_output() {
+        // exit 1 with non-OID text
+        assert!(parse_merge_tree_output(Some(1), b"fatal: something\0", "").is_err());
+        // exit 1 with an OID but no paths
+        let err = parse_merge_tree_output(Some(1), &merge_tree_stdout(&[OID40]), "").unwrap_err();
+        assert!(err.to_string().contains("listed no paths"));
+        // exit 128 with an OID
+        let err =
+            parse_merge_tree_output(Some(128), &merge_tree_stdout(&[OID40]), "boom").unwrap_err();
+        assert!(err.to_string().contains("exit 128"));
+        // exit 0 without an OID
+        assert!(parse_merge_tree_output(Some(0), b"", "").is_err());
+        // killed by a signal
+        let err =
+            parse_merge_tree_output(None, &merge_tree_stdout(&[OID40, "a.txt"]), "").unwrap_err();
+        assert!(err.to_string().contains("exit signal"));
+        // uppercase hex is not an OID
+        let upper = OID40.to_uppercase();
+        assert!(parse_merge_tree_output(Some(0), &merge_tree_stdout(&[&upper]), "").is_err());
+    }
+
+    #[test]
+    fn test_merge_tree_oid_forms() {
+        let oid64 = "a".repeat(64);
+        assert_eq!(
+            parse_merge_tree_output(Some(0), &merge_tree_stdout(&[&oid64]), "").unwrap(),
+            MergeTreeOutcome::Clean
+        );
+        // no trailing NUL
+        assert_eq!(
+            parse_merge_tree_output(Some(1), format!("{OID40}\0a.txt").as_bytes(), "").unwrap(),
+            MergeTreeOutcome::Conflicts(vec!["a.txt".to_string()])
+        );
+        // paths stop at the first empty record
+        assert_eq!(
+            parse_merge_tree_output(Some(1), format!("{OID40}\0a.txt\0\0b.txt\0").as_bytes(), "")
+                .unwrap(),
+            MergeTreeOutcome::Conflicts(vec!["a.txt".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_git_version() {
+        assert_eq!(
+            parse_git_version("git version 2.47.1.windows.1\n"),
+            Some((2, 47))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.39.3 (Apple Git-146)"),
+            Some((2, 39))
+        );
+        assert_eq!(parse_git_version("garbage"), None);
+        assert_eq!(parse_git_version("git version abc"), None);
+        assert_eq!(parse_git_version(""), None);
+    }
+
+    #[test]
+    fn test_git_version_check_from_output() {
+        assert!(version_check_from_output("git version 2.38.0").supported);
+        assert!(!version_check_from_output("git version 2.37.9").supported);
+        assert!(version_check_from_output("git version 2.100.0").supported);
+        assert!(version_check_from_output("git version 3.0.0").supported);
+
+        let check = version_check_from_output("git version 2.47.1.windows.1\n");
+        assert_eq!(check.version, "2.47.1.windows.1");
+        assert!(check.supported);
+
+        let check = version_check_from_output("  git version abc \n");
+        assert!(!check.supported);
+        assert_eq!(check.version, "git version abc");
+
+        let check = version_check_from_output("garbage\n");
+        assert!(!check.supported);
+        assert_eq!(check.version, "garbage");
+    }
+
+    #[test]
+    fn test_parse_last_touch() {
+        let output = concat!(
+            "\x1eaaaaaaaa1111\x1fAlice\x1f2026-10-22T10:00:00-07:00\n\nContent/a b.uasset\nshared.txt\n\n",
+            "\x1ebbbbbbbb2222\x1fBob\x1f2026-10-21T10:00:00-07:00\n",
+            "\x1ecccc\x1fCarol\x1f2026-10-20T10:00:00-07:00\n\nshared.txt\nold.txt\n",
+            "\x1ebroken\x1fDan\n\nignored.txt\n"
+        );
+        let touches = parse_last_touch(output);
+        assert_eq!(touches.len(), 3);
+        assert_eq!(
+            touches["shared.txt"],
+            FileTouch {
+                sha: "aaaaaaaa".to_string(),
+                author: "Alice".to_string(),
+                date: "2026-10-22T10:00:00-07:00".to_string(),
+            }
+        );
+        assert_eq!(touches["Content/a b.uasset"].sha, "aaaaaaaa");
+        assert_eq!(touches["old.txt"].sha, "cccc");
+        assert_eq!(touches["old.txt"].author, "Carol");
+        assert!(!touches.contains_key("ignored.txt"));
+        assert!(parse_last_touch("").is_empty());
+    }
+
+    /// Writes `contents` to `path` and commits it on the current branch.
+    fn commit_bytes(dir: &std::path::Path, path: &str, contents: &[u8], msg: &str) -> String {
+        std::fs::write(dir.join(path), contents).unwrap();
+        git_ok(dir, &["add", "--", path]);
+        git_ok(dir, &["commit", "-m", msg]);
+        git_ok(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// Builds origin/main and origin/x from a common base: `x_files` are committed on x,
+    /// `main_files` on main, both pushed and fetched. HEAD is left on the original branch.
+    fn setup_diverged_origin(
+        main_files: &[(&str, &[u8])],
+        x_files: &[(&str, &[u8])],
+    ) -> (Git, TempDir, TempDir) {
+        let (git, dir, origin) = setup_repo_with_bare_origin();
+        let path = git.repo_path.clone();
+        git_ok(&path, &["switch", "-c", "x"]);
+        for (file, bytes) in x_files {
+            commit_bytes(&path, file, bytes, &format!("x {file}"));
+        }
+        git_ok(&path, &["push", "origin", "HEAD:refs/heads/x"]);
+        git_ok(&path, &["switch", "-"]);
+        for (file, bytes) in main_files {
+            commit_bytes(&path, file, bytes, &format!("main {file}"));
+        }
+        git_ok(&path, &["push", "origin", "HEAD:refs/heads/main"]);
+        git_ok(&path, &["fetch", "origin"]);
+        (git, dir, origin)
+    }
+
+    /// Working tree/index status, HEAD and every ref, to prove a call changed none of them.
+    fn repo_snapshot(dir: &std::path::Path) -> (String, String, String, String) {
+        (
+            git_ok(dir, &["status", "--porcelain", "--untracked-files=all"]),
+            git_ok(dir, &["rev-parse", "HEAD"]),
+            git_ok(dir, &["symbolic-ref", "HEAD"]),
+            git_ok(dir, &["for-each-ref"]),
+        )
+    }
+
+    async fn git_supported(git: &Git) -> bool {
+        let check = git.check_min_version().await.expect("git version");
+        if !check.supported {
+            println!("skipped: git {} is older than 2.38", check.version);
+        }
+        check.supported
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_clean() {
+        let (git, dir, _origin) =
+            setup_diverged_origin(&[("m.txt", b"main")], &[("x.txt", b"branch")]);
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let outcome = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/x")
+            .await
+            .unwrap();
+        assert_eq!(outcome, MergeTreeOutcome::Clean);
+        assert_eq!(repo_snapshot(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_conflict() {
+        let (git, dir, _origin) = setup_diverged_origin(
+            &[("seed.txt", b"main side"), ("m.txt", b"main")],
+            &[("seed.txt", b"branch side"), ("x.txt", b"branch")],
+        );
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let outcome = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/x")
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            MergeTreeOutcome::Conflicts(vec!["seed.txt".to_string()])
+        );
+        assert_eq!(repo_snapshot(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_binary_both_sided() {
+        let (git, dir, _origin) = setup_diverged_origin(
+            &[("a.uasset", b"main\0bytes")],
+            &[("a.uasset", b"branch\0bytes"), ("x.txt", b"branch")],
+        );
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let outcome = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/x")
+            .await
+            .unwrap();
+        match outcome {
+            MergeTreeOutcome::Conflicts(paths) => {
+                assert!(paths.contains(&"a.uasset".to_string()), "{paths:?}")
+            }
+            other => panic!("expected conflicts, got {other:?}"),
+        }
+        assert_eq!(repo_snapshot(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_missing_ref() {
+        let (git, dir, _origin) =
+            setup_diverged_origin(&[("m.txt", b"main")], &[("x.txt", b"branch")]);
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let err = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/nope")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not something we can merge"),
+            "{err}"
+        );
+        assert_eq!(repo_snapshot(dir.path()), before);
+
+        assert!(git
+            .predict_merge_conflicts("--output=x", "refs/remotes/origin/x")
+            .await
+            .is_err());
+        assert!(git
+            .predict_merge_conflicts("refs/remotes/origin/main", "-x")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_last_touch_by_path_real() {
+        let (git, dir) = setup_repo();
+        let path = dir.path();
+        let base = git_ok(path, &["rev-parse", "HEAD"]);
+        let first = commit_bytes(path, "a.txt", b"one", "first");
+        commit_bytes(path, "b.txt", b"b", "second");
+        let third = commit_bytes(path, "a.txt", b"two", "third");
+
+        let range = format!("{base}..HEAD");
+        let touches = git.last_touch_by_path(&range, 2000).await.unwrap();
+        assert_eq!(touches.len(), 2);
+        assert_eq!(touches["a.txt"].sha, third[..8]);
+        assert_ne!(touches["a.txt"].sha, first[..8]);
+        assert_eq!(touches["a.txt"].author, "test");
+        assert!(!touches["a.txt"].date.is_empty());
+
+        let newest_only = git.last_touch_by_path(&range, 1).await.unwrap();
+        assert_eq!(newest_only.keys().collect::<Vec<_>>(), vec!["a.txt"]);
+
+        assert!(git.last_touch_by_path("--all", 10).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_min_version_real() {
+        let (git, _dir) = setup_repo();
+        let check = git.check_min_version().await.unwrap();
+        assert!(!check.version.is_empty());
+        assert!(check.supported, "git {} is unsupported", check.version);
+        // cached
+        assert_eq!(git.check_min_version().await.unwrap(), check);
     }
 }

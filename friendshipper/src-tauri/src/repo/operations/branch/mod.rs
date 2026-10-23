@@ -1,25 +1,72 @@
 use anyhow::anyhow;
 
 use crate::engine::EngineProvider;
+use crate::repo::operations::gh::submit::is_branch_mode;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::storage::ArtifactStorage;
+use ethos_core::types::config::RepoConfig;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
+mod analyze;
+mod cleanup;
 mod create;
 mod list;
 mod post_head_change;
+mod pull_request;
 mod submit;
 mod switch;
 
+pub use analyze::{branch_analysis_handler, BranchAnalysisOp};
+pub use cleanup::{branch_cleanup_candidates_handler, branch_cleanup_handler};
 pub use create::{create_branch_handler, CreateBranchOp};
 pub use list::list_branches_handler;
+pub use pull_request::{
+    branch_pull_request_enqueue_handler, branch_pull_request_handler, BranchPullRequestOp,
+};
 pub use submit::{branch_submit_handler, BranchSubmitOp};
 pub use switch::{switch_branch_handler, SwitchBranchOp};
 
 const MAX_SLUG_LEN: usize = 48;
+
+pub(crate) const GITHUB_PAT_MISSING: &str =
+    "GitHub PAT is not configured. Please configure it in the settings.";
+
+/// Whether `trunk` merges through the merge queue; a trunk with no target entry does.
+pub(crate) fn trunk_uses_merge_queue(repo_config: &RepoConfig, trunk: &str) -> bool {
+    repo_config
+        .target_branches
+        .iter()
+        .find(|target| target.name == trunk)
+        .map(|target| target.uses_merge_queue)
+        .unwrap_or(true)
+}
+
+/// The trunk for Branch Management on `branch`, or the Input error that refuses it.
+pub(crate) fn branch_management_trunk(
+    branch: &str,
+    repo_config: &RepoConfig,
+) -> Result<String, CoreError> {
+    if branch.is_empty() {
+        return Err(CoreError::Input(anyhow!(
+            "No branch is checked out (detached HEAD or rebase in progress)."
+        )));
+    }
+    let trunk = repo_config.trunk_branch.clone();
+    if trunk.is_empty() {
+        return Err(CoreError::Input(anyhow!(
+            "The repo config does not define trunkBranch."
+        )));
+    }
+    if !is_branch_mode(repo_config, branch) {
+        return Err(CoreError::Input(anyhow!(
+            "Branch Management actions are not available on {branch}. Create or select a feature branch."
+        )));
+    }
+    Ok(trunk)
+}
 
 /// Normalizes a user-entered slug (lowercase; whitespace and `_` become `-`; `-` runs collapse;
 /// edge `-` trimmed) and validates the result. Invalid characters are rejected, never stripped.

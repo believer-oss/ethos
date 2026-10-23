@@ -18,9 +18,10 @@ use ethos_core::types::playtests::{
 };
 use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::{
-    BranchInfo, ChangeSet, CommitFileInfo, CommitInfo, CreateBranchRequest, CreateBranchResponse,
-    FileHistoryResponse, PushRequest, RepoDirectoryListing, RepoStatus, Snapshot,
-    SwitchBranchRequest, SwitchBranchResponse,
+    BranchAnalysis, BranchCleanupCandidates, BranchCleanupRequest, BranchCleanupResult, BranchInfo,
+    BranchPullRequestResult, ChangeSet, CommitFileInfo, CommitInfo, CreateBranchPullRequestRequest,
+    CreateBranchRequest, CreateBranchResponse, FileHistoryResponse, PushRequest,
+    RepoDirectoryListing, RepoStatus, Snapshot, SwitchBranchRequest, SwitchBranchResponse,
 };
 use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
@@ -649,6 +650,98 @@ pub async fn switch_branch(
         .client
         .post(format!("{}/repo/branch/switch", state.server_url))
         .json(&SwitchBranchRequest { branch })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_branch_analysis(
+    state: tauri::State<'_, State>,
+) -> Result<BranchAnalysis, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/branch/analysis", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn create_branch_pull_request(
+    state: tauri::State<'_, State>,
+    req: CreateBranchPullRequestRequest,
+) -> Result<BranchPullRequestResult, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/pr", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn enqueue_branch_pull_request(
+    state: tauri::State<'_, State>,
+) -> Result<BranchPullRequestResult, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/pr/enqueue", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_branch_cleanup_candidates(
+    state: tauri::State<'_, State>,
+) -> Result<BranchCleanupCandidates, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/repo/branch/cleanup/candidates",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn cleanup_branches(
+    state: tauri::State<'_, State>,
+    req: BranchCleanupRequest,
+) -> Result<Vec<BranchCleanupResult>, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/cleanup", state.server_url))
+        .json(&req)
         .send()
         .await?;
 

@@ -1,6 +1,7 @@
 use graphql_client::GraphQLQuery;
 
 type DateTime = String;
+type GitObjectID = String;
 #[allow(clippy::upper_case_acronyms)]
 type URI = String;
 

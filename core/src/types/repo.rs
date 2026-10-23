@@ -1,3 +1,4 @@
+use crate::types::commits::Commit;
 use crate::types::locks::Lock;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -507,6 +508,211 @@ pub struct SwitchBranchResponse {
     pub warning: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BranchUpstream {
+    #[default]
+    Present,
+    Gone,
+    NotPushed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BranchLocalSync {
+    #[default]
+    InSync,
+    Ahead,
+    Behind,
+    Diverged,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTouch {
+    /// First 8 chars of the commit sha.
+    pub sha: String,
+    pub author: String,
+    /// git `%aI`, RFC 3339.
+    pub date: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockableFileRow {
+    /// Repo-relative, forward slashes.
+    pub path: String,
+    /// Empty when the engine has none cached; the UI falls back to `path`.
+    pub display_name: String,
+    /// Newest branch commit touching the path; null if beyond the 2000-commit scan.
+    pub branch_commit: Option<FileTouch>,
+    /// Path changed on origin/<trunk> since the merge-base.
+    pub changed_on_main: bool,
+    /// Newest trunk commit touching the path; null when !changed_on_main or beyond the scan.
+    pub main_commit: Option<FileTouch>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchMergeQueueEntry {
+    /// GraphQL `MergeQueueEntryState` name.
+    pub state: String,
+    pub position: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchPullRequest {
+    pub number: i64,
+    /// GraphQL node id.
+    pub id: String,
+    pub url: String,
+    /// PR head commit sha.
+    pub head_ref_oid: String,
+    /// Branch the PR merges into.
+    pub base_ref_name: String,
+    /// `owner/name` of the head repository; `None` when GitHub no longer has it.
+    pub head_repository: Option<String>,
+    /// "OPEN" or "MERGED"; closed PRs are never returned.
+    pub state: String,
+    /// "MERGEABLE", "CONFLICTING" or "UNKNOWN"; unknown values are passed through.
+    pub mergeable: String,
+    /// Non-null when the PR is in the merge queue.
+    pub merge_queue_entry: Option<BranchMergeQueueEntry>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchAnalysis {
+    /// When false, every other field is a default and must be ignored.
+    pub git_supported: bool,
+    /// Token after "git version " (e.g. "2.47.1.windows.1"); trimmed raw output when unparseable.
+    pub git_version: String,
+    /// Current branch (never protected).
+    pub branch: String,
+    pub trunk_branch: String,
+    pub uses_merge_queue: bool,
+    pub upstream: BranchUpstream,
+    /// Local <branch> vs origin/<branch>; Unknown unless upstream is Present.
+    pub local_sync: BranchLocalSync,
+    pub local_ahead_of_origin: u32,
+    pub local_behind_origin: u32,
+    /// origin/<branch> vs origin/<trunk>.
+    pub commits_ahead: u32,
+    pub commits_behind: u32,
+    /// Full sha of merge-base(origin/<trunk>, origin/<branch>).
+    pub merge_base: Option<String>,
+    /// merge-tree conflicted paths; empty means clean.
+    pub predicted_conflicts: Vec<String>,
+    /// Capped at 1000, sorted changed_on_main first, then path (case-insensitive).
+    pub lockable_files: Vec<LockableFileRow>,
+    /// Total before the cap.
+    pub lockable_file_count: u32,
+    /// origin/<trunk>..origin/<branch>, newest first, max 200.
+    pub commits: Vec<Commit>,
+    /// A MERGED PR is returned only when it covers the branch tip or the upstream is gone.
+    pub pr: Option<BranchPullRequest>,
+    /// Set when the GitHub lookup failed or GitHub is unavailable; `pr` is then null.
+    pub pr_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateBranchPullRequestRequest {
+    pub title: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchPullRequestResult {
+    pub number: i64,
+    pub url: String,
+    pub created: bool,
+    pub already_queued: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupPr {
+    pub number: i64,
+    pub url: String,
+    pub base_ref_name: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupCommit {
+    pub sha: String,
+    pub subject: String,
+}
+
+/// A local `f11r-branch-*` branch whose branch on origin was deleted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupCandidate {
+    pub name: String,
+    /// Full sha of the local branch tip.
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    /// Author date, ISO 8601.
+    pub date: String,
+    /// The tip is an ancestor of origin/<trunk>.
+    pub merged_into_trunk: bool,
+    /// Every non-merge commit not on origin/<trunk> has a patch-equivalent commit there.
+    pub patch_equivalent: bool,
+    /// A merged pull request for this branch name whose head contains the tip.
+    pub merged_via_pr: Option<BranchCleanupPr>,
+    /// The pull request lookup was needed but GitHub was unavailable.
+    pub pr_unknown: bool,
+    /// Commits not on origin/<trunk>: non-merge commits without an equivalent there, plus merges.
+    pub unmerged_commit_count: u32,
+    /// Newest first, at most 20.
+    pub unmerged_commits: Vec<BranchCleanupCommit>,
+    /// Merged into the trunk (or a target branch via PR); deleting it loses no commits.
+    pub safe: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupCandidates {
+    pub trunk_branch: String,
+    pub candidates: Vec<BranchCleanupCandidate>,
+    /// Set when GitHub could not be asked about some candidate's pull request.
+    pub pr_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupTarget {
+    pub name: String,
+    /// The tip the user saw; the branch is deleted only if it still points here.
+    pub sha: String,
+    /// The user saw the branch as safe; unless that was via a merged PR, it must still be
+    /// merged into the trunk by git checks.
+    #[serde(default)]
+    pub safe: bool,
+    /// The branch was safe only because of a merged pull request.
+    #[serde(default)]
+    pub safe_via_pr: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupRequest {
+    pub branches: Vec<BranchCleanupTarget>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchCleanupResult {
+    pub name: String,
+    pub sha: String,
+    pub deleted: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
@@ -588,6 +794,27 @@ mod tests {
             .remove("willConflictOnRebase");
         let status: RepoStatus = serde_json::from_value(legacy).unwrap();
         assert!(status.will_conflict_on_rebase.is_empty());
+    }
+
+    #[test]
+    fn branch_analysis_wire_shape() {
+        let value = serde_json::to_value(BranchAnalysis::default()).unwrap();
+        assert_eq!(value["gitSupported"], serde_json::json!(false));
+        assert_eq!(value["localAheadOfOrigin"], serde_json::json!(0));
+        assert_eq!(value["mergeBase"], serde_json::Value::Null);
+        assert_eq!(value["pr"], serde_json::Value::Null);
+        assert!(value.as_object().unwrap().contains_key("prError"));
+        assert_eq!(value["prError"], serde_json::Value::Null);
+        assert_eq!(value["upstream"], serde_json::json!("present"));
+        assert_eq!(value["localSync"], serde_json::json!("inSync"));
+
+        assert_eq!(
+            serde_json::to_value(BranchUpstream::NotPushed).unwrap(),
+            serde_json::json!("notPushed")
+        );
+
+        let req: CreateBranchPullRequestRequest = serde_json::from_str(r#"{"title":"x"}"#).unwrap();
+        assert_eq!(req.title, "x");
     }
 
     #[test]
