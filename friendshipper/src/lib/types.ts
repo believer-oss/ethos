@@ -1260,6 +1260,8 @@ export interface RebaseState {
 	currentCommit: Nullable<RebaseCommitInfo>;
 	conflicts: ConflictFile[];
 	stepIncomplete: boolean;
+	// Tracked files edited but not staged during the step; aborting discards the edits.
+	unstagedEdits: string[];
 	droppedCommits: DroppedCommit[];
 	staleReason: Nullable<RebaseStaleReason>;
 	touchesCpp: boolean;
