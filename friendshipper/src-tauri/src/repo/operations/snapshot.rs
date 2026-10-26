@@ -1,3 +1,4 @@
+use super::guard_state;
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 use axum::extract::{Query, State};
@@ -93,6 +94,8 @@ pub async fn restore_snapshot<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     // Pass BOTH modified and untracked as "local files" so the backend's
     // conflict gate matches the preview's `conflictsWithLocal` definition.
     // Otherwise a caller bypassing the UI could silently clobber an untracked

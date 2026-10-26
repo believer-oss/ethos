@@ -18,7 +18,7 @@ use ethos_core::types::locks::LockOperation;
 use ethos_core::types::repo::{File, RevertFilesRequest};
 use ethos_core::worker::{Task, TaskSequence};
 
-use super::RepoStatusRef;
+use super::{guard_op, guard_state, RepoStatusRef};
 
 #[derive(Clone)]
 pub struct RevertFilesOp<T> {
@@ -102,8 +102,11 @@ pub async fn revert_files_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    sequence.push(guard_op(&state));
 
     let repo_path = state.app_config.read().repo_path.clone();
 

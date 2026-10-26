@@ -15,6 +15,9 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::engine;
 use crate::engine::EngineProvider;
+use crate::repo::operations::branch::{
+    is_active, rebase_dir_exists, recorded_rebase_kind, resolve_git_dir,
+};
 use crate::repo::operations::gh::submit::{is_branch_mode, is_quicksubmit_branch};
 use crate::state::AppState;
 use ethos_core::blocked_files::BlockedFileMatcher;
@@ -191,6 +194,19 @@ where
                 self.git_client.repo_path
             );
         }
+
+        // Status never fails over the guided rebase state; an unknown one is treated as a rebase
+        // below, and the guard refuses other operations.
+        let repo_path = &self.git_client.repo_path;
+        let mut rebasing = rebase_dir_exists(&resolve_git_dir(repo_path));
+        match recorded_rebase_kind(&self.git_client, repo_path).await {
+            Ok(kind) => status.guided_rebase_active = kind.is_some_and(is_active),
+            Err(e) => {
+                warn!("Could not determine the guided rebase state: {e:#}");
+                rebasing = true;
+            }
+        }
+        rebasing |= status.guided_rebase_active;
 
         // if we're not on the main branch, we need to get the ahead/behind counts
         let target_branch = self.app_config.read().target_branch.clone();
@@ -377,7 +393,11 @@ where
                 "editor binary archives");
         }
 
-        {
+        // While rebasing, HEAD is built on the new trunk, so diffing it against the old
+        // upstream would report main-side files as upstream changes.
+        if rebasing {
+            info!("Rebase in progress, skipping upstream changes");
+        } else {
             let upstream = self.get_modified_upstream(&status).await?;
             status.modified_upstream = upstream.modified_upstream;
             status.will_conflict_on_rebase = upstream.will_conflict_on_rebase;
@@ -936,6 +956,8 @@ mod tests {
     use ethos_core::types::config::{AppConfig, RepoConfig, TargetBranchConfig};
 
     use super::*;
+    use crate::repo::operations::branch::rebase_fixture::{guided_record, start_raw_rebase};
+    use crate::repo::operations::branch::{json_path, write_rebase_file};
 
     /// Initialize a local git repo with a real (also-local) `origin` remote,
     /// carrying both `main` and `content-main` branches — the two branches
@@ -1456,6 +1478,7 @@ mod tests {
         dir: tempfile::TempDir,
         _remote: tempfile::TempDir,
         _collab_dir: tempfile::TempDir,
+        _hooks: tempfile::TempDir,
         git: git::Git,
         collab: git::Git,
     }
@@ -1486,13 +1509,41 @@ mod tests {
             run_git(&collab, &["config", "user.email", "collab@example.com"]).await;
             run_git(&collab, &["config", "user.name", "Collaborator"]).await;
 
+            // Hooks come only from an empty temp dir.
+            let hooks = tempfile::tempdir().expect("create hooks tempdir");
+            let hooks_path = hooks.path().to_str().expect("utf8 hooks path");
+            for clone in [&git, &collab] {
+                run_git(clone, &["config", "core.hooksPath", hooks_path]).await;
+                run_git(clone, &["config", "commit.gpgsign", "false"]).await;
+            }
+
             Self {
                 dir,
                 _remote: remote,
                 _collab_dir: collab_dir,
+                _hooks: hooks,
                 git,
                 collab,
             }
+        }
+
+        fn git_dir(&self) -> std::path::PathBuf {
+            self.dir.path().join(".git")
+        }
+
+        /// Commits a local edit of `path` on the current branch and pushes it.
+        async fn push_edit(&self, path: &str, contents: &str, message: &str) {
+            self.edit(path, contents);
+            run_git(&self.git, &["commit", "-qam", message]).await;
+            run_git(&self.git, &["push", "-q"]).await;
+        }
+
+        /// Writes the guided rebase record for the current branch and rebases onto
+        /// `origin/main`; returns git's exit code.
+        async fn guided_rebase(&self) -> i32 {
+            let file = guided_record(&self.git, "refs/remotes/origin/main").await;
+            write_rebase_file(&self.git_dir(), &file).expect("write rebase record");
+            start_raw_rebase(&self.git, &file.onto).await
         }
 
         /// Creates `FEATURE` from local `main` and pushes it with an upstream.
@@ -1616,6 +1667,7 @@ mod tests {
         fx.edit("Content/B.uasset", "local\n");
 
         let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
         assert_eq!(
             status.modified_upstream,
             vec!["Content/B.uasset".to_string()]
@@ -1800,6 +1852,131 @@ mod tests {
         assert!(status.detached_head);
         assert_eq!(status.branch, "");
         assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+    }
+
+    fn assert_no_upstream_lists(status: &RepoStatus) {
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert!(status.will_conflict_on_sync.is_empty(), "{status:?}");
+        assert!(!status.conflict_upstream);
+    }
+
+    /// `FEATURE` and `main` both changed `Content/A.uasset`.
+    async fn diverge_on_a(fx: &BranchFixture) {
+        fx.push_feature_branch().await;
+        fx.push_edit("Content/A.uasset", "branch\n", "branch edit a")
+            .await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+    }
+
+    #[tokio::test]
+    async fn guided_rebase_in_progress_status_ok() {
+        let fx = BranchFixture::new().await;
+        diverge_on_a(&fx).await;
+        assert_eq!(fx.guided_rebase().await, 1, "the rebase should stop");
+        fx.edit("Content/D.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert!(status.detached_head);
+        assert_eq!(status.branch, "");
+        assert!(status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+        assert_eq!(
+            submit_status_of(&status, "Content/A.uasset"),
+            SubmitStatus::Unmerged
+        );
+        assert_ne!(
+            submit_status_of(&status, "Content/D.uasset"),
+            SubmitStatus::Conflicted
+        );
+    }
+
+    /// Completes a guided rebase of `FEATURE`, then a collaborator changes `Content/C.uasset` on
+    /// `origin/FEATURE`, which the user also edits locally.
+    async fn completed_rebase_with_upstream_change(fx: &BranchFixture) {
+        fx.push_feature_branch().await;
+        fx.push_edit("Content/B.uasset", "branch\n", "branch edit b")
+            .await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+        assert_eq!(fx.guided_rebase().await, 0);
+        fx.collab_push(FEATURE, "Content/C.uasset", "collab\n", "collab edit c")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/C.uasset", "local\n");
+    }
+
+    #[tokio::test]
+    async fn guided_rebase_completed_skips_upstream_changes() {
+        let fx = BranchFixture::new().await;
+        completed_rebase_with_upstream_change(&fx).await;
+
+        let status = fx.status().await;
+        assert_eq!(status.branch, FEATURE);
+        assert!(status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+        assert_ne!(
+            submit_status_of(&status, "Content/C.uasset"),
+            SubmitStatus::Conflicted
+        );
+
+        // The same repo without the record reports the collaborator's change.
+        fs::remove_file(json_path(&fx.git_dir())).unwrap();
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_eq!(
+            status.modified_upstream,
+            vec!["Content/C.uasset".to_string()]
+        );
+        assert_eq!(status.conflicts, vec!["Content/C.uasset".to_string()]);
+        assert!(status.conflict_upstream);
+    }
+
+    #[tokio::test]
+    async fn external_rebase_status_ok() {
+        let fx = BranchFixture::new().await;
+        diverge_on_a(&fx).await;
+        assert_eq!(
+            start_raw_rebase(&fx.git, "refs/remotes/origin/main").await,
+            1
+        );
+
+        let status = fx.status().await;
+        assert!(status.detached_head);
+        assert!(!status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+    }
+
+    #[tokio::test]
+    async fn unknown_rebase_state_does_not_fail_status() {
+        let fx = BranchFixture::new().await;
+        diverge_on_a(&fx).await;
+        assert_eq!(fx.guided_rebase().await, 1);
+        // A record that exists but can't be read.
+        let json = json_path(&fx.git_dir());
+        fs::remove_file(&json).unwrap();
+        fs::create_dir(&json).unwrap();
+
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+    }
+
+    #[tokio::test]
+    async fn unknown_rebase_state_skips_upstream_changes() {
+        let fx = BranchFixture::new().await;
+        completed_rebase_with_upstream_change(&fx).await;
+        let json = json_path(&fx.git_dir());
+        fs::remove_file(&json).unwrap();
+        fs::create_dir(&json).unwrap();
+
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
     }
 
     #[test]

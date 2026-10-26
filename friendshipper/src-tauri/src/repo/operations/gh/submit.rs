@@ -13,6 +13,7 @@ use crate::engine::EngineProvider;
 use crate::repo::operations::pull::PullOp;
 use crate::repo::operations::validate::validate_repo_state;
 use crate::repo::operations::StatusOp;
+use crate::repo::operations::{ensure_no_guided_rebase, guard_state};
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use crate::state::Notification;
@@ -942,6 +943,7 @@ where
             let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
             let repo_status = self.repo_status.read().clone();
             validate_repo_state(&repo_path, &repo_status)?;
+            ensure_no_guided_rebase(&self.git_client, &repo_path).await?;
         }
 
         self.emit_phase("Checking repository status");
@@ -1510,6 +1512,8 @@ pub async fn submit_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let token = state
         .app_config
         .read()

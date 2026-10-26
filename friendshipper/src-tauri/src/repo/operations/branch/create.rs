@@ -7,7 +7,9 @@ use axum::{async_trait, Json};
 use tracing::info;
 
 use super::switch::run_switch;
-use super::{normalize_and_validate_slug, require_aws_and_storage, run_sequence};
+use super::{
+    guard_state, normalize_and_validate_slug, require_aws_and_storage, run_guarded_sequence,
+};
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 use ethos_core::clients::git;
@@ -117,6 +119,8 @@ pub async fn create_branch_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     // Checked up front so nothing is created when the switch could not run.
     let (aws_client, storage) = require_aws_and_storage(&state).await?;
 
@@ -128,7 +132,7 @@ where
         sync_phase_tx: state.sync_phase_tx.clone(),
         created: created.clone(),
     };
-    run_sequence(&state, Box::new(op)).await?;
+    run_guarded_sequence(&state, Box::new(op)).await?;
 
     let name = created.lock().clone().ok_or_else(|| {
         CoreError::Internal(anyhow!(
