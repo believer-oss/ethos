@@ -343,7 +343,7 @@ pub struct Git {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Opts<'a> {
     pub ignored_errors: &'a [&'a str],
     pub should_log_stdout: bool,
@@ -428,6 +428,20 @@ impl Opts<'_> {
     pub fn with_skip_notify_frontend(mut self) -> Self {
         self.skip_notify_frontend = true;
         self
+    }
+}
+
+// Prints env keys only: values may hold credentials and `Opts` is recorded in tracing spans.
+impl std::fmt::Debug for Opts<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Opts")
+            .field("ignored_errors", &self.ignored_errors)
+            .field("should_log_stdout", &self.should_log_stdout)
+            .field("return_complete_error", &self.return_complete_error)
+            .field("lfs_mode", &self.lfs_mode)
+            .field("skip_notify_frontend", &self.skip_notify_frontend)
+            .field("env", &self.env.iter().map(|(k, _)| *k).collect::<Vec<_>>())
+            .finish()
     }
 }
 
@@ -2502,12 +2516,7 @@ impl Git {
             bail!("No arguments provided to git command");
         }
 
-        let mut sys = System::new();
-        sys.refresh_processes_specifics(
-            ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
-        );
-        // Just bail if we have more than 3 git-credential-manager procs running, because it might be death spiraling
-        if sys.processes_by_name("git-credential-manager").count() > 3 {
+        if Self::gcm_death_spiral() {
             bail!("User may need to authenticate with the git credential manager");
         }
 
@@ -2523,15 +2532,119 @@ impl Git {
         }
     }
 
-    /// Runs git and returns its exit code and output instead of failing on a non-zero exit.
+    /// Runs git and returns its exit code and untrimmed output instead of failing on a non-zero
+    /// exit. Only a failure to spawn git is an error. `ignored_errors`, `return_complete_error`
+    /// and `should_log_stdout` have no effect here.
     pub async fn run_with_status(
         &self,
         args: &[&str],
         opts: Opts<'_>,
     ) -> anyhow::Result<GitRunOutput> {
-        // TODO: Implement in Stage 003
-        let _ = (args, opts);
-        bail!("not implemented")
+        // assert we have at least one arg
+        if args.is_empty() {
+            bail!("No arguments provided to git command");
+        }
+
+        if Self::gcm_death_spiral() {
+            bail!("User may need to authenticate with the git credential manager");
+        }
+
+        let mut cmd = self.build_command(args, &opts)?;
+
+        if !opts.skip_notify_frontend {
+            if let Err(e) = self.tx.send(Self::running_message(args)) {
+                warn!("Failed to send git command message: {}", e);
+            }
+        }
+
+        let git_cmd_str = format!("git {}", args.join(" "));
+        info!("Running: {}", git_cmd_str);
+
+        let output = match cmd.output().await {
+            Ok(o) => o,
+            Err(e) => {
+                error!("Failed to run: {}. Reason: {}", git_cmd_str, e);
+                if !opts.skip_notify_frontend {
+                    let _ = self.tx.send(String::new());
+                }
+                bail!("Failed to run git command. Check the log for details.");
+            }
+        };
+
+        let result = GitRunOutput {
+            exit_code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        };
+
+        // A non-zero exit is often an answer (e.g. `merge-base --is-ancestor`), not a failure
+        if result.exit_code != 0 {
+            info!(
+                "{} exited with {}.\n{}",
+                git_cmd_str, result.exit_code, result.stderr
+            );
+        }
+
+        if !opts.skip_notify_frontend {
+            let _ = self.tx.send(String::new());
+        }
+
+        Ok(result)
+    }
+
+    fn running_message(args: &[&str]) -> String {
+        if args.len() <= 8 {
+            format!("Running 'git {}'", args.join(" "))
+        } else {
+            format!(
+                "Running 'git {} (+ {} more)'",
+                args[..8].join(" "),
+                args.len() - 8
+            )
+        }
+    }
+
+    /// Whether many git-credential-manager processes are running, which suggests it is death
+    /// spiraling.
+    fn gcm_death_spiral() -> bool {
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
+        );
+        sys.processes_by_name("git-credential-manager").count() > 3
+    }
+
+    fn build_command(&self, args: &[&str], opts: &Opts<'_>) -> anyhow::Result<Command> {
+        let mut cmd = Command::new("git");
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        // disable clone protection
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+
+        if opts.lfs_mode == LfsMode::Stubs {
+            cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
+        }
+
+        // after the built-in vars so a caller can override them
+        for (k, v) in opts.env {
+            cmd.env(k, v);
+        }
+
+        if !&self.repo_path.as_os_str().is_empty() {
+            // if the first arg is clone, set current dir to the parent, then canonicalize
+            if args[0] == "clone" {
+                cmd.current_dir(&self.repo_path.parent().unwrap().canonicalize()?);
+            } else {
+                cmd.current_dir(&self.repo_path.canonicalize()?);
+            }
+        }
+
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        Ok(cmd)
     }
 
     pub async fn run_and_collect_output_into_lines(
@@ -2573,45 +2686,13 @@ impl Git {
         opts: Opts<'a>,
         output: &mut Option<String>,
     ) -> anyhow::Result<()> {
-        let message = if args.len() <= 8 {
-            format!("Running 'git {}'", args.join(" "))
-        } else {
-            format!(
-                "Running 'git {} (+ {} more)'",
-                args[..8].join(" "),
-                args.len() - 8
-            )
-        };
-
         if !opts.skip_notify_frontend {
-            if let Err(e) = self.tx.send(message) {
+            if let Err(e) = self.tx.send(Self::running_message(args)) {
                 warn!("Failed to send git command message: {}", e);
             }
         }
 
-        let mut cmd = Command::new("git");
-        for arg in args {
-            cmd.arg(arg);
-        }
-
-        // disable clone protection
-        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
-
-        if opts.lfs_mode == LfsMode::Stubs {
-            cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
-        }
-
-        if !&self.repo_path.as_os_str().is_empty() {
-            // if the first arg is clone, set current dir to the parent, then canonicalize
-            if args[0] == "clone" {
-                cmd.current_dir(&self.repo_path.parent().unwrap().canonicalize()?);
-            } else {
-                cmd.current_dir(&self.repo_path.canonicalize()?);
-            }
-        }
-
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        let mut cmd = self.build_command(args, &opts)?;
 
         let mut git_cmd_str: String = "git".to_string();
         for arg in args {
@@ -2776,9 +2857,12 @@ mod tests {
             &["config", "commit.gpgsign", "false"],
             &["config", "core.autocrlf", "false"],
         ];
-        for args in config_steps {
+        // keep the developer's global hooks out of test commits
+        let hooks_dir = dir.path().join("no-hooks");
+        let hooks_step = ["config", "core.hooksPath", hooks_dir.to_str().unwrap()];
+        for args in config_steps.iter().copied().chain([&hooks_step[..]]) {
             let out = StdCommand::new("git")
-                .args(*args)
+                .args(args)
                 .current_dir(&path)
                 .output()
                 .expect("run git");
@@ -3434,6 +3518,160 @@ mod tests {
 
     fn remote_sha(origin: &std::path::Path, refname: &str) -> String {
         git_ok(origin, &["rev-parse", "--verify", refname])
+    }
+
+    #[tokio::test]
+    async fn test_with_env_reaches_git_and_does_not_leak() {
+        let (git, _dir) = setup_repo();
+
+        let before = git
+            .run_and_collect_output(&["var", "GIT_EDITOR"], Opts::default())
+            .await
+            .unwrap();
+        let with_env = git
+            .run_and_collect_output(
+                &["var", "GIT_EDITOR"],
+                Opts::default().with_env(&[("GIT_EDITOR", "true")]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(with_env, "true");
+
+        let after = git
+            .run_and_collect_output(&["var", "GIT_EDITOR"], Opts::default())
+            .await
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_applies_env() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(
+                &["var", "GIT_EDITOR"],
+                Opts::default().with_env(&[("GIT_EDITOR", "true")]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            out,
+            GitRunOutput {
+                exit_code: 0,
+                stdout: "true\n".to_string(),
+                stderr: String::new(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_returns_exit_code_for_is_ancestor() {
+        let (git, _dir) = setup_repo();
+        let older = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        std::fs::write(git.repo_path.join("seed.txt"), "second").unwrap();
+        git_ok(&git.repo_path, &["commit", "-a", "-m", "second"]);
+        let newer = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+
+        let not_ancestor = git
+            .run_with_status(
+                &["merge-base", "--is-ancestor", &newer, &older],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(not_ancestor.exit_code, 1);
+        assert!(not_ancestor.stdout.is_empty());
+
+        let ancestor = git
+            .run_with_status(
+                &["merge-base", "--is-ancestor", &older, &newer],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ancestor.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_diff_quiet() {
+        let (git, _dir) = setup_repo();
+
+        let clean = git
+            .run_with_status(&["diff", "--quiet"], Opts::default())
+            .await
+            .unwrap();
+        assert_eq!(clean.exit_code, 0);
+
+        std::fs::write(git.repo_path.join("seed.txt"), "modified").unwrap();
+        let dirty = git
+            .run_with_status(&["diff", "--quiet"], Opts::default())
+            .await
+            .unwrap();
+        assert_eq!(dirty.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_preserves_nul_separated_output() {
+        let (git, _dir) = setup_repo();
+        std::fs::write(git.repo_path.join("a b.txt"), "x").unwrap();
+
+        let out = git
+            .run_with_status(
+                &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("? a b.txt\0"), "{:?}", out.stdout);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_missing_ref_is_ok_with_exit_1() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(
+                &["rev-parse", "--verify", "-q", "refs/heads/nope"],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_unknown_command_is_ok_with_nonzero_exit() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(&["not-a-command"], Opts::default())
+            .await
+            .unwrap();
+        assert_ne!(out.exit_code, 0);
+        assert!(out.stderr.contains("not-a-command"), "{:?}", out.stderr);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_rejects_empty_args() {
+        let (git, _dir) = setup_repo();
+        assert!(git.run_with_status(&[], Opts::default()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_commit_amend_with_noop_editor() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(
+                &["commit", "--amend"],
+                Opts::default().with_env(&[("GIT_EDITOR", "true")]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 0, "{}", out.stderr);
+        assert_eq!(
+            git_ok(&git.repo_path, &["log", "-1", "--format=%s"]),
+            "seed"
+        );
     }
 
     #[test]
