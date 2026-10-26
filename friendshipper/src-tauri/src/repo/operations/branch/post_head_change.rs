@@ -6,6 +6,7 @@ use tracing::{error, info};
 
 use crate::engine::EngineProvider;
 use crate::repo::operations::{DownloadDllsOp, StatusOp, UpdateEngineOp};
+use crate::state::AppState;
 use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
 use ethos_core::clients::git;
@@ -32,6 +33,29 @@ pub(crate) struct PostHeadChangeCtx<T> {
     pub git_client: git::Git,
     pub github_client: Option<GraphQLClient>,
     pub engine: T,
+}
+
+impl<T: EngineProvider> PostHeadChangeCtx<T> {
+    pub(crate) fn new(
+        state: &AppState<T>,
+        aws_client: AWSClient,
+        storage: ArtifactStorage,
+    ) -> Self {
+        PostHeadChangeCtx {
+            app_config: state.app_config.clone(),
+            repo_config: state.repo_config.clone(),
+            repo_status: state.repo_status.clone(),
+            artifact_sync: state.artifact_sync.clone(),
+            downloads: state.downloads.clone(),
+            sync_event_tx: state.sync_event_tx.clone(),
+            sync_phase_tx: state.sync_phase_tx.clone(),
+            aws_client,
+            storage,
+            git_client: state.git(),
+            github_client: state.github_client.read().clone(),
+            engine: state.engine.clone(),
+        }
+    }
 }
 
 /// Brings the working copy's derived state in line with a new HEAD: refreshes status,

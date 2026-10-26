@@ -24,7 +24,7 @@ const BACKUP_RETENTION_SECS: u64 = 14 * 86400;
 const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 const TEXT_SNIFF_BYTES: u64 = 8000;
 const LOCALE_ENV: &[(&str, &str)] = &[("LC_ALL", "C")];
-const COMMIT_INFO_FORMAT: &str = "--format=%H%x1f%an%x1f%s";
+pub(crate) const COMMIT_INFO_FORMAT: &str = "--format=%H%x1f%an%x1f%s";
 
 const BOTH_ADDED: &str = "Both main and the branch added this file.";
 const RENAMED_DIFFERENTLY: &str = "This file was renamed differently on main and on the branch.";
@@ -562,7 +562,7 @@ fn last_segment(path: &str) -> String {
 }
 
 /// Parses a `%H%x1f%an%x1f%s` line.
-fn parse_commit_info(line: &str) -> Option<RebaseCommitInfo> {
+pub(crate) fn parse_commit_info(line: &str) -> Option<RebaseCommitInfo> {
     let mut fields = line.trim_end_matches(['\r', '\n']).splitn(3, '\u{1f}');
     let sha = fields.next()?;
     if sha.is_empty() {
@@ -575,7 +575,7 @@ fn parse_commit_info(line: &str) -> Option<RebaseCommitInfo> {
     })
 }
 
-async fn commit_info(git: &git::Git, sha: &str) -> anyhow::Result<RebaseCommitInfo> {
+pub(crate) async fn commit_info(git: &git::Git, sha: &str) -> anyhow::Result<RebaseCommitInfo> {
     let output = read_git(git, &["log", "-1", COMMIT_INFO_FORMAT, sha, "--"]).await?;
     if output.exit_code != 0 {
         bail!("Could not read commit {sha}: {}", output.stderr.trim());
@@ -1121,7 +1121,6 @@ pub(crate) async fn prune_backup_refs(
     Ok(())
 }
 
-#[allow(dead_code)] // TODO: Stage 013
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PushOutcome {
     /// Updated or created, or already identical on origin.
@@ -1134,7 +1133,6 @@ pub(crate) enum PushOutcome {
 }
 
 /// The flag and summary of the `git push --porcelain` line that updated `refs/heads/<branch>`.
-#[allow(dead_code)] // TODO: Stage 013
 pub(crate) fn push_ref_status(stdout: &str, branch: &str) -> Option<(char, String)> {
     let target = format!(":refs/heads/{branch}");
     stdout.lines().find_map(|line| {
@@ -1152,7 +1150,6 @@ pub(crate) fn push_ref_status(stdout: &str, branch: &str) -> Option<(char, Strin
     })
 }
 
-#[allow(dead_code)] // TODO: Stage 013
 pub(crate) fn parse_push_porcelain(stdout: &str, branch: &str) -> PushOutcome {
     match push_ref_status(stdout, branch) {
         None => PushOutcome::NoRefLine,
@@ -1325,6 +1322,18 @@ pub(crate) mod tests {
                 ],
             )
             .await;
+            let url = git_out(&git, &["remote", "get-url", "origin"]).await;
+            assert_eq!(
+                url,
+                slash_path(origin_dir.path()),
+                "tests push only to their own temp origin"
+            );
+            assert!(Path::new(&url).is_dir(), "{url}");
+            assert_eq!(
+                git_out(&git, &["remote", "get-url", "--push", "origin"]).await,
+                url,
+                "tests push only to their own temp origin"
+            );
             // Local values override the developer's global config that the tests depend on.
             for (key, value) in [
                 ("user.email", "user@example.com"),
@@ -2824,6 +2833,35 @@ pub(crate) mod tests {
 
     fn push_output(flag: &str, dst: &str, summary: &str) -> String {
         format!("To https://example.com/r.git\n{flag}\tHEAD:{dst}\t{summary}\nDone\n")
+    }
+
+    /// Output captured from git 2.55 pushing a sha with an explicit lease.
+    #[test]
+    fn parses_captured_push_porcelain() {
+        let line = |flag: &str, summary: &str| {
+            format!(
+                "To C:/tmp/origin.git\n{flag}\tcb8ec49a2ce0ba12a558f20128b0d6e4bf348559:refs/heads/feat\t{summary}\nDone\n"
+            )
+        };
+        for (stdout, expected) in [
+            (
+                line("+", "89e5b6e...cb8ec49 (forced update)"),
+                PushOutcome::Pushed,
+            ),
+            (line("=", "[up to date]"), PushOutcome::Pushed),
+            // A collaborator pushed, or the branch was deleted on origin.
+            (
+                line("!", "[rejected] (stale info)"),
+                PushOutcome::LeaseRejected,
+            ),
+            // Origin moved after the lease was checked against its advertised refs.
+            (
+                line("!", "[remote rejected] (incorrect old value provided)"),
+                PushOutcome::Rejected("[remote rejected] (incorrect old value provided)".into()),
+            ),
+        ] {
+            assert_eq!(parse_push_porcelain(&stdout, "feat"), expected, "{stdout}");
+        }
     }
 
     #[test]

@@ -214,20 +214,7 @@ pub(crate) fn build_switch_op<T: EngineProvider>(
 ) -> SwitchBranchOp<T> {
     SwitchBranchOp {
         branch,
-        ctx: PostHeadChangeCtx {
-            app_config: state.app_config.clone(),
-            repo_config: state.repo_config.clone(),
-            repo_status: state.repo_status.clone(),
-            artifact_sync: state.artifact_sync.clone(),
-            downloads: state.downloads.clone(),
-            sync_event_tx: state.sync_event_tx.clone(),
-            sync_phase_tx: state.sync_phase_tx.clone(),
-            aws_client,
-            storage,
-            git_client: state.git(),
-            github_client: state.github_client.read().clone(),
-            engine: state.engine.clone(),
-        },
+        ctx: PostHeadChangeCtx::new(state, aws_client, storage),
         head_moved: Arc::new(AtomicBool::new(false)),
     }
 }
