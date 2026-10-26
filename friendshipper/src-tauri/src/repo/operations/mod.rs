@@ -1,8 +1,15 @@
 pub use branch::{
     branch_analysis_handler, branch_cleanup_candidates_handler, branch_cleanup_handler,
     branch_pull_request_enqueue_handler, branch_pull_request_handler, branch_submit_handler,
-    create_branch_handler, list_branches_handler, switch_branch_handler, BranchAnalysisOp,
-    BranchPullRequestOp, BranchSubmitOp, CreateBranchOp, SwitchBranchOp,
+    create_branch_handler, editor_binaries_handler, editor_rebuild_handler,
+    guided_rebase_abort_handler, guided_rebase_continue_handler, guided_rebase_dismiss_handler,
+    guided_rebase_finish_handler, guided_rebase_open_file_handler, guided_rebase_preflight_handler,
+    guided_rebase_redo_handler, guided_rebase_reset_to_backup_handler,
+    guided_rebase_resolve_handler, guided_rebase_start_handler, guided_rebase_state_handler,
+    guided_rebase_unresolve_handler, list_branches_handler, switch_branch_handler,
+    BranchAnalysisOp, BranchPullRequestOp, BranchSubmitOp, CreateBranchOp, EditorRebuildOp,
+    RebaseAbortOp, RebaseContinueOp, RebaseFinishOp, RebaseRedoOp, RebaseResetToBackupOp,
+    RebaseResolveOp, RebaseStartOp, RebaseUnresolveOp, SwitchBranchOp,
 };
 pub use branch_compare::branch_compare_handler;
 pub use browse::list_directory_handler;

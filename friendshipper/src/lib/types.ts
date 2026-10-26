@@ -367,6 +367,7 @@ export interface RepoStatus {
 	modifiedUpstream: string[];
 	willConflictOnRebase: string[];
 	willConflictOnSync?: string[];
+	guidedRebaseActive: boolean;
 	lastPullRequest?: PullRequestStatus;
 	lockUser: string;
 	locksOurs: Lock[];
@@ -468,6 +469,7 @@ export interface Lock {
 export interface RebaseStatusResponse {
 	rebaseMergeExists: boolean;
 	headNameExists: boolean;
+	guidedRebaseActive?: boolean;
 }
 
 export interface ObjectCountResponse {
@@ -841,4 +843,105 @@ export interface BranchCleanupResult {
 	sha: string;
 	deleted: boolean;
 	error: Nullable<string>;
+}
+
+export type RebaseStateKind =
+	| 'idle'
+	| 'inProgress'
+	| 'completedUnpushed'
+	| 'pushFailed'
+	| 'stale'
+	| 'external';
+
+export type RebaseStaleReason =
+	| 'abortedOutside'
+	| 'pushedOutside'
+	| 'branchChanged'
+	| 'otherRebase'
+	| 'unreadable'
+	| 'unknown';
+
+export interface RebaseCommitInfo {
+	sha: string;
+	subject: string;
+	author: string;
+}
+
+export type ConflictKind = 'content' | 'modifyDelete' | 'unsupported';
+
+export type ConflictSideName = 'main' | 'branch';
+
+export type RebaseKeep = 'main' | 'branch' | 'manual';
+
+export interface ConflictFile {
+	path: string;
+	displayName: string;
+	kind: ConflictKind;
+	// Set only for modifyDelete.
+	deletedOn: Nullable<ConflictSideName>;
+	unsupportedReason: Nullable<string>;
+	isText: boolean;
+	resolved: boolean;
+	resolution: Nullable<RebaseKeep>;
+	mainSide: Nullable<RebaseCommitInfo>;
+	branchSide: RebaseCommitInfo;
+}
+
+export interface DroppedCommit {
+	sha: string;
+	subject: string;
+}
+
+export interface RebaseState {
+	state: RebaseStateKind;
+	// Empty when idle or external.
+	branch: string;
+	step: number;
+	totalSteps: number;
+	currentCommit: Nullable<RebaseCommitInfo>;
+	conflicts: ConflictFile[];
+	stepIncomplete: boolean;
+	droppedCommits: DroppedCommit[];
+	staleReason: Nullable<RebaseStaleReason>;
+	touchesCpp: boolean;
+	backupRef: string;
+	backupSha: string;
+	pushFailedRemoteSha: Nullable<string>;
+}
+
+export interface ResolveConflictRequest {
+	path: string;
+	keep: RebaseKeep;
+}
+
+export interface OpenConflictFileRequest {
+	path: string;
+}
+
+export interface UnresolveConflictRequest {
+	path: string;
+}
+
+export type RebaseFinishOutcome = 'pushed' | 'leaseRejected';
+
+export interface RebaseFinishResponse {
+	outcome: RebaseFinishOutcome;
+	state: RebaseState;
+	droppedCommits: DroppedCommit[];
+	touchesCpp: boolean;
+	postStepError: Nullable<string>;
+}
+
+export interface RebasePreflight {
+	touchesCpp: boolean;
+	cppFiles: string[];
+	commitCount: number;
+}
+
+export type EditorBinariesState = 'match' | 'mismatch' | 'unknown';
+
+export interface EditorBinariesStatus {
+	state: EditorBinariesState;
+	dllCommit: string;
+	latestCppCommit: Nullable<RebaseCommitInfo>;
 }
