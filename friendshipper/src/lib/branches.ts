@@ -7,7 +7,10 @@ import type {
 	BranchCleanupCandidate,
 	BranchCleanupResult,
 	CommitTagCategory,
+	ConflictFile,
 	Nullable,
+	RebaseState,
+	RebaseStateKind,
 	RepoConfig,
 	RepoStatus
 } from '$lib/types';
@@ -121,8 +124,8 @@ export const targetUsesMergeQueue = (target: string, cfg: Nullable<RepoConfig>):
 
 export type SubmitMode = 'quick' | 'branch' | 'unavailable';
 
-// Always false: RepoStatus does not report guided rebase state yet.
-export const isGuidedRebaseActive = (_status: RepoStatus): boolean => false;
+// RepoStatus.guidedRebaseActive is set by the backend for inProgress, completedUnpushed and pushFailed.
+export const isGuidedRebaseActive = (status: RepoStatus): boolean => status.guidedRebaseActive;
 
 // Mirrors the Rust `is_branch_mode`: branch mode is any branch that is neither protected nor Quick Submit.
 // `targetMismatch` blocks Quick Submit, as the backend's `ensure_quick_submit_allowed` does.
@@ -263,6 +266,157 @@ export const createPrBlockers = (a: BranchAnalysis): string[] => {
 };
 
 export const shortSha = (sha: string): string => sha.substring(0, 8);
+
+export const sha7 = (sha: string): string => sha.substring(0, 7);
+
+// Mirrors the Rust `MIN_GUIDED_REBASE_GIT`; Branch Management itself needs only 2.38.
+const MIN_GUIDED_REBASE_GIT: [number, number] = [2, 43];
+
+// Mirrors the Rust `git_version_gate`: an unparseable version is unsupported.
+export const guidedRebaseGitSupported = (version: string): boolean => {
+	const m = /^(\d+)\.(\d+)/.exec(version.trim());
+	if (!m) {
+		return false;
+	}
+	const [major, minor] = [Number(m[1]), Number(m[2])];
+	return (
+		major > MIN_GUIDED_REBASE_GIT[0] ||
+		(major === MIN_GUIDED_REBASE_GIT[0] && minor >= MIN_GUIDED_REBASE_GIT[1])
+	);
+};
+
+// First reason the Rebase button is disabled, in the backend's gate order; the backend re-checks
+// each one.
+export const rebaseBlockReason = (
+	status: Nullable<RepoStatus>,
+	analysis: Nullable<BranchAnalysis>,
+	rebase: Nullable<RebaseState>,
+	busy: boolean
+): string | null => {
+	if (!status || !analysis) {
+		return 'Loading branch status…';
+	}
+	if (!analysis.gitSupported) {
+		return 'Update git to use Branch Management';
+	}
+	if (!guidedRebaseGitSupported(analysis.gitVersion)) {
+		return `Update git to use Branch Management (found ${analysis.gitVersion}, need 2.43 or newer).`;
+	}
+	if (analysis.pr?.state === 'MERGED' || analysis.upstream === 'gone') {
+		return 'This branch was merged or deleted.';
+	}
+	if (rebase === null || rebase.state !== 'idle') {
+		return 'Finish or dismiss the current rebase first.';
+	}
+	if (status.hasLocalChanges || status.untrackedFiles.length > 0) {
+		return 'Commit, snapshot, or revert your changes before rebasing.';
+	}
+	if (status.commitsAhead > 0 || status.commitsBehind > 0) {
+		return 'Your branch has unpushed or unsynced commits — submit or Sync first.';
+	}
+	if (analysis.commitsBehind === 0) {
+		return `${analysis.branch} already contains the latest ${analysis.trunkBranch}.`;
+	}
+	if (busy) {
+		return 'Wait for the current operation to finish.';
+	}
+	return null;
+};
+
+// A resolved file with no recorded choice was resolved outside Friendshipper, so it counts as
+// a manual merge.
+const isManualResolution = (f: ConflictFile): boolean =>
+	f.resolved && (f.resolution === 'manual' || f.resolution === null);
+
+// Whether Undo discards edits the user made, so it needs a confirmation first.
+export const undoNeedsConfirm = (f: ConflictFile): boolean => isManualResolution(f);
+
+// True when the chosen side is the one that deleted the file.
+const choseDeletion = (f: ConflictFile): boolean =>
+	f.deletedOn !== null && f.resolution === f.deletedOn;
+
+export const resolutionLabel = (f: ConflictFile): string => {
+	if (isManualResolution(f)) {
+		return 'Manually merged';
+	}
+	if (choseDeletion(f)) {
+		return 'Deleted';
+	}
+	return f.resolution === 'main' ? "Kept main's version" : "Kept branch's version";
+};
+
+// The choice for the Continue confirmation; Continue can still refuse, e.g. for edits left
+// unstaged.
+export const confirmLine = (f: ConflictFile): string => {
+	if (isManualResolution(f)) {
+		return 'Manually merged';
+	}
+	if (choseDeletion(f)) {
+		return 'Deleted';
+	}
+	if (f.resolution === 'main') {
+		return f.mainSide
+			? `Main's version — by ${f.mainSide.author} in ${sha7(f.mainSide.sha)}`
+			: "Main's version";
+	}
+	return `Branch's version — by ${f.branchSide.author} in ${sha7(f.branchSide.sha)}`;
+};
+
+export const mainSideText = (f: ConflictFile): string => {
+	if (f.deletedOn === 'main') {
+		return f.mainSide ? `deleted on main by ${f.mainSide.author}` : 'deleted on main';
+	}
+	return f.mainSide
+		? `last changed by ${f.mainSide.author} in ${sha7(f.mainSide.sha)} "${f.mainSide.subject}"`
+		: 'last changed on main';
+};
+
+export const branchSideText = (f: ConflictFile): string =>
+	f.deletedOn === 'branch'
+		? 'deleted on branch'
+		: `from ${sha7(f.branchSide.sha)} by ${f.branchSide.author}`;
+
+// Mirrors the backend's stale messages.
+export const staleMessage = (state: RebaseState): string => {
+	switch (state.staleReason) {
+		case 'abortedOutside':
+			return `The rebase of ${state.branch} was aborted outside Friendshipper. Your branch is back where it started.`;
+		case 'pushedOutside':
+			return `The rebased ${state.branch} is already on origin. Sync and download editor binaries if needed.`;
+		case 'branchChanged':
+			return `You switched away from ${state.branch} outside Friendshipper while it was being rebased. Its backup is kept at ${state.backupRef}.`;
+		case 'otherRebase':
+			return 'A different rebase was started outside Friendshipper. Finish it in your git client or in Diagnostics.';
+		case 'unreadable':
+			return "Friendshipper's rebase record is unreadable. Your backup refs are kept under refs/f11r-backup/.";
+		default:
+			return `${state.branch} was changed outside Friendshipper during the rebase. Its backup is kept at ${state.backupRef}.`;
+	}
+};
+
+// Advisory; Continue re-checks everything, and the confirmation step does not promise success.
+export const canContinue = (state: RebaseState): boolean =>
+	state.state === 'inProgress' &&
+	!state.stepIncomplete &&
+	state.conflicts.length > 0 &&
+	state.conflicts.every((c) => c.resolved && c.kind !== 'unsupported');
+
+export const pushFailedText = (state: RebaseState): string =>
+	state.pushFailedRemoteSha
+		? `Someone pushed to ${state.branch} (${shortSha(
+				state.pushFailedRemoteSha
+		  )}) while you were rebasing. Sync and submit are blocked until you choose:`
+		: `${state.branch} was changed or deleted on origin while you were rebasing. Sync and submit are blocked until you choose:`;
+
+export const rebaseViewFor = (state: Nullable<RebaseState>): 'resolver' | 'recovery' | 'none' => {
+	const kind: Nullable<RebaseStateKind> = state?.state ?? null;
+	if (kind === 'inProgress') {
+		return 'resolver';
+	}
+	return kind === 'completedUnpushed' || kind === 'pushFailed' || kind === 'stale'
+		? 'recovery'
+		: 'none';
+};
 
 export const localBranchCount = (n: number): string => `${n} local branch${n === 1 ? '' : 'es'}`;
 
