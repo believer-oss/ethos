@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ use ethos_core::worker::{RepoWorker, TaskSequence};
 
 use crate::client::FriendshipperClient;
 use crate::engine::{EngineProvider, UnrealEngineProvider};
-use crate::repo::operations::InstallGitHooksOp;
+use crate::repo::operations::{may_remove_stale_index_lock, resolve_git_dir, InstallGitHooksOp};
 use crate::state::{FrontendOp, Notification};
 use crate::APP_NAME;
 use crate::{state::AppState, KEYRING_USER, VERSION};
@@ -297,14 +297,19 @@ impl Server {
             // Check for and remove index.lock if it exists
             let span = tracing::info_span!("remove_index_lock").entered();
 
-            let index_lock_path = PathBuf::from(&repo_path).join(".git").join("index.lock");
+            let git_dir = resolve_git_dir(Path::new(&repo_path));
+            let index_lock_path = git_dir.join("index.lock");
             if index_lock_path.exists() {
-                match fs::remove_file(&index_lock_path) {
-                    Ok(_) => {
-                        info!("Removed existing index.lock file");
-                    }
-                    Err(e) => {
-                        warn!("Failed to remove index.lock file: {:?}", e);
+                if !may_remove_stale_index_lock(&git_dir) {
+                    warn!("Not removing index.lock: a rebase may still be running");
+                } else {
+                    match fs::remove_file(&index_lock_path) {
+                        Ok(_) => {
+                            info!("Removed existing index.lock file");
+                        }
+                        Err(e) => {
+                            warn!("Failed to remove index.lock file: {:?}", e);
+                        }
                     }
                 }
             }

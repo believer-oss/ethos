@@ -8,7 +8,7 @@ use axum::{async_trait, Json};
 use tracing::{error, info, warn};
 
 use super::post_head_change::{run_post_head_change, PostHeadChangeCtx};
-use super::{is_valid_branch_name, require_aws_and_storage, run_sequence};
+use super::{guard_state, is_valid_branch_name, require_aws_and_storage, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::repo::operations::validate::validate_repo_state;
@@ -260,7 +260,7 @@ pub(crate) async fn run_switch<T: EngineProvider>(
 ) -> Result<Option<String>, CoreError> {
     let op = build_switch_op(state, branch.to_string(), aws_client, storage);
     let head_moved = op.head_moved.clone();
-    let result = run_sequence(state, Box::new(op)).await;
+    let result = run_guarded_sequence(state, Box::new(op)).await;
     switch_outcome(branch, result, head_moved.load(Ordering::SeqCst))
 }
 
@@ -271,6 +271,8 @@ pub async fn switch_branch_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let (aws_client, storage) = require_aws_and_storage(&state).await?;
 
     let branch = req.branch;

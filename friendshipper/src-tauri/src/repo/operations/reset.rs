@@ -9,7 +9,7 @@ use tokio::sync::oneshot::error::RecvError;
 use tracing::{error, info};
 
 use crate::engine::EngineProvider;
-use crate::repo::operations::{DownloadDllsOp, StatusOp, UpdateEngineOp};
+use crate::repo::operations::{guard_op, guard_state, DownloadDllsOp, StatusOp, UpdateEngineOp};
 use crate::state::AppState;
 use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
@@ -27,6 +27,8 @@ pub async fn reset_repo<T>(State(state): State<AppState<T>>) -> Result<(), CoreE
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let branch = state.app_config.read().target_branch.clone();
     state.git().hard_reset(&branch).await.map_err(|e| e.into())
 }
@@ -209,6 +211,8 @@ pub async fn reset_repo_to_commit<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
     let storage = match state.storage.read().clone() {
         Some(storage) => storage,
@@ -221,6 +225,7 @@ where
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    sequence.push(guard_op(&state));
 
     let reset_to_commit_op = ResetToCommitOp {
         commit,

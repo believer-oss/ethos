@@ -62,24 +62,24 @@ async fn read_git(git: &git::Git, args: &[&str]) -> anyhow::Result<git::GitRunOu
 
 /// The per-worktree git dir: `.git` itself, or the target of a `gitdir:` file.
 pub(crate) fn resolve_git_dir(repo_path: &Path) -> PathBuf {
-    let dot_git = repo_path.join(".git");
-    if dot_git.is_dir() {
-        return dot_git;
-    }
-    if dot_git.is_file() {
-        if let Ok(content) = std::fs::read_to_string(&dot_git) {
-            if let Some(target) = content.trim().strip_prefix("gitdir:") {
-                let target = Path::new(target.trim());
-                if !target.as_os_str().is_empty() {
-                    return repo_path.join(target);
-                }
-            }
-        }
-    }
-    dot_git
+    try_resolve_git_dir(repo_path).unwrap_or_else(|_| repo_path.join(".git"))
 }
 
-fn json_path(git_dir: &Path) -> PathBuf {
+/// [`resolve_git_dir`], failing when `.git` is a file that can't be read or names no git dir.
+pub(crate) fn try_resolve_git_dir(repo_path: &Path) -> anyhow::Result<PathBuf> {
+    let dot_git = repo_path.join(".git");
+    if !dot_git.is_file() {
+        return Ok(dot_git);
+    }
+    let content = std::fs::read_to_string(&dot_git)
+        .with_context(|| format!("Could not read {}", dot_git.display()))?;
+    match content.trim().strip_prefix("gitdir:").map(str::trim) {
+        Some(target) if !target.is_empty() => Ok(repo_path.join(target)),
+        _ => bail!("{} does not name a git dir", dot_git.display()),
+    }
+}
+
+pub(crate) fn json_path(git_dir: &Path) -> PathBuf {
     git_dir.join(REBASE_FILE)
 }
 
@@ -989,7 +989,7 @@ pub(crate) fn parse_push_porcelain(stdout: &str, branch: &str) -> PushOutcome {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::sync::mpsc;
     use std::time::SystemTime;
@@ -999,19 +999,19 @@ mod tests {
     use ethos_core::types::config::{AppConfig, RepoConfig};
     use ethos_core::types::repo::RebaseKeep;
 
-    const BRANCH: &str = "f11r-branch-feature";
-    const OTHER_BRANCH: &str = "f11r-branch-other";
+    pub(crate) const BRANCH: &str = "f11r-branch-feature";
+    pub(crate) const OTHER_BRANCH: &str = "f11r-branch-other";
     const RAW_REBASE_ENV: &[(&str, &str)] = &[("GIT_EDITOR", "true"), ("LC_ALL", "C")];
     const NOW: u64 = 1_761_060_000;
     const DAY: u64 = 86400;
     const LINES: &[u8] = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
 
-    fn new_git(path: &Path) -> git::Git {
+    pub(crate) fn new_git(path: &Path) -> git::Git {
         let (tx, _rx) = mpsc::channel::<String>();
         git::Git::new(path.to_path_buf(), tx)
     }
 
-    fn slash_path(path: &Path) -> String {
+    pub(crate) fn slash_path(path: &Path) -> String {
         path.to_str().expect("utf8 path").replace('\\', "/")
     }
 
@@ -1019,6 +1019,81 @@ mod tests {
         git.run(args, git::Opts::new_without_logs())
             .await
             .unwrap_or_else(|e| panic!("git {args:?} failed: {e}"));
+    }
+
+    async fn git_out(git: &git::Git, args: &[&str]) -> String {
+        git.run_and_collect_output(args, git::Opts::new_without_logs())
+            .await
+            .unwrap_or_else(|e| panic!("git {args:?} failed: {e}"))
+            .trim()
+            .to_string()
+    }
+
+    /// The pinned rebase invocation; returns git's exit code.
+    pub(crate) async fn start_raw_rebase(git: &git::Git, onto: &str) -> i32 {
+        git.run_with_status(
+            &[
+                "-c",
+                "rebase.rebaseMerges=false",
+                "-c",
+                "rerere.enabled=false",
+                "rebase",
+                "--merge",
+                "--no-autostash",
+                "--no-update-refs",
+                "--no-autosquash",
+                "--empty=drop",
+                onto,
+            ],
+            git::Opts::new_without_logs().with_env(RAW_REBASE_ENV),
+        )
+        .await
+        .expect("spawn rebase")
+        .exit_code
+    }
+
+    /// The record Start writes for the current branch before rebasing onto `onto`.
+    pub(crate) async fn guided_record(git: &git::Git, onto: &str) -> GuidedRebaseFile {
+        let branch = git_out(git, &["symbolic-ref", "--short", "HEAD"]).await;
+        let backup_sha = git_out(git, &["rev-parse", "HEAD"]).await;
+        let merge_base = git_out(git, &["merge-base", onto, "HEAD"]).await;
+        let range = format!("{merge_base}..HEAD");
+        let log = git_out(
+            git,
+            &[
+                "log",
+                "--reverse",
+                "--no-merges",
+                "--date=raw",
+                "--format=%H%x1f%ae%x1f%ad%x1f%s",
+                &range,
+            ],
+        )
+        .await;
+        let original_commits = log
+            .lines()
+            .map(|line| {
+                let fields: Vec<&str> = line.splitn(4, '\u{1f}').collect();
+                original(fields[0], fields[1], fields[2], fields[3])
+            })
+            .collect();
+        GuidedRebaseFile {
+            version: 1,
+            backup_ref: format!("{BACKUP_REF_PREFIX}{branch}/{NOW}"),
+            branch,
+            trunk: "main".to_string(),
+            phase: GuidedRebasePhase::Rebasing,
+            pre_rebase_origin_sha: backup_sha.clone(),
+            backup_sha,
+            onto: git_out(git, &["rev-parse", onto]).await,
+            merge_base,
+            original_commits,
+            touches_cpp: false,
+            engine_association: String::new(),
+            started_at: "2026-10-21T15:00:00Z".to_string(),
+            push_failed_remote_sha: None,
+            current_step: None,
+        }
     }
 
     fn info(sha: &str, subject: &str) -> RebaseCommitInfo {
@@ -1036,7 +1111,7 @@ mod tests {
     }
 
     /// One file change of a commit.
-    enum Change<'a> {
+    pub(crate) enum Change<'a> {
         Write(&'a str, &'a [u8]),
         Delete(&'a str),
         Rename(&'a str, &'a str),
@@ -1044,22 +1119,22 @@ mod tests {
     }
 
     /// `main` and `BRANCH` each one commit past `base`.
-    struct Diverged {
+    pub(crate) struct Diverged {
         base: String,
         main: String,
         branch: String,
     }
 
     /// A temp bare origin with `main` and a user clone on `main`; hooks come only from a temp dir.
-    struct Fixture {
+    pub(crate) struct Fixture {
         _origin_dir: tempfile::TempDir,
         dir: tempfile::TempDir,
         _hooks: tempfile::TempDir,
-        git: git::Git,
+        pub(crate) git: git::Git,
     }
 
     impl Fixture {
-        async fn new() -> Self {
+        pub(crate) async fn new() -> Self {
             let origin_dir = tempfile::tempdir().expect("origin tempdir");
             let dir = tempfile::tempdir().expect("user tempdir");
             let hooks = tempfile::tempdir().expect("hooks tempdir");
@@ -1102,32 +1177,27 @@ mod tests {
             fx
         }
 
-        fn path(&self) -> &Path {
+        pub(crate) fn path(&self) -> &Path {
             self.dir.path()
         }
 
-        fn git_dir(&self) -> PathBuf {
+        pub(crate) fn git_dir(&self) -> PathBuf {
             self.path().join(".git")
         }
 
-        async fn run(&self, args: &[&str]) {
+        pub(crate) async fn run(&self, args: &[&str]) {
             run_git(&self.git, args).await;
         }
 
         async fn out(&self, args: &[&str]) -> String {
-            self.git
-                .run_and_collect_output(args, git::Opts::new_without_logs())
-                .await
-                .unwrap_or_else(|e| panic!("git {args:?} failed: {e}"))
-                .trim()
-                .to_string()
+            git_out(&self.git, args).await
         }
 
         async fn sha(&self, rev: &str) -> String {
             self.out(&["rev-parse", rev]).await
         }
 
-        async fn head(&self) -> String {
+        pub(crate) async fn head(&self) -> String {
             self.sha("HEAD").await
         }
 
@@ -1167,41 +1237,21 @@ mod tests {
             self.run(&["checkout", "-q", "-b", name]).await;
         }
 
-        async fn checkout(&self, name: &str) {
+        pub(crate) async fn checkout(&self, name: &str) {
             self.run(&["checkout", "-q", name]).await;
         }
 
         /// Force-pushes `name` to origin, updating its remote-tracking ref.
-        async fn push(&self, name: &str) {
+        pub(crate) async fn push(&self, name: &str) {
             let refspec = format!("+{name}:refs/heads/{name}");
             self.run(&["push", "-q", "-u", "origin", &refspec]).await;
         }
 
-        /// The pinned rebase invocation; returns git's exit code.
-        async fn start_raw_rebase(&self, onto: &str) -> i32 {
-            self.git
-                .run_with_status(
-                    &[
-                        "-c",
-                        "rebase.rebaseMerges=false",
-                        "-c",
-                        "rerere.enabled=false",
-                        "rebase",
-                        "--merge",
-                        "--no-autostash",
-                        "--no-update-refs",
-                        "--no-autosquash",
-                        "--empty=drop",
-                        onto,
-                    ],
-                    git::Opts::new_without_logs().with_env(RAW_REBASE_ENV),
-                )
-                .await
-                .expect("spawn rebase")
-                .exit_code
+        pub(crate) async fn start_raw_rebase(&self, onto: &str) -> i32 {
+            start_raw_rebase(&self.git, onto).await
         }
 
-        fn write_file_json(&self, file: &GuidedRebaseFile) {
+        pub(crate) fn write_file_json(&self, file: &GuidedRebaseFile) {
             write_rebase_file(&self.git_dir(), file).expect("write json");
         }
 
@@ -1231,46 +1281,8 @@ mod tests {
             read_trimmed(&self.git_dir().join("REBASE_HEAD")).expect("REBASE_HEAD")
         }
 
-        /// The record Start writes for the current branch before rebasing onto `onto`.
-        async fn guided_file(&self, onto: &str) -> GuidedRebaseFile {
-            let branch = self.out(&["symbolic-ref", "--short", "HEAD"]).await;
-            let backup_sha = self.head().await;
-            let merge_base = self.out(&["merge-base", onto, "HEAD"]).await;
-            let range = format!("{merge_base}..HEAD");
-            let log = self
-                .out(&[
-                    "log",
-                    "--reverse",
-                    "--no-merges",
-                    "--date=raw",
-                    "--format=%H%x1f%ae%x1f%ad%x1f%s",
-                    &range,
-                ])
-                .await;
-            let original_commits = log
-                .lines()
-                .map(|line| {
-                    let fields: Vec<&str> = line.splitn(4, '\u{1f}').collect();
-                    original(fields[0], fields[1], fields[2], fields[3])
-                })
-                .collect();
-            GuidedRebaseFile {
-                version: 1,
-                backup_ref: format!("{BACKUP_REF_PREFIX}{branch}/{NOW}"),
-                branch,
-                trunk: "main".to_string(),
-                phase: GuidedRebasePhase::Rebasing,
-                pre_rebase_origin_sha: backup_sha.clone(),
-                backup_sha,
-                onto: self.sha(onto).await,
-                merge_base,
-                original_commits,
-                touches_cpp: false,
-                engine_association: String::new(),
-                started_at: "2026-10-21T15:00:00Z".to_string(),
-                push_failed_remote_sha: None,
-                current_step: None,
-            }
+        pub(crate) async fn guided_file(&self, onto: &str) -> GuidedRebaseFile {
+            guided_record(&self.git, onto).await
         }
 
         /// Pushes `base` and `branch` as `BRANCH`, then `main` on top of `base`; leaves the
@@ -1315,7 +1327,7 @@ mod tests {
         }
 
         /// Diverges without conflicts, writes the json and completes the rebase.
-        async fn guided_complete(&self) -> GuidedRebaseFile {
+        pub(crate) async fn guided_complete(&self) -> GuidedRebaseFile {
             self.diverge(
                 &[],
                 &[Change::Write("m.txt", b"main\n")],
@@ -1328,7 +1340,7 @@ mod tests {
             file
         }
 
-        async fn derive(&self) -> DerivedState {
+        pub(crate) async fn derive(&self) -> DerivedState {
             derive_rebase_state(&self.git, self.path())
                 .await
                 .expect("derive rebase state")
@@ -1379,7 +1391,7 @@ mod tests {
         );
     }
 
-    async fn diverge_on_a_txt(fx: &Fixture) -> Diverged {
+    pub(crate) async fn diverge_on_a_txt(fx: &Fixture) -> Diverged {
         fx.diverge(
             &[Change::Write("a.txt", b"base\n")],
             &[Change::Write("a.txt", b"main\n")],
@@ -1388,7 +1400,7 @@ mod tests {
         .await
     }
 
-    async fn guided_stop_on_a_txt(fx: &Fixture) -> (Diverged, GuidedRebaseFile) {
+    pub(crate) async fn guided_stop_on_a_txt(fx: &Fixture) -> (Diverged, GuidedRebaseFile) {
         fx.guided_stop(
             &[Change::Write("a.txt", b"base\n")],
             &[Change::Write("a.txt", b"main\n")],
@@ -2707,7 +2719,7 @@ mod tests {
 
     // Json IO
 
-    fn sample_file() -> GuidedRebaseFile {
+    pub(crate) fn sample_file() -> GuidedRebaseFile {
         let sha = |c: char| c.to_string().repeat(40);
         GuidedRebaseFile {
             version: 1,
@@ -2725,6 +2737,15 @@ mod tests {
             started_at: "2026-10-21T15:00:00Z".to_string(),
             push_failed_remote_sha: Some(sha('e')),
             current_step: None,
+        }
+    }
+
+    /// A well-formed record for `branch`; its shas name no real commits.
+    pub(crate) fn sample_file_for(branch: &str) -> GuidedRebaseFile {
+        GuidedRebaseFile {
+            branch: branch.to_string(),
+            backup_ref: format!("{BACKUP_REF_PREFIX}{branch}/{NOW}"),
+            ..sample_file()
         }
     }
 

@@ -17,7 +17,7 @@ use ethos_core::fs::clear_readonly;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::FileState;
 
-use super::sanitize_repo_path;
+use super::{guard_state, sanitize_repo_path};
 
 const MANIFEST_NAME: &str = ".friendshipper-zip-manifest.json";
 
@@ -382,6 +382,8 @@ pub async fn import_zipped_changes_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let source = PathBuf::from(&req.source);
     if !source.is_file() {
         return Err(CoreError::Input(anyhow!(

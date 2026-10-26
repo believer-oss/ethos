@@ -10,7 +10,10 @@ use futures::stream::{self, StreamExt};
 use tracing::{info, instrument, warn};
 
 use super::analyze::{merged_pr_covers_commit, quiet};
-use super::{is_valid_branch_name, run_sequence, GITHUB_PAT_MISSING};
+use super::rebase_state::{read_rebase_file, RebaseFileRead};
+use super::{
+    guard_state, is_valid_branch_name, run_guarded_sequence, run_sequence, GITHUB_PAT_MISSING,
+};
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 use ethos_core::clients::git;
@@ -28,6 +31,11 @@ const PR_LOOKUP_CONCURRENCY: usize = 4;
 const ORIGIN_PREFIX: &str = "refs/remotes/origin/";
 const NO_BRANCH_CHECKED_OUT: &str =
     "No branch is checked out (detached HEAD or rebase in progress). Check out a branch to clean up branches.";
+const REBASE_RECORD_UNREADABLE: &str =
+    "Friendshipper's rebase record is unreadable. Dismiss it in Branch Management first.";
+const CHECKED_OUT: &str = "The branch is checked out.";
+const GUIDED_REBASE_RECORDED: &str =
+    "The branch has a guided rebase record. Finish or dismiss it in Branch Management first.";
 const BRANCH_FORMAT: &str = "--format=%(refname)%00%(objectname)%00%(upstream)%00%(symref)%00%(authorname)%00%(authordate:iso-strict)%00%(contents:subject)";
 /// Files in a worktree's git dir that name the branch a rebase or bisect will return to.
 const IN_PROGRESS_FILES: [&str; 3] = [
@@ -143,11 +151,11 @@ async fn worktree_git_dirs(git: &git::Git) -> Result<Vec<PathBuf>, CoreError> {
     Ok(dirs)
 }
 
-/// Branches cleanup must not touch: the current branch, branches checked out in any worktree
-/// and branches being rebased or bisected in any worktree (those report a detached HEAD).
-/// Refuses a detached HEAD here, which includes a rebase in progress, and any worktree whose
-/// state can't be read.
-async fn checked_out_branches(git: &git::Git) -> Result<HashSet<String>, CoreError> {
+/// Branches cleanup must not touch, each with the reason: the current branch, branches checked
+/// out in any worktree, branches being rebased or bisected in any worktree (those report a
+/// detached HEAD) and branches with a guided rebase record. Refuses a detached HEAD here, which
+/// includes a rebase in progress, and any worktree whose state can't be read.
+async fn checked_out_branches(git: &git::Git) -> Result<HashMap<String, &'static str>, CoreError> {
     let current = git.current_branch().await?;
     if current.is_empty() {
         return Err(CoreError::Input(anyhow!(NO_BRANCH_CHECKED_OUT)));
@@ -155,20 +163,40 @@ async fn checked_out_branches(git: &git::Git) -> Result<HashSet<String>, CoreErr
     let output = git
         .run_and_collect_output(&["worktree", "list", "--porcelain"], quiet())
         .await?;
-    let mut branches: HashSet<String> = output
+    let mut branches: HashMap<String, &'static str> = output
         .lines()
         .filter_map(|line| line.strip_prefix("branch refs/heads/"))
-        .map(str::to_string)
+        .map(|name| (name.to_string(), CHECKED_OUT))
         .collect();
+    let mut recorded = vec![];
+    let unreadable_state = |e: String| {
+        CoreError::Input(anyhow!(
+            "Could not read the rebase or bisect state of a worktree ({e}). Branch cleanup needs every worktree's state."
+        ))
+    };
     for dir in worktree_git_dirs(git).await? {
-        let in_progress = in_progress_branches(&dir).map_err(|e| {
-            CoreError::Input(anyhow!(
-                "Could not read the rebase or bisect state of a worktree ({e}). Branch cleanup needs every worktree's state."
-            ))
-        })?;
-        branches.extend(in_progress);
+        let in_progress = in_progress_branches(&dir).map_err(unreadable_state)?;
+        branches.extend(in_progress.into_iter().map(|name| (name, CHECKED_OUT)));
+        // The record outlives git's own rebase state, e.g. after switching away mid-rebase.
+        match read_rebase_file(&dir) {
+            RebaseFileRead::Missing => {}
+            RebaseFileRead::Ok(file) => recorded.push(file.branch),
+            RebaseFileRead::Unreadable(e) => {
+                warn!(
+                    "Guided rebase record in {} is unreadable: {e}",
+                    dir.display()
+                );
+                return Err(CoreError::Input(anyhow!(REBASE_RECORD_UNREADABLE)));
+            }
+            RebaseFileRead::Failed(e) => {
+                return Err(unreadable_state(format!("{}: {e}", dir.display())));
+            }
+        }
     }
-    branches.insert(current);
+    branches.insert(current, CHECKED_OUT);
+    for name in recorded {
+        branches.entry(name).or_insert(GUIDED_REBASE_RECORDED);
+    }
     Ok(branches)
 }
 
@@ -210,7 +238,7 @@ fn is_gone_on_origin(branch: &LocalBranch, origin_refs: &HashSet<String>) -> boo
 fn select_candidates(
     branches: Vec<LocalBranch>,
     origin_refs: &HashSet<String>,
-    checked_out: &HashSet<String>,
+    checked_out: &HashMap<String, &'static str>,
 ) -> Vec<LocalBranch> {
     branches
         .into_iter()
@@ -218,7 +246,7 @@ fn select_candidates(
             is_cleanup_name(&b.name)
                 && b.symref.is_empty()
                 && is_full_sha(&b.sha)
-                && !checked_out.contains(&b.name)
+                && !checked_out.contains_key(&b.name)
                 && is_gone_on_origin(b, origin_refs)
         })
         .collect()
@@ -549,7 +577,7 @@ where
 /// read after a fresh prune fetch.
 fn cleanup_refusal(
     target: &BranchCleanupTarget,
-    checked_out: &HashSet<String>,
+    checked_out: &HashMap<String, &'static str>,
     local: &HashMap<String, LocalBranch>,
     origin_refs: &HashSet<String>,
 ) -> Option<String> {
@@ -559,8 +587,8 @@ fn cleanup_refusal(
     if !is_full_sha(&target.sha) {
         return Some("The branch tip sha is invalid.".to_string());
     }
-    if checked_out.contains(&target.name) {
-        return Some("The branch is checked out.".to_string());
+    if let Some(reason) = checked_out.get(&target.name) {
+        return Some(reason.to_string());
     }
     let Some(branch) = local.get(&target.name) else {
         return Some("The branch no longer exists locally.".to_string());
@@ -701,6 +729,8 @@ pub async fn branch_cleanup_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     if req.branches.is_empty() {
         return Err(CoreError::Input(anyhow!("No branches were selected.")));
     }
@@ -717,7 +747,7 @@ where
         targets: req.branches,
         result: result.clone(),
     };
-    run_sequence(&state, Box::new(op)).await?;
+    run_guarded_sequence(&state, Box::new(op)).await?;
     let results = std::mem::take(&mut *result.lock());
     Ok(Json(results))
 }
@@ -729,6 +759,12 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
+    use crate::repo::operations::branch::rebase_guard::{guard_with_op_lock, GUARD_UNKNOWN};
+    use crate::repo::operations::branch::rebase_state::tests::sample_file_for;
+    use crate::repo::operations::branch::rebase_state::{
+        derive_rebase_state, json_path, write_rebase_file,
+    };
+    use ethos_core::types::repo::{RebaseStaleReason, RebaseStateKind};
 
     const GONE: &str = "f11r-branch-gone";
 
@@ -1695,5 +1731,108 @@ mod tests {
             .is_err());
         assert_eq!(fx.local_tip(GONE).await, Some(tip));
         assert!(fx.has_upstream_config(GONE).await);
+    }
+
+    #[tokio::test]
+    async fn branch_with_a_guided_rebase_record_is_excluded() {
+        let fx = Fixture::new().await;
+        let tip = fx.gone_branch(GONE, &["g1"]).await;
+        let other = fx.gone_branch("f11r-branch-other", &["o1"]).await;
+        write_rebase_file(&fx.user_dir.path().join(".git"), &sample_file_for(GONE)).unwrap();
+        let derived = derive_rebase_state(&fx.user, fx.user_dir.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            (derived.kind, derived.stale_reason),
+            (
+                RebaseStateKind::Stale,
+                Some(RebaseStaleReason::BranchChanged)
+            )
+        );
+
+        let list = fx.candidates().await.expect("candidates");
+        assert_eq!(names(&list), vec!["f11r-branch-other"]);
+        let results = fx
+            .cleanup(&[(GONE, &tip), ("f11r-branch-other", &other)])
+            .await;
+        assert_eq!(results[0].error.as_deref(), Some(GUIDED_REBASE_RECORDED));
+        assert!(results[1].deleted);
+        assert_eq!(fx.local_tip(GONE).await, Some(tip));
+    }
+
+    #[tokio::test]
+    async fn checked_out_wins_over_a_guided_rebase_record() {
+        let fx = Fixture::new().await;
+        let tip = fx.gone_branch(GONE, &["g1"]).await;
+        write_rebase_file(&fx.user_dir.path().join(".git"), &sample_file_for(GONE)).unwrap();
+        let (_dir, _wt) = fx.add_worktree(GONE).await;
+        let results = fx.cleanup(&[(GONE, &tip)]).await;
+        assert_eq!(results[0].error.as_deref(), Some(CHECKED_OUT));
+    }
+
+    #[tokio::test]
+    async fn guided_rebase_record_in_a_linked_worktree_is_honored() {
+        let fx = Fixture::new().await;
+        let tip = fx.gone_branch(GONE, &["g1"]).await;
+        run_git(&fx.user, &["branch", "f11r-branch-wt", "main"]).await;
+        let (_dir, wt) = fx.add_worktree("f11r-branch-wt").await;
+        let wt_git_dir = git_output(&wt, &["rev-parse", "--absolute-git-dir"]).await;
+        write_rebase_file(Path::new(&wt_git_dir), &sample_file_for(GONE)).unwrap();
+
+        assert!(fx.candidates().await.expect("candidates").is_empty());
+        let results = fx.cleanup(&[(GONE, &tip)]).await;
+        assert_eq!(results[0].error.as_deref(), Some(GUIDED_REBASE_RECORDED));
+        assert_eq!(fx.local_tip(GONE).await, Some(tip));
+    }
+
+    /// What `branch_cleanup_handler` runs: the guard, then the op (a private op lock stands in
+    /// for `REBASE_OP_LOCK`, which rebase ops in other tests may hold).
+    async fn handler_cleanup(
+        fx: &Fixture,
+        targets: &[(&str, &str)],
+    ) -> Result<Vec<BranchCleanupResult>, CoreError> {
+        let op_lock = tokio::sync::Mutex::new(());
+        guard_with_op_lock(&fx.user, fx.user_dir.path(), &op_lock).await?;
+        fx.cleanup_result(targets).await
+    }
+
+    #[tokio::test]
+    async fn unreadable_guided_rebase_record_refuses_list_and_delete() {
+        let fx = Fixture::new().await;
+        let tip = fx.gone_branch(GONE, &["g1"]).await;
+        let json = json_path(&fx.user_dir.path().join(".git"));
+        fs::write(&json, "{").unwrap();
+
+        assert_input(fx.candidates().await, REBASE_RECORD_UNREADABLE);
+        // The guard passes a stale record, so the handler reaches the op's refusal.
+        assert_input(
+            handler_cleanup(&fx, &[(GONE, &tip)]).await,
+            REBASE_RECORD_UNREADABLE,
+        );
+        assert_eq!(fx.local_tip(GONE).await, Some(tip.clone()));
+
+        // A record that exists but can't be read at all.
+        fs::remove_file(&json).unwrap();
+        fs::create_dir(&json).unwrap();
+        // The handler's guard refuses first.
+        let result = handler_cleanup(&fx, &[(GONE, &tip)]).await;
+        assert!(
+            matches!(&result, Err(CoreError::Internal(e)) if e.to_string() == GUARD_UNKNOWN),
+            "{result:?}"
+        );
+        for result in [
+            fx.candidates().await.map(|_| ()),
+            fx.cleanup_result(&[(GONE, &tip)]).await.map(|_| ()),
+        ] {
+            match result {
+                Err(CoreError::Input(e)) => assert!(
+                    e.to_string()
+                        .starts_with("Could not read the rebase or bisect state of a worktree"),
+                    "{e}"
+                ),
+                other => panic!("expected Input error, got {other:?}"),
+            }
+        }
+        assert_eq!(fx.local_tip(GONE).await, Some(tip));
     }
 }

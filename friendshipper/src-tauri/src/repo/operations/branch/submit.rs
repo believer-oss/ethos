@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::{instrument, warn};
 
-use super::run_sequence;
+use super::{guard_state, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{
     commit_files, is_branch_mode, reject_files_with_conflict_markers, reject_unsubmittable_files,
@@ -412,6 +412,8 @@ pub async fn branch_submit_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let op = BranchSubmitOp {
         files: request.files,
         commit_message: request.commit_message,
@@ -427,7 +429,7 @@ where
         sync_phase_tx: state.sync_phase_tx.clone(),
     };
 
-    run_sequence(&state, Box::new(op)).await?;
+    run_guarded_sequence(&state, Box::new(op)).await?;
 
     Ok(Json("ok".to_string()))
 }

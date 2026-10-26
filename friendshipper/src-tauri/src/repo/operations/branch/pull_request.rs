@@ -12,7 +12,10 @@ use octocrab::Octocrab;
 use tracing::{info, instrument, warn};
 
 use super::analyze::{collect_branch_facts, merged_pr_covers_tip, BranchFacts};
-use super::{branch_management_trunk, run_sequence, trunk_uses_merge_queue, GITHUB_PAT_MISSING};
+use super::{
+    branch_management_trunk, guard_state, run_guarded_sequence, trunk_uses_merge_queue,
+    GITHUB_PAT_MISSING,
+};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::create_pull_request;
 use crate::repo::operations::validate::validate_repo_state;
@@ -666,6 +669,8 @@ async fn run_branch_pull_request<T>(
 where
     T: EngineProvider,
 {
+    guard_state(state).await?;
+
     let (token, github_client) = require_github(
         state.app_config.read().github_pat.clone(),
         state.github_client.read().clone(),
@@ -685,7 +690,7 @@ where
         result: result.clone(),
     };
 
-    run_sequence(state, Box::new(op)).await?;
+    run_guarded_sequence(state, Box::new(op)).await?;
 
     let result = result
         .lock()

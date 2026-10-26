@@ -246,6 +246,8 @@ async fn sync_uproject_commit_with_engine<T>(
 where
     T: EngineProvider,
 {
+    operations::guard_state(&state).await?;
+
     info!("Syncing uproject with current engine commit.");
 
     let app_config = state.app_config.read().clone();

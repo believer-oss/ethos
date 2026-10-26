@@ -29,6 +29,7 @@ use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
 use crate::engine::EngineProvider;
+use crate::repo::operations::{guard_op, guard_state};
 use crate::system::unreal;
 use crate::AppState;
 
@@ -449,10 +450,19 @@ pub async fn update_engine_handler<T>(State(state): State<AppState<T>>) -> Resul
 where
     T: EngineProvider,
 {
+    // A source engine update stashes and checks out with the project repo's git client.
+    let source_engine = state.app_config.read().engine_type == EngineType::Source;
+    if source_engine {
+        guard_state(&state).await?;
+    }
+
     let update_op = get_update_op(&state).await?;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    if source_engine {
+        sequence.push(guard_op(&state));
+    }
     sequence.push(Box::new(update_op));
     let _ = state.operation_tx.send(sequence).await;
 

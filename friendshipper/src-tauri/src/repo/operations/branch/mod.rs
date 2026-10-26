@@ -18,6 +18,7 @@ mod list;
 mod post_head_change;
 mod pull_request;
 mod rebase;
+mod rebase_guard;
 mod rebase_state;
 mod submit;
 mod switch;
@@ -39,6 +40,15 @@ pub use rebase::{
     EditorRebuildOp, RebaseAbortOp, RebaseContinueOp, RebaseFinishOp, RebaseRedoOp,
     RebaseResetToBackupOp, RebaseResolveOp, RebaseStartOp, RebaseUnresolveOp,
 };
+pub(crate) use rebase_guard::{
+    ensure_no_guided_rebase, guard_op, guard_state, may_remove_stale_index_lock,
+    recorded_rebase_kind, GUARD_IN_PROGRESS,
+};
+pub(crate) use rebase_state::{
+    is_active, read_rebase_file, rebase_dir_exists, resolve_git_dir, RebaseFileRead,
+};
+#[cfg(test)]
+pub(crate) use rebase_state::{json_path, tests as rebase_fixture, write_rebase_file};
 pub use submit::{branch_submit_handler, BranchSubmitOp};
 pub use switch::{switch_branch_handler, SwitchBranchOp};
 
@@ -142,9 +152,33 @@ pub(crate) async fn run_sequence<T>(
 where
     T: EngineProvider,
 {
+    run_tasks(state, vec![op]).await
+}
+
+/// [`run_sequence`] for an op that changes the repo: the guided rebase guard runs first, on
+/// the worker.
+pub(crate) async fn run_guarded_sequence<T>(
+    state: &AppState<T>,
+    op: Box<dyn Task + Send + Sync>,
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    run_tasks(state, vec![guard_op(state), op]).await
+}
+
+async fn run_tasks<T>(
+    state: &AppState<T>,
+    ops: Vec<Box<dyn Task + Send + Sync>>,
+) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
-    sequence.push(op);
+    for op in ops {
+        sequence.push(op);
+    }
     state
         .operation_tx
         .send(sequence)

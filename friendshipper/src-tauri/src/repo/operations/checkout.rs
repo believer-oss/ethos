@@ -6,6 +6,7 @@ use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 
+use super::{guard_op, guard_state};
 use crate::state::AppState;
 
 #[derive(Clone)]
@@ -35,9 +36,12 @@ pub async fn checkout_trunk_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     // Block on any other fetch-like operations in the queue
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    sequence.push(guard_op(&state));
 
     let op = {
         let app_config = state.app_config.read().clone();
@@ -64,9 +68,12 @@ pub async fn checkout_target_branch_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     // Block on any other fetch-like operations in the queue
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    sequence.push(guard_op(&state));
 
     let op = {
         let app_config = state.app_config.read().clone();
