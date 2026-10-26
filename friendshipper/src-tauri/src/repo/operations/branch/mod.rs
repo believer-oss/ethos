@@ -13,18 +13,30 @@ use ethos_core::AWSClient;
 mod analyze;
 mod cleanup;
 mod create;
+mod editor_binaries;
 mod list;
 mod post_head_change;
 mod pull_request;
+mod rebase;
 mod submit;
 mod switch;
 
 pub use analyze::{branch_analysis_handler, BranchAnalysisOp};
 pub use cleanup::{branch_cleanup_candidates_handler, branch_cleanup_handler};
 pub use create::{create_branch_handler, CreateBranchOp};
+pub use editor_binaries::editor_binaries_handler;
 pub use list::list_branches_handler;
 pub use pull_request::{
     branch_pull_request_enqueue_handler, branch_pull_request_handler, BranchPullRequestOp,
+};
+pub use rebase::{
+    editor_rebuild_handler, guided_rebase_abort_handler, guided_rebase_continue_handler,
+    guided_rebase_dismiss_handler, guided_rebase_finish_handler, guided_rebase_open_file_handler,
+    guided_rebase_preflight_handler, guided_rebase_redo_handler,
+    guided_rebase_reset_to_backup_handler, guided_rebase_resolve_handler,
+    guided_rebase_start_handler, guided_rebase_state_handler, guided_rebase_unresolve_handler,
+    EditorRebuildOp, RebaseAbortOp, RebaseContinueOp, RebaseFinishOp, RebaseRedoOp,
+    RebaseResetToBackupOp, RebaseResolveOp, RebaseStartOp, RebaseUnresolveOp,
 };
 pub use submit::{branch_submit_handler, BranchSubmitOp};
 pub use switch::{switch_branch_handler, SwitchBranchOp};

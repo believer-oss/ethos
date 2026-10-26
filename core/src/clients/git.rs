@@ -350,6 +350,15 @@ pub struct Opts<'a> {
     pub return_complete_error: bool,
     pub lfs_mode: LfsMode,
     pub skip_notify_frontend: bool,
+    pub env: &'a [(&'a str, &'a str)],
+}
+
+/// A finished git process, whatever its exit code.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitRunOutput {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -367,6 +376,7 @@ impl Default for Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 }
@@ -379,6 +389,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 
@@ -389,6 +400,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 
@@ -399,6 +411,7 @@ impl Opts<'_> {
             return_complete_error: true,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 
@@ -414,6 +427,13 @@ impl Opts<'_> {
 
     pub fn with_skip_notify_frontend(mut self) -> Self {
         self.skip_notify_frontend = true;
+        self
+    }
+}
+
+impl<'a> Opts<'a> {
+    pub fn with_env(mut self, env: &'a [(&'a str, &'a str)]) -> Self {
+        self.env = env;
         self
     }
 }
@@ -2364,6 +2384,7 @@ impl Git {
                     return_complete_error: true,
                     lfs_mode: LfsMode::Stubs,
                     skip_notify_frontend: false,
+                    env: &[],
                 },
             )
             .await?;
@@ -2500,6 +2521,17 @@ impl Git {
             }
             Ok(_) => Ok(output.unwrap()),
         }
+    }
+
+    /// Runs git and returns its exit code and output instead of failing on a non-zero exit.
+    pub async fn run_with_status(
+        &self,
+        args: &[&str],
+        opts: Opts<'_>,
+    ) -> anyhow::Result<GitRunOutput> {
+        // TODO: Implement in Stage 003
+        let _ = (args, opts);
+        bail!("not implemented")
     }
 
     pub async fn run_and_collect_output_into_lines(

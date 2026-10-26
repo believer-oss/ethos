@@ -199,6 +199,10 @@ pub struct RepoStatus {
     #[serde(default)]
     pub will_conflict_on_sync: Vec<String>,
 
+    /// A guided rebase is in progress, completed but unpushed, or its push failed.
+    #[serde(default)]
+    pub guided_rebase_active: bool,
+
     // locks
     pub lock_user: String,
     pub locks_ours: Vec<Lock>,
@@ -233,6 +237,7 @@ impl RepoStatus {
             modified_upstream: vec![],
             will_conflict_on_rebase: vec![],
             will_conflict_on_sync: vec![],
+            guided_rebase_active: false,
             lock_user: String::new(),
             locks_ours: vec![],
             locks_theirs: vec![],
@@ -347,6 +352,8 @@ fn default_snapshot() -> bool {
 pub struct RebaseStatusResponse {
     pub rebase_merge_exists: bool,
     pub head_name_exists: bool,
+    #[serde(default)]
+    pub guided_rebase_active: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -713,6 +720,192 @@ pub struct BranchCleanupResult {
     pub error: Option<String>,
 }
 
+/// Where a guided rebase stands, derived from `f11r-rebase.json` and git's own rebase state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RebaseStateKind {
+    /// No guided rebase.
+    #[default]
+    Idle,
+    /// Git is stopped mid-rebase on a guided rebase's commits.
+    InProgress,
+    /// The rebase finished locally and has not been pushed.
+    CompletedUnpushed,
+    /// The force-with-lease push was rejected or failed.
+    PushFailed,
+    /// The record no longer matches the repository; it can only be dismissed.
+    Stale,
+    /// A rebase Friendshipper did not start is in progress.
+    External,
+}
+
+/// Why a guided rebase record no longer matches the repository.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RebaseStaleReason {
+    #[default]
+    AbortedOutside,
+    PushedOutside,
+    BranchChanged,
+    OtherRebase,
+    Unreadable,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseCommitInfo {
+    /// Full 40-hex sha.
+    pub sha: String,
+    pub subject: String,
+    /// Author name.
+    pub author: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictKind {
+    #[default]
+    Content,
+    ModifyDelete,
+    /// Only aborting the rebase resolves it.
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConflictSideName {
+    #[default]
+    Main,
+    Branch,
+}
+
+/// Which side of a conflict to keep.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RebaseKeep {
+    #[default]
+    Main,
+    Branch,
+    /// The file was edited by hand.
+    Manual,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictFile {
+    /// Repo-relative, `/` separators.
+    pub path: String,
+    pub display_name: String,
+    pub kind: ConflictKind,
+    /// Set only for `modifyDelete`.
+    pub deleted_on: Option<ConflictSideName>,
+    pub unsupported_reason: Option<String>,
+    pub is_text: bool,
+    pub resolved: bool,
+    pub resolution: Option<RebaseKeep>,
+    /// Latest commit on the main side that touched the file.
+    pub main_side: Option<RebaseCommitInfo>,
+    /// The branch commit being replayed.
+    pub branch_side: RebaseCommitInfo,
+}
+
+/// A commit of the original branch with no replayed counterpart.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DroppedCommit {
+    pub sha: String,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseState {
+    pub state: RebaseStateKind,
+    /// Empty when idle or external.
+    pub branch: String,
+    pub step: u32,
+    pub total_steps: u32,
+    pub current_commit: Option<RebaseCommitInfo>,
+    pub conflicts: Vec<ConflictFile>,
+    /// Git stopped without a conflict Friendshipper recorded; only abort is offered.
+    pub step_incomplete: bool,
+    pub dropped_commits: Vec<DroppedCommit>,
+    pub stale_reason: Option<RebaseStaleReason>,
+    /// The branch's commits touch C++ source or build files.
+    pub touches_cpp: bool,
+    /// Empty when none.
+    pub backup_ref: String,
+    /// Empty when none.
+    pub backup_sha: String,
+    pub push_failed_remote_sha: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveConflictRequest {
+    pub path: String,
+    pub keep: RebaseKeep,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenConflictFileRequest {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnresolveConflictRequest {
+    pub path: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RebaseFinishOutcome {
+    #[default]
+    Pushed,
+    LeaseRejected,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseFinishResponse {
+    pub outcome: RebaseFinishOutcome,
+    pub state: RebaseState,
+    pub dropped_commits: Vec<DroppedCommit>,
+    pub touches_cpp: bool,
+    /// Updating editor binaries or the engine failed after the push succeeded.
+    pub post_step_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebasePreflight {
+    pub touches_cpp: bool,
+    /// First 20 paths.
+    pub cpp_files: Vec<String>,
+    pub commit_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EditorBinariesState {
+    #[default]
+    Match,
+    Mismatch,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorBinariesStatus {
+    pub state: EditorBinariesState,
+    /// Empty if none.
+    pub dll_commit: String,
+    pub latest_cpp_commit: Option<RebaseCommitInfo>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
@@ -815,6 +1008,62 @@ mod tests {
 
         let req: CreateBranchPullRequestRequest = serde_json::from_str(r#"{"title":"x"}"#).unwrap();
         assert_eq!(req.title, "x");
+    }
+
+    #[test]
+    fn rebase_state_wire_shape() {
+        let value = serde_json::to_value(RebaseState::default()).unwrap();
+        assert_eq!(value["state"], serde_json::json!("idle"));
+        assert_eq!(value["branch"], serde_json::json!(""));
+        assert_eq!(value["step"], serde_json::json!(0));
+        assert_eq!(value["totalSteps"], serde_json::json!(0));
+        assert_eq!(value["currentCommit"], serde_json::Value::Null);
+        assert_eq!(value["conflicts"], serde_json::json!([]));
+        assert_eq!(value["stepIncomplete"], serde_json::json!(false));
+        assert_eq!(value["droppedCommits"], serde_json::json!([]));
+        assert_eq!(value["staleReason"], serde_json::Value::Null);
+        assert_eq!(value["touchesCpp"], serde_json::json!(false));
+        assert_eq!(value["backupRef"], serde_json::json!(""));
+        assert_eq!(value["backupSha"], serde_json::json!(""));
+        assert_eq!(value["pushFailedRemoteSha"], serde_json::Value::Null);
+
+        assert_eq!(
+            serde_json::to_value(RebaseStateKind::CompletedUnpushed).unwrap(),
+            serde_json::json!("completedUnpushed")
+        );
+        assert_eq!(
+            serde_json::to_value(RebaseStaleReason::PushedOutside).unwrap(),
+            serde_json::json!("pushedOutside")
+        );
+        assert_eq!(
+            serde_json::to_value(ConflictKind::ModifyDelete).unwrap(),
+            serde_json::json!("modifyDelete")
+        );
+        assert_eq!(
+            serde_json::to_value(EditorBinariesState::Match).unwrap(),
+            serde_json::json!("match")
+        );
+
+        let keep: RebaseKeep = serde_json::from_str(r#""manual""#).unwrap();
+        assert_eq!(keep, RebaseKeep::Manual);
+        let req: ResolveConflictRequest =
+            serde_json::from_str(r#"{"path":"a/b.txt","keep":"branch"}"#).unwrap();
+        assert_eq!(req.keep, RebaseKeep::Branch);
+    }
+
+    #[test]
+    fn repo_status_guided_rebase_active_defaults_false() {
+        let value = serde_json::to_value(RepoStatus::new()).unwrap();
+        assert_eq!(value["guidedRebaseActive"], serde_json::json!(false));
+
+        let mut legacy = value;
+        legacy.as_object_mut().unwrap().remove("guidedRebaseActive");
+        let status: RepoStatus = serde_json::from_value(legacy).unwrap();
+        assert!(!status.guided_rebase_active);
+
+        let response: RebaseStatusResponse =
+            serde_json::from_str(r#"{"rebaseMergeExists":false,"headNameExists":false}"#).unwrap();
+        assert!(!response.guided_rebase_active);
     }
 
     #[test]
