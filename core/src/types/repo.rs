@@ -830,6 +830,8 @@ pub struct RebaseState {
     pub conflicts: Vec<ConflictFile>,
     /// Git stopped without a conflict Friendshipper recorded; only abort is offered.
     pub step_incomplete: bool,
+    /// Tracked files edited but not staged during the step; aborting discards the edits.
+    pub unstaged_edits: Vec<String>,
     pub dropped_commits: Vec<DroppedCommit>,
     pub stale_reason: Option<RebaseStaleReason>,
     /// The branch's commits touch C++ source or build files.
@@ -1020,6 +1022,7 @@ mod tests {
         assert_eq!(value["currentCommit"], serde_json::Value::Null);
         assert_eq!(value["conflicts"], serde_json::json!([]));
         assert_eq!(value["stepIncomplete"], serde_json::json!(false));
+        assert_eq!(value["unstagedEdits"], serde_json::json!([]));
         assert_eq!(value["droppedCommits"], serde_json::json!([]));
         assert_eq!(value["staleReason"], serde_json::Value::Null);
         assert_eq!(value["touchesCpp"], serde_json::json!(false));
