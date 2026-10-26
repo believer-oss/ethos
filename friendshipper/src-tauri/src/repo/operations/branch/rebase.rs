@@ -11,11 +11,12 @@ use super::cleanup::worktree_git_dirs_or;
 use super::rebase_guard::guard_sentence;
 use super::rebase_state::{
     build_rebase_state, create_backup_ref, delete_rebase_file, derive_rebase_state,
-    ensure_current_step, is_ancestor, is_full_sha, parse_unmerged, prune_backup_refs, read_git,
-    read_rebase_file, rebase_dir_exists, rebase_head, refresh_resolved, resolve_git_dir, rev_parse,
-    set_resolution, status_porcelain, write_rebase_file, DerivedState, GuidedRebaseFile,
-    GuidedRebasePhase, OriginalCommit, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK,
-    REBASE_FILE_VERSION, REBASE_OP_LOCK,
+    ensure_current_step, is_ancestor, is_full_sha, parse_unmerged, parse_untracked,
+    prune_backup_refs, read_git, read_rebase_file, rebase_dir_exists, rebase_head,
+    refresh_resolved, replace_current_step, resolve_git_dir, rev_parse, set_resolution,
+    status_porcelain, write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase,
+    OriginalCommit, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK, REBASE_FILE_VERSION,
+    REBASE_OP_LOCK,
 };
 use super::{git_too_old_message, is_valid_branch_name, run_sequence};
 use crate::engine::EngineProvider;
@@ -63,6 +64,10 @@ const UNRESOLVABLE_STEP: &str =
     "This commit has a conflict Friendshipper can't resolve. Abort the rebase.";
 const TEXT_ONLY: &str = "Mark resolved is only available for text files.";
 const OP_RUNNING: &str = "A rebase operation is running. Try again when it finishes.";
+const RESOLVE_EVERY_FILE: &str = "Resolve every file before continuing.";
+const NOT_ADVANCING: &str = "The rebase did not advance; abort it to restore your branch.";
+const NOTHING_TO_ABORT: &str = "There is no rebase in progress to abort.";
+const LISTED_PATHS: usize = 10;
 
 fn not_implemented() -> CoreError {
     CoreError::Internal(anyhow!("Guided rebase is not implemented yet"))
@@ -366,6 +371,149 @@ async fn stopped_step<T: EngineProvider>(
         rebase_head,
         conflicts,
     }))
+}
+
+/// What the Continue loop does once `rebase --continue` or `--skip` has returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ContinueStep {
+    /// Every commit is replayed.
+    Completed,
+    /// The rebase ended, but git reported an error.
+    EndedWithError,
+    /// Git stopped on the conflicts of a later commit.
+    Stopped,
+    /// Git stopped on the same commit because the resolution left it empty (git before 2.47).
+    SkipEmpty,
+    Failed,
+}
+
+/// Decides the next Continue step from git's exit code, whether a rebase dir and unmerged
+/// paths exist, whether the index and working tree match HEAD, and whether HEAD and
+/// REBASE_HEAD are where they were before the call. Skipping needs a clean tree, as `--skip`
+/// discards every change to tracked files.
+fn continue_outcome(
+    exit_code: i32,
+    rebase_dir: bool,
+    unmerged: bool,
+    clean_tree: bool,
+    head_eq_h0: bool,
+    rh_eq_x: bool,
+) -> ContinueStep {
+    match (rebase_dir, unmerged) {
+        (false, _) if exit_code == 0 => ContinueStep::Completed,
+        (false, _) => ContinueStep::EndedWithError,
+        (true, true) => ContinueStep::Stopped,
+        (true, false) if clean_tree && head_eq_h0 && rh_eq_x => ContinueStep::SkipEmpty,
+        _ => ContinueStep::Failed,
+    }
+}
+
+/// Whether neither the index nor the working tree differs from HEAD in a tracked file.
+async fn tree_matches_head(git: &git::Git) -> Result<bool, CoreError> {
+    for args in [
+        &["diff", "--cached", "--quiet", "HEAD", "--"][..],
+        &["diff", "--quiet", "--"][..],
+    ] {
+        if read_git(git, args).await?.exit_code != 0 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The paths a `git diff --name-only -z` lists.
+async fn diff_paths(git: &git::Git, args: &[&str]) -> Result<Vec<String>, CoreError> {
+    let mut full_args = vec!["diff", "--name-only", "-z", "--no-renames"];
+    full_args.extend_from_slice(args);
+    full_args.push("--");
+    let output = read_git(git, &full_args).await?;
+    if output.exit_code != 0 {
+        return Err(internal(format!(
+            "git diff failed: {}",
+            output.stderr.trim()
+        )));
+    }
+    Ok(output
+        .stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Refuses a step whose resolved files are not exactly what Continue would commit: edits left
+/// unstaged, staged files that are neither conflicts nor part of the replayed commit, or
+/// leftover conflict markers.
+async fn check_resolutions(
+    git: &git::Git,
+    state: &RebaseState,
+    rebase_head: &str,
+) -> Result<(), CoreError> {
+    let in_step = |path: &String| state.conflicts.iter().any(|c| &c.path == path);
+
+    // Unstaged edits are left out of the commit, and `--skip` discards them.
+    let (edited_conflicts, edited_others): (Vec<String>, Vec<String>) =
+        state.unstaged_edits.iter().cloned().partition(in_step);
+    let mut refusals = vec![];
+    if !edited_conflicts.is_empty() {
+        refusals.push(format!(
+            "These files changed after you resolved them; undo and resolve them again before continuing: {}.",
+            listed_paths(&edited_conflicts)
+        ));
+    }
+    if !edited_others.is_empty() {
+        refusals.push(format!(
+            "These files were edited outside the conflict; revert them outside Friendshipper before continuing (aborting discards the edits): {}.",
+            listed_paths(&edited_others)
+        ));
+    }
+    if !refusals.is_empty() {
+        return Err(input(refusals.join(" ")));
+    }
+
+    // Anything the commit brings differs between HEAD and REBASE_HEAD, renames included.
+    let brought = diff_paths(git, &["HEAD", rebase_head]).await?;
+    let foreign: Vec<String> = diff_paths(git, &["--cached", "HEAD"])
+        .await?
+        .into_iter()
+        .filter(|path| !in_step(path) && !brought.contains(path))
+        .collect();
+    if !foreign.is_empty() {
+        return Err(input(format!(
+            "These files are staged but not part of this commit; unstage them outside Friendshipper before continuing: {}.",
+            listed_paths(&foreign)
+        )));
+    }
+
+    // Keep main or branch takes a committed side as it is.
+    let hand_merged: Vec<String> = state
+        .conflicts
+        .iter()
+        .filter(|c| {
+            c.kind == ConflictKind::Content
+                && c.is_text
+                && matches!(c.resolution, None | Some(RebaseKeep::Manual))
+        })
+        .map(|c| c.path.clone())
+        .collect();
+    let marked = find_files_with_conflict_markers(git, &hand_merged).await?;
+    if !marked.is_empty() {
+        return Err(input(format!(
+            "Remove the conflict markers from {} before continuing.",
+            listed_paths(&marked)
+        )));
+    }
+    Ok(())
+}
+
+/// The first [`LISTED_PATHS`] of `paths`, comma-separated.
+fn listed_paths(paths: &[String]) -> String {
+    let listed: Vec<&str> = paths
+        .iter()
+        .take(LISTED_PATHS)
+        .map(String::as_str)
+        .collect();
+    listed.join(", ")
 }
 
 /// The absolute path of a repo-relative `/`-separated path, built component by component.
@@ -844,8 +992,116 @@ where
     T: EngineProvider,
 {
     async fn execute(&self) -> Result<(), CoreError> {
-        // TODO: Implement in Stage 011
-        Err(not_implemented())
+        let _op = REBASE_OP_LOCK.lock().await;
+        let _ = self.sync_phase_tx.send("Replaying commits".to_string());
+        let git = &self.git_client;
+        let repo_path = repo_path_of(&self.app_config);
+        let git_dir = resolve_git_dir(&repo_path);
+
+        editor_check(&self.engine).await?;
+        index_lock_check(&git_dir)?;
+        let derived = derive(git, &repo_path).await?;
+        let file = match (derived.kind, &derived.file) {
+            (RebaseStateKind::InProgress, Some(file)) => file.clone(),
+            _ => return Err(input(NO_REBASE_IN_PROGRESS)),
+        };
+        let engine_path = engine_path_of(&self.app_config, &self.repo_config);
+        let state = build_rebase_state(git, &repo_path, &self.engine, &engine_path, derived, None)
+            .await
+            .map_err(CoreError::Internal)?;
+        if state.step_incomplete {
+            return Err(input(STEP_INCOMPLETE));
+        }
+        if state
+            .conflicts
+            .iter()
+            .any(|c| c.kind == ConflictKind::Unsupported)
+        {
+            return Err(input(UNRESOLVABLE_STEP));
+        }
+        if !parse_unmerged(&status_porcelain(git).await?).is_empty() {
+            return Err(input(RESOLVE_EVERY_FILE));
+        }
+
+        let status = read_git(
+            git,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        .await?;
+        if status.exit_code != 0 {
+            return Err(internal(format!(
+                "git status failed: {}",
+                status.stderr.trim()
+            )));
+        }
+        // A later pick would refuse to overwrite an untracked file.
+        let untracked = parse_untracked(&status.stdout);
+        if !untracked.is_empty() {
+            return Err(input(format!(
+                "Move or delete these new files before continuing: {}.",
+                listed_paths(&untracked)
+            )));
+        }
+        let mut x = rebase_head(&git_dir).ok_or_else(|| input(STEP_INCOMPLETE))?;
+        check_resolutions(git, &state, &x).await?;
+
+        let mut h0 = required_sha(git, "HEAD").await?;
+        let mut command = "--continue";
+        for _ in 0..=state.total_steps {
+            let output = git
+                .run_with_status(
+                    &["-c", "rerere.enabled=false", "rebase", command],
+                    git::Opts::new_with_complete_error().with_env(REBASE_ENV),
+                )
+                .await?;
+            let rebase_dir = rebase_dir_exists(&git_dir);
+            let unmerged = rebase_dir && !parse_unmerged(&status_porcelain(git).await?).is_empty();
+            let clean_tree = rebase_dir && !unmerged && tree_matches_head(git).await?;
+            let head = rev_parse(git, "HEAD").await?;
+            let rebase_head_now = rebase_head(&git_dir);
+            let mut outcome = continue_outcome(
+                output.exit_code,
+                rebase_dir,
+                unmerged,
+                clean_tree,
+                head.as_deref() == Some(h0.as_str()),
+                rebase_head_now.as_deref() == Some(x.as_str()),
+            );
+            let stderr = output.stderr.trim();
+            if outcome == ContinueStep::EndedWithError
+                && derive(git, &repo_path).await?.kind == RebaseStateKind::CompletedUnpushed
+            {
+                warn!("git rebase {command} completed the rebase but failed: {stderr}");
+                outcome = ContinueStep::Completed;
+            }
+            match outcome {
+                ContinueStep::Completed | ContinueStep::Stopped => {
+                    replace_current_step(git, &repo_path, &self.engine, &engine_path, &file)
+                        .await
+                        .map_err(CoreError::Internal)?;
+                    return Ok(());
+                }
+                ContinueStep::SkipEmpty => {
+                    // A later stop on this same commit with HEAD unmoved means `--skip` did
+                    // not advance either.
+                    h0 = head.unwrap_or_default();
+                    x = rebase_head_now.unwrap_or_default();
+                    command = "--skip";
+                }
+                ContinueStep::EndedWithError | ContinueStep::Failed => {
+                    let msg = if stderr.is_empty() {
+                        format!(
+                            "git rebase {command} stopped unexpectedly (exit code {}).",
+                            output.exit_code
+                        )
+                    } else {
+                        stderr.to_string()
+                    };
+                    return Err(internal(enrich_error(&repo_path, &msg)));
+                }
+            }
+        }
+        Err(internal(NOT_ADVANCING))
     }
 
     fn get_name(&self) -> String {
@@ -861,6 +1117,7 @@ pub struct RebaseAbortOp<T> {
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
     pub sync_phase_tx: std::sync::mpsc::Sender<String>,
+    pub github_username: String,
 }
 
 #[async_trait]
@@ -869,8 +1126,72 @@ where
     T: EngineProvider,
 {
     async fn execute(&self) -> Result<(), CoreError> {
-        // TODO: Implement in Stage 011
-        Err(not_implemented())
+        let _op = REBASE_OP_LOCK.lock().await;
+        let _ = self.sync_phase_tx.send("Aborting rebase".to_string());
+        let git = &self.git_client;
+        let repo_path = repo_path_of(&self.app_config);
+        let git_dir = resolve_git_dir(&repo_path);
+
+        editor_check(&self.engine).await?;
+        index_lock_check(&git_dir)?;
+        let derived = derive(git, &repo_path).await?;
+        let file = match (derived.kind, derived.file) {
+            (RebaseStateKind::InProgress, Some(file)) => file,
+            _ => return Err(input(NOTHING_TO_ABORT)),
+        };
+
+        let output = git
+            .run_with_status(
+                &["rebase", "--abort"],
+                git::Opts::new_with_complete_error().with_env(REBASE_ENV),
+            )
+            .await?;
+        if output.exit_code != 0 {
+            let msg = format!("git rebase --abort failed: {}", output.stderr.trim());
+            return Err(internal(enrich_error(&repo_path, &msg)));
+        }
+
+        // The record stays until the branch is verifiably back at its backup.
+        let branch_ref = format!("refs/heads/{}", file.branch);
+        let head = rev_parse(git, "HEAD").await?;
+        if rebase_dir_exists(&git_dir)
+            || head_ref(git).await?.as_deref() != Some(branch_ref.as_str())
+            || head.as_deref() != Some(file.backup_sha.as_str())
+        {
+            let head = match &head {
+                Some(sha) => format!("HEAD is {}", sha.get(..8).unwrap_or(sha)),
+                None => "HEAD does not resolve".to_string(),
+            };
+            return Err(internal(format!(
+                "Abort did not restore {} to its backup ({head}). Use Reset to backup.",
+                file.branch
+            )));
+        }
+        {
+            let _lock = REBASE_FILE_LOCK.lock().await;
+            delete_rebase_file(&git_dir)?;
+        }
+
+        let status_op = StatusOp {
+            git_client: git.clone(),
+            github_username: self.github_username.clone(),
+            repo_status: self.repo_status.clone(),
+            app_config: self.app_config.clone(),
+            repo_config: self.repo_config.clone(),
+            engine: self.engine.clone(),
+            aws_client: None,
+            storage: None,
+            allow_offline_communication: false,
+            skip_display_names: true,
+            skip_engine_update: false,
+            // internal post-operation refresh, not a user-initiated one
+            fetch_first: false,
+        };
+        // The branch is restored either way; the caller refreshes status after a HEAD change.
+        if let Err(e) = status_op.execute().await {
+            warn!("Could not refresh status after aborting the rebase: {e}");
+        }
+        Ok(())
     }
 
     fn get_name(&self) -> String {
@@ -1212,24 +1533,41 @@ async fn dismiss_stale(
 
 #[instrument(skip_all)]
 pub async fn guided_rebase_continue_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseState>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 011
-    Err(not_implemented())
+    let op = RebaseContinueOp {
+        git_client: state.git(),
+        engine: state.engine.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        repo_status: state.repo_status.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
+    };
+    run_sequence(&state, Box::new(op)).await?;
+    Ok(Json(current_rebase_state(&state, false).await?))
 }
 
 #[instrument(skip_all)]
 pub async fn guided_rebase_abort_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseState>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 011
-    Err(not_implemented())
+    let op = RebaseAbortOp {
+        git_client: state.git(),
+        engine: state.engine.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        repo_status: state.repo_status.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
+        github_username: state.github_username(),
+    };
+    run_sequence(&state, Box::new(op)).await?;
+    Ok(Json(current_rebase_state(&state, false).await?))
 }
 
 #[instrument(skip_all)]
@@ -1292,7 +1630,7 @@ mod tests {
     };
     use crate::repo::operations::branch::rebase_state::{json_path, UnmergedEntry};
     use ethos_core::types::config::{AppConfig, RepoConfig, TargetBranchConfig};
-    use ethos_core::types::repo::{RebaseStaleReason, RepoStatus};
+    use ethos_core::types::repo::{DroppedCommit, RebaseStaleReason, RepoStatus};
 
     const DAY: u64 = 86400;
     const OTHER: &str = "o.txt";
@@ -2684,6 +3022,1070 @@ mod tests {
         let still = conflict_in_state(&fx, "a.txt").await;
         assert!(still.resolved);
         assert_eq!(still.resolution, Some(RebaseKeep::Main));
+    }
+
+    // Continue
+
+    fn continue_op(
+        fx: &Fixture,
+    ) -> (
+        RebaseContinueOp<UnrealEngineProvider>,
+        mpsc::Receiver<String>,
+    ) {
+        let refs = refs(fx);
+        let (sync_phase_tx, phases) = mpsc::channel();
+        let op = RebaseContinueOp {
+            git_client: fx.git.clone(),
+            engine: refs.engine,
+            app_config: refs.app_config,
+            repo_config: refs.repo_config,
+            repo_status: refs.repo_status,
+            sync_phase_tx,
+        };
+        (op, phases)
+    }
+
+    async fn continue_rebase(fx: &Fixture) -> Result<(), CoreError> {
+        continue_op(fx).0.execute().await
+    }
+
+    /// Continue is refused with `expected` and changes nothing.
+    async fn assert_continue_refused(fx: &Fixture, expected: &str) {
+        let before = capture(fx).await;
+        assert_eq!(input_message(continue_rebase(fx).await), expected);
+        assert_eq!(capture(fx).await, before);
+    }
+
+    fn conflict_file(
+        path: &str,
+        kind: ConflictKind,
+        deleted_on: Option<ConflictSideName>,
+        is_text: bool,
+        main: &str,
+        branch: (&str, &str),
+    ) -> ConflictFile {
+        ConflictFile {
+            path: path.to_string(),
+            display_name: path.rsplit('/').next().unwrap().to_string(),
+            kind,
+            deleted_on,
+            unsupported_reason: None,
+            is_text,
+            resolved: false,
+            resolution: None,
+            main_side: Some(info(main, "main change")),
+            branch_side: info(branch.0, branch.1),
+        }
+    }
+
+    fn dropped(sha: &str, subject: &str) -> DroppedCommit {
+        DroppedCommit {
+            sha: sha.to_string(),
+            subject: subject.to_string(),
+        }
+    }
+
+    /// The state of a finished rebase that has not been pushed.
+    fn completed(file: &GuidedRebaseFile, dropped_commits: Vec<DroppedCommit>) -> RebaseState {
+        RebaseState {
+            state: RebaseStateKind::CompletedUnpushed,
+            branch: BRANCH.to_string(),
+            dropped_commits,
+            backup_ref: file.backup_ref.clone(),
+            backup_sha: file.backup_sha.clone(),
+            ..Default::default()
+        }
+    }
+
+    struct FourCommits {
+        base: String,
+        main: String,
+        commits: [String; 4],
+    }
+
+    /// `BRANCH` with four commits: C1 conflicts on `a.txt`, C2 is clean, C3 conflicts on the
+    /// LFS-attributed `b.uasset` and on `c.txt`, which main deleted, and C4 is clean.
+    async fn four_commits(fx: &Fixture) -> FourCommits {
+        let base = fx
+            .commit(
+                &[
+                    Change::Write(".gitattributes", b"*.uasset filter=lfs\n"),
+                    Change::Write("a.txt", b"base a\n"),
+                    Change::Write("b.uasset", b"base\0b\n"),
+                    Change::Write("c.txt", b"base c\n"),
+                ],
+                "base change",
+            )
+            .await;
+        fx.branch(BRANCH).await;
+        let c1 = fx.commit_file("a.txt", b"branch a\n", "C1").await;
+        let c2 = fx.commit_file("d.txt", b"d\n", "C2").await;
+        let c3 = fx
+            .commit(
+                &[
+                    Change::Write("b.uasset", b"branch\0b\n"),
+                    Change::Write("c.txt", b"branch c\n"),
+                ],
+                "C3",
+            )
+            .await;
+        let c4 = fx.commit_file("e.txt", b"e\n", "C4").await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        let main = fx
+            .commit(
+                &[
+                    Change::Write("a.txt", b"main a\n"),
+                    Change::Write("b.uasset", b"main\0b\n"),
+                    Change::Delete("c.txt"),
+                ],
+                "main change",
+            )
+            .await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+        FourCommits {
+            base,
+            main,
+            commits: [c1, c2, c3, c4],
+        }
+    }
+
+    /// Starts the four-commit rebase, keeps the branch's `a.txt` and continues to C3.
+    async fn continue_to_c3(fx: &Fixture) {
+        start(fx).await.expect("start");
+        resolve(fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        continue_rebase(fx).await.expect("continue to C3");
+        assert_eq!(state(fx).await.step, 3);
+    }
+
+    /// `(author, email, date, subject)` of each commit in `range`, oldest first.
+    async fn commit_identities(fx: &Fixture, range: &str) -> String {
+        fx.out(&[
+            "log",
+            "--reverse",
+            "--date=raw",
+            "--format=%an%x1f%ae%x1f%ad%x1f%s",
+            range,
+        ])
+        .await
+    }
+
+    #[tokio::test]
+    async fn continue_replays_every_step() {
+        let fx = Fixture::new().await;
+        let four = four_commits(&fx).await;
+        let [c1, _, c3, _] = &four.commits;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        let in_progress = RebaseState {
+            state: RebaseStateKind::InProgress,
+            branch: BRANCH.to_string(),
+            total_steps: 4,
+            backup_ref: file.backup_ref.clone(),
+            backup_sha: file.backup_sha.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                step: 1,
+                current_commit: Some(info(c1, "C1")),
+                conflicts: vec![conflict_file(
+                    "a.txt",
+                    ConflictKind::Content,
+                    None,
+                    true,
+                    &four.main,
+                    (c1, "C1"),
+                )],
+                ..in_progress.clone()
+            }
+        );
+
+        resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        let (op, phases) = continue_op(&fx);
+        op.execute().await.expect("continue to C3");
+        assert_eq!(phases.try_iter().collect::<Vec<_>>(), ["Replaying commits"]);
+        let c3_conflicts = vec![
+            conflict_file(
+                "b.uasset",
+                ConflictKind::Content,
+                None,
+                false,
+                &four.main,
+                (c3, "C3"),
+            ),
+            conflict_file(
+                "c.txt",
+                ConflictKind::ModifyDelete,
+                Some(ConflictSideName::Main),
+                true,
+                &four.main,
+                (c3, "C3"),
+            ),
+        ];
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                step: 3,
+                current_commit: Some(info(c3, "C3")),
+                conflicts: c3_conflicts.clone(),
+                ..in_progress.clone()
+            }
+        );
+        let step = record(&fx).current_step.expect("cached step");
+        assert_eq!(step.sha, *c3);
+        assert_eq!(step.conflicts, c3_conflicts);
+
+        resolve(&fx, "b.uasset", RebaseKeep::Main).await.unwrap();
+        resolve(&fx, "c.txt", RebaseKeep::Branch).await.unwrap();
+        continue_rebase(&fx).await.expect("continue to the end");
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_eq!(fx.build(true).await, completed(&file, vec![]));
+        assert_eq!(record(&fx).current_step, None);
+
+        // The tree is main plus the choices made, and every commit kept its identity.
+        assert_eq!(fx.sha("HEAD~4").await, four.main);
+        assert_eq!(
+            fx.out(&["ls-tree", "-r", "--name-only", "HEAD"]).await,
+            ".gitattributes\na.txt\nb.uasset\nc.txt\nd.txt\ne.txt\nseed.txt"
+        );
+        for (path, side) in [
+            ("a.txt", c1.as_str()),
+            ("b.uasset", four.main.as_str()),
+            ("c.txt", c3.as_str()),
+            ("d.txt", four.commits[1].as_str()),
+            ("e.txt", four.commits[3].as_str()),
+        ] {
+            assert_eq!(
+                fx.sha(&format!("HEAD:{path}")).await,
+                fx.sha(&format!("{side}:{path}")).await,
+                "{path}"
+            );
+        }
+        assert_eq!(
+            commit_identities(&fx, "refs/remotes/origin/main..HEAD").await,
+            commit_identities(&fx, &format!("{}..{}", four.base, file.backup_sha)).await
+        );
+        assert_eq!(fx.porcelain_v2().await, "");
+    }
+
+    #[tokio::test]
+    async fn continue_drops_a_commit_its_resolution_emptied() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        start(&fx).await.expect("start");
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        continue_rebase(&fx).await.expect("continue");
+
+        let expected = completed(&record(&fx), vec![dropped(&d.branch, "branch change")]);
+        assert_eq!(state(&fx).await, expected);
+        assert_eq!(fx.build(true).await, expected);
+        assert_eq!(fx.head().await, d.main);
+        assert_eq!(
+            fx.out(&["rev-list", "refs/remotes/origin/main..HEAD"])
+                .await,
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn start_drops_a_commit_already_on_main() {
+        let fx = Fixture::new().await;
+        fx.branch(BRANCH).await;
+        let shared = fx.commit_file("s.txt", b"shared\n", "shared change").await;
+        fx.commit_file("b.txt", b"b\n", "own change").await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        fx.commit_file("m.txt", b"main\n", "main change").await;
+        fx.run(&["cherry-pick", &shared]).await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+
+        start(&fx).await.expect("start");
+        let expected = completed(&record(&fx), vec![dropped(&shared, "shared change")]);
+        assert_eq!(state(&fx).await, expected);
+        assert_eq!(fx.build(true).await, expected);
+        assert_eq!(
+            fx.out(&["log", "--format=%s", "refs/remotes/origin/main..HEAD"])
+                .await,
+            "own change"
+        );
+    }
+
+    #[test]
+    fn continue_outcomes() {
+        use ContinueStep::{Completed, EndedWithError, Failed, SkipEmpty, Stopped};
+        // (exit code, rebase dir, unmerged, clean tree, HEAD == H0, REBASE_HEAD == X)
+        for (exit_code, rebase_dir, unmerged, clean, head_same, rh_same, expected) in [
+            (0, false, false, false, false, false, Completed),
+            (0, false, false, true, true, true, Completed),
+            (1, false, false, true, true, true, EndedWithError),
+            (128, false, false, false, false, false, EndedWithError),
+            (1, true, true, false, false, false, Stopped),
+            (1, true, true, true, true, true, Stopped),
+            (0, true, true, false, true, true, Stopped),
+            (1, true, false, true, true, true, SkipEmpty),
+            (0, true, false, true, true, true, SkipEmpty),
+            (1, true, false, false, true, true, Failed),
+            (1, true, false, true, false, true, Failed),
+            (1, true, false, true, true, false, Failed),
+            (0, true, false, true, false, false, Failed),
+        ] {
+            assert_eq!(
+                continue_outcome(exit_code, rebase_dir, unmerged, clean, head_same, rh_same),
+                expected,
+                "{exit_code} {rebase_dir} {unmerged} {clean} {head_same} {rh_same}"
+            );
+        }
+    }
+
+    /// Replaces the rest of the todo list with `count` failing `exec` lines that put
+    /// REBASE_HEAD back: git then stops on the same commit with HEAD unmoved, as git before
+    /// 2.47 does for a commit its resolution left empty.
+    fn simulate_now_empty_stops(fx: &Fixture, count: usize) {
+        let git_dir = fx.git_dir();
+        fs::copy(
+            git_dir.join("REBASE_HEAD"),
+            git_dir.join("saved-rebase-head"),
+        )
+        .unwrap();
+        let todo = "exec cp .git/saved-rebase-head .git/REBASE_HEAD && false\n".repeat(count);
+        fs::write(git_dir.join("rebase-merge").join("git-rebase-todo"), todo).unwrap();
+    }
+
+    #[tokio::test]
+    async fn continue_skips_a_commit_git_stopped_on_as_empty() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        start(&fx).await.expect("start");
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        simulate_now_empty_stops(&fx, 1);
+
+        // Git reports every command it runs on this channel.
+        let (tx, commands) = mpsc::channel();
+        let (mut op, _) = continue_op(&fx);
+        op.git_client = git::Git::new(fx.path().to_path_buf(), tx);
+        op.execute().await.expect("continue");
+        let rebase_commands: Vec<String> = commands
+            .try_iter()
+            .filter(|command| command.contains(" rebase "))
+            .collect();
+        assert_eq!(
+            rebase_commands,
+            [
+                "Running 'git -c rerere.enabled=false rebase --continue'",
+                "Running 'git -c rerere.enabled=false rebase --skip'",
+            ]
+        );
+        assert_eq!(
+            state(&fx).await,
+            completed(&record(&fx), vec![dropped(&d.branch, "branch change")])
+        );
+        assert_eq!(fx.head().await, d.main);
+        assert_eq!(record(&fx).current_step, None);
+    }
+
+    #[tokio::test]
+    async fn continue_gives_up_when_git_does_not_advance() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        start(&fx).await.expect("start");
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        simulate_now_empty_stops(&fx, 3);
+        let json_before = fx.json_bytes();
+
+        assert_eq!(internal_message(continue_rebase(&fx).await), NOT_ADVANCING);
+        assert_eq!(fx.json_bytes(), json_before);
+        assert_eq!(state(&fx).await.state, RebaseStateKind::InProgress);
+        abort(&fx).await.expect("abort");
+        assert_eq!(fx.head().await, d.branch);
+    }
+
+    /// Resolves `a.txt` with the branch's version and makes git stop after it without a
+    /// conflict: the next step is incomplete.
+    async fn stop_after_a_failed_exec(fx: &Fixture) {
+        start(fx).await.expect("start");
+        resolve(fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        let todo = fx.git_dir().join("rebase-merge").join("git-rebase-todo");
+        fs::write(todo, "exec false\n").unwrap();
+        let json_before = fx.json_bytes();
+
+        let message = internal_message(continue_rebase(fx).await);
+        assert!(message.contains("execution failed: false"), "{message}");
+        assert_eq!(fx.json_bytes(), json_before);
+        let state = state(fx).await;
+        assert_eq!(state.state, RebaseStateKind::InProgress);
+        assert!(state.step_incomplete, "{state:?}");
+    }
+
+    #[tokio::test]
+    async fn continue_leaves_an_unexpected_stop_to_abort() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        stop_after_a_failed_exec(&fx).await;
+        // The resolved commit was replayed before git stopped.
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_continue_refused(&fx, STEP_INCOMPLETE).await;
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_an_unresolved_file() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        assert_continue_refused(&fx, RESOLVE_EVERY_FILE).await;
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_an_unsupported_conflict() {
+        let fx = Fixture::new().await;
+        fx.diverge(
+            &[],
+            &[Change::Write("n.txt", b"main\n")],
+            &[Change::Write("n.txt", b"branch\n")],
+        )
+        .await;
+        start(&fx).await.expect("start");
+        assert_continue_refused(&fx, UNRESOLVABLE_STEP).await;
+        // Resolved outside Friendshipper, so the unsupported conflict is all that is left.
+        fx.run(&["checkout", "--ours", "--", "n.txt"]).await;
+        fx.run(&["add", "--", "n.txt"]).await;
+        let state = state(&fx).await;
+        assert!(state.conflicts.iter().all(|c| c.resolved), "{state:?}");
+        assert!(state.unstaged_edits.is_empty());
+        assert_continue_refused(&fx, UNRESOLVABLE_STEP).await;
+    }
+
+    #[tokio::test]
+    async fn continue_refused_when_the_step_is_incomplete() {
+        let fx = Fixture::new().await;
+        guided_stop_on_a_txt(&fx).await;
+        fx.run(&["checkout", "--theirs", "--", "a.txt"]).await;
+        fx.run(&["add", "--", "a.txt"]).await;
+        assert!(state(&fx).await.step_incomplete);
+        assert_continue_refused(&fx, STEP_INCOMPLETE).await;
+    }
+
+    async fn resolve_both(fx: &Fixture) {
+        resolve(fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        resolve(fx, OTHER, RebaseKeep::Branch).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_untracked_files() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        resolve_both(&fx).await;
+        fx.write("x.tmp", b"new\n");
+        assert_continue_refused(
+            &fx,
+            "Move or delete these new files before continuing: x.tmp.",
+        )
+        .await;
+
+        fs::remove_file(fx.path().join("x.tmp")).unwrap();
+        for i in 0..12 {
+            fx.write(&format!("new/f{i:02}.tmp"), b"new\n");
+        }
+        let listed: Vec<String> = (0..10).map(|i| format!("new/f{i:02}.tmp")).collect();
+        assert_continue_refused(
+            &fx,
+            &format!(
+                "Move or delete these new files before continuing: {}.",
+                listed.join(", ")
+            ),
+        )
+        .await;
+        assert!(fx.path().join("new/f11.tmp").exists());
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_unresolved_edits() {
+        let fx = Fixture::new().await;
+        let d = stop_content(&fx).await;
+        resolve_both(&fx).await;
+        fx.write("seed.txt", b"edited\n");
+        fx.write("a.txt", b"edited after resolving\n");
+        assert_eq!(state(&fx).await.unstaged_edits, ["a.txt", "seed.txt"]);
+        assert_continue_refused(
+            &fx,
+            "These files changed after you resolved them; undo and resolve them again before continuing: a.txt. \
+             These files were edited outside the conflict; revert them outside Friendshipper before continuing (aborting discards the edits): seed.txt.",
+        )
+        .await;
+        assert_eq!(read(&fx, "seed.txt").as_deref(), Some(&b"edited\n"[..]));
+
+        // Undo and resolve again inside Friendshipper; revert the other file outside it.
+        unresolve(&fx, "a.txt").await.expect("unresolve");
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        assert_continue_refused(
+            &fx,
+            "These files were edited outside the conflict; revert them outside Friendshipper before continuing (aborting discards the edits): seed.txt.",
+        )
+        .await;
+        fx.run(&["checkout", "--", "seed.txt"]).await;
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+        assert_eq!(
+            fx.sha("HEAD:a.txt").await,
+            fx.sha(&format!("{}:a.txt", d.main)).await
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_discards_the_listed_unstaged_edits() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        fx.write("seed.txt", b"edited\n");
+        assert_eq!(state(&fx).await.unstaged_edits, ["seed.txt"]);
+        abort(&fx).await.expect("abort");
+        assert_eq!(read(&fx, "seed.txt").as_deref(), Some(&b"seed\n"[..]));
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_a_staged_file_outside_the_commit() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        resolve_both(&fx).await;
+        fx.write("seed.txt", b"staged\n");
+        fx.run(&["add", "--", "seed.txt"]).await;
+        assert_continue_refused(
+            &fx,
+            "These files are staged but not part of this commit; unstage them outside Friendshipper before continuing: seed.txt.",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_conflict_markers() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        // Staged with its markers outside Friendshipper.
+        fx.run(&["add", "--", "a.txt"]).await;
+        resolve(&fx, OTHER, RebaseKeep::Branch).await.unwrap();
+        assert_eq!(conflict_in_state(&fx, "a.txt").await.resolution, None);
+        assert_continue_refused(
+            &fx,
+            "Remove the conflict markers from a.txt before continuing.",
+        )
+        .await;
+
+        // A manual resolution whose markers came back and were staged outside Friendshipper.
+        unresolve(&fx, "a.txt").await.expect("unresolve");
+        fx.write("a.txt", b"merged by hand\n");
+        resolve(&fx, "a.txt", RebaseKeep::Manual).await.unwrap();
+        fx.write(
+            "a.txt",
+            b"<<<<<<< ours\nmain\n=======\nbranch\n>>>>>>> theirs\n",
+        );
+        fx.run(&["add", "--", "a.txt"]).await;
+        assert_continue_refused(
+            &fx,
+            "Remove the conflict markers from a.txt before continuing.",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn continue_accepts_everything_the_commit_brings() {
+        let fx = Fixture::new().await;
+        let lines = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+        let edited = b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nTEN\n";
+        let d = fx
+            .diverge(
+                &[
+                    Change::Write("a.txt", b"base\n"),
+                    Change::Write("r.txt", lines),
+                    Change::Write("m.txt", b"1\n2\n3\n4\n5\n"),
+                ],
+                &[
+                    Change::Write("a.txt", b"main\n"),
+                    Change::Rename("r.txt", "renamed.txt"),
+                    Change::Write("m.txt", b"main\n2\n3\n4\n5\n"),
+                ],
+                &[
+                    Change::Write("a.txt", b"branch\n"),
+                    Change::Write("r.txt", edited),
+                    Change::Write("m.txt", b"1\n2\n3\n4\nbranch\n"),
+                    Change::Write("new.txt", b"new\n"),
+                ],
+            )
+            .await;
+        start(&fx).await.expect("start");
+        assert_eq!(
+            state(&fx)
+                .await
+                .conflicts
+                .iter()
+                .map(|c| c.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a.txt"]
+        );
+        resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_eq!(read(&fx, "renamed.txt").as_deref(), Some(&edited[..]));
+        assert_eq!(
+            read(&fx, "m.txt").as_deref(),
+            Some(&b"main\n2\n3\n4\nbranch\n"[..])
+        );
+        assert_eq!(read(&fx, "new.txt").as_deref(), Some(&b"new\n"[..]));
+    }
+
+    #[tokio::test]
+    async fn continue_refused_without_a_rebase_in_progress() {
+        let fx = Fixture::new().await;
+        assert_continue_refused(&fx, NO_REBASE_IN_PROGRESS).await;
+        diverge_clean(&fx).await;
+        start(&fx).await.expect("start");
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+        assert_continue_refused(&fx, NO_REBASE_IN_PROGRESS).await;
+    }
+
+    #[tokio::test]
+    async fn continue_refused_while_the_index_is_locked() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        resolve_both(&fx).await;
+        let lock = fx.git_dir().join("index.lock");
+        fs::write(&lock, b"").unwrap();
+        assert_continue_refused(
+            &fx,
+            &format!(
+                "Git's index is locked ({}). If no git command is running, delete that file and try again.",
+                lock.display()
+            ),
+        )
+        .await;
+        assert!(lock.exists());
+    }
+
+    // Confirmation step
+
+    #[tokio::test]
+    async fn a_resolved_step_waits_for_continue() {
+        let fx = Fixture::new().await;
+        let d = stop_content(&fx).await;
+        fx.write("a.txt", b"merged by hand\n");
+        resolve(&fx, "a.txt", RebaseKeep::Manual).await.unwrap();
+        resolve(&fx, OTHER, RebaseKeep::Branch).await.unwrap();
+        let head = fx.head().await;
+        let replayed = fx
+            .out(&["rev-list", "refs/remotes/origin/main..HEAD"])
+            .await;
+
+        // Nothing outlives a restart but the disk, and the state comes from it alone.
+        let file = record(&fx);
+        let resolved = |path: &str, keep: RebaseKeep| ConflictFile {
+            resolved: true,
+            resolution: Some(keep),
+            ..conflict(path, ConflictKind::Content, &d)
+        };
+        assert_eq!(
+            fx.build(true).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 1,
+                total_steps: 1,
+                current_commit: Some(info(&d.branch, "branch change")),
+                conflicts: vec![
+                    resolved("a.txt", RebaseKeep::Manual),
+                    resolved(OTHER, RebaseKeep::Branch),
+                ],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: file.backup_sha.clone(),
+                ..Default::default()
+            }
+        );
+        assert_eq!(fx.head().await, head);
+        assert_eq!(
+            fx.out(&["rev-list", "refs/remotes/origin/main..HEAD"])
+                .await,
+            replayed
+        );
+        assert_eq!(
+            read(&fx, "a.txt").as_deref(),
+            Some(&b"merged by hand\n"[..])
+        );
+
+        for path in ["a.txt", OTHER] {
+            unresolve(&fx, path).await.expect(path);
+            assert_eq!(xy_of(&fx, path).await.as_deref(), Some("UU"));
+        }
+        assert_eq!(fx.head().await, head);
+    }
+
+    #[tokio::test]
+    async fn undo_refused_for_a_file_of_a_previous_step() {
+        let fx = Fixture::new().await;
+        four_commits(&fx).await;
+        continue_to_c3(&fx).await;
+        let before = capture(&fx).await;
+        assert_eq!(
+            input_message(unresolve(&fx, "a.txt").await),
+            "a.txt has no resolution to undo in this step."
+        );
+        assert_eq!(capture(&fx).await, before);
+    }
+
+    // Abort
+
+    fn abort_op(
+        fx: &Fixture,
+    ) -> (
+        RebaseAbortOp<UnrealEngineProvider>,
+        RepoStatusRef,
+        mpsc::Receiver<String>,
+    ) {
+        let refs = refs(fx);
+        let (sync_phase_tx, phases) = mpsc::channel();
+        let op = RebaseAbortOp {
+            git_client: fx.git.clone(),
+            engine: refs.engine,
+            app_config: refs.app_config,
+            repo_config: refs.repo_config,
+            repo_status: refs.repo_status.clone(),
+            sync_phase_tx,
+            github_username: "test_user".to_string(),
+        };
+        (op, refs.repo_status, phases)
+    }
+
+    async fn abort(fx: &Fixture) -> Result<(), CoreError> {
+        abort_op(fx).0.execute().await
+    }
+
+    /// Everything outside the rebased branch that Abort must leave alone.
+    #[derive(Debug, PartialEq)]
+    struct Bystanders {
+        local_branches: String,
+        stash_count: usize,
+        origin_refs: String,
+        ignored: Option<Vec<u8>>,
+    }
+
+    async fn bystanders(fx: &Fixture) -> Bystanders {
+        let snapshot = capture(fx).await;
+        Bystanders {
+            local_branches: fx
+                .out(&[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/heads/",
+                ])
+                .await,
+            stash_count: snapshot.stash_count,
+            origin_refs: snapshot.origin_refs,
+            ignored: read(fx, "keep.log"),
+        }
+    }
+
+    /// An ignored file, a stash entry and another branch, created before Start.
+    async fn add_bystanders(fx: &Fixture) -> Bystanders {
+        fs::write(fx.git_dir().join("info").join("exclude"), "*.log\n").unwrap();
+        fx.write("keep.log", b"ignored\n");
+        fx.write("seed.txt", b"stashed\n");
+        fx.run(&["stash", "push", "-q", "-m", "bystander"]).await;
+        fx.run(&[
+            "branch",
+            "f11r-branch-bystander",
+            "refs/remotes/origin/main",
+        ])
+        .await;
+        let bystanders = bystanders(fx).await;
+        assert_eq!(bystanders.stash_count, 1);
+        bystanders
+    }
+
+    /// The branch is back at its backup and nothing else changed.
+    async fn assert_aborted(fx: &Fixture, file: &GuidedRebaseFile, before: &Bystanders) {
+        assert_eq!(
+            fx.out(&["symbolic-ref", "-q", "HEAD"]).await,
+            format!("refs/heads/{BRANCH}")
+        );
+        assert_eq!(fx.head().await, file.backup_sha);
+        assert_eq!(fx.out(&["status", "--porcelain"]).await, "");
+        assert!(!json_path(&fx.git_dir()).exists());
+        assert!(!fx.git_dir().join("rebase-merge").exists());
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        assert_eq!(&bystanders(fx).await, before);
+        assert_eq!(state(fx).await, RebaseState::default());
+    }
+
+    /// Content conflicts on `a.txt` and `o.txt`, not started.
+    async fn diverge_two_conflicts(fx: &Fixture) -> Diverged {
+        fx.diverge(
+            &[
+                Change::Write(
+                    "a.txt", b"base
+",
+                ),
+                Change::Write(
+                    OTHER, b"base o
+",
+                ),
+            ],
+            &[
+                Change::Write(
+                    "a.txt", b"main
+",
+                ),
+                Change::Write(
+                    OTHER, b"main o
+",
+                ),
+            ],
+            &[
+                Change::Write(
+                    "a.txt", b"branch
+",
+                ),
+                Change::Write(
+                    OTHER,
+                    b"branch o
+",
+                ),
+            ],
+        )
+        .await
+    }
+
+    enum AbortFrom {
+        Unresolved,
+        PartlyResolved,
+        LaterStep,
+        IncompleteStep,
+        UnsupportedStep,
+    }
+
+    async fn abort_case(from: AbortFrom) {
+        let fx = Fixture::new().await;
+        match from {
+            AbortFrom::Unresolved | AbortFrom::PartlyResolved => {
+                diverge_two_conflicts(&fx).await;
+            }
+            AbortFrom::LaterStep => {
+                four_commits(&fx).await;
+            }
+            AbortFrom::IncompleteStep => {
+                diverge_on_a_txt(&fx).await;
+            }
+            AbortFrom::UnsupportedStep => {
+                fx.diverge(
+                    &[],
+                    &[Change::Write("n.txt", b"main\n")],
+                    &[Change::Write("n.txt", b"branch\n")],
+                )
+                .await;
+            }
+        }
+        let before = add_bystanders(&fx).await;
+
+        match from {
+            AbortFrom::Unresolved => start(&fx).await.expect("start"),
+            AbortFrom::PartlyResolved => {
+                start(&fx).await.expect("start");
+                fx.write("a.txt", b"merged by hand\n");
+                resolve(&fx, "a.txt", RebaseKeep::Manual).await.unwrap();
+            }
+            AbortFrom::LaterStep => continue_to_c3(&fx).await,
+            AbortFrom::IncompleteStep => stop_after_a_failed_exec(&fx).await,
+            AbortFrom::UnsupportedStep => {
+                start(&fx).await.expect("start");
+                assert_eq!(
+                    conflict_in_state(&fx, "n.txt").await.kind,
+                    ConflictKind::Unsupported
+                );
+            }
+        }
+        assert_eq!(state(&fx).await.state, RebaseStateKind::InProgress);
+        let file = record(&fx);
+
+        let (op, repo_status, phases) = abort_op(&fx);
+        op.execute().await.expect("abort");
+        assert_aborted(&fx, &file, &before).await;
+        assert_eq!(phases.try_iter().collect::<Vec<_>>(), ["Aborting rebase"]);
+        let status = repo_status.read();
+        assert_eq!(status.branch, BRANCH);
+        assert!(!status.detached_head);
+    }
+
+    #[tokio::test]
+    async fn abort_with_nothing_resolved() {
+        abort_case(AbortFrom::Unresolved).await;
+    }
+
+    #[tokio::test]
+    async fn abort_with_a_manual_resolution() {
+        abort_case(AbortFrom::PartlyResolved).await;
+    }
+
+    #[tokio::test]
+    async fn abort_after_a_continue() {
+        abort_case(AbortFrom::LaterStep).await;
+    }
+
+    #[tokio::test]
+    async fn abort_an_incomplete_step() {
+        abort_case(AbortFrom::IncompleteStep).await;
+    }
+
+    #[tokio::test]
+    async fn abort_an_unsupported_step() {
+        abort_case(AbortFrom::UnsupportedStep).await;
+    }
+
+    async fn assert_abort_refused(fx: &Fixture) {
+        let before = capture(fx).await;
+        assert_eq!(input_message(abort(fx).await), NOTHING_TO_ABORT);
+        assert_eq!(capture(fx).await, before);
+    }
+
+    #[tokio::test]
+    async fn abort_refused_without_a_guided_rebase_in_progress() {
+        let fx = Fixture::new().await;
+        assert_abort_refused(&fx).await;
+        diverge_clean(&fx).await;
+        start(&fx).await.expect("start");
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+        assert_abort_refused(&fx).await;
+    }
+
+    #[tokio::test]
+    async fn abort_refused_for_a_rebase_started_elsewhere() {
+        let fx = Fixture::new().await;
+        diverge_on_a_txt(&fx).await;
+        assert_eq!(fx.start_raw_rebase("main").await, 1);
+        assert_eq!(fx.derive().await.kind, RebaseStateKind::External);
+        assert_abort_refused(&fx).await;
+        assert!(fx.git_dir().join("rebase-merge").is_dir());
+    }
+
+    #[tokio::test]
+    async fn abort_that_does_not_restore_keeps_the_record() {
+        let fx = Fixture::new().await;
+        let d = stop_content(&fx).await;
+        let json_before = fx.json_bytes();
+        // Git returns the branch to `orig-head`; point it elsewhere.
+        fs::write(
+            fx.git_dir().join("rebase-merge").join("orig-head"),
+            format!("{}\n", d.main),
+        )
+        .unwrap();
+
+        assert_eq!(
+            internal_message(abort(&fx).await),
+            format!(
+                "Abort did not restore {BRANCH} to its backup (HEAD is {}). Use Reset to backup.",
+                &d.main[..8]
+            )
+        );
+        assert_eq!(fx.json_bytes(), json_before);
+        assert_eq!(fx.derive().await.kind, RebaseStateKind::CompletedUnpushed);
+        assert_eq!(fx.sha(&record(&fx).backup_ref).await, d.branch);
+    }
+
+    #[tokio::test]
+    async fn abort_restores_the_backup_after_the_branch_ref_moved() {
+        let fx = Fixture::new().await;
+        let d = stop_content(&fx).await;
+        let tree = format!("{}^{{tree}}", d.main);
+        let moved = fx
+            .out(&["commit-tree", "-p", &d.main, "-m", "moved", &tree])
+            .await;
+        fx.run(&["update-ref", &format!("refs/heads/{BRANCH}"), &moved])
+            .await;
+
+        abort(&fx).await.expect("abort");
+        assert_eq!(fx.head().await, d.branch);
+        assert_eq!(fx.sha(BRANCH).await, d.branch);
+        assert!(!json_path(&fx.git_dir()).exists());
+    }
+
+    #[tokio::test]
+    async fn abort_refused_by_git_keeps_untracked_files_and_the_record() {
+        let fx = Fixture::new().await;
+        four_commits(&fx).await;
+        continue_to_c3(&fx).await;
+        // C4's file, not replayed yet, would overwrite it.
+        fx.write("e.txt", b"untracked\n");
+        let json_before = fx.json_bytes();
+
+        let message = internal_message(abort(&fx).await);
+        assert!(
+            message.starts_with("git rebase --abort failed:"),
+            "{message}"
+        );
+        assert!(message.contains("e.txt"), "{message}");
+        assert_eq!(read(&fx, "e.txt").as_deref(), Some(&b"untracked\n"[..]));
+        assert_eq!(fx.json_bytes(), json_before);
+        assert_eq!(state(&fx).await.state, RebaseStateKind::InProgress);
+    }
+
+    // Interference from a terminal
+
+    #[tokio::test]
+    async fn aborted_by_hand_is_stale_and_dismissable() {
+        let fx = Fixture::new().await;
+        let d = stop_content(&fx).await;
+        let backup_ref = record(&fx).backup_ref;
+        fx.run(&["rebase", "--abort"]).await;
+        assert_eq!(
+            fx.derive().await.stale_reason,
+            Some(RebaseStaleReason::AbortedOutside)
+        );
+        assert_continue_refused(&fx, NO_REBASE_IN_PROGRESS).await;
+        assert_abort_refused(&fx).await;
+
+        dismiss_stale(&fx.git, fx.path(), &tokio::sync::Mutex::new(()))
+            .await
+            .expect("dismiss");
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert_eq!(fx.sha(&backup_ref).await, d.branch);
+    }
+
+    #[tokio::test]
+    async fn continued_by_hand_is_completed_unpushed() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        start(&fx).await.expect("start");
+        fx.run(&["checkout", "--theirs", "--", "a.txt"]).await;
+        fx.run(&["add", "--", "a.txt"]).await;
+        let editor: &[(&str, &str)] = &[("GIT_EDITOR", "true")];
+        let continued = fx
+            .git
+            .run_with_status(
+                &["rebase", "--continue"],
+                git::Opts::new_without_logs().with_env(editor),
+            )
+            .await
+            .unwrap();
+        assert_eq!(continued.exit_code, 0, "{}", continued.stderr);
+
+        assert_eq!(state(&fx).await, completed(&record(&fx), vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_continue_refused(&fx, NO_REBASE_IN_PROGRESS).await;
+        assert_abort_refused(&fx).await;
+    }
+
+    #[tokio::test]
+    async fn quit_by_hand_is_branch_changed() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        fx.run(&["rebase", "--quit"]).await;
+        let derived = fx.derive().await;
+        assert_eq!(
+            (derived.kind, derived.stale_reason),
+            (
+                RebaseStateKind::Stale,
+                Some(RebaseStaleReason::BranchChanged)
+            )
+        );
+        assert_abort_refused(&fx).await;
     }
 
     // Open file

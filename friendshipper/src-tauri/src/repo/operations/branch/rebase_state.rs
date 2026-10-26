@@ -452,7 +452,6 @@ pub(crate) fn parse_unmerged(porcelain_z: &str) -> Vec<UnmergedEntry> {
 }
 
 /// Untracked (`?`) paths of `git status --porcelain=v2 -z`.
-#[allow(dead_code)] // TODO: Stage 011
 pub(crate) fn parse_untracked(porcelain_z: &str) -> Vec<String> {
     let mut paths = vec![];
     let mut records = porcelain_z.split('\0');
@@ -461,6 +460,29 @@ pub(crate) fn parse_untracked(porcelain_z: &str) -> Vec<String> {
             paths.push(path.to_string());
         } else if record.starts_with("2 ") {
             records.next();
+        }
+    }
+    paths
+}
+
+/// Tracked paths of `git status --porcelain=v2 -z` whose working-tree file differs from the
+/// index.
+pub(crate) fn parse_unstaged(porcelain_z: &str) -> Vec<String> {
+    let mut paths = vec![];
+    let mut records = porcelain_z.split('\0');
+    while let Some(record) = records.next() {
+        let field_count = if record.starts_with("1 ") {
+            9
+        } else if record.starts_with("2 ") {
+            // A rename or copy is followed by its original path.
+            records.next();
+            10
+        } else {
+            continue;
+        };
+        let fields: Vec<&str> = record.splitn(field_count, ' ').collect();
+        if fields.len() == field_count && !fields[1].ends_with('.') {
+            paths.push(fields[field_count - 1].to_string());
         }
     }
     paths
@@ -703,11 +725,11 @@ fn same_record(git_dir: &Path, file: &GuidedRebaseFile) -> anyhow::Result<Guided
 async fn store_current_step(
     git_dir: &Path,
     file: &GuidedRebaseFile,
-    step: CurrentStep,
+    step: Option<CurrentStep>,
 ) -> anyhow::Result<()> {
     let _lock = REBASE_FILE_LOCK.lock().await;
     let mut current = same_record(git_dir, file)?;
-    current.current_step = Some(step);
+    current.current_step = step;
     write_rebase_file(git_dir, &current)
 }
 
@@ -787,8 +809,40 @@ pub(crate) async fn ensure_current_step<T: EngineProvider>(
         sha: rebase_head.to_string(),
         conflicts,
     };
-    store_current_step(&git_dir, file, step.clone()).await?;
+    store_current_step(&git_dir, file, Some(step.clone())).await?;
     Ok(Some(step))
+}
+
+/// Classifies the step git stopped on and overwrites the cache with it, or clears the cache
+/// when git is not stopped on a conflict. For ops that just ran `rebase --continue` or
+/// `--skip`, after which any cached step is outdated. Callers hold `REBASE_OP_LOCK`.
+pub(crate) async fn replace_current_step<T: EngineProvider>(
+    git: &git::Git,
+    repo_path: &Path,
+    engine: &T,
+    engine_path: &Path,
+    file: &GuidedRebaseFile,
+) -> anyhow::Result<()> {
+    let git_dir = resolve_git_dir(repo_path);
+    let mut step = None;
+    if let Some(rebase_head) = rebase_head(&git_dir).filter(|_| rebase_dir_exists(&git_dir)) {
+        let conflicts = classify_conflicts(
+            git,
+            repo_path,
+            engine,
+            engine_path,
+            &file.merge_base,
+            &rebase_head,
+        )
+        .await?;
+        if !conflicts.is_empty() {
+            step = Some(CurrentStep {
+                sha: rebase_head,
+                conflicts,
+            });
+        }
+    }
+    store_current_step(&git_dir, file, step).await
 }
 
 /// Sets the cached resolution of `path` in the step for `rebase_head`.
@@ -940,7 +994,9 @@ pub(crate) async fn build_rebase_state<T: EngineProvider>(
             remaining.extend(todo_picks(&todo));
         }
 
-        let unmerged = parse_unmerged(&status_porcelain(git).await?);
+        let porcelain = status_porcelain(git).await?;
+        let unmerged = parse_unmerged(&porcelain);
+        state.unstaged_edits = parse_unstaged(&porcelain);
         match rebase_head(&git_dir) {
             Some(rebase_head) => {
                 remaining.insert(rebase_head.clone());
@@ -2319,6 +2375,7 @@ pub(crate) mod tests {
                 current_commit: Some(info(&first, "first")),
                 conflicts: vec![first_step_conflict(&first, &main)],
                 step_incomplete: false,
+                unstaged_edits: vec![],
                 dropped_commits: vec![],
                 stale_reason: None,
                 touches_cpp: false,
@@ -2591,7 +2648,30 @@ pub(crate) mod tests {
             )
         );
         assert_eq!(parse_untracked(&porcelain), vec!["untracked file.txt"]);
+        assert_eq!(parse_unstaged(&porcelain), vec!["plain.txt"]);
         assert!(parse_unmerged("").is_empty());
+    }
+
+    #[test]
+    fn parses_unstaged_records() {
+        let porcelain = [
+            "1 M. N... 100644 100644 100644 aaaa bbbb staged.txt",
+            "1 MM N... 100644 100644 100644 aaaa bbbb both changed.txt",
+            "1 .D N... 100644 100644 000000 aaaa aaaa deleted.txt",
+            "2 RM N... 100644 100644 100644 aaaa bbbb R100 renamed then edited.txt",
+            "1 .M N... 100644 100644 100644 aaaa aaaa looks like a record.txt",
+            "2 R. N... 100644 100644 100644 aaaa bbbb R100 renamed.txt",
+            "1 .M N... 100644 100644 100644 aaaa bbbb renamed from.txt",
+            "u UU N... 100644 100644 100644 100644 h1 h2 h3 conflicted.txt",
+            "? untracked.txt",
+            "",
+        ]
+        .join("\0");
+        assert_eq!(
+            parse_unstaged(&porcelain),
+            vec!["both changed.txt", "deleted.txt", "renamed then edited.txt"]
+        );
+        assert!(parse_unstaged("").is_empty());
     }
 
     fn unmerged(xy: &str, sub: &str, path: &str) -> UnmergedEntry {
