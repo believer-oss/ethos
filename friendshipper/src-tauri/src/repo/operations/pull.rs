@@ -24,7 +24,7 @@ use crate::config::RepoConfigRef;
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::repo::operations::validate::validate_repo_state;
-use crate::repo::operations::UpdateEngineOp;
+use crate::repo::operations::{ensure_no_guided_rebase, guard_state, UpdateEngineOp};
 use crate::state::AppState;
 
 use super::{DownloadDllsOp, RepoStatusRef, StatusOp};
@@ -106,6 +106,7 @@ where
             let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
             let repo_status = self.repo_status.read().clone();
             validate_repo_state(&repo_path, &repo_status)?;
+            ensure_no_guided_rebase(&self.git_client, &repo_path).await?;
         }
 
         self.emit_phase("Checking repository status");
@@ -499,6 +500,8 @@ pub async fn pull_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     // Fast path: fetch and compare HEAD vs remote to skip everything if already up to date.
     // Only applies to non-f11r branches.
     let git_client = state.git();
