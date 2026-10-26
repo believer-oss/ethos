@@ -12,6 +12,7 @@ import type {
 	CommitInfo,
 	CreateBranchPullRequestRequest,
 	CreateBranchResponse,
+	EditorBinariesStatus,
 	FileHistoryResponse,
 	GitHubPullRequest,
 	GitHubStatusResponse,
@@ -19,16 +20,23 @@ import type {
 	IncomingEngineChange,
 	MergeQueue,
 	ObjectCountResponse,
+	OpenConflictFileRequest,
 	PushRequest,
+	RebaseCommitInfo,
+	RebaseFinishResponse,
+	RebasePreflight,
+	RebaseState,
 	RebaseStatusResponse,
 	RepoDirectoryListing,
 	RepoStatus,
+	ResolveConflictRequest,
 	RestoreFileToRevisionRequest,
 	RevertFilesRequest,
 	Snapshot,
 	SnapshotPreviewResponse,
 	SwitchBranchResponse,
 	SyncKind,
+	UnresolveConflictRequest,
 	VerifyResponse,
 	ZipLocalChangesResponse,
 	ZipPreviewResponse
@@ -122,6 +130,42 @@ export const getBranchCleanupCandidates = async (): Promise<BranchCleanupCandida
 
 export const cleanupBranches = async (req: BranchCleanupRequest): Promise<BranchCleanupResult[]> =>
 	invoke('cleanup_branches', { req });
+
+export const getRebaseState = async (): Promise<RebaseState> => invoke('get_rebase_state');
+
+export const getRebasePreflight = async (): Promise<RebasePreflight> =>
+	invoke('get_rebase_preflight');
+
+export const startRebase = async (): Promise<RebaseState> => invoke('start_rebase');
+
+export const resolveRebaseConflict = async (req: ResolveConflictRequest): Promise<RebaseState> =>
+	invoke('resolve_rebase_conflict', { req });
+
+export const unresolveRebaseConflict = async (
+	req: UnresolveConflictRequest
+): Promise<RebaseState> => invoke('unresolve_rebase_conflict', { req });
+
+export const openRebaseConflictFile = async (req: OpenConflictFileRequest): Promise<void> =>
+	invoke('open_rebase_conflict_file', { req });
+
+export const continueRebase = async (): Promise<RebaseState> => invoke('continue_rebase');
+
+export const abortGuidedRebase = async (): Promise<RebaseState> => invoke('abort_guided_rebase');
+
+export const finishRebase = async (): Promise<RebaseFinishResponse> => invoke('finish_rebase');
+
+export const redoRebase = async (): Promise<RebaseState> => invoke('redo_rebase');
+
+export const resetRebaseToBackup = async (): Promise<RebaseState> =>
+	invoke('reset_rebase_to_backup');
+
+export const dismissRebaseState = async (): Promise<RebaseState> => invoke('dismiss_rebase_state');
+
+export const triggerEditorRebuild = async (): Promise<RebaseCommitInfo> =>
+	invoke('trigger_editor_rebuild');
+
+export const getEditorBinariesStatus = async (): Promise<EditorBinariesStatus> =>
+	invoke('get_editor_binaries_status');
 
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 

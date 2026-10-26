@@ -20,8 +20,10 @@ use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::{
     BranchAnalysis, BranchCleanupCandidates, BranchCleanupRequest, BranchCleanupResult, BranchInfo,
     BranchPullRequestResult, ChangeSet, CommitFileInfo, CommitInfo, CreateBranchPullRequestRequest,
-    CreateBranchRequest, CreateBranchResponse, FileHistoryResponse, PushRequest,
-    RepoDirectoryListing, RepoStatus, Snapshot, SwitchBranchRequest, SwitchBranchResponse,
+    CreateBranchRequest, CreateBranchResponse, EditorBinariesStatus, FileHistoryResponse,
+    OpenConflictFileRequest, PushRequest, RebaseCommitInfo, RebaseFinishResponse, RebasePreflight,
+    RebaseState, RepoDirectoryListing, RepoStatus, ResolveConflictRequest, Snapshot,
+    SwitchBranchRequest, SwitchBranchResponse, UnresolveConflictRequest,
 };
 use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
@@ -742,6 +744,245 @@ pub async fn cleanup_branches(
         .client
         .post(format!("{}/repo/branch/cleanup", state.server_url))
         .json(&req)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_rebase_state(state: tauri::State<'_, State>) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/branch/rebase/state", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_rebase_preflight(
+    state: tauri::State<'_, State>,
+) -> Result<RebasePreflight, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/branch/rebase/preflight", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn start_rebase(state: tauri::State<'_, State>) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/start", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn resolve_rebase_conflict(
+    state: tauri::State<'_, State>,
+    req: ResolveConflictRequest,
+) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/resolve", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn unresolve_rebase_conflict(
+    state: tauri::State<'_, State>,
+    req: UnresolveConflictRequest,
+) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/unresolve", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn open_rebase_conflict_file(
+    state: tauri::State<'_, State>,
+    req: OpenConflictFileRequest,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/open-file", state.server_url))
+        .json(&req)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn continue_rebase(state: tauri::State<'_, State>) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/continue", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn abort_guided_rebase(
+    state: tauri::State<'_, State>,
+) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/abort", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn finish_rebase(
+    state: tauri::State<'_, State>,
+) -> Result<RebaseFinishResponse, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/finish", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn redo_rebase(state: tauri::State<'_, State>) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/redo", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn reset_rebase_to_backup(
+    state: tauri::State<'_, State>,
+) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/repo/branch/rebase/reset-to-backup",
+            state.server_url
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn dismiss_rebase_state(
+    state: tauri::State<'_, State>,
+) -> Result<RebaseState, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebase/dismiss", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn trigger_editor_rebuild(
+    state: tauri::State<'_, State>,
+) -> Result<RebaseCommitInfo, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/repo/branch/rebuild-editor", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_editor_binaries_status(
+    state: tauri::State<'_, State>,
+) -> Result<EditorBinariesStatus, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/branch/editor-binaries", state.server_url))
         .send()
         .await?;
 

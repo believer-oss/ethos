@@ -47,6 +47,8 @@ where
     Ok(Json(RebaseStatusResponse {
         rebase_merge_exists: rebase_merge_path.exists(),
         head_name_exists: head_name_path.exists(),
+        // TODO: Implement in Stage 007
+        guided_rebase_active: false,
     }))
 }
 
