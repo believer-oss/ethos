@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -5,6 +6,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::instrument;
 
+use super::rebase_state::{build_rebase_state, derive_rebase_state, REBASE_OP_LOCK};
 use crate::engine::EngineProvider;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
@@ -253,13 +255,40 @@ where
 
 #[instrument(skip_all)]
 pub async fn guided_rebase_state_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseState>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 009
-    Err(not_implemented())
+    let repo_path = PathBuf::from(state.app_config.read().repo_path.clone());
+    if repo_path.as_os_str().is_empty() {
+        return Ok(Json(RebaseState::default()));
+    }
+    let engine_path = state
+        .app_config
+        .read()
+        .load_engine_path_from_repo(&state.repo_config.read())
+        .unwrap_or_default();
+    let git = state.git();
+
+    // Conflicts are cached only while no rebase op runs, so a half-applied step never is.
+    let op_guard = REBASE_OP_LOCK.try_lock();
+    let derived = derive_rebase_state(&git, &repo_path)
+        .await
+        .map_err(CoreError::Internal)?;
+    let rebase_state = build_rebase_state(
+        &git,
+        &repo_path,
+        &state.engine,
+        &engine_path,
+        derived,
+        op_guard.is_ok(),
+    )
+    .await
+    .map_err(CoreError::Internal)?;
+    drop(op_guard);
+
+    Ok(Json(rebase_state))
 }
 
 #[instrument(skip_all)]

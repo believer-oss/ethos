@@ -96,7 +96,7 @@ const SUBMIT_PREFIX: &str = "[quick submit]";
 /// Files with `text=auto` or `text=unspecified` are kept; `--check` will run
 /// its own NUL-byte heuristic on them at diff time. That costs an extra
 /// staging round-trip for those files but doesn't change the result.
-async fn filter_to_textlike_paths(
+pub(crate) async fn filter_to_textlike_paths(
     git_client: &git::Git,
     paths: &[String],
 ) -> anyhow::Result<Vec<String>> {
