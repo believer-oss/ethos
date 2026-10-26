@@ -8,17 +8,18 @@ use axum::{async_trait, Json};
 use tracing::{error, instrument, warn};
 
 use super::cleanup::worktree_git_dirs_or;
+use super::post_head_change::{run_post_head_change, PostHeadChangeCtx};
 use super::rebase_guard::guard_sentence;
 use super::rebase_state::{
-    build_rebase_state, create_backup_ref, delete_rebase_file, derive_rebase_state,
-    ensure_current_step, is_ancestor, is_full_sha, parse_unmerged, parse_untracked,
-    prune_backup_refs, read_git, read_rebase_file, rebase_dir_exists, rebase_head,
+    build_rebase_state, commit_info, create_backup_ref, delete_rebase_file, derive_rebase_state,
+    ensure_current_step, is_ancestor, is_full_sha, parse_push_porcelain, parse_unmerged,
+    parse_untracked, prune_backup_refs, read_git, read_rebase_file, rebase_dir_exists, rebase_head,
     refresh_resolved, replace_current_step, resolve_git_dir, rev_parse, set_resolution,
     status_porcelain, write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase,
-    OriginalCommit, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK, REBASE_FILE_VERSION,
-    REBASE_OP_LOCK,
+    OriginalCommit, PushOutcome, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK,
+    REBASE_FILE_VERSION, REBASE_OP_LOCK,
 };
-use super::{git_too_old_message, is_valid_branch_name, run_sequence};
+use super::{git_too_old_message, is_valid_branch_name, require_aws_and_storage, run_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{find_files_with_conflict_markers, is_branch_mode};
 use crate::repo::operations::validate::validate_repo_state;
@@ -26,15 +27,17 @@ use crate::repo::operations::StatusOp;
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use ethos_core::clients::git::{self, GitVersionCheck};
+use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfigRef, UProject};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{
     ConflictFile, ConflictKind, ConflictSideName, OpenConflictFileRequest, RebaseCommitInfo,
-    RebaseFinishResponse, RebaseKeep, RebasePreflight, RebaseState, RebaseStateKind,
-    ResolveConflictRequest, UnresolveConflictRequest,
+    RebaseFinishOutcome, RebaseFinishResponse, RebaseKeep, RebasePreflight, RebaseState,
+    RebaseStateKind, ResolveConflictRequest, UnresolveConflictRequest,
 };
 use ethos_core::utils::process::describe_blocking_processes;
 use ethos_core::worker::Task;
+use ethos_core::AWSClient;
 
 /// Every git call that may open an editor runs with these.
 pub(crate) const REBASE_ENV: &[(&str, &str)] = &[
@@ -67,11 +70,18 @@ const OP_RUNNING: &str = "A rebase operation is running. Try again when it finis
 const RESOLVE_EVERY_FILE: &str = "Resolve every file before continuing.";
 const NOT_ADVANCING: &str = "The rebase did not advance; abort it to restore your branch.";
 const NOTHING_TO_ABORT: &str = "There is no rebase in progress to abort.";
+const NOTHING_TO_PUSH: &str = "There is no rebased branch waiting to be pushed.";
+const REDO_ONLY_AFTER_PUSH_FAILED: &str =
+    "Redo is only available after pushing the rebased branch failed.";
+const RESET_ONLY_AFTER_REPLAY: &str =
+    "Reset to backup is only available after a rebase finished replaying.";
+const UNSTAGE_FIRST: &str = "Unstage your changes before triggering an editor build.";
+const SYNC_FIRST: &str = "Sync before triggering an editor build.";
+const NEW_COMMITS_ON_ORIGIN: &str =
+    "Branch has new commits on origin — Sync, then trigger the editor build again.";
+const OPERATION_IN_PROGRESS: &str = "Finish or abort the merge, cherry-pick, revert or rebase in progress before triggering an editor build.";
+const EDITOR_BUILD_MESSAGE: &str = "[ci:editor] Rebuild editor after rebase";
 const LISTED_PATHS: usize = 10;
-
-fn not_implemented() -> CoreError {
-    CoreError::Internal(anyhow!("Guided rebase is not implemented yet"))
-}
 
 fn input(message: impl Into<String>) -> CoreError {
     CoreError::Input(anyhow!(message.into()))
@@ -232,16 +242,23 @@ async fn original_commits(
         .collect())
 }
 
-/// Fetches `<trunk>` and, when it exists on origin, `<branch>`; returns whether it does.
-async fn fetch_trunk_and_branch(
+/// Fetches `<trunk>` (when given) and, when it exists on origin, `<branch>`; returns whether
+/// it does. Never fetches without a refspec, which would fetch every configured ref.
+async fn fetch_origin(
     git: &git::Git,
-    trunk: &str,
+    trunk: Option<&str>,
     branch: &str,
 ) -> Result<bool, CoreError> {
     let fetch = |with_branch: bool| async move {
-        let mut refspecs = vec![format!("+refs/heads/{trunk}:refs/remotes/origin/{trunk}")];
+        let mut refspecs = vec![];
+        if let Some(trunk) = trunk {
+            refspecs.push(format!("+refs/heads/{trunk}:refs/remotes/origin/{trunk}"));
+        }
         if with_branch {
             refspecs.push(format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"));
+        }
+        if refspecs.is_empty() {
+            return Ok(());
         }
         let mut args = vec![
             "fetch",
@@ -297,6 +314,225 @@ async fn recorded_backup_refs(git: &git::Git) -> Option<Vec<String>> {
         }
     }
     Some(keep)
+}
+
+/// The checked-out feature branch.
+async fn feature_branch(git: &git::Git, repo_config: &RepoConfigRef) -> Result<String, CoreError> {
+    // The full ref: `--short` gives `heads/<branch>` when a tag has the same name.
+    let head = head_ref(git).await?;
+    match head.as_deref().and_then(|r| r.strip_prefix("refs/heads/")) {
+        Some(branch)
+            if is_valid_branch_name(branch) && is_branch_mode(&repo_config.read(), branch) =>
+        {
+            Ok(branch.to_string())
+        }
+        _ => Err(input(FEATURE_BRANCHES_ONLY)),
+    }
+}
+
+/// Refuses modified, staged or untracked files.
+async fn ensure_clean_tree(git: &git::Git) -> Result<(), CoreError> {
+    let status = git.status(vec![]).await?;
+    if status
+        .lines()
+        .any(|line| !line.is_empty() && !line.starts_with("## "))
+    {
+        return Err(input(DIRTY_TREE));
+    }
+    Ok(())
+}
+
+/// What `git push --porcelain` reported for the pushed branch.
+struct PushResult {
+    outcome: PushOutcome,
+    stderr: String,
+    exit_code: i32,
+}
+
+impl PushResult {
+    fn failure(&self) -> String {
+        if self.stderr.is_empty() {
+            format!("Push failed (exit code {}).", self.exit_code)
+        } else {
+            format!("Push failed: {}", self.stderr)
+        }
+    }
+}
+
+/// Pushes `sha` to origin's `<branch>`, leased to origin's branch being exactly `expected`.
+/// The guided rebase's only push.
+async fn leased_push(
+    git: &git::Git,
+    branch: &str,
+    sha: &str,
+    expected: &str,
+) -> Result<PushResult, CoreError> {
+    if !is_valid_branch_name(branch) || !is_full_sha(sha) || !is_full_sha(expected) {
+        return Err(internal(format!(
+            "Refusing to push {sha} to {branch} leased to {expected}."
+        )));
+    }
+    let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
+    let refspec = format!("{sha}:refs/heads/{branch}");
+    let output = git
+        .run_with_status(
+            &[
+                "push",
+                "--porcelain",
+                "--no-follow-tags",
+                "--no-force-if-includes",
+                &lease,
+                "origin",
+                &refspec,
+            ],
+            git::Opts::new_with_complete_error().with_env(REBASE_ENV),
+        )
+        .await?;
+    Ok(PushResult {
+        outcome: parse_push_porcelain(&output.stdout, branch),
+        stderr: output.stderr.trim().to_string(),
+        exit_code: output.exit_code,
+    })
+}
+
+/// `git reset --keep <sha>`, which refuses rather than discard a local change. Ignored files
+/// are not local changes: one that `sha` tracks is overwritten.
+async fn reset_keep(git: &git::Git, repo_path: &Path, sha: &str) -> Result<(), CoreError> {
+    if !is_full_sha(sha) {
+        return Err(internal(format!("Refusing to reset to {sha}.")));
+    }
+    let output = git
+        .run_with_status(
+            &["reset", "--keep", sha],
+            git::Opts::new_with_complete_error().with_env(REBASE_ENV),
+        )
+        .await?;
+    if output.exit_code != 0 {
+        let msg = format!("git reset --keep failed: {}", output.stderr.trim());
+        return Err(internal(enrich_error(repo_path, &msg)));
+    }
+    Ok(())
+}
+
+/// Backs up the rebased `head` as `<ts>-rebased`, verified before anything moves.
+async fn backup_rebased_head(
+    git: &git::Git,
+    branch: &str,
+    head: &str,
+) -> Result<String, CoreError> {
+    let refname = create_backup_ref(git, branch, head, "-rebased", unix_now()).await?;
+    if rev_parse(git, &refname).await?.as_deref() != Some(head) {
+        return Err(internal(format!(
+            "The backup {refname} of the rebased branch could not be verified; nothing was changed."
+        )));
+    }
+    Ok(refname)
+}
+
+/// Marks `file`'s rebase as push failed, origin's branch then at `remote_sha`, if the record
+/// on disk is still `file`.
+async fn record_push_failed(
+    git_dir: &Path,
+    file: &GuidedRebaseFile,
+    remote_sha: Option<String>,
+) -> Result<(), CoreError> {
+    let _lock = REBASE_FILE_LOCK.lock().await;
+    match read_rebase_file(git_dir) {
+        RebaseFileRead::Ok(on_disk) if *on_disk == *file => {}
+        other => {
+            return Err(internal(format!(
+                "The rebase record changed during the push: {other:?}"
+            )))
+        }
+    }
+    let updated = GuidedRebaseFile {
+        phase: GuidedRebasePhase::PushFailed,
+        push_failed_remote_sha: remote_sha.filter(|sha| is_full_sha(sha)),
+        ..file.clone()
+    };
+    write_rebase_file(git_dir, &updated)?;
+    match read_rebase_file(git_dir) {
+        RebaseFileRead::Ok(written) if *written == updated => Ok(()),
+        other => Err(internal(format!(
+            "The rebase record did not read back as written: {other:?}"
+        ))),
+    }
+}
+
+/// Origin's `<branch>` after fetching it; `None` when it no longer exists or can't be fetched.
+async fn fetched_branch_tip(git: &git::Git, branch: &str) -> Option<String> {
+    match fetch_origin(git, None, branch).await {
+        Ok(true) => rev_parse(git, &format!("refs/remotes/origin/{branch}"))
+            .await
+            .inspect_err(|e| warn!("Could not read origin's {branch}: {e}"))
+            .ok()
+            .flatten(),
+        Ok(false) => None,
+        Err(e) => {
+            warn!("Could not fetch {branch} after the push was rejected: {e}");
+            None
+        }
+    }
+}
+
+/// The parents of commit `sha`.
+async fn commit_parents(git: &git::Git, sha: &str) -> Result<Vec<String>, CoreError> {
+    let output = read_git(git, &["rev-list", "--parents", "-n", "1", sha, "--"]).await?;
+    let mut fields = output.stdout.split_whitespace().map(str::to_string);
+    if output.exit_code != 0 || fields.next().as_deref() != Some(sha) {
+        return Err(internal(format!(
+            "Could not read the parents of {sha}: {}",
+            output.stderr.trim()
+        )));
+    }
+    Ok(fields.collect())
+}
+
+/// Drops the unpushed editor build commit `new`, whose tree is `head`'s, while HEAD is still
+/// exactly that commit.
+async fn undo_editor_build_commit(
+    git: &git::Git,
+    repo_path: &Path,
+    branch: &str,
+    new: &str,
+    head: &str,
+) -> Result<(), CoreError> {
+    if rev_parse(git, "HEAD").await?.as_deref() != Some(new) {
+        return Err(internal(format!(
+            "The editor build commit could not be pushed and HEAD moved; check {branch} before retrying."
+        )));
+    }
+    reset_keep(git, repo_path, head).await
+}
+
+/// The post-HEAD-change context, or why it can't be built (AWS may still be initializing).
+fn post_ctx<T: EngineProvider>(
+    state: &AppState<T>,
+    aws: Result<(AWSClient, ArtifactStorage), CoreError>,
+) -> Result<PostHeadChangeCtx<T>, String> {
+    aws.map(|(aws_client, storage)| PostHeadChangeCtx::new(state, aws_client, storage))
+        .map_err(|e| e.to_string())
+}
+
+/// Refreshes status, editor binaries and the engine after HEAD moved; never undoes the move.
+async fn run_post<T: EngineProvider>(
+    post: &Result<PostHeadChangeCtx<T>, String>,
+    old_engine_association: Option<String>,
+) -> Result<(), String> {
+    match post {
+        Ok(ctx) => run_post_head_change(ctx, old_engine_association)
+            .await
+            .map_err(|e| e.to_string()),
+        Err(e) => Err(e.clone()),
+    }
+}
+
+/// The text for a reset whose post-HEAD-change steps failed.
+fn post_failure_note(branch: &str, e: &str) -> String {
+    format!(
+        "{branch} was reset, but updating editor binaries or engine failed: {}.",
+        e.trim_end_matches('.')
+    )
 }
 
 /// Runs a git command on one conflicted path, taken literally; a failure is Internal.
@@ -601,21 +837,6 @@ where
         }
     }
 
-    /// The checked-out feature branch.
-    async fn feature_branch(&self) -> Result<String, CoreError> {
-        // The full ref: `--short` gives `heads/<branch>` when a tag has the same name.
-        let head = head_ref(&self.git_client).await?;
-        match head.as_deref().and_then(|r| r.strip_prefix("refs/heads/")) {
-            Some(branch)
-                if is_valid_branch_name(branch)
-                    && is_branch_mode(&self.repo_config.read(), branch) =>
-            {
-                Ok(branch.to_string())
-            }
-            _ => Err(input(FEATURE_BRANCHES_ONLY)),
-        }
-    }
-
     fn engine_association(&self, repo_path: &Path) -> String {
         let uproject_path = repo_path.join(self.repo_config.read().uproject_path.clone());
         match UProject::load(&uproject_path) {
@@ -643,33 +864,23 @@ where
             }
         }
     }
-}
 
-#[async_trait]
-impl<T> Task for RebaseStartOp<T>
-where
-    T: EngineProvider,
-{
-    async fn execute(&self) -> Result<(), CoreError> {
-        let _op = REBASE_OP_LOCK.lock().await;
-        self.emit_phase("Checking repository status");
+    /// Start's gates, record and rebase, after the idle check. A redo passes the `previous`
+    /// record: its backup is never pruned, and its engine association is kept, as the installed
+    /// engine still matches it.
+    async fn start_rebase_inner(
+        &self,
+        previous: Option<&GuidedRebaseFile>,
+    ) -> Result<(), CoreError> {
         let git = &self.git_client;
         let repo_path = repo_path_of(&self.app_config);
         let git_dir = resolve_git_dir(&repo_path);
-
-        let derived = derive(git, &repo_path).await?;
-        match derived.kind {
-            RebaseStateKind::Idle => {}
-            RebaseStateKind::Stale => return Err(input(DISMISS_FIRST)),
-            RebaseStateKind::External => return Err(input(EXTERNAL_REBASE)),
-            kind => return Err(input(guard_sentence(kind).unwrap_or(DISMISS_FIRST))),
-        }
 
         editor_check(&self.engine).await?;
         index_lock_check(&git_dir)?;
         git_version_gate(&git.check_min_version().await?)?;
 
-        let branch = self.feature_branch().await?;
+        let branch = feature_branch(git, &self.repo_config).await?;
         let trunk = self.trunk.clone();
         if !is_valid_branch_name(&trunk) {
             return Err(input(NO_TRUNK));
@@ -677,16 +888,10 @@ where
 
         self.status_op().execute().await?;
         validate_repo_state(&repo_path, &self.repo_status.read())?;
-        let status = git.status(vec![]).await?;
-        if status
-            .lines()
-            .any(|line| !line.is_empty() && !line.starts_with("## "))
-        {
-            return Err(input(DIRTY_TREE));
-        }
+        ensure_clean_tree(git).await?;
 
         self.emit_phase("Fetching latest");
-        if !fetch_trunk_and_branch(git, &trunk, &branch).await? {
+        if !fetch_origin(git, Some(&trunk), &branch).await? {
             return Err(input(UNSYNCED));
         }
         let head = required_sha(git, "HEAD").await?;
@@ -704,11 +909,17 @@ where
         let merge_base = merge_base(git, &onto, &head).await?;
         let original_commits = original_commits(git, &merge_base, &head).await?;
         let touches_cpp = !cpp_files(git, &merge_base, &head).await?.is_empty();
-        let engine_association = self.engine_association(&repo_path);
+        let engine_association = match previous {
+            Some(previous) => previous.engine_association.clone(),
+            None => self.engine_association(&repo_path),
+        };
 
         let now = unix_now();
         match recorded_backup_refs(git).await {
-            Some(keep) => prune_backup_refs(git, now, &keep).await?,
+            Some(mut keep) => {
+                keep.extend(previous.map(|previous| previous.backup_ref.clone()));
+                prune_backup_refs(git, now, &keep).await?
+            }
             None => warn!("Not pruning old backup refs: a worktree's rebase record can't be read"),
         }
         let backup_ref = create_backup_ref(git, &branch, &head, "", now).await?;
@@ -799,6 +1010,26 @@ where
             stderr
         };
         Err(internal(enrich_error(&repo_path, &msg)))
+    }
+}
+
+#[async_trait]
+impl<T> Task for RebaseStartOp<T>
+where
+    T: EngineProvider,
+{
+    async fn execute(&self) -> Result<(), CoreError> {
+        let _op = REBASE_OP_LOCK.lock().await;
+        self.emit_phase("Checking repository status");
+        let derived = derive(&self.git_client, &repo_path_of(&self.app_config)).await?;
+        match derived.kind {
+            RebaseStateKind::Idle => {}
+            RebaseStateKind::Stale => return Err(input(DISMISS_FIRST)),
+            RebaseStateKind::External => return Err(input(EXTERNAL_REBASE)),
+            kind => return Err(input(guard_sentence(kind).unwrap_or(DISMISS_FIRST))),
+        }
+
+        self.start_rebase_inner(None).await
     }
 
     fn get_name(&self) -> String {
@@ -1207,7 +1438,22 @@ pub struct RebaseFinishOp<T> {
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
     pub sync_phase_tx: std::sync::mpsc::Sender<String>,
+    pub(crate) post: Result<PostHeadChangeCtx<T>, String>,
     pub result: Arc<parking_lot::Mutex<Option<RebaseFinishResponse>>>,
+}
+
+impl<T: EngineProvider> RebaseFinishOp<T> {
+    async fn state_after(
+        &self,
+        repo_path: &Path,
+        engine_path: &Path,
+    ) -> Result<RebaseState, CoreError> {
+        let git = &self.git_client;
+        let derived = derive(git, repo_path).await?;
+        build_rebase_state(git, repo_path, &self.engine, engine_path, derived, None)
+            .await
+            .map_err(CoreError::Internal)
+    }
 }
 
 #[async_trait]
@@ -1216,8 +1462,75 @@ where
     T: EngineProvider,
 {
     async fn execute(&self) -> Result<(), CoreError> {
-        // TODO: Implement in Stage 013
-        Err(not_implemented())
+        let _op = REBASE_OP_LOCK.lock().await;
+        let git = &self.git_client;
+        let repo_path = repo_path_of(&self.app_config);
+        let git_dir = resolve_git_dir(&repo_path);
+        let engine_path = engine_path_of(&self.app_config, &self.repo_config);
+
+        editor_check(&self.engine).await?;
+        index_lock_check(&git_dir)?;
+        let derived = derive(git, &repo_path).await?;
+        let file = match (derived.kind, &derived.file) {
+            (RebaseStateKind::CompletedUnpushed, Some(file)) => file.clone(),
+            _ => return Err(input(NOTHING_TO_PUSH)),
+        };
+        let dropped_commits =
+            build_rebase_state(git, &repo_path, &self.engine, &engine_path, derived, None)
+                .await
+                .map_err(CoreError::Internal)?
+                .dropped_commits;
+        let head = required_sha(git, "HEAD").await?;
+
+        let _ = self
+            .sync_phase_tx
+            .send("Pushing rebased branch".to_string());
+        let push = leased_push(git, &file.branch, &head, &file.pre_rebase_origin_sha).await?;
+        let (outcome, post_step_error) = match push.outcome {
+            PushOutcome::Pushed => {
+                {
+                    let _lock = REBASE_FILE_LOCK.lock().await;
+                    delete_rebase_file(&git_dir).map_err(|e| {
+                        internal(format!(
+                            "{} was pushed, but its rebase record could not be deleted: {e}",
+                            file.branch
+                        ))
+                    })?;
+                }
+                let _ = self
+                    .sync_phase_tx
+                    .send("Updating editor binaries".to_string());
+                let post = run_post(&self.post, Some(file.engine_association.clone())).await;
+                (RebaseFinishOutcome::Pushed, post.err())
+            }
+            PushOutcome::LeaseRejected => {
+                let remote_sha = fetched_branch_tip(git, &file.branch).await;
+                record_push_failed(&git_dir, &file, remote_sha).await?;
+                (RebaseFinishOutcome::LeaseRejected, None)
+            }
+            PushOutcome::Rejected(summary) => {
+                return Err(input(format!("GitHub rejected the push: {summary}")));
+            }
+            PushOutcome::NoRefLine => return Err(internal(push.failure())),
+        };
+
+        let state = match self.state_after(&repo_path, &engine_path).await {
+            Ok(state) => state,
+            // The push and the record's deletion are done; the page re-reads the state.
+            Err(e) if outcome == RebaseFinishOutcome::Pushed => {
+                error!("Could not read the rebase state after pushing: {e}");
+                RebaseState::default()
+            }
+            Err(e) => return Err(e),
+        };
+        *self.result.lock() = Some(RebaseFinishResponse {
+            outcome,
+            state,
+            dropped_commits,
+            touches_cpp: file.touches_cpp,
+            post_step_error,
+        });
+        Ok(())
     }
 
     fn get_name(&self) -> String {
@@ -1233,6 +1546,9 @@ pub struct RebaseRedoOp<T> {
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
     pub sync_phase_tx: std::sync::mpsc::Sender<String>,
+    pub trunk: String,
+    pub github_username: String,
+    pub(crate) post: Result<PostHeadChangeCtx<T>, String>,
 }
 
 #[async_trait]
@@ -1241,8 +1557,89 @@ where
     T: EngineProvider,
 {
     async fn execute(&self) -> Result<(), CoreError> {
-        // TODO: Implement in Stage 013
-        Err(not_implemented())
+        let _op = REBASE_OP_LOCK.lock().await;
+        let git = &self.git_client;
+        let repo_path = repo_path_of(&self.app_config);
+        let git_dir = resolve_git_dir(&repo_path);
+
+        // Every refusal comes before anything moves.
+        editor_check(&self.engine).await?;
+        index_lock_check(&git_dir)?;
+        let derived = derive(git, &repo_path).await?;
+        let file = match (derived.kind, derived.file) {
+            (RebaseStateKind::PushFailed, Some(file)) => file,
+            _ => return Err(input(REDO_ONLY_AFTER_PUSH_FAILED)),
+        };
+        ensure_clean_tree(git).await?;
+        if !is_valid_branch_name(&self.trunk) {
+            return Err(input(NO_TRUNK));
+        }
+
+        let _ = self.sync_phase_tx.send("Fetching latest".to_string());
+        if !fetch_origin(git, Some(&self.trunk), &file.branch).await? {
+            return Err(input(format!(
+                "{} no longer exists on origin. Use Reset to backup.",
+                file.branch
+            )));
+        }
+        let origin_sha = required_sha(git, &format!("refs/remotes/origin/{}", file.branch)).await?;
+        // Resetting to origin must never drop the commits the rebase started from.
+        if !is_ancestor(git, &file.pre_rebase_origin_sha, &origin_sha).await? {
+            return Err(input(format!(
+                "{} was rewritten on origin. Use Reset to backup.",
+                file.branch
+            )));
+        }
+        if file
+            .push_failed_remote_sha
+            .as_deref()
+            .is_some_and(|seen| seen != origin_sha)
+        {
+            record_push_failed(&git_dir, &file, Some(origin_sha)).await?;
+            return Err(input(format!(
+                "{} changed on origin again. Review it and try again.",
+                file.branch
+            )));
+        }
+        let head = required_sha(git, "HEAD").await?;
+        backup_rebased_head(git, &file.branch, &head).await?;
+        // A crash before the record is deleted derives as pushed outside: Dismiss leaves the
+        // branch at origin's version, as a finished Redo would. Deleting the record first would
+        // instead leave the unpushed rebase unguarded.
+        reset_keep(git, &repo_path, &origin_sha).await?;
+        {
+            let _lock = REBASE_FILE_LOCK.lock().await;
+            delete_rebase_file(&git_dir)?;
+        }
+
+        let start = RebaseStartOp {
+            git_client: git.clone(),
+            engine: self.engine.clone(),
+            app_config: self.app_config.clone(),
+            repo_config: self.repo_config.clone(),
+            repo_status: self.repo_status.clone(),
+            sync_phase_tx: self.sync_phase_tx.clone(),
+            trunk: self.trunk.clone(),
+            github_username: self.github_username.clone(),
+        };
+        let started = start.start_rebase_inner(Some(&file)).await;
+        let Err(e) = started else {
+            return Ok(());
+        };
+        // Without a new record HEAD stays at origin's branch, so the post steps run now.
+        if !matches!(read_rebase_file(&git_dir), RebaseFileRead::Missing) {
+            return Err(e);
+        }
+        match run_post(&self.post, Some(file.engine_association.clone())).await {
+            Ok(()) => Err(e),
+            Err(post_e) => {
+                let msg = format!("{e} {}", post_failure_note(&file.branch, &post_e));
+                Err(match e {
+                    CoreError::Input(_) => input(msg),
+                    _ => internal(msg),
+                })
+            }
+        }
     }
 
     fn get_name(&self) -> String {
@@ -1258,6 +1655,7 @@ pub struct RebaseResetToBackupOp<T> {
     pub repo_config: RepoConfigRef,
     pub repo_status: RepoStatusRef,
     pub sync_phase_tx: std::sync::mpsc::Sender<String>,
+    pub(crate) post: Result<PostHeadChangeCtx<T>, String>,
 }
 
 #[async_trait]
@@ -1266,8 +1664,36 @@ where
     T: EngineProvider,
 {
     async fn execute(&self) -> Result<(), CoreError> {
-        // TODO: Implement in Stage 013
-        Err(not_implemented())
+        let _op = REBASE_OP_LOCK.lock().await;
+        let _ = self.sync_phase_tx.send("Resetting to backup".to_string());
+        let git = &self.git_client;
+        let repo_path = repo_path_of(&self.app_config);
+        let git_dir = resolve_git_dir(&repo_path);
+
+        editor_check(&self.engine).await?;
+        index_lock_check(&git_dir)?;
+        let derived = derive(git, &repo_path).await?;
+        let file = match (derived.kind, derived.file) {
+            (RebaseStateKind::CompletedUnpushed | RebaseStateKind::PushFailed, Some(file)) => file,
+            _ => return Err(input(RESET_ONLY_AFTER_REPLAY)),
+        };
+        if rev_parse(git, &file.backup_ref).await?.as_deref() != Some(file.backup_sha.as_str()) {
+            return Err(internal(format!(
+                "The backup {} is missing or moved; nothing was changed.",
+                file.backup_ref
+            )));
+        }
+
+        let head = required_sha(git, "HEAD").await?;
+        backup_rebased_head(git, &file.branch, &head).await?;
+        reset_keep(git, &repo_path, &file.backup_sha).await?;
+        {
+            let _lock = REBASE_FILE_LOCK.lock().await;
+            delete_rebase_file(&git_dir)?;
+        }
+        run_post(&self.post, Some(file.engine_association.clone()))
+            .await
+            .map_err(|e| input(post_failure_note(&file.branch, &e)))
     }
 
     fn get_name(&self) -> String {
@@ -1292,8 +1718,90 @@ where
     T: EngineProvider,
 {
     async fn execute(&self) -> Result<(), CoreError> {
-        // TODO: Implement in Stage 013
-        Err(not_implemented())
+        let _op = REBASE_OP_LOCK.lock().await;
+        let git = &self.git_client;
+        let repo_path = repo_path_of(&self.app_config);
+        let git_dir = resolve_git_dir(&repo_path);
+
+        // The guard itself refuses while REBASE_OP_LOCK is held, as it is here.
+        if let Some(sentence) = guard_sentence(derive(git, &repo_path).await?.kind) {
+            return Err(input(sentence));
+        }
+        index_lock_check(&git_dir)?;
+        // A commit now would conclude the merge, cherry-pick, revert or rebase in progress.
+        if rebase_dir_exists(&git_dir)
+            || ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]
+                .iter()
+                .any(|name| git_dir.join(name).exists())
+        {
+            return Err(input(OPERATION_IN_PROGRESS));
+        }
+        let branch = feature_branch(git, &self.repo_config).await?;
+        // `commit --allow-empty` would commit anything staged.
+        if read_git(git, &["diff", "--cached", "--quiet", "HEAD", "--"])
+            .await?
+            .exit_code
+            != 0
+        {
+            return Err(input(UNSTAGE_FIRST));
+        }
+
+        let _ = self.sync_phase_tx.send("Fetching latest".to_string());
+        let origin_sha = match fetch_origin(git, None, &branch).await? {
+            true => rev_parse(git, &format!("refs/remotes/origin/{branch}")).await?,
+            false => None,
+        };
+        let head = required_sha(git, "HEAD").await?;
+        if origin_sha.as_deref() != Some(head.as_str()) {
+            return Err(input(SYNC_FIRST));
+        }
+
+        git.run(
+            &["commit", "--allow-empty", "-m", EDITOR_BUILD_MESSAGE],
+            git::Opts::new_with_complete_error(),
+        )
+        .await?;
+        let new = required_sha(git, "HEAD").await?;
+        let tree = rev_parse(git, &format!("{new}^{{tree}}")).await?;
+        let head_tree = rev_parse(git, &format!("{head}^{{tree}}")).await?;
+        if tree != head_tree {
+            // A hook changed the files; the commit stays local for the user to inspect.
+            return Err(internal(format!(
+                "The editor build commit {new} is not an empty commit on {branch}, so it was not pushed."
+            )));
+        }
+        if commit_parents(git, &new).await? != [head.as_str()] {
+            undo_editor_build_commit(git, &repo_path, &branch, &new, &head).await?;
+            return Err(internal(format!(
+                "The editor build commit was not a plain commit on {branch}; it was undone and not pushed."
+            )));
+        }
+
+        let _ = self
+            .sync_phase_tx
+            .send("Pushing editor build commit".to_string());
+        let push = leased_push(git, &branch, &new, &head).await;
+        if let Ok(PushResult {
+            outcome: PushOutcome::Pushed,
+            ..
+        }) = &push
+        {
+            *self.result.lock() = Some(commit_info(git, &new).await?);
+            return Ok(());
+        }
+
+        undo_editor_build_commit(git, &repo_path, &branch, &new, &head).await?;
+        let push = push?;
+        Err(match push.outcome {
+            PushOutcome::NoRefLine => internal(push.failure()),
+            // Origin itself refuses a push that lost a race with a collaborator.
+            PushOutcome::Rejected(summary)
+                if fetched_branch_tip(git, &branch).await.as_deref() == Some(head.as_str()) =>
+            {
+                input(format!("GitHub rejected the push: {summary}"))
+            }
+            _ => input(NEW_COMMITS_ON_ORIGIN),
+        })
     }
 
     fn get_name(&self) -> String {
@@ -1572,46 +2080,98 @@ where
 
 #[instrument(skip_all)]
 pub async fn guided_rebase_finish_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseFinishResponse>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 013
-    Err(not_implemented())
+    let aws = require_aws_and_storage(&state).await;
+    let result = Arc::new(parking_lot::Mutex::new(None));
+    let op = RebaseFinishOp {
+        git_client: state.git(),
+        engine: state.engine.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        repo_status: state.repo_status.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
+        post: post_ctx(&state, aws),
+        result: result.clone(),
+    };
+    run_sequence(&state, Box::new(op)).await?;
+    let response = result
+        .lock()
+        .take()
+        .ok_or_else(|| internal("The push finished without a result."))?;
+    Ok(Json(response))
 }
 
 #[instrument(skip_all)]
 pub async fn guided_rebase_redo_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseState>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 013
-    Err(not_implemented())
+    let aws = require_aws_and_storage(&state).await;
+    let op = RebaseRedoOp {
+        git_client: state.git(),
+        engine: state.engine.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        repo_status: state.repo_status.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
+        trunk: state.repo_config.read().trunk_branch.clone(),
+        github_username: state.github_username(),
+        post: post_ctx(&state, aws),
+    };
+    run_sequence(&state, Box::new(op)).await?;
+    Ok(Json(current_rebase_state(&state, false).await?))
 }
 
 #[instrument(skip_all)]
 pub async fn guided_rebase_reset_to_backup_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseState>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 013
-    Err(not_implemented())
+    let aws = require_aws_and_storage(&state).await;
+    let op = RebaseResetToBackupOp {
+        git_client: state.git(),
+        engine: state.engine.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        repo_status: state.repo_status.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
+        post: post_ctx(&state, aws),
+    };
+    run_sequence(&state, Box::new(op)).await?;
+    Ok(Json(current_rebase_state(&state, false).await?))
 }
 
 #[instrument(skip_all)]
 pub async fn editor_rebuild_handler<T>(
-    State(_state): State<AppState<T>>,
+    State(state): State<AppState<T>>,
 ) -> Result<Json<RebaseCommitInfo>, CoreError>
 where
     T: EngineProvider,
 {
-    // TODO: Implement in Stage 013
-    Err(not_implemented())
+    let result = Arc::new(parking_lot::Mutex::new(None));
+    let op = EditorRebuildOp {
+        git_client: state.git(),
+        engine: state.engine.clone(),
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+        repo_status: state.repo_status.clone(),
+        sync_phase_tx: state.sync_phase_tx.clone(),
+        result: result.clone(),
+    };
+    run_sequence(&state, Box::new(op)).await?;
+    let commit = result
+        .lock()
+        .take()
+        .ok_or_else(|| internal("The editor build finished without a result."))?;
+    Ok(Json(commit))
 }
 
 #[cfg(test)]
@@ -1623,7 +2183,9 @@ mod tests {
 
     use super::*;
     use crate::engine::UnrealEngineProvider;
-    use crate::repo::operations::branch::rebase_guard::GUARD_IN_PROGRESS;
+    use crate::repo::operations::branch::rebase_guard::{
+        GUARD_COMPLETED_UNPUSHED, GUARD_IN_PROGRESS,
+    };
     use crate::repo::operations::branch::rebase_state::tests::{
         conflict, diverge_on_a_txt, engine, guided_stop_on_a_txt, info, new_git, original,
         sample_file_for, slash_path, Change, Diverged, Fixture, BRANCH,
@@ -1747,7 +2309,7 @@ mod tests {
         }
     }
 
-    fn internal_message(result: Result<(), CoreError>) -> String {
+    fn internal_message<V: std::fmt::Debug>(result: Result<V, CoreError>) -> String {
         match result {
             Err(CoreError::Internal(e)) => e.to_string(),
             other => panic!("expected Internal error, got {other:?}"),
@@ -1801,6 +2363,22 @@ mod tests {
         )
         .await
         .expect("clone");
+        assert_eq!(
+            git.run_and_collect_output(&["remote", "get-url", "origin"], opts)
+                .await
+                .expect("remote url")
+                .trim(),
+            slash_path(fx.origin_path()),
+            "the collaborator's origin must be the test's temp origin"
+        );
+        assert_eq!(
+            git.run_and_collect_output(&["remote", "get-url", "--push", "origin"], opts)
+                .await
+                .expect("push url")
+                .trim(),
+            slash_path(fx.origin_path()),
+            "the collaborator pushes only to the test's temp origin"
+        );
         let hooks = slash_path(fx.hooks_path());
         for (key, value) in [
             ("user.email", "collab@example.com"),
@@ -4204,5 +4782,1054 @@ mod tests {
             OP_RUNNING
         );
         assert!(json_path(&fx.git_dir()).exists());
+    }
+
+    // Finish
+
+    const POST_ERROR: &str = "test";
+
+    fn finish_op(fx: &Fixture) -> (RebaseFinishOp<UnrealEngineProvider>, mpsc::Receiver<String>) {
+        let refs = refs(fx);
+        let (sync_phase_tx, phases) = mpsc::channel();
+        let op = RebaseFinishOp {
+            git_client: fx.git.clone(),
+            engine: refs.engine,
+            app_config: refs.app_config,
+            repo_config: refs.repo_config,
+            repo_status: refs.repo_status,
+            sync_phase_tx,
+            post: Err(POST_ERROR.to_string()),
+            result: Arc::new(parking_lot::Mutex::new(None)),
+        };
+        (op, phases)
+    }
+
+    async fn finish(fx: &Fixture) -> Result<RebaseFinishResponse, CoreError> {
+        let (op, _) = finish_op(fx);
+        op.execute().await?;
+        let response = op.result.lock().take().expect("finish response");
+        Ok(response)
+    }
+
+    /// Origin's `<branch>`, read in the bare origin itself.
+    async fn origin_tip(fx: &Fixture, branch: &str) -> Option<String> {
+        let refname = format!("refs/heads/{branch}");
+        let output = new_git(fx.origin_path())
+            .run_with_status(
+                &["rev-parse", "-q", "--verify", &refname],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("rev-parse in origin");
+        (output.exit_code == 0).then(|| output.stdout.trim().to_string())
+    }
+
+    async fn origin_subject(fx: &Fixture, rev: &str) -> String {
+        new_git(fx.origin_path())
+            .run_and_collect_output(
+                &["log", "-1", "--format=%s", rev],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("log in origin")
+            .trim()
+            .to_string()
+    }
+
+    /// A rebase of `diverge_clean` that replayed and waits to be pushed.
+    async fn completed_clean(fx: &Fixture) -> Diverged {
+        let d = diverge_clean(fx).await;
+        start(fx).await.expect("start");
+        assert_eq!(state(fx).await.state, RebaseStateKind::CompletedUnpushed);
+        d
+    }
+
+    /// A collaborator pushes `path` to the branch, then Finish's lease is rejected; returns
+    /// the collaborator's commit.
+    async fn reject_push(fx: &Fixture, path: &str) -> String {
+        collaborator_push(fx, BRANCH, path).await;
+        let collab = origin_tip(fx, BRANCH).await.expect("collaborator commit");
+        let response = finish(fx).await.expect("finish");
+        assert_eq!(response.outcome, RebaseFinishOutcome::LeaseRejected);
+        collab
+    }
+
+    /// The `-rebased` backup refs.
+    async fn rebased_backups(fx: &Fixture) -> Vec<String> {
+        backup_refs(fx)
+            .await
+            .into_iter()
+            .filter(|refname| refname.ends_with("-rebased"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn finish_pushes_the_rebased_branch() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        let head = fx.head().await;
+        let (op, phases) = finish_op(&fx);
+        op.execute().await.expect("finish");
+        let response = op.result.lock().take().expect("finish response");
+
+        assert_eq!(
+            response,
+            RebaseFinishResponse {
+                outcome: RebaseFinishOutcome::Pushed,
+                state: RebaseState::default(),
+                dropped_commits: vec![],
+                touches_cpp: false,
+                post_step_error: Some(POST_ERROR.to_string()),
+            }
+        );
+        assert_eq!(
+            origin_tip(&fx, BRANCH).await.as_deref(),
+            Some(head.as_str())
+        );
+        assert_eq!(fx.sha(&format!("refs/remotes/origin/{BRANCH}")).await, head);
+        assert_eq!(fx.head().await, head);
+        assert!(!json_path(&fx.git_dir()).exists());
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert_eq!(
+            phases.try_iter().collect::<Vec<_>>(),
+            ["Pushing rebased branch", "Updating editor binaries"]
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_reports_the_dropped_commits() {
+        let fx = Fixture::new().await;
+        fx.branch(BRANCH).await;
+        let shared = fx.commit_file("s.txt", b"shared\n", "shared change").await;
+        fx.commit_file("b.txt", b"b\n", "own change").await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        fx.commit_file("m.txt", b"main\n", "main change").await;
+        fx.run(&["cherry-pick", &shared]).await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+        start(&fx).await.expect("start");
+        let before = state(&fx).await.dropped_commits;
+        assert_eq!(before, vec![dropped(&shared, "shared change")]);
+
+        let response = finish(&fx).await.expect("finish");
+        assert_eq!(response.outcome, RebaseFinishOutcome::Pushed);
+        assert_eq!(response.dropped_commits, before);
+    }
+
+    #[tokio::test]
+    async fn finish_pushes_a_ci_tagged_tip_unchanged() {
+        let fx = Fixture::new().await;
+        diverge_clean(&fx).await;
+        fx.commit_file("t.txt", b"t\n", "[ci:editor] tagged tip")
+            .await;
+        fx.push(BRANCH).await;
+        start(&fx).await.expect("start");
+
+        finish(&fx).await.expect("finish");
+        assert_eq!(
+            origin_subject(&fx, &format!("refs/heads/{BRANCH}")).await,
+            "[ci:editor] tagged tip"
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_after_an_earlier_push_is_up_to_date() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        let head = fx.head().await;
+        // A crash right after a push: origin has the rebased branch, the record remains and the
+        // tracking ref was not updated.
+        let refspec = format!("+{head}:refs/heads/{BRANCH}");
+        fx.run(&["push", "-q", "origin", &refspec]).await;
+        let tracking = format!("refs/remotes/origin/{BRANCH}");
+        fx.run(&["update-ref", &tracking, &file.backup_sha]).await;
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+
+        let response = finish(&fx).await.expect("finish");
+        assert_eq!(response.outcome, RebaseFinishOutcome::Pushed);
+        assert_eq!(
+            origin_tip(&fx, BRANCH).await.as_deref(),
+            Some(head.as_str())
+        );
+        assert!(!json_path(&fx.git_dir()).exists());
+    }
+
+    #[tokio::test]
+    async fn finish_lease_rejected_keeps_the_collaborators_commit() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        let head = fx.head().await;
+        collaborator_push(&fx, BRANCH, "c.txt").await;
+        let collab = origin_tip(&fx, BRANCH).await.expect("collaborator commit");
+
+        let response = finish(&fx).await.expect("lease rejection is not an error");
+        let expected_state = RebaseState {
+            state: RebaseStateKind::PushFailed,
+            push_failed_remote_sha: Some(collab.clone()),
+            ..completed(&file, vec![])
+        };
+        assert_eq!(
+            response,
+            RebaseFinishResponse {
+                outcome: RebaseFinishOutcome::LeaseRejected,
+                state: expected_state.clone(),
+                dropped_commits: vec![],
+                touches_cpp: false,
+                post_step_error: None,
+            }
+        );
+        assert_eq!(
+            record(&fx),
+            GuidedRebaseFile {
+                phase: GuidedRebasePhase::PushFailed,
+                push_failed_remote_sha: Some(collab.clone()),
+                ..file
+            }
+        );
+        assert_eq!(origin_tip(&fx, BRANCH).await, Some(collab));
+        assert_eq!(fx.head().await, head);
+        assert_eq!(state(&fx).await, expected_state);
+    }
+
+    #[tokio::test]
+    async fn finish_does_not_recreate_a_branch_deleted_on_origin() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        let (_dir, collab) = collaborator(&fx).await;
+        let delete = format!(":refs/heads/{BRANCH}");
+        collab
+            .run(
+                &["push", "-q", "origin", &delete],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("delete on origin");
+
+        let response = finish(&fx).await.expect("lease rejection is not an error");
+        assert_eq!(response.outcome, RebaseFinishOutcome::LeaseRejected);
+        assert_eq!(response.state.state, RebaseStateKind::PushFailed);
+        assert_eq!(response.state.push_failed_remote_sha, None);
+        assert_eq!(record(&fx).phase, GuidedRebasePhase::PushFailed);
+        assert_eq!(record(&fx).push_failed_remote_sha, None);
+        assert_eq!(origin_tip(&fx, BRANCH).await, None);
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+    }
+
+    /// A `pre-receive` hook in the temp origin that refuses every push.
+    async fn refuse_pushes_on_origin(fx: &Fixture) {
+        let origin_hooks = fx.origin_path().join("hooks");
+        fs::create_dir_all(&origin_hooks).unwrap();
+        fs::write(
+            origin_hooks.join("pre-receive"),
+            "#!/bin/sh\necho 'protected branch hook declined' >&2\nexit 1\n",
+        )
+        .unwrap();
+        new_git(fx.origin_path())
+            .run(
+                &["config", "core.hooksPath", &slash_path(&origin_hooks)],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("config");
+    }
+
+    #[tokio::test]
+    async fn finish_rejected_by_origin_keeps_the_record() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        refuse_pushes_on_origin(&fx).await;
+        let before = capture(&fx).await;
+
+        let message = input_message(finish(&fx).await);
+        assert!(
+            message.starts_with("GitHub rejected the push: [remote rejected]"),
+            "{message}"
+        );
+        assert_eq!(capture(&fx).await, before);
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+    }
+
+    #[tokio::test]
+    async fn finish_network_failure_keeps_the_record() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let url = fx.out(&["remote", "get-url", "origin"]).await;
+        let missing = slash_path(&fx.path().join("missing.git"));
+        fx.run(&["remote", "set-url", "origin", &missing]).await;
+        let before = capture(&fx).await;
+
+        let message = internal_message(finish(&fx).await);
+        assert!(message.starts_with("Push failed:"), "{message}");
+        assert_eq!(capture(&fx).await, before);
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+
+        fx.run(&["remote", "set-url", "origin", &url]).await;
+        assert_eq!(
+            finish(&fx).await.expect("finish").outcome,
+            RebaseFinishOutcome::Pushed
+        );
+    }
+
+    /// Finish is refused and changes nothing, origin included.
+    async fn assert_finish_refused(fx: &Fixture) {
+        let before = capture(fx).await;
+        assert_eq!(input_message(finish(fx).await), NOTHING_TO_PUSH);
+        assert_eq!(capture(fx).await, before);
+    }
+
+    #[tokio::test]
+    async fn finish_refused_unless_completed_unpushed() {
+        let fx = Fixture::new().await;
+        assert_finish_refused(&fx).await;
+
+        stop_content(&fx).await;
+        assert_finish_refused(&fx).await;
+
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        reject_push(&fx, "c.txt").await;
+        assert_finish_refused(&fx).await;
+    }
+
+    /// The pushes git ran, as reported on the command channel.
+    fn pushes(commands: &mpsc::Receiver<String>) -> Vec<String> {
+        commands
+            .try_iter()
+            .filter(|command| command.starts_with("Running 'git push"))
+            .collect()
+    }
+
+    /// Every push names the branch's exact expected sha and never forces without a lease.
+    fn assert_leased(pushes: &[String]) {
+        assert!(!pushes.is_empty());
+        let lease = format!("--force-with-lease=refs/heads/{BRANCH}:");
+        for push in pushes {
+            let args: Vec<&str> = push.trim_end_matches('\'').split(' ').collect();
+            let leases: Vec<&str> = args
+                .iter()
+                .filter_map(|arg| arg.strip_prefix(&lease))
+                .collect();
+            assert_eq!(leases.len(), 1, "{push}");
+            assert!(is_full_sha(leases[0]), "{push}");
+            assert!(args.contains(&"--porcelain"), "{push}");
+            assert!(
+                !args
+                    .iter()
+                    .any(|arg| *arg == "--force" || *arg == "-f" || arg.starts_with('+')),
+                "{push}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn every_push_has_an_explicit_lease() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let (tx, commands) = mpsc::channel();
+        let (mut op, _) = finish_op(&fx);
+        op.git_client = git::Git::new(fx.path().to_path_buf(), tx.clone());
+        op.execute().await.expect("finish");
+        let finish_pushes = pushes(&commands);
+        assert_eq!(finish_pushes.len(), 1);
+        assert_leased(&finish_pushes);
+
+        let (mut op, _) = rebuild_op(&fx);
+        op.git_client = git::Git::new(fx.path().to_path_buf(), tx);
+        op.execute().await.expect("rebuild");
+        let rebuild_pushes = pushes(&commands);
+        assert_eq!(rebuild_pushes.len(), 1);
+        assert_leased(&rebuild_pushes);
+    }
+
+    // Redo
+
+    fn redo_op(fx: &Fixture) -> RebaseRedoOp<UnrealEngineProvider> {
+        let refs = refs(fx);
+        RebaseRedoOp {
+            git_client: fx.git.clone(),
+            engine: refs.engine,
+            app_config: refs.app_config,
+            repo_config: refs.repo_config,
+            repo_status: refs.repo_status,
+            sync_phase_tx: mpsc::channel().0,
+            trunk: "main".to_string(),
+            github_username: "test_user".to_string(),
+            post: Err(POST_ERROR.to_string()),
+        }
+    }
+
+    async fn redo(fx: &Fixture) -> Result<(), CoreError> {
+        redo_op(fx).execute().await
+    }
+
+    #[tokio::test]
+    async fn redo_rebases_origins_branch_onto_latest_main() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let old = record(&fx);
+        let rebased = fx.head().await;
+        let collab = reject_push(&fx, "c.txt").await;
+        collaborator_push(&fx, "main", "m2.txt").await;
+        let latest_main = origin_tip(&fx, "main").await.expect("main");
+
+        redo(&fx).await.expect("redo");
+        let new = record(&fx);
+        assert_eq!(rebased_backups(&fx).await.len(), 1);
+        assert_eq!(fx.sha(&rebased_backups(&fx).await[0]).await, rebased);
+        assert_eq!(fx.sha(&old.backup_ref).await, old.backup_sha);
+        assert_ne!(new.backup_ref, old.backup_ref);
+        assert_eq!(fx.sha(&new.backup_ref).await, collab);
+        assert_eq!(new.backup_sha, collab);
+        assert_eq!(new.pre_rebase_origin_sha, collab);
+        assert_eq!(new.onto, latest_main);
+        assert_eq!(new.phase, GuidedRebasePhase::Rebasing);
+        assert_eq!(new.push_failed_remote_sha, None);
+        assert_eq!(state(&fx).await, completed(&new, vec![]));
+        assert_eq!(
+            fx.out(&["log", "--format=%s", &format!("{latest_main}..HEAD")])
+                .await,
+            "collab commit\nbranch change"
+        );
+
+        let response = finish(&fx).await.expect("finish");
+        assert_eq!(response.outcome, RebaseFinishOutcome::Pushed);
+        let tip = origin_tip(&fx, BRANCH).await.expect("branch on origin");
+        assert_eq!(tip, fx.head().await);
+        assert!(is_ancestor(&fx.git, &latest_main, &tip).await.unwrap());
+        assert_eq!(read(&fx, "c.txt").as_deref(), Some(&b"collab\n"[..]));
+    }
+
+    #[tokio::test]
+    async fn redo_stops_on_a_conflicting_collaborator_change() {
+        let fx = Fixture::new().await;
+        let d = fx
+            .diverge(
+                &[Change::Write("a.txt", b"base\n")],
+                &[Change::Write("a.txt", b"main\n")],
+                &[Change::Write("b.txt", b"branch\n")],
+            )
+            .await;
+        start(&fx).await.expect("start");
+        let collab = reject_push(&fx, "a.txt").await;
+
+        redo(&fx).await.expect("redo");
+        let new = record(&fx);
+        assert_eq!(new.backup_sha, collab);
+        let state = state(&fx).await;
+        assert_eq!(state.state, RebaseStateKind::InProgress);
+        assert_eq!(
+            state.current_commit.map(|c| (c.sha, c.subject)),
+            Some((collab, "collab commit".to_string()))
+        );
+        assert_eq!(
+            state
+                .conflicts
+                .iter()
+                .map(|c| c.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a.txt"]
+        );
+        assert_eq!(new.onto, d.main);
+    }
+
+    #[tokio::test]
+    async fn redo_refused_with_local_changes_moves_nothing() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        reject_push(&fx, "c.txt").await;
+        fx.write("seed.txt", b"edited\n");
+        let before = capture(&fx).await;
+
+        assert_eq!(input_message(redo(&fx).await), DIRTY_TREE);
+        assert_eq!(capture(&fx).await, before);
+        assert!(rebased_backups(&fx).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn redo_refused_when_the_branch_was_deleted_on_origin() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let (_dir, collab) = collaborator(&fx).await;
+        let delete = format!(":refs/heads/{BRANCH}");
+        collab
+            .run(
+                &["push", "-q", "origin", &delete],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("delete on origin");
+        finish(&fx).await.expect("finish");
+        let before = capture(&fx).await;
+
+        assert_eq!(
+            input_message(redo(&fx).await),
+            format!("{BRANCH} no longer exists on origin. Use Reset to backup.")
+        );
+        let after = capture(&fx).await;
+        assert_eq!(
+            Snapshot {
+                tracking_refs: before.tracking_refs.clone(),
+                ..after
+            },
+            before
+        );
+        assert!(rebased_backups(&fx).await.is_empty());
+    }
+
+    /// A clone of origin's `BRANCH` in the collaborator's clone.
+    async fn collaborator_on_branch(fx: &Fixture) -> (tempfile::TempDir, git::Git) {
+        let (dir, collab) = collaborator(fx).await;
+        let tracking = format!("refs/remotes/origin/{BRANCH}");
+        collab
+            .run(
+                &["checkout", "-q", "-B", BRANCH, &tracking],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("checkout");
+        (dir, collab)
+    }
+
+    /// Redo is refused with `expected` and moves nothing; only tracking refs may change.
+    async fn assert_redo_refused_after_fetch(fx: &Fixture, expected: &str) {
+        let before = capture(fx).await;
+        assert_eq!(input_message(redo(fx).await), expected);
+        let after = capture(fx).await;
+        assert_eq!(
+            Snapshot {
+                tracking_refs: before.tracking_refs.clone(),
+                ..after
+            },
+            before
+        );
+        assert!(rebased_backups(fx).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn redo_reports_a_start_gate_after_the_reset() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let rebased = fx.head().await;
+        // The collaborator merges main into origin's branch, so it contains the latest main.
+        let (_dir, collab) = collaborator_on_branch(&fx).await;
+        let opts = git::Opts::new_without_logs();
+        collab
+            .run(
+                &["merge", "-q", "--no-edit", "refs/remotes/origin/main"],
+                opts,
+            )
+            .await
+            .expect("merge");
+        let refspec = format!("HEAD:refs/heads/{BRANCH}");
+        collab
+            .run(&["push", "-q", "origin", &refspec], opts)
+            .await
+            .expect("push");
+        let origin = origin_tip(&fx, BRANCH).await.expect("branch on origin");
+        assert_eq!(
+            finish(&fx).await.expect("finish").outcome,
+            RebaseFinishOutcome::LeaseRejected
+        );
+
+        assert_eq!(
+            input_message(redo(&fx).await),
+            format!(
+                "{BRANCH} already contains the latest main. {BRANCH} was reset, but updating editor binaries or engine failed: test."
+            )
+        );
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert_eq!(fx.head().await, origin);
+        assert_eq!(
+            fx.out(&["symbolic-ref", "-q", "HEAD"]).await,
+            format!("refs/heads/{BRANCH}")
+        );
+        assert!(!json_path(&fx.git_dir()).exists());
+        assert_eq!(fx.sha(&rebased_backups(&fx).await[0]).await, rebased);
+    }
+
+    #[tokio::test]
+    async fn redo_refused_when_origin_rebased_the_branch() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        // The collaborator rebases origin's branch onto main themselves and force-pushes it.
+        let (_dir, collab) = collaborator_on_branch(&fx).await;
+        let opts = git::Opts::new_without_logs();
+        collab
+            .run(&["rebase", "-q", "refs/remotes/origin/main"], opts)
+            .await
+            .expect("rebase");
+        let refspec = format!("+HEAD:refs/heads/{BRANCH}");
+        collab
+            .run(&["push", "-q", "origin", &refspec], opts)
+            .await
+            .expect("push");
+        finish(&fx).await.expect("finish");
+        assert_eq!(state(&fx).await.state, RebaseStateKind::PushFailed);
+
+        assert_redo_refused_after_fetch(
+            &fx,
+            &format!("{BRANCH} was rewritten on origin. Use Reset to backup."),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn redo_refused_when_origin_recreated_the_branch_from_main() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let (_dir, collab) = collaborator(&fx).await;
+        let opts = git::Opts::new_without_logs();
+        let delete = format!(":refs/heads/{BRANCH}");
+        collab
+            .run(&["push", "-q", "origin", &delete], opts)
+            .await
+            .expect("delete on origin");
+        finish(&fx).await.expect("finish");
+        let recreate = format!("refs/remotes/origin/main:refs/heads/{BRANCH}");
+        collab
+            .run(&["push", "-q", "origin", &recreate], opts)
+            .await
+            .expect("recreate on origin");
+
+        assert_redo_refused_after_fetch(
+            &fx,
+            &format!("{BRANCH} was rewritten on origin. Use Reset to backup."),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn redo_refused_when_origin_moved_again() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let rebased = fx.head().await;
+        let seen = reject_push(&fx, "c.txt").await;
+        assert_eq!(state(&fx).await.push_failed_remote_sha, Some(seen.clone()));
+        collaborator_push(&fx, BRANCH, "d.txt").await;
+        let moved = origin_tip(&fx, BRANCH).await.expect("branch on origin");
+        let json_before = fx.json_bytes();
+
+        let message = input_message(redo(&fx).await);
+        assert_eq!(
+            message,
+            format!("{BRANCH} changed on origin again. Review it and try again.")
+        );
+        assert_ne!(fx.json_bytes(), json_before);
+        let state = state(&fx).await;
+        assert_eq!(state.state, RebaseStateKind::PushFailed);
+        assert_eq!(state.push_failed_remote_sha, Some(moved.clone()));
+        assert_eq!(fx.head().await, rebased);
+        assert!(rebased_backups(&fx).await.is_empty());
+
+        // Once seen, the same origin can be redone onto.
+        redo(&fx).await.expect("redo");
+        assert_eq!(record(&fx).backup_sha, moved);
+    }
+
+    #[tokio::test]
+    async fn redo_keeps_an_old_original_backup() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        let old = unix_now() - 15 * DAY;
+        let old_backup = format!("refs/f11r-backup/{BRANCH}/{old}");
+        let unrecorded = format!("refs/f11r-backup/{BRANCH}/{}", old - 1);
+        fx.run(&["update-ref", &old_backup, &file.backup_sha]).await;
+        fx.run(&["update-ref", &unrecorded, &file.backup_sha]).await;
+        fx.write_file_json(&GuidedRebaseFile {
+            backup_ref: old_backup.clone(),
+            ..file.clone()
+        });
+        reject_push(&fx, "c.txt").await;
+
+        redo(&fx).await.expect("redo");
+        assert_eq!(fx.sha(&old_backup).await, file.backup_sha);
+        assert!(!backup_refs(&fx).await.contains(&unrecorded));
+    }
+
+    #[tokio::test]
+    async fn redo_interrupted_after_the_reset_is_dismissable() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        let collab = reject_push(&fx, "c.txt").await;
+        // Redo's reset ran, then the app died before deleting the record.
+        fx.run(&["reset", "-q", "--keep", &collab]).await;
+
+        let derived = fx.derive().await;
+        assert_eq!(
+            (derived.kind, derived.stale_reason),
+            (
+                RebaseStateKind::Stale,
+                Some(RebaseStaleReason::PushedOutside)
+            )
+        );
+        dismiss_stale(&fx.git, fx.path(), &tokio::sync::Mutex::new(()))
+            .await
+            .expect("dismiss");
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert_eq!(fx.head().await, collab);
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+    }
+
+    #[tokio::test]
+    async fn redo_refused_unless_push_failed() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let before = capture(&fx).await;
+        assert_eq!(input_message(redo(&fx).await), REDO_ONLY_AFTER_PUSH_FAILED);
+        assert_eq!(capture(&fx).await, before);
+    }
+
+    // Reset to backup
+
+    fn reset_op(fx: &Fixture) -> RebaseResetToBackupOp<UnrealEngineProvider> {
+        let refs = refs(fx);
+        RebaseResetToBackupOp {
+            git_client: fx.git.clone(),
+            engine: refs.engine,
+            app_config: refs.app_config,
+            repo_config: refs.repo_config,
+            repo_status: refs.repo_status,
+            sync_phase_tx: mpsc::channel().0,
+            post: Err(POST_ERROR.to_string()),
+        }
+    }
+
+    async fn reset_to_backup(fx: &Fixture) -> Result<(), CoreError> {
+        reset_op(fx).execute().await
+    }
+
+    /// Resets, and checks the branch is at its backup with every backup ref kept.
+    async fn assert_reset(fx: &Fixture) {
+        let file = record(fx);
+        let rebased = fx.head().await;
+        let backups_before = backup_refs(fx).await;
+        let origin_before = capture(fx).await.origin_refs;
+
+        assert_eq!(
+            input_message(reset_to_backup(fx).await),
+            format!("{BRANCH} was reset, but updating editor binaries or engine failed: test.")
+        );
+        assert_eq!(fx.head().await, file.backup_sha);
+        assert_eq!(
+            fx.out(&["symbolic-ref", "-q", "HEAD"]).await,
+            format!("refs/heads/{BRANCH}")
+        );
+        assert!(!json_path(&fx.git_dir()).exists());
+        let backups = backup_refs(fx).await;
+        assert!(backups_before.iter().all(|b| backups.contains(b)));
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        let rebased_refs = rebased_backups(fx).await;
+        assert_eq!(rebased_refs.len(), 1);
+        assert_eq!(fx.sha(&rebased_refs[0]).await, rebased);
+        assert_eq!(capture(fx).await.origin_refs, origin_before);
+        assert_eq!(state(fx).await, RebaseState::default());
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_from_completed_unpushed() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        assert_reset(&fx).await;
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_from_push_failed() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        reject_push(&fx, "c.txt").await;
+        assert_reset(&fx).await;
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_keeps_an_unrelated_local_change() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        fx.write("seed.txt", b"edited\n");
+        let file = record(&fx);
+        input_message(reset_to_backup(&fx).await);
+        assert_eq!(fx.head().await, file.backup_sha);
+        assert_eq!(read(&fx, "seed.txt").as_deref(), Some(&b"edited\n"[..]));
+        assert!(!json_path(&fx.git_dir()).exists());
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_refused_by_a_conflicting_local_change() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        // m.txt comes from main and is not in the backup.
+        fx.write("m.txt", b"edited\n");
+        let head = fx.head().await;
+        let json_before = fx.json_bytes();
+
+        let message = internal_message(reset_to_backup(&fx).await);
+        assert!(message.starts_with("git reset --keep failed:"), "{message}");
+        assert_eq!(fx.head().await, head);
+        assert_eq!(fx.json_bytes(), json_before);
+        assert_eq!(read(&fx, "m.txt").as_deref(), Some(&b"edited\n"[..]));
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_refused_when_the_backup_is_missing() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        fx.run(&["update-ref", "-d", &file.backup_ref]).await;
+        let before = capture(&fx).await;
+
+        assert_eq!(
+            internal_message(reset_to_backup(&fx).await),
+            format!(
+                "The backup {} is missing or moved; nothing was changed.",
+                file.backup_ref
+            )
+        );
+        assert_eq!(capture(&fx).await, before);
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_refused_unless_replayed() {
+        let fx = Fixture::new().await;
+        assert_eq!(
+            input_message(reset_to_backup(&fx).await),
+            RESET_ONLY_AFTER_REPLAY
+        );
+        stop_content(&fx).await;
+        let before = capture(&fx).await;
+        assert_eq!(
+            input_message(reset_to_backup(&fx).await),
+            RESET_ONLY_AFTER_REPLAY
+        );
+        assert_eq!(capture(&fx).await, before);
+    }
+
+    // Editor rebuild
+
+    fn rebuild_op(
+        fx: &Fixture,
+    ) -> (
+        EditorRebuildOp<UnrealEngineProvider>,
+        mpsc::Receiver<String>,
+    ) {
+        let refs = refs(fx);
+        let (sync_phase_tx, phases) = mpsc::channel();
+        let op = EditorRebuildOp {
+            git_client: fx.git.clone(),
+            engine: refs.engine,
+            app_config: refs.app_config,
+            repo_config: refs.repo_config,
+            repo_status: refs.repo_status,
+            sync_phase_tx,
+            result: Arc::new(parking_lot::Mutex::new(None)),
+        };
+        (op, phases)
+    }
+
+    async fn rebuild(fx: &Fixture) -> Result<RebaseCommitInfo, CoreError> {
+        let (op, _) = rebuild_op(fx);
+        op.execute().await?;
+        let commit = op.result.lock().take().expect("rebuild result");
+        Ok(commit)
+    }
+
+    /// `BRANCH` with one commit, pushed.
+    async fn pushed_branch(fx: &Fixture) -> String {
+        fx.branch(BRANCH).await;
+        let tip = fx.commit_file("b.txt", b"branch\n", "branch change").await;
+        fx.push(BRANCH).await;
+        tip
+    }
+
+    #[tokio::test]
+    async fn rebuild_pushes_an_empty_ci_commit() {
+        let fx = Fixture::new().await;
+        let tip = pushed_branch(&fx).await;
+
+        let commit = rebuild(&fx).await.expect("rebuild");
+        let origin = origin_tip(&fx, BRANCH).await.expect("branch on origin");
+        assert_eq!(
+            commit,
+            RebaseCommitInfo {
+                sha: origin.clone(),
+                subject: EDITOR_BUILD_MESSAGE.to_string(),
+                author: "User".to_string(),
+            }
+        );
+        assert_eq!(fx.head().await, origin);
+        assert_eq!(fx.sha(&format!("{origin}^")).await, tip);
+        assert_eq!(
+            fx.sha(&format!("{origin}^{{tree}}")).await,
+            fx.sha(&format!("{tip}^{{tree}}")).await
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_race_leaves_the_collaborators_commit() {
+        let fx = Fixture::new().await;
+        let tip = pushed_branch(&fx).await;
+        // The collaborator's commit is ready; a one-shot pre-push hook of the user clone pushes
+        // it after the op's fetch and before its own push reaches origin.
+        let (collab_dir, collab) = collaborator(&fx).await;
+        let opts = git::Opts::new_without_logs();
+        let tracking = format!("refs/remotes/origin/{BRANCH}");
+        collab
+            .run(&["checkout", "-q", "-B", BRANCH, &tracking], opts)
+            .await
+            .expect("checkout");
+        fs::write(collab_dir.path().join("c.txt"), b"collab\n").unwrap();
+        collab.run(&["add", "c.txt"], opts).await.expect("add");
+        collab
+            .run(&["commit", "-qm", "collab commit"], opts)
+            .await
+            .expect("commit");
+        let collab_sha = collab
+            .run_and_collect_output(&["rev-parse", "HEAD"], opts)
+            .await
+            .unwrap()
+            .trim()
+            .to_string();
+        let race_hooks = tempfile::tempdir().expect("hooks tempdir");
+        fs::write(
+            race_hooks.path().join("pre-push"),
+            format!(
+                "#!/bin/sh\nrm -f \"$0\"\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_PARAMETERS\ncd '{}' && git push -q origin HEAD:refs/heads/{BRANCH}\n",
+                slash_path(collab_dir.path())
+            ),
+        )
+        .unwrap();
+        fx.run(&["config", "core.hooksPath", &slash_path(race_hooks.path())])
+            .await;
+
+        assert_eq!(input_message(rebuild(&fx).await), NEW_COMMITS_ON_ORIGIN);
+        assert!(!race_hooks.path().join("pre-push").exists());
+        assert_eq!(fx.head().await, tip);
+        assert_eq!(fx.out(&["status", "--porcelain"]).await, "");
+        assert_eq!(origin_tip(&fx, BRANCH).await, Some(collab_sha.clone()));
+        assert_eq!(
+            new_git(fx.origin_path())
+                .run_and_collect_output(&["rev-parse", &format!("{collab_sha}^")], opts)
+                .await
+                .unwrap()
+                .trim(),
+            tip
+        );
+        assert_eq!(
+            fx.out(&[
+                "log",
+                "-1",
+                "--format=%s",
+                "--all",
+                "--grep=ci:editor",
+                "--fixed-strings"
+            ])
+            .await,
+            ""
+        );
+    }
+
+    /// The rebuild is refused with `expected` and changes nothing but tracking refs.
+    async fn assert_rebuild_refused(fx: &Fixture, expected: &str) {
+        let before = capture(fx).await;
+        assert_eq!(input_message(rebuild(fx).await), expected);
+        let after = capture(fx).await;
+        assert_eq!(
+            Snapshot {
+                tracking_refs: before.tracking_refs.clone(),
+                ..after
+            },
+            before
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_refused_when_not_in_sync() {
+        let fx = Fixture::new().await;
+        pushed_branch(&fx).await;
+        fx.commit_file("x.txt", b"x\n", "unpushed").await;
+        assert_rebuild_refused(&fx, SYNC_FIRST).await;
+    }
+
+    #[tokio::test]
+    async fn rebuild_refused_with_a_staged_file() {
+        let fx = Fixture::new().await;
+        pushed_branch(&fx).await;
+        fx.write("staged.txt", b"staged\n");
+        fx.run(&["add", "staged.txt"]).await;
+        assert_rebuild_refused(&fx, UNSTAGE_FIRST).await;
+        assert_eq!(
+            fx.out(&["diff", "--cached", "--name-only"]).await,
+            "staged.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_refused_during_a_guided_rebase() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        assert_rebuild_refused(&fx, GUARD_COMPLETED_UNPUSHED).await;
+    }
+
+    #[tokio::test]
+    async fn rebuild_refused_on_a_protected_branch() {
+        let fx = Fixture::new().await;
+        assert_rebuild_refused(&fx, FEATURE_BRANCHES_ONLY).await;
+    }
+
+    #[tokio::test]
+    async fn rebuild_refused_during_a_merge() {
+        let fx = Fixture::new().await;
+        let tip = pushed_branch(&fx).await;
+        // A merge that changes no file: `commit --allow-empty` would conclude it.
+        let tree = format!("{tip}^{{tree}}");
+        let side = fx
+            .out(&["commit-tree", &tree, "-p", &tip, "-m", "side"])
+            .await;
+        fx.run(&["merge", "-q", "--no-ff", "--no-commit", &side])
+            .await;
+        assert!(fx.git_dir().join("MERGE_HEAD").exists());
+
+        assert_rebuild_refused(&fx, OPERATION_IN_PROGRESS).await;
+        assert!(fx.git_dir().join("MERGE_HEAD").exists());
+        assert_eq!(fx.head().await, tip);
+    }
+
+    #[tokio::test]
+    async fn rebuild_rejected_by_origin_drops_the_commit() {
+        let fx = Fixture::new().await;
+        let tip = pushed_branch(&fx).await;
+        refuse_pushes_on_origin(&fx).await;
+        let origin_before = capture(&fx).await.origin_refs;
+
+        let message = input_message(rebuild(&fx).await);
+        assert!(
+            message.starts_with("GitHub rejected the push: [remote rejected]"),
+            "{message}"
+        );
+        assert_eq!(fx.head().await, tip);
+        assert_eq!(fx.out(&["status", "--porcelain"]).await, "");
+        assert_eq!(capture(&fx).await.origin_refs, origin_before);
+    }
+
+    #[tokio::test]
+    async fn rebuild_network_failure_drops_the_commit() {
+        let fx = Fixture::new().await;
+        let tip = pushed_branch(&fx).await;
+        // The fetch succeeds; the push goes to a missing local path.
+        let missing = slash_path(&fx.path().join("missing.git"));
+        fx.run(&["remote", "set-url", "--push", "origin", &missing])
+            .await;
+
+        let message = internal_message(rebuild(&fx).await);
+        assert!(message.starts_with("Push failed:"), "{message}");
+        assert_eq!(fx.head().await, tip);
+        assert_eq!(origin_tip(&fx, BRANCH).await, Some(tip));
     }
 }
