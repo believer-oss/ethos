@@ -12,13 +12,13 @@ use crate::engine::{CommunicationType, EngineProvider};
 use crate::repo::operations::gh::submit::filter_to_textlike_paths;
 use ethos_core::clients::git;
 use ethos_core::types::repo::{
-    ConflictFile, ConflictKind, ConflictSideName, DroppedCommit, RebaseCommitInfo,
+    ConflictFile, ConflictKind, ConflictSideName, DroppedCommit, RebaseCommitInfo, RebaseKeep,
     RebaseStaleReason, RebaseState, RebaseStateKind,
 };
 
 const REBASE_FILE: &str = "f11r-rebase.json";
 const REBASE_FILE_TMP: &str = "f11r-rebase.json.tmp";
-const REBASE_FILE_VERSION: u32 = 1;
+pub(crate) const REBASE_FILE_VERSION: u32 = 1;
 const BACKUP_REF_PREFIX: &str = "refs/f11r-backup/";
 const BACKUP_RETENTION_SECS: u64 = 14 * 86400;
 const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
@@ -31,8 +31,8 @@ const RENAMED_DIFFERENTLY: &str = "This file was renamed differently on main and
 const FILE_AND_FOLDER: &str = "A file and a folder with the same name conflict.";
 const UNRESOLVABLE: &str = "This conflict can't be resolved in Friendshipper.";
 
-/// Project and plugin `Source/` trees plus module and target rules files.
-#[allow(dead_code)] // TODO: Stage 009
+/// Project and plugin `Source/` trees plus module and target rules files. Pathspec magic: never
+/// pass them to a git call with `--literal-pathspecs`.
 pub(crate) const CPP_PATHSPECS: [&str; 3] = [
     ":(glob)**/Source/**",
     ":(glob)**/*.Build.cs",
@@ -53,7 +53,7 @@ fn read_opts<'a>() -> git::Opts<'a> {
         .with_env(LOCALE_ENV)
 }
 
-async fn read_git(git: &git::Git, args: &[&str]) -> anyhow::Result<git::GitRunOutput> {
+pub(crate) async fn read_git(git: &git::Git, args: &[&str]) -> anyhow::Result<git::GitRunOutput> {
     let mut full_args = Vec::with_capacity(args.len() + 1);
     full_args.push("--no-optional-locks");
     full_args.extend_from_slice(args);
@@ -150,7 +150,7 @@ pub(crate) struct GuidedRebaseFile {
 }
 
 /// A full SHA-1 or SHA-256 object name, as git prints it.
-fn is_full_sha(s: &str) -> bool {
+pub(crate) fn is_full_sha(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -243,7 +243,6 @@ pub(crate) fn write_rebase_file(git_dir: &Path, file: &GuidedRebaseFile) -> anyh
     }
 }
 
-#[allow(dead_code)] // TODO: Stage 009
 pub(crate) fn delete_rebase_file(git_dir: &Path) -> anyhow::Result<()> {
     match std::fs::remove_file(json_path(git_dir)) {
         Ok(()) => Ok(()),
@@ -333,7 +332,7 @@ fn read_existing(path: &Path) -> anyhow::Result<Option<String>> {
 }
 
 /// Whether `ancestor` is reachable from `rev`; a missing object is not an ancestor.
-async fn is_ancestor(git: &git::Git, ancestor: &str, rev: &str) -> anyhow::Result<bool> {
+pub(crate) async fn is_ancestor(git: &git::Git, ancestor: &str, rev: &str) -> anyhow::Result<bool> {
     let output = read_git(git, &["merge-base", "--is-ancestor", ancestor, rev]).await?;
     Ok(output.exit_code == 0)
 }
@@ -403,7 +402,7 @@ async fn derive_from_file(
 }
 
 /// The sha `rev` names, or `None` when it does not exist.
-async fn rev_parse(git: &git::Git, rev: &str) -> anyhow::Result<Option<String>> {
+pub(crate) async fn rev_parse(git: &git::Git, rev: &str) -> anyhow::Result<Option<String>> {
     let output = read_git(git, &["rev-parse", "-q", "--verify", rev]).await?;
     match output.exit_code {
         0 => Ok(Some(output.stdout.trim().to_string())),
@@ -596,7 +595,7 @@ async fn exists_in_tree(git: &git::Git, rev: &str, path: &str) -> anyhow::Result
     Ok(read_git(git, &["cat-file", "-e", &object]).await?.exit_code == 0)
 }
 
-async fn status_porcelain(git: &git::Git) -> anyhow::Result<String> {
+pub(crate) async fn status_porcelain(git: &git::Git) -> anyhow::Result<String> {
     let output = read_git(
         git,
         &["status", "--porcelain=v2", "-z", "--untracked-files=no"],
@@ -672,7 +671,7 @@ pub(crate) async fn classify_conflicts<T: EngineProvider>(
 
 /// Recomputes `resolved` from the current unmerged paths; a file that is unmerged again
 /// loses its resolution.
-fn refresh_resolved(conflicts: &mut [ConflictFile], unmerged: &[UnmergedEntry]) {
+pub(crate) fn refresh_resolved(conflicts: &mut [ConflictFile], unmerged: &[UnmergedEntry]) {
     let unmerged: HashSet<&str> = unmerged.iter().map(|e| e.path.as_str()).collect();
     for conflict in conflicts {
         conflict.resolved = !unmerged.contains(conflict.path.as_str());
@@ -682,19 +681,135 @@ fn refresh_resolved(conflicts: &mut [ConflictFile], unmerged: &[UnmergedEntry]) 
     }
 }
 
-/// Stores `step` in the json unless it now describes a different rebase.
-async fn cache_current_step(git_dir: &Path, file: &GuidedRebaseFile, step: CurrentStep) {
+/// The sha of the commit git stopped on, if any.
+pub(crate) fn rebase_head(git_dir: &Path) -> Option<String> {
+    read_trimmed(&git_dir.join("REBASE_HEAD")).filter(|sha| is_full_sha(sha))
+}
+
+/// The json, if it still describes the rebase `file` describes. Call under `REBASE_FILE_LOCK`.
+fn same_record(git_dir: &Path, file: &GuidedRebaseFile) -> anyhow::Result<GuidedRebaseFile> {
+    match read_rebase_file(git_dir) {
+        RebaseFileRead::Ok(current)
+            if current.onto == file.onto && current.backup_sha == file.backup_sha =>
+        {
+            Ok(*current)
+        }
+        RebaseFileRead::Ok(_) => bail!("The rebase record now describes a different rebase"),
+        other => bail!("The rebase record could not be read: {other:?}"),
+    }
+}
+
+/// Stores `step` in the json; fails when the json now describes a different rebase.
+async fn store_current_step(
+    git_dir: &Path,
+    file: &GuidedRebaseFile,
+    step: CurrentStep,
+) -> anyhow::Result<()> {
     let _lock = REBASE_FILE_LOCK.lock().await;
-    let RebaseFileRead::Ok(mut current) = read_rebase_file(git_dir) else {
+    let mut current = same_record(git_dir, file)?;
+    current.current_step = Some(step);
+    write_rebase_file(git_dir, &current)
+}
+
+/// Caches `step`, classified from `head` and `unmerged`, unless a rebase op holds `op_lock` or
+/// git's state has moved since: a step classified while an op ran is never stored.
+async fn cache_if_unchanged(
+    git: &git::Git,
+    git_dir: &Path,
+    file: &GuidedRebaseFile,
+    op_lock: &tokio::sync::Mutex<()>,
+    step: CurrentStep,
+    head: &str,
+    unmerged: &[UnmergedEntry],
+) {
+    let Ok(_op) = op_lock.try_lock() else {
         return;
     };
-    if current.onto != file.onto || current.backup_sha != file.backup_sha {
+    let unchanged = rebase_head(git_dir).as_deref() == Some(step.sha.as_str())
+        && matches!(rev_parse(git, "HEAD").await, Ok(Some(now)) if now == head)
+        && matches!(status_porcelain(git).await, Ok(status) if parse_unmerged(&status) == unmerged);
+    if !unchanged {
         return;
     }
-    current.current_step = Some(step);
-    if let Err(e) = write_rebase_file(git_dir, &current) {
+    let _lock = REBASE_FILE_LOCK.lock().await;
+    let result = same_record(git_dir, file).and_then(|mut current| {
+        // An op that finished meanwhile cached this step itself, maybe with resolutions.
+        if current
+            .current_step
+            .as_ref()
+            .is_some_and(|cached| cached.sha == step.sha && !cached.conflicts.is_empty())
+        {
+            return Ok(());
+        }
+        current.current_step = Some(step);
+        write_rebase_file(git_dir, &current)
+    });
+    if let Err(e) = result {
         warn!("Could not cache the current rebase step: {e}");
     }
+}
+
+/// The cached step for `rebase_head`, classified and stored first when the cache is missing or
+/// belongs to another step. `None` when nothing is unmerged and nothing is cached. Callers hold
+/// `REBASE_OP_LOCK`, so nothing else writes the cache meanwhile.
+pub(crate) async fn ensure_current_step<T: EngineProvider>(
+    git: &git::Git,
+    repo_path: &Path,
+    engine: &T,
+    engine_path: &Path,
+    file: &GuidedRebaseFile,
+    rebase_head: &str,
+) -> anyhow::Result<Option<CurrentStep>> {
+    let git_dir = resolve_git_dir(repo_path);
+    let cached = {
+        let _lock = REBASE_FILE_LOCK.lock().await;
+        same_record(&git_dir, file)?
+            .current_step
+            .filter(|step| step.sha == rebase_head && !step.conflicts.is_empty())
+    };
+    if cached.is_some() {
+        return Ok(cached);
+    }
+
+    let conflicts = classify_conflicts(
+        git,
+        repo_path,
+        engine,
+        engine_path,
+        &file.merge_base,
+        rebase_head,
+    )
+    .await?;
+    if conflicts.is_empty() {
+        return Ok(None);
+    }
+    let step = CurrentStep {
+        sha: rebase_head.to_string(),
+        conflicts,
+    };
+    store_current_step(&git_dir, file, step.clone()).await?;
+    Ok(Some(step))
+}
+
+/// Sets the cached resolution of `path` in the step for `rebase_head`.
+pub(crate) async fn set_resolution(
+    git_dir: &Path,
+    file: &GuidedRebaseFile,
+    rebase_head: &str,
+    path: &str,
+    resolution: Option<RebaseKeep>,
+) -> anyhow::Result<()> {
+    let _lock = REBASE_FILE_LOCK.lock().await;
+    let mut current = same_record(git_dir, file)?;
+    let conflict = current
+        .current_step
+        .as_mut()
+        .filter(|step| step.sha == rebase_head)
+        .and_then(|step| step.conflicts.iter_mut().find(|c| c.path == path))
+        .ok_or_else(|| anyhow!("{path} is not cached for the current step"))?;
+    conflict.resolution = resolution;
+    conflict.resolved = resolution.is_some();
+    write_rebase_file(git_dir, &current)
 }
 
 /// Shas the rebase has not replayed yet: the `pick` lines of the todo list.
@@ -785,15 +900,16 @@ pub(crate) fn dropped_commits(
         .collect()
 }
 
-/// Builds the wire state for `derived`. Conflicts of a new step are classified and, when
-/// `may_cache`, stored in the json; a step already cached only has `resolved` recomputed.
+/// Builds the wire state for `derived`. Conflicts of a new step are classified and, with a
+/// `cache_lock` (`REBASE_OP_LOCK`), stored in the json while no rebase op holds it; a step
+/// already cached only has `resolved` recomputed.
 pub(crate) async fn build_rebase_state<T: EngineProvider>(
     git: &git::Git,
     repo_path: &Path,
     engine: &T,
     engine_path: &Path,
     derived: DerivedState,
-    may_cache: bool,
+    cache_lock: Option<&tokio::sync::Mutex<()>>,
 ) -> anyhow::Result<RebaseState> {
     let mut state = RebaseState {
         state: derived.kind,
@@ -825,7 +941,7 @@ pub(crate) async fn build_rebase_state<T: EngineProvider>(
         }
 
         let unmerged = parse_unmerged(&status_porcelain(git).await?);
-        match read_trimmed(&git_dir.join("REBASE_HEAD")).filter(|sha| is_full_sha(sha)) {
+        match rebase_head(&git_dir) {
             Some(rebase_head) => {
                 remaining.insert(rebase_head.clone());
                 state.current_commit = Some(commit_info(git, &rebase_head).await?);
@@ -837,6 +953,9 @@ pub(crate) async fn build_rebase_state<T: EngineProvider>(
                     state.conflicts.clone_from(&step.conflicts);
                     refresh_resolved(&mut state.conflicts, &unmerged);
                 } else if !unmerged.is_empty() {
+                    let head = rev_parse(git, "HEAD")
+                        .await?
+                        .ok_or_else(|| anyhow!("HEAD does not resolve"))?;
                     state.conflicts = classify_conflicts(
                         git,
                         repo_path,
@@ -846,12 +965,13 @@ pub(crate) async fn build_rebase_state<T: EngineProvider>(
                         &rebase_head,
                     )
                     .await?;
-                    if may_cache && !state.conflicts.is_empty() {
+                    if let Some(op_lock) = cache_lock.filter(|_| !state.conflicts.is_empty()) {
                         let step = CurrentStep {
                             sha: rebase_head.clone(),
                             conflicts: state.conflicts.clone(),
                         };
-                        cache_current_step(&git_dir, &file, step).await;
+                        cache_if_unchanged(git, &git_dir, &file, op_lock, step, &head, &unmerged)
+                            .await;
                     }
                 }
                 state.step_incomplete = unmerged.is_empty() && cached.is_none();
@@ -887,7 +1007,6 @@ pub(crate) fn refs_to_prune(refs: &[String], now_ts: u64, keep: &[String]) -> Ve
 
 /// Creates `refs/f11r-backup/<branch>/<ts><suffix>` at `sha`, never overwriting an existing
 /// ref; retries once with `ts + 1`.
-#[allow(dead_code)] // TODO: Stage 009
 pub(crate) async fn create_backup_ref(
     git: &git::Git,
     branch: &str,
@@ -917,7 +1036,6 @@ pub(crate) async fn create_backup_ref(
 
 /// Deletes backup refs older than 14 days except `keep` (the current record's backup, read
 /// by the caller under `REBASE_FILE_LOCK`). A ref that cannot be deleted is skipped.
-#[allow(dead_code)] // TODO: Stage 009
 pub(crate) async fn prune_backup_refs(
     git: &git::Git,
     now_ts: u64,
@@ -1096,7 +1214,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn info(sha: &str, subject: &str) -> RebaseCommitInfo {
+    pub(crate) fn info(sha: &str, subject: &str) -> RebaseCommitInfo {
         RebaseCommitInfo {
             sha: sha.to_string(),
             subject: subject.to_string(),
@@ -1104,7 +1222,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn engine(repo_path: &Path) -> UnrealEngineProvider {
+    pub(crate) fn engine(repo_path: &Path) -> UnrealEngineProvider {
         let mut app_config = AppConfig::new(crate::APP_NAME);
         app_config.repo_path = slash_path(repo_path);
         UnrealEngineProvider::new_from_config(app_config, RepoConfig::default())
@@ -1120,16 +1238,16 @@ pub(crate) mod tests {
 
     /// `main` and `BRANCH` each one commit past `base`.
     pub(crate) struct Diverged {
-        base: String,
-        main: String,
-        branch: String,
+        pub(crate) base: String,
+        pub(crate) main: String,
+        pub(crate) branch: String,
     }
 
     /// A temp bare origin with `main` and a user clone on `main`; hooks come only from a temp dir.
     pub(crate) struct Fixture {
-        _origin_dir: tempfile::TempDir,
+        origin_dir: tempfile::TempDir,
         dir: tempfile::TempDir,
-        _hooks: tempfile::TempDir,
+        hooks: tempfile::TempDir,
         pub(crate) git: git::Git,
     }
 
@@ -1151,11 +1269,16 @@ pub(crate) mod tests {
                 ],
             )
             .await;
+            // Local values override the developer's global config that the tests depend on.
             for (key, value) in [
                 ("user.email", "user@example.com"),
                 ("user.name", "User"),
                 ("commit.gpgsign", "false"),
                 ("core.autocrlf", "false"),
+                ("core.safecrlf", "false"),
+                ("core.fsmonitor", "false"),
+                ("merge.conflictStyle", "merge"),
+                ("rerere.enabled", "false"),
             ] {
                 run_git(&git, &["config", key, value]).await;
             }
@@ -1166,9 +1289,9 @@ pub(crate) mod tests {
             .await;
 
             let fx = Self {
-                _origin_dir: origin_dir,
+                origin_dir,
                 dir,
-                _hooks: hooks,
+                hooks,
                 git,
             };
             fx.run(&["checkout", "-q", "-b", "main"]).await;
@@ -1185,15 +1308,23 @@ pub(crate) mod tests {
             self.path().join(".git")
         }
 
+        pub(crate) fn origin_path(&self) -> &Path {
+            self.origin_dir.path()
+        }
+
+        pub(crate) fn hooks_path(&self) -> &Path {
+            self.hooks.path()
+        }
+
         pub(crate) async fn run(&self, args: &[&str]) {
             run_git(&self.git, args).await;
         }
 
-        async fn out(&self, args: &[&str]) -> String {
+        pub(crate) async fn out(&self, args: &[&str]) -> String {
             git_out(&self.git, args).await
         }
 
-        async fn sha(&self, rev: &str) -> String {
+        pub(crate) async fn sha(&self, rev: &str) -> String {
             self.out(&["rev-parse", rev]).await
         }
 
@@ -1201,14 +1332,14 @@ pub(crate) mod tests {
             self.sha("HEAD").await
         }
 
-        fn write(&self, path: &str, bytes: &[u8]) {
+        pub(crate) fn write(&self, path: &str, bytes: &[u8]) {
             let abs = repo_file_path(self.path(), path);
             fs::create_dir_all(abs.parent().unwrap()).unwrap();
             fs::write(abs, bytes).unwrap();
         }
 
         /// Commits `changes` (or an empty commit) on the current branch; returns the sha.
-        async fn commit(&self, changes: &[Change<'_>], message: &str) -> String {
+        pub(crate) async fn commit(&self, changes: &[Change<'_>], message: &str) -> String {
             for change in changes {
                 match change {
                     Change::Write(path, bytes) => {
@@ -1229,11 +1360,11 @@ pub(crate) mod tests {
             self.head().await
         }
 
-        async fn commit_file(&self, path: &str, bytes: &[u8], message: &str) -> String {
+        pub(crate) async fn commit_file(&self, path: &str, bytes: &[u8], message: &str) -> String {
             self.commit(&[Change::Write(path, bytes)], message).await
         }
 
-        async fn branch(&self, name: &str) {
+        pub(crate) async fn branch(&self, name: &str) {
             self.run(&["checkout", "-q", "-b", name]).await;
         }
 
@@ -1255,18 +1386,18 @@ pub(crate) mod tests {
             write_rebase_file(&self.git_dir(), file).expect("write json");
         }
 
-        fn read_file_json(&self) -> GuidedRebaseFile {
+        pub(crate) fn read_file_json(&self) -> GuidedRebaseFile {
             match read_rebase_file(&self.git_dir()) {
                 RebaseFileRead::Ok(file) => *file,
                 other => panic!("expected a readable json, got {other:?}"),
             }
         }
 
-        fn json_bytes(&self) -> Option<Vec<u8>> {
+        pub(crate) fn json_bytes(&self) -> Option<Vec<u8>> {
             fs::read(json_path(&self.git_dir())).ok()
         }
 
-        async fn porcelain_v2(&self) -> String {
+        pub(crate) async fn porcelain_v2(&self) -> String {
             self.out(&[
                 "--no-optional-locks",
                 "status",
@@ -1277,7 +1408,7 @@ pub(crate) mod tests {
             .await
         }
 
-        fn rebase_head(&self) -> String {
+        pub(crate) fn rebase_head(&self) -> String {
             read_trimmed(&self.git_dir().join("REBASE_HEAD")).expect("REBASE_HEAD")
         }
 
@@ -1287,7 +1418,7 @@ pub(crate) mod tests {
 
         /// Pushes `base` and `branch` as `BRANCH`, then `main` on top of `base`; leaves the
         /// clone on `BRANCH`.
-        async fn diverge(
+        pub(crate) async fn diverge(
             &self,
             base: &[Change<'_>],
             main: &[Change<'_>],
@@ -1309,7 +1440,7 @@ pub(crate) mod tests {
         }
 
         /// Diverges, writes the json and starts the guided rebase, which must stop.
-        async fn guided_stop(
+        pub(crate) async fn guided_stop(
             &self,
             base: &[Change<'_>],
             main: &[Change<'_>],
@@ -1346,20 +1477,25 @@ pub(crate) mod tests {
                 .expect("derive rebase state")
         }
 
-        async fn build_from(&self, derived: DerivedState, may_cache: bool) -> RebaseState {
+        pub(crate) async fn build_from(
+            &self,
+            derived: DerivedState,
+            may_cache: bool,
+        ) -> RebaseState {
+            let op_lock = tokio::sync::Mutex::new(());
             build_rebase_state(
                 &self.git,
                 self.path(),
                 &engine(self.path()),
                 Path::new(""),
                 derived,
-                may_cache,
+                may_cache.then_some(&op_lock),
             )
             .await
             .expect("build rebase state")
         }
 
-        async fn build(&self, may_cache: bool) -> RebaseState {
+        pub(crate) async fn build(&self, may_cache: bool) -> RebaseState {
             let derived = self.derive().await;
             self.build_from(derived, may_cache).await
         }
@@ -1409,7 +1545,7 @@ pub(crate) mod tests {
         .await
     }
 
-    fn conflict(path: &str, kind: ConflictKind, d: &Diverged) -> ConflictFile {
+    pub(crate) fn conflict(path: &str, kind: ConflictKind, d: &Diverged) -> ConflictFile {
         ConflictFile {
             path: path.to_string(),
             display_name: last_segment(path),
@@ -2263,6 +2399,97 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn cache_is_not_written_while_an_op_holds_the_lock() {
+        let fx = Fixture::new().await;
+        three_commit_stop(&fx).await;
+        let op_lock = tokio::sync::Mutex::new(());
+        let _running = op_lock.lock().await;
+        let state = build_rebase_state(
+            &fx.git,
+            fx.path(),
+            &engine(fx.path()),
+            Path::new(""),
+            fx.derive().await,
+            Some(&op_lock),
+        )
+        .await
+        .unwrap();
+        assert_eq!(state.conflicts.len(), 1);
+        assert_eq!(fx.read_file_json().current_step, None);
+    }
+
+    #[tokio::test]
+    async fn cache_is_not_written_when_git_moved_during_classification() {
+        let fx = Fixture::new().await;
+        let (file, _, _) = three_commit_stop(&fx).await;
+        let op_lock = tokio::sync::Mutex::new(());
+        let head = fx.head().await;
+        let unmerged = parse_unmerged(&fx.porcelain_v2().await);
+        let step = CurrentStep {
+            sha: fx.rebase_head(),
+            conflicts: fx.classify(&file.merge_base).await,
+        };
+
+        for (head, unmerged) in [
+            (file.merge_base.as_str(), unmerged.as_slice()),
+            (head.as_str(), &[][..]),
+        ] {
+            cache_if_unchanged(
+                &fx.git,
+                &fx.git_dir(),
+                &file,
+                &op_lock,
+                step.clone(),
+                head,
+                unmerged,
+            )
+            .await;
+            assert_eq!(fx.read_file_json().current_step, None);
+        }
+
+        cache_if_unchanged(
+            &fx.git,
+            &fx.git_dir(),
+            &file,
+            &op_lock,
+            step.clone(),
+            &head,
+            &unmerged,
+        )
+        .await;
+        assert_eq!(fx.read_file_json().current_step, Some(step));
+    }
+
+    #[tokio::test]
+    async fn cache_keeps_a_step_an_op_cached_meanwhile() {
+        let fx = Fixture::new().await;
+        let (file, _, _) = three_commit_stop(&fx).await;
+        let head = fx.head().await;
+        let unmerged = parse_unmerged(&fx.porcelain_v2().await);
+        let classified = CurrentStep {
+            sha: fx.rebase_head(),
+            conflicts: fx.classify(&file.merge_base).await,
+        };
+        let mut cached = classified.clone();
+        cached.conflicts[0].resolution = Some(RebaseKeep::Main);
+        let mut with_cache = file.clone();
+        with_cache.current_step = Some(cached.clone());
+        fx.write_file_json(&with_cache);
+
+        cache_if_unchanged(
+            &fx.git,
+            &fx.git_dir(),
+            &file,
+            &tokio::sync::Mutex::new(()),
+            classified,
+            &head,
+            &unmerged,
+        )
+        .await;
+        assert_eq!(fx.read_file_json().current_step, Some(cached));
+    }
+
+    #[tokio::test]
     async fn step_incomplete_without_conflicts_or_cache() {
         let fx = Fixture::new().await;
         let (_, first, _) = three_commit_stop(&fx).await;
@@ -2440,7 +2667,7 @@ pub(crate) mod tests {
         assert_eq!(parse_commit_info("abc"), None);
     }
 
-    fn original(sha: &str, email: &str, date: &str, subject: &str) -> OriginalCommit {
+    pub(crate) fn original(sha: &str, email: &str, date: &str, subject: &str) -> OriginalCommit {
         OriginalCommit {
             sha: sha.to_string(),
             subject: subject.to_string(),

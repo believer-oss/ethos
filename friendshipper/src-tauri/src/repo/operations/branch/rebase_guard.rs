@@ -69,13 +69,20 @@ pub(super) async fn guard_with_op_lock(
     let derived = derive_rebase_state(git, repo_path)
         .await
         .map_err(unknown_state)?;
-    let sentence = match derived.kind {
-        RebaseStateKind::Idle | RebaseStateKind::Stale | RebaseStateKind::External => return Ok(()),
-        RebaseStateKind::InProgress => GUARD_IN_PROGRESS,
-        RebaseStateKind::CompletedUnpushed => GUARD_COMPLETED_UNPUSHED,
-        RebaseStateKind::PushFailed => GUARD_PUSH_FAILED,
-    };
-    Err(CoreError::Input(anyhow!(sentence)))
+    match guard_sentence(derived.kind) {
+        Some(sentence) => Err(CoreError::Input(anyhow!(sentence))),
+        None => Ok(()),
+    }
+}
+
+/// The refusal for an active state; `None` for the states the guard lets through.
+pub(crate) fn guard_sentence(kind: RebaseStateKind) -> Option<&'static str> {
+    match kind {
+        RebaseStateKind::Idle | RebaseStateKind::Stale | RebaseStateKind::External => None,
+        RebaseStateKind::InProgress => Some(GUARD_IN_PROGRESS),
+        RebaseStateKind::CompletedUnpushed => Some(GUARD_COMPLETED_UNPUSHED),
+        RebaseStateKind::PushFailed => Some(GUARD_PUSH_FAILED),
+    }
 }
 
 /// `ensure_no_guided_rebase` for the configured repo.
