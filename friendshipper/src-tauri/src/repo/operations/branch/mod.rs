@@ -18,6 +18,7 @@ mod list;
 mod post_head_change;
 mod pull_request;
 mod rebase;
+mod rebase_state;
 mod submit;
 mod switch;
 
