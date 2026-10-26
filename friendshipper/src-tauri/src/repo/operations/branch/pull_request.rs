@@ -14,7 +14,7 @@ use tracing::{info, instrument, warn};
 use super::analyze::{collect_branch_facts, merged_pr_covers_tip, BranchFacts};
 use super::{
     branch_management_trunk, guard_state, run_guarded_sequence, trunk_uses_merge_queue,
-    GITHUB_PAT_MISSING,
+    unsupported_git_message, GITHUB_PAT_MISSING,
 };
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::create_pull_request;
@@ -43,11 +43,7 @@ const GITHUB_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The first failed PR gate, in the order the page lists its blockers. Behind trunk is not a gate.
 pub(crate) fn pr_gate_error(facts: &BranchFacts, trunk: &str, branch: &str) -> Option<String> {
     if !facts.git.supported {
-        let (major, minor) = git::MIN_BRANCH_GIT;
-        return Some(format!(
-            "Update git to use Branch Management (found {}, need {major}.{minor} or newer).",
-            facts.git.version
-        ));
+        return Some(unsupported_git_message(&facts.git.version));
     }
     match facts.upstream {
         BranchUpstream::Gone => {

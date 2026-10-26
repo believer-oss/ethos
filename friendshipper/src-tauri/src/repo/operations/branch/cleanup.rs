@@ -119,9 +119,23 @@ fn in_progress_branches(git_dir: &Path) -> Result<Vec<String>, String> {
     Ok(branches)
 }
 
-/// The git dir of every worktree: the common dir for the main worktree, plus each linked
-/// worktree's `worktrees/<id>`, including ones whose directory is gone.
 async fn worktree_git_dirs(git: &git::Git) -> Result<Vec<PathBuf>, CoreError> {
+    worktree_git_dirs_or(git, |common, e| {
+        CoreError::Input(anyhow!(
+            "Could not read the worktrees in {}: {e}. Branch cleanup needs every worktree's state.",
+            common.display()
+        ))
+    })
+    .await
+}
+
+/// The git dir of every worktree: the common dir for the main worktree, plus each linked
+/// worktree's `worktrees/<id>`, including ones whose directory is gone. `unreadable` maps a
+/// failure to list the common dir's `worktrees/`.
+pub(super) async fn worktree_git_dirs_or(
+    git: &git::Git,
+    unreadable: impl Fn(&Path, std::io::Error) -> CoreError,
+) -> Result<Vec<PathBuf>, CoreError> {
     let output = git
         .run_and_collect_output(
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -129,12 +143,7 @@ async fn worktree_git_dirs(git: &git::Git) -> Result<Vec<PathBuf>, CoreError> {
         )
         .await?;
     let common = PathBuf::from(output.trim());
-    let unreadable = |e: std::io::Error| {
-        CoreError::Input(anyhow!(
-            "Could not read the worktrees in {}: {e}. Branch cleanup needs every worktree's state.",
-            common.display()
-        ))
-    };
+    let unreadable = |e: std::io::Error| unreadable(&common, e);
     let mut dirs = vec![common.clone()];
     match std::fs::read_dir(common.join("worktrees")) {
         Ok(entries) => {

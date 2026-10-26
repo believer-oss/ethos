@@ -4,6 +4,7 @@ use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_branch_mode;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
+use ethos_core::clients::git;
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::RepoConfig;
 use ethos_core::types::errors::CoreError;
@@ -56,6 +57,16 @@ const MAX_SLUG_LEN: usize = 48;
 
 pub(crate) const GITHUB_PAT_MISSING: &str =
     "GitHub PAT is not configured. Please configure it in the settings.";
+
+/// The refusal for a git older than Branch Management needs.
+pub(crate) fn unsupported_git_message(version: &str) -> String {
+    git_too_old_message(version, git::MIN_BRANCH_GIT)
+}
+
+/// The refusal for a git older than `(major, minor)`.
+pub(crate) fn git_too_old_message(version: &str, (major, minor): (u32, u32)) -> String {
+    format!("Update git to use Branch Management (found {version}, need {major}.{minor} or newer).")
+}
 
 /// Whether `trunk` merges through the merge queue; a trunk with no target entry does.
 pub(crate) fn trunk_uses_merge_queue(repo_config: &RepoConfig, trunk: &str) -> bool {

@@ -230,10 +230,11 @@ pub(crate) async fn find_files_with_conflict_markers(
     }
 
     // Write the pathspec list once and reuse it for both `git add` and
-    // `git diff` so they stay scoped to the same files.
+    // `git diff` so they stay scoped to the same files. NUL-separated and
+    // read literally, so no path is unquoted or taken as a glob or magic.
     let mut pathspec = tempfile::NamedTempFile::new()?;
     for path in &paths {
-        writeln!(pathspec, "{path}")?;
+        write!(pathspec, "{path}\0")?;
     }
     pathspec.flush()?;
     let pathspec_arg = pathspec
@@ -272,7 +273,14 @@ pub(crate) async fn find_files_with_conflict_markers(
     //    additions/modifications/deletions in one shot.
     let add_out = run_git_with_index(
         git_client,
-        &["add", "-A", "--pathspec-from-file", &pathspec_arg],
+        &[
+            "--literal-pathspecs",
+            "add",
+            "-A",
+            "--pathspec-from-file",
+            &pathspec_arg,
+            "--pathspec-file-nul",
+        ],
         &temp_index,
     )
     .await?;
@@ -2156,6 +2164,27 @@ mod tests {
             .await
             .expect("check ran");
         assert_eq!(result, vec![path.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn paths_are_not_read_as_globs() {
+        // `[a].txt` as a glob matches `a.txt`; only the clean `[a].txt` itself may be checked.
+        let (dir, git) = make_test_repo().await;
+        fs::write(dir.path().join("[a].txt"), "clean\n").unwrap();
+        fs::write(
+            dir.path().join("a.txt"),
+            "ok\n<<<<<<< HEAD\nm\n=======\nt\n>>>>>>> b\nok\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &["[a].txt".to_string()])
+            .await
+            .expect("check ran");
+        assert!(result.is_empty(), "{result:?}");
+        let result = find_files_with_conflict_markers(&git, &["a.txt".to_string()])
+            .await
+            .expect("check ran");
+        assert_eq!(result, vec!["a.txt".to_string()]);
     }
 
     #[tokio::test]
