@@ -45,6 +45,17 @@ it essentially replaces workflows that UGS and P4V support.
   your local copies of `f11r-branch-*` branches deleted on origin, after a preview that shows each branch's SHA and
   flags commits that are not on the trunk. **Clean up all merged** removes only merged branches; a branch with commits
   not on the trunk is removed only when you pick it and confirm.
+- **Rebase onto latest main** on Branch Management (Git 2.43 or newer) replays the branch's pushed commits on top of
+  the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. A backup is kept
+  under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
+  it as a separate step; collaborators must Sync afterwards.
+- Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can
+  also be merged in an editor, except files Windows would run. A choice can be undone until you confirm the commit.
+  Continue is refused while edits are unsaved, files you staged yourself are present or conflict markers remain. Abort
+  returns the branch to where it started.
+- While a rebase is in progress or waiting to be pushed, Sync, submit and other changes are blocked; locking still works.
+- If someone pushes to the branch during the rebase, choose **Redo rebase on new origin**, or **Reset to backup** if
+  origin's branch was rewritten. Branches that change C++ get an offer to trigger an editor build afterwards.
 
 ### Limitations
 
