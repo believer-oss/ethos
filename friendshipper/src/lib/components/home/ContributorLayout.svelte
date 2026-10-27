@@ -248,7 +248,10 @@
 		syncing = false;
 	};
 
+	$: guidedRebaseActive = $repoStatus?.guidedRebaseActive === true;
+
 	const handleSyncClicked = async () => {
+		if (guidedRebaseActive) return;
 		try {
 			const incoming = await getIncomingEngineChange();
 			if (incoming.changes) {
@@ -267,6 +270,7 @@
 
 	const handleEngineChangeConfirmed = async () => {
 		showEngineChangeModal = false;
+		if (guidedRebaseActive) return;
 		await runSync();
 	};
 
@@ -503,11 +507,24 @@
 					</div>
 					<div class="flex flex-col gap-2">
 						<ButtonGroup size="xs" class="space-x-px w-full">
-							<Button color="primary" class="w-full" on:click={handleSyncClicked}>Sync</Button>
+							<Button
+								id="contributor-sync"
+								color="primary"
+								class="w-full"
+								disabled={guidedRebaseActive}
+								on:click={handleSyncClicked}>Sync</Button
+							>
 							<Button color="primary" href="/source/submit" class="w-full"
 								>Submit<LinkOutline class="ml-4 w-4 h-4l" /></Button
 							>
 						</ButtonGroup>
+						{#if guidedRebaseActive}
+							<Tooltip
+								triggeredBy="#contributor-sync"
+								class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+								placement="bottom">Finish the rebase in Branch Management first</Tooltip
+							>
+						{/if}
 						<Button
 							disabled={openingProject}
 							size="xs"

@@ -37,6 +37,7 @@
 	let asyncModalText = '';
 
 	$: conflictsDetected = $repoStatus?.conflicts && $repoStatus.conflicts.length > 0;
+	$: guidedRebaseActive = $repoStatus?.guidedRebaseActive === true;
 
 	let selectedCommit = '';
 
@@ -60,6 +61,7 @@
 	};
 
 	const handleSyncClicked = async () => {
+		if (guidedRebaseActive) return;
 		try {
 			inAsyncOperation = true;
 			asyncModalText = 'Pulling latest with git';
@@ -148,6 +150,7 @@
 	};
 
 	const handleSyncUprojectWithEngineRepo = async () => {
+		if (guidedRebaseActive) return;
 		try {
 			inAsyncOperation = true;
 			asyncModalText = 'Syncing uproject with engine commit...';
@@ -200,6 +203,7 @@
 	};
 
 	const handleResetRepoToCommit = async (commit: string) => {
+		if (guidedRebaseActive) return;
 		try {
 			inAsyncOperation = true;
 			asyncModalText = 'Resetting repo to commit...';
@@ -243,9 +247,10 @@
 	</div>
 	<ButtonGroup size="xs" class="space-x-px">
 		<Button
+			id="history-sync"
 			size="xs"
 			color="primary"
-			disabled={inAsyncOperation || conflictsDetected}
+			disabled={inAsyncOperation || conflictsDetected || guidedRebaseActive}
 			on:click={async () => handleSyncClicked()}
 		>
 			<RefreshOutline class="w-3 h-3 mr-2" />
@@ -255,14 +260,28 @@
 			<Button
 				size="xs"
 				color="primary"
-				disabled={inAsyncOperation}
+				disabled={inAsyncOperation || guidedRebaseActive}
 				on:click={async () => handleResetRepoToCommit(selectedCommit)}
 			>
 				<RefreshOutline class="w-3 h-3 mr-2" />
 				Reset to commit
 			</Button>
+			{#if guidedRebaseActive}
+				<Tooltip
+					class="ml-2 w-[22rem] text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
+					placement="bottom"
+					>Finish the rebase in Branch Management first
+				</Tooltip>
+			{/if}
 		{/if}
-		{#if conflictsDetected}
+		{#if guidedRebaseActive}
+			<Tooltip
+				triggeredBy="#history-sync"
+				class="ml-2 w-[22rem] text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
+				placement="bottom"
+				>Finish the rebase in Branch Management first
+			</Tooltip>
+		{:else if conflictsDetected}
 			<Tooltip
 				class="ml-2 w-36 text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
 				placement="bottom"
@@ -319,11 +338,15 @@
 				install.
 			</Tooltip>
 		{:else}
-			<DropdownItem class="text-xs" on:click={handleSyncUprojectWithEngineRepo}
+			<DropdownItem
+				class="text-xs {guidedRebaseActive ? 'opacity-50 cursor-not-allowed' : ''}"
+				on:click={handleSyncUprojectWithEngineRepo}
 				>Sync UProject with engine commit
 			</DropdownItem>
 			<Tooltip class="text-xs w-[22rem]" placement="left"
-				>Updates the EngineAssociation item in the .uproject to reflect the current engine commit.
+				>{guidedRebaseActive
+					? 'Finish the rebase in Branch Management first'
+					: 'Updates the EngineAssociation item in the .uproject to reflect the current engine commit.'}
 			</Tooltip>
 			<DropdownItem class="text-xs" on:click={handleSyncEngineRepoWithUproject}
 				>Sync engine commit with UProject

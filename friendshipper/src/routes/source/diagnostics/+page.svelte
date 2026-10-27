@@ -6,6 +6,7 @@
 	import 'svelte-highlight/styles/github-dark.css';
 	import { emit } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { repoStatus } from '$lib/stores';
 	import {
 		fixRebase,
@@ -138,9 +139,12 @@
 		}
 	};
 
+	const GUIDED_REBASE_TEXT = 'A guided rebase is in progress. Continue it in Branch Management.';
+
 	let rebaseStatus: RebaseStatusResponse = {
 		rebaseMergeExists: false,
-		headNameExists: false
+		headNameExists: false,
+		guidedRebaseActive: false
 	};
 
 	let objectCountStatus: ObjectCountResponse = {
@@ -200,7 +204,11 @@
 
 		try {
 			rebaseStatus = await getRebaseStatus();
-			if (rebaseStatus.rebaseMergeExists || rebaseStatus.headNameExists) {
+			if (
+				rebaseStatus.guidedRebaseActive ||
+				rebaseStatus.rebaseMergeExists ||
+				rebaseStatus.headNameExists
+			) {
 				rebaseCheck = CheckStatus.Failure;
 			} else {
 				rebaseCheck = CheckStatus.Success;
@@ -368,7 +376,14 @@
 				>
 				<EmojiStatus checkStatus={rebaseCheck} />
 			</div>
-			{#if rebaseStatus.headNameExists || rebaseStatus.rebaseMergeExists}
+			{#if rebaseStatus.guidedRebaseActive}
+				<div class="flex items-center gap-2">
+					<span>{GUIDED_REBASE_TEXT}</span>
+					<Button size="sm" primary on:click={() => goto('/source/branches')}>
+						Open Branch Management
+					</Button>
+				</div>
+			{:else if rebaseStatus.headNameExists || rebaseStatus.rebaseMergeExists}
 				<div class="flex items-center gap-2">
 					<span
 						>Rebase detected. You can attempt to fix this by clicking the button to the right.</span
@@ -391,7 +406,9 @@
 				<span class="text-xs text-gray-300 font-mono w-3/4">Do we need to rebase on upstream?</span>
 				<EmojiStatus checkStatus={rebaseRequiredCheck} />
 			</div>
-			{#if rebaseRequiredCheck === CheckStatus.Failure}
+			{#if rebaseRequiredCheck === CheckStatus.Failure && rebaseStatus.guidedRebaseActive}
+				{GUIDED_REBASE_TEXT}
+			{:else if rebaseRequiredCheck === CheckStatus.Failure}
 				<div class="flex items-center gap-2">
 					<span
 						>Local repo is {$repoStatus?.commitsAhead} commit(s) ahead and {$repoStatus?.commitsBehind}

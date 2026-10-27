@@ -83,6 +83,7 @@
 	import {
 		getAllCommits,
 		getObjectCount,
+		getRebaseState,
 		getRepoStatus,
 		SkipDllCheck,
 		AllowOfflineCommunication,
@@ -296,6 +297,8 @@
 		}
 	};
 
+	let startupRebaseChecked = false;
+
 	const loadAppData = async () => {
 		try {
 			// Initialize the current synced version from localStorage
@@ -327,6 +330,20 @@
 				repoConfig.set(repoConfigResponse);
 				repoStatus.set(repoStatusResponse);
 				commits.set(commitsResponse);
+
+				// An unfinished guided rebase opens Branch Management, which shows its view. Once per
+				// session: token renewals rerun loadAppData.
+				if (!startupRebaseChecked) {
+					startupRebaseChecked = true;
+					try {
+						const rs = await getRebaseState();
+						if (['inProgress', 'completedUnpushed', 'pushFailed', 'stale'].includes(rs.state)) {
+							await goto('/source/branches');
+						}
+					} catch (e) {
+						await logError('loadAppData: getRebaseState failed', e);
+					}
+				}
 
 				// Initialize changesets only AFTER repoStatus is set, so they can be
 				// reconciled against the live working-tree status. Doing this inside

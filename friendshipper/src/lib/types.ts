@@ -469,7 +469,7 @@ export interface Lock {
 export interface RebaseStatusResponse {
 	rebaseMergeExists: boolean;
 	headNameExists: boolean;
-	guidedRebaseActive?: boolean;
+	guidedRebaseActive: boolean;
 }
 
 export interface ObjectCountResponse {

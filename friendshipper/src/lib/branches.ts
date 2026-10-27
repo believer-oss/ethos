@@ -305,7 +305,11 @@ export const rebaseBlockReason = (
 	if (analysis.pr?.state === 'MERGED' || analysis.upstream === 'gone') {
 		return 'This branch was merged or deleted.';
 	}
-	if (rebase === null || rebase.state !== 'idle') {
+	// Null means the state could not be read, which is not the same as idle.
+	if (rebase === null) {
+		return "Couldn't read the rebase state. Retry.";
+	}
+	if (rebase.state !== 'idle') {
 		return 'Finish or dismiss the current rebase first.';
 	}
 	if (status.hasLocalChanges || status.untrackedFiles.length > 0) {

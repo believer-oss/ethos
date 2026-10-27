@@ -219,6 +219,7 @@
 	$: conflictsDetected = ($repoStatus?.conflicts.length ?? 0) > 0;
 	$: syncConflictPaths = $repoStatus?.willConflictOnSync ?? [];
 	$: canSync = !quickSubmitting && !syncing;
+	$: guidedRebaseActive = $repoStatus?.guidedRebaseActive === true;
 
 	const onModifiedFileRightClick = async (e: MouseEvent, file: ModifiedFile) => {
 		e.preventDefault();
@@ -765,6 +766,7 @@
 	};
 
 	const handleSyncClicked = async () => {
+		if (guidedRebaseActive) return;
 		try {
 			loading = true;
 			syncing = true;
@@ -1382,7 +1384,7 @@
 		<Button
 			size="xs"
 			color="primary"
-			disabled={loading || conflictsDetected || !canSync}
+			disabled={loading || conflictsDetected || !canSync || guidedRebaseActive}
 			on:click={async () => handleSyncClicked()}
 		>
 			<RefreshOutline class="w-3 h-3 mr-2" />
@@ -1392,7 +1394,11 @@
 				<span class="ml-1 text-orange-300">{syncConflictPaths.length}</span>
 			{/if}
 		</Button>
-		{#if conflictsDetected}
+		{#if guidedRebaseActive}
+			<Tooltip class="text-xs w-[22rem]" placement="bottom"
+				>Finish the rebase in Branch Management first</Tooltip
+			>
+		{:else if conflictsDetected}
 			<Tooltip
 				class="ml-2 w-36 text-sm text-primary-400 bg-secondary-800 dark:bg-space-950"
 				placement="bottom"
