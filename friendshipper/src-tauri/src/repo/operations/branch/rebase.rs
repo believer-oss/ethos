@@ -2184,13 +2184,16 @@ mod tests {
     use super::*;
     use crate::engine::UnrealEngineProvider;
     use crate::repo::operations::branch::rebase_guard::{
-        GUARD_COMPLETED_UNPUSHED, GUARD_IN_PROGRESS,
+        guard_with_op_lock, may_remove_stale_index_lock, GUARD_COMPLETED_UNPUSHED,
+        GUARD_IN_PROGRESS,
     };
     use crate::repo::operations::branch::rebase_state::tests::{
         conflict, diverge_on_a_txt, engine, guided_stop_on_a_txt, info, new_git, original,
         sample_file_for, slash_path, Change, Diverged, Fixture, BRANCH,
     };
-    use crate::repo::operations::branch::rebase_state::{json_path, UnmergedEntry};
+    use crate::repo::operations::branch::rebase_state::{
+        backup_ref_ts, json_path, CurrentStep, UnmergedEntry,
+    };
     use ethos_core::types::config::{AppConfig, RepoConfig, TargetBranchConfig};
     use ethos_core::types::repo::{DroppedCommit, RebaseStaleReason, RepoStatus};
 
@@ -5831,5 +5834,942 @@ mod tests {
         assert!(message.starts_with("Push failed:"), "{message}");
         assert_eq!(fx.head().await, tip);
         assert_eq!(origin_tip(&fx, BRANCH).await, Some(tip));
+    }
+
+    // Interruption and failure matrix
+
+    /// What no interruption or recovery may change.
+    #[derive(Debug, PartialEq)]
+    struct Kept {
+        backups: Vec<String>,
+        other_branches: Vec<String>,
+        stash_count: usize,
+        origin_refs: String,
+    }
+
+    async fn kept(fx: &Fixture) -> Kept {
+        let format = "--format=%(refname) %(objectname)";
+        let own = format!("refs/heads/{BRANCH} ");
+        Kept {
+            backups: fx
+                .out(&["for-each-ref", format, "refs/f11r-backup/"])
+                .await
+                .lines()
+                .map(str::to_string)
+                .collect(),
+            other_branches: fx
+                .out(&["for-each-ref", format, "refs/heads/"])
+                .await
+                .lines()
+                .filter(|line| !line.starts_with(&own))
+                .map(str::to_string)
+                .collect(),
+            stash_count: fx.out(&["stash", "list"]).await.lines().count(),
+            origin_refs: capture(fx).await.origin_refs,
+        }
+    }
+
+    /// Adds a stash entry, another branch and an ignored file, and records what must be kept.
+    async fn watch(fx: &Fixture) -> Kept {
+        add_bystanders(fx).await;
+        kept(fx).await
+    }
+
+    /// Every earlier backup ref is unchanged, other branches and the stash are untouched, and so
+    /// is origin unless something was pushed.
+    async fn assert_kept(fx: &Fixture, before: &Kept, pushed: bool) {
+        let after = kept(fx).await;
+        for backup in &before.backups {
+            assert!(after.backups.contains(backup), "{backup}: {after:?}");
+        }
+        assert_eq!(after.other_branches, before.other_branches);
+        assert_eq!(after.stash_count, before.stash_count);
+        if !pushed {
+            assert_eq!(after.origin_refs, before.origin_refs);
+        }
+    }
+
+    fn install_hook(fx: &Fixture, name: &str, script: &str) -> PathBuf {
+        let hook = fx.hooks_path().join(name);
+        fs::write(&hook, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        hook
+    }
+
+    /// Leaves what a crash between Start writing its record and running the rebase leaves: a
+    /// pre-rebase hook copies Start's own record aside and fails, and the copy is put back.
+    async fn start_crashed_before_the_rebase(fx: &Fixture) -> GuidedRebaseFile {
+        let hook = install_hook(
+            fx,
+            "pre-rebase",
+            "#!/bin/sh\ncp .git/f11r-rebase.json .git/f11r-rebase.crashed\nexit 1\n",
+        );
+        let message = internal_message(start(fx).await);
+        assert!(message.starts_with("Rebase could not start:"), "{message}");
+        fs::remove_file(hook).unwrap();
+        fs::rename(
+            fx.git_dir().join("f11r-rebase.crashed"),
+            json_path(&fx.git_dir()),
+        )
+        .unwrap();
+        let file = record(fx);
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        file
+    }
+
+    fn stale(file: &GuidedRebaseFile, reason: RebaseStaleReason) -> RebaseState {
+        RebaseState {
+            state: RebaseStateKind::Stale,
+            stale_reason: Some(reason),
+            branch: file.branch.clone(),
+            backup_ref: file.backup_ref.clone(),
+            backup_sha: file.backup_sha.clone(),
+            ..Default::default()
+        }
+    }
+
+    async fn dismiss(fx: &Fixture) {
+        dismiss_stale(&fx.git, fx.path(), &tokio::sync::Mutex::new(()))
+            .await
+            .expect("dismiss");
+        assert_eq!(state(fx).await, RebaseState::default());
+    }
+
+    /// Finish pushes HEAD and leaves no rebase behind.
+    async fn assert_finished(fx: &Fixture) {
+        let response = finish(fx).await.expect("finish");
+        assert_eq!(response.outcome, RebaseFinishOutcome::Pushed);
+        assert_eq!(origin_tip(fx, BRANCH).await, Some(fx.head().await));
+        assert!(!json_path(&fx.git_dir()).exists());
+        assert_eq!(state(fx).await, RebaseState::default());
+    }
+
+    fn index_locked(lock: &Path) -> String {
+        format!(
+            "Git's index is locked ({}). If no git command is running, delete that file and try again.",
+            lock.display()
+        )
+    }
+
+    async fn set_origin_url(fx: &Fixture, url: &str) {
+        fx.run(&["remote", "set-url", "origin", url]).await;
+    }
+
+    #[tokio::test]
+    async fn m1_start_interrupted_by_a_network_failure() {
+        let fx = Fixture::new().await;
+        let d = diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        let url = fx.out(&["remote", "get-url", "origin"]).await;
+        set_origin_url(&fx, &slash_path(&fx.path().join("missing.git"))).await;
+        let snapshot = capture(&fx).await;
+
+        assert!(start(&fx).await.is_err());
+        assert_eq!(capture(&fx).await, snapshot);
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert!(backup_refs(&fx).await.is_empty());
+
+        set_origin_url(&fx, &url).await;
+        start(&fx).await.expect("start");
+        assert_eq!(state(&fx).await, completed(&record(&fx), vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m1_start_interrupted_after_the_backup_ref() {
+        let fx = Fixture::new().await;
+        let d = diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        // Backup refs of Starts that died before writing their record, 15 days and 1 day ago.
+        let now = unix_now();
+        let orphan = create_backup_ref(&fx.git, BRANCH, &d.branch, "", now - 15 * DAY)
+            .await
+            .unwrap();
+        let recent = create_backup_ref(&fx.git, BRANCH, &d.branch, "", now - DAY)
+            .await
+            .unwrap();
+        assert_eq!(state(&fx).await, RebaseState::default());
+
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_eq!(backup_refs(&fx).await, [recent, file.backup_ref]);
+        assert!(!backup_refs(&fx).await.contains(&orphan));
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m2_start_interrupted_before_the_rebase_ran() {
+        let fx = Fixture::new().await;
+        let d = diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        let file = start_crashed_before_the_rebase(&fx).await;
+        let crashed = kept(&fx).await;
+        assert_eq!(fx.head().await, d.branch);
+        assert_eq!(
+            state(&fx).await,
+            stale(&file, RebaseStaleReason::AbortedOutside)
+        );
+        assert_kept(&fx, &before, false).await;
+
+        dismiss(&fx).await;
+        start(&fx).await.expect("start");
+        let new = record(&fx);
+        assert_ne!(new.backup_ref, file.backup_ref);
+        assert_eq!(state(&fx).await, completed(&new, vec![]));
+        assert_kept(&fx, &crashed, false).await;
+    }
+
+    #[tokio::test]
+    async fn m3_rebase_stopped_in_the_background_after_a_crash() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        watch(&fx).await;
+        let file = start_crashed_before_the_rebase(&fx).await;
+        let crashed = kept(&fx).await;
+        // Git outlived Friendshipper and stopped on the conflict.
+        assert_eq!(fx.start_raw_rebase(&file.onto).await, 1);
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 1,
+                total_steps: 1,
+                current_commit: Some(info(&d.branch, "branch change")),
+                conflicts: vec![conflict("a.txt", ConflictKind::Content, &d)],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: d.branch.clone(),
+                ..Default::default()
+            }
+        );
+
+        resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_kept(&fx, &crashed, false).await;
+        assert_finished(&fx).await;
+        assert_kept(&fx, &crashed, true).await;
+    }
+
+    #[tokio::test]
+    async fn m3_rebase_completed_in_the_background_after_a_crash() {
+        let fx = Fixture::new().await;
+        let d = diverge_clean(&fx).await;
+        watch(&fx).await;
+        let file = start_crashed_before_the_rebase(&fx).await;
+        let crashed = kept(&fx).await;
+        assert_eq!(fx.start_raw_rebase(&file.onto).await, 0);
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_kept(&fx, &crashed, false).await;
+
+        assert_finished(&fx).await;
+        assert_kept(&fx, &crashed, true).await;
+    }
+
+    #[tokio::test]
+    async fn m3_continue_ran_on_in_the_background_after_a_crash() {
+        let fx = Fixture::new().await;
+        let four = four_commits(&fx).await;
+        let c3 = &four.commits[2];
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        // Continue's git outlived Friendshipper and stopped on C3; the record still caches C1.
+        let continued = fx
+            .git
+            .run_with_status(
+                &["-c", "rerere.enabled=false", "rebase", "--continue"],
+                git::Opts::new_without_logs().with_env(REBASE_ENV),
+            )
+            .await
+            .unwrap();
+        assert_eq!(continued.exit_code, 1, "{}", continued.stderr);
+        let file = record(&fx);
+        assert_eq!(file.current_step.as_ref().unwrap().sha, four.commits[0]);
+
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 3,
+                total_steps: 4,
+                current_commit: Some(info(c3, "C3")),
+                conflicts: vec![
+                    conflict_file(
+                        "b.uasset",
+                        ConflictKind::Content,
+                        None,
+                        false,
+                        &four.main,
+                        (c3, "C3"),
+                    ),
+                    conflict_file(
+                        "c.txt",
+                        ConflictKind::ModifyDelete,
+                        Some(ConflictSideName::Main),
+                        true,
+                        &four.main,
+                        (c3, "C3"),
+                    ),
+                ],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: file.backup_sha.clone(),
+                ..Default::default()
+            }
+        );
+
+        resolve(&fx, "b.uasset", RebaseKeep::Main).await.unwrap();
+        resolve(&fx, "c.txt", RebaseKeep::Branch).await.unwrap();
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_eq!(fx.sha("HEAD~4").await, four.main);
+        assert_kept(&fx, &before, false).await;
+        assert_finished(&fx).await;
+    }
+
+    #[tokio::test]
+    async fn m4_pick_stopped_by_a_failing_smudge_filter() {
+        let fx = Fixture::new().await;
+        for (key, value) in [
+            ("filter.fail.clean", "cat"),
+            ("filter.fail.smudge", "cat"),
+            ("filter.fail.required", "true"),
+        ] {
+            fx.run(&["config", key, value]).await;
+        }
+        fx.commit_file(".gitattributes", b"*.bin filter=fail\n", "base change")
+            .await;
+        fx.branch(BRANCH).await;
+        let c1 = fx.commit_file("b.txt", b"branch\n", "C1").await;
+        let c2 = fx.commit_file("x.bin", b"bin\n", "C2").await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        let main = fx.commit_file("m.txt", b"main\n", "main change").await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+        let before = watch(&fx).await;
+        let bystanders_before = bystanders(&fx).await;
+        // The LFS server is unreachable: writing C2's file fails mid-pick.
+        fx.run(&["config", "filter.fail.smudge", "false"]).await;
+
+        let message = internal_message(start(&fx).await);
+        assert!(message.contains("smudge filter fail failed"), "{message}");
+        let file = record(&fx);
+        // C1 was replayed onto main before the failure.
+        assert_eq!(fx.sha("HEAD~1").await, main);
+        assert_eq!(
+            fx.out(&["log", "-1", "--format=%s"]).await,
+            fx.out(&["log", "-1", "--format=%s", &c1]).await
+        );
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 2,
+                total_steps: 2,
+                step_incomplete: true,
+                // C2 was taken off the todo list but never replayed.
+                dropped_commits: vec![dropped(&c2, "C2")],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: c2.clone(),
+                ..Default::default()
+            }
+        );
+        assert_continue_refused(&fx, STEP_INCOMPLETE).await;
+        assert_eq!(
+            input_message(resolve(&fx, "x.bin", RebaseKeep::Main).await),
+            STEP_INCOMPLETE
+        );
+
+        // Abort needs the filter too, and reports git's error while it fails.
+        let json = fx.json_bytes();
+        let message = internal_message(abort(&fx).await);
+        assert!(
+            message.starts_with("git rebase --abort failed:"),
+            "{message}"
+        );
+        assert!(message.contains("smudge filter fail failed"), "{message}");
+        assert_eq!(fx.json_bytes(), json);
+        assert_eq!(state(&fx).await.state, RebaseStateKind::InProgress);
+
+        fx.run(&["config", "filter.fail.smudge", "cat"]).await;
+        abort(&fx).await.expect("abort");
+        assert_aborted(&fx, &file, &bystanders_before).await;
+        assert_eq!(read(&fx, "x.bin").as_deref(), Some(&b"bin\n"[..]));
+        assert_kept(&fx, &before, false).await;
+    }
+
+    /// Every queued rebase op is refused with the index-lock text, except Start and the editor
+    /// build, which refuse an active state first; nothing changes.
+    async fn assert_refused_by_the_index_lock(fx: &Fixture, lock: &Path, guard: &str) {
+        let before = capture(fx).await;
+        let json = fx.json_bytes();
+        for result in [
+            resolve(fx, "a.txt", RebaseKeep::Main).await,
+            unresolve(fx, "a.txt").await,
+            continue_rebase(fx).await,
+            abort(fx).await,
+            finish(fx).await.map(|_| ()),
+            redo(fx).await,
+            reset_to_backup(fx).await,
+        ] {
+            assert_eq!(input_message(result), index_locked(lock));
+        }
+        assert_eq!(input_message(start(fx).await), guard);
+        assert_eq!(input_message(rebuild(fx).await), guard);
+        assert_eq!(capture(fx).await, before);
+        assert_eq!(fx.json_bytes(), json);
+        assert!(lock.exists());
+    }
+
+    #[tokio::test]
+    async fn m5_stale_index_lock_while_in_progress() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let in_progress = state(&fx).await;
+        assert_eq!(in_progress.state, RebaseStateKind::InProgress);
+        let lock = fx.git_dir().join("index.lock");
+        fs::write(&lock, b"").unwrap();
+
+        assert_eq!(state(&fx).await, in_progress);
+        assert_refused_by_the_index_lock(&fx, &lock, GUARD_IN_PROGRESS).await;
+        assert_eq!(state(&fx).await, in_progress);
+        // Startup keeps it too, as git may still be rebasing.
+        assert!(!may_remove_stale_index_lock(&fx.git_dir()));
+
+        fs::remove_file(&lock).unwrap();
+        resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await, completed(&record(&fx), vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m5_stale_index_lock_while_completed_unpushed() {
+        let fx = Fixture::new().await;
+        diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        let lock = fx.git_dir().join("index.lock");
+        fs::write(&lock, b"").unwrap();
+
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_refused_by_the_index_lock(&fx, &lock, GUARD_COMPLETED_UNPUSHED).await;
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        // No git rebase can still run, so startup would remove it; no op does.
+        assert!(may_remove_stale_index_lock(&fx.git_dir()));
+
+        fs::remove_file(&lock).unwrap();
+        assert_kept(&fx, &before, false).await;
+        assert_finished(&fx).await;
+        assert_kept(&fx, &before, true).await;
+    }
+
+    /// Resolves `a.txt` by keeping main, then runs only Undo's `update-index --unresolve`, as a
+    /// crash before its working-tree checkout leaves it.
+    async fn undo_crashed_before_the_checkout(fx: &Fixture) -> (Diverged, Kept) {
+        let d = diverge_on_a_txt(fx).await;
+        let before = watch(fx).await;
+        start(fx).await.expect("start");
+        resolve(fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        fx.run(&[
+            "--literal-pathspecs",
+            "update-index",
+            "--unresolve",
+            "--",
+            "a.txt",
+        ])
+        .await;
+
+        let file = record(fx);
+        assert_eq!(
+            state(fx).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 1,
+                total_steps: 1,
+                current_commit: Some(info(&d.branch, "branch change")),
+                conflicts: vec![conflict("a.txt", ConflictKind::Content, &d)],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: d.branch.clone(),
+                ..Default::default()
+            }
+        );
+        assert_eq!(xy_of(fx, "a.txt").await.as_deref(), Some("UU"));
+        assert_eq!(read(fx, "a.txt").as_deref(), Some(&b"main\n"[..]));
+        assert_continue_refused(fx, RESOLVE_EVERY_FILE).await;
+        (d, before)
+    }
+
+    #[tokio::test]
+    async fn m6_undo_interrupted_then_keep_branch() {
+        let fx = Fixture::new().await;
+        let (d, before) = undo_crashed_before_the_checkout(&fx).await;
+        resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
+        assert_eq!(read(&fx, "a.txt").as_deref(), Some(&b"branch\n"[..]));
+        assert_eq!(
+            conflict_in_state(&fx, "a.txt").await.resolution,
+            Some(RebaseKeep::Branch)
+        );
+
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await, completed(&record(&fx), vec![]));
+        assert_eq!(
+            fx.sha("HEAD:a.txt").await,
+            fx.sha(&format!("{}:a.txt", d.branch)).await
+        );
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m6_undo_interrupted_then_mark_resolved() {
+        let fx = Fixture::new().await;
+        let (d, before) = undo_crashed_before_the_checkout(&fx).await;
+        resolve(&fx, "a.txt", RebaseKeep::Manual).await.unwrap();
+        assert_eq!(read(&fx, "a.txt").as_deref(), Some(&b"main\n"[..]));
+        assert_eq!(
+            conflict_in_state(&fx, "a.txt").await.resolution,
+            Some(RebaseKeep::Manual)
+        );
+
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(
+            state(&fx).await,
+            completed(&record(&fx), vec![dropped(&d.branch, "branch change")])
+        );
+        assert_eq!(fx.head().await, d.main);
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m7_app_closed_with_the_continue_confirm_open() {
+        let fx = Fixture::new().await;
+        let d = diverge_two_conflicts(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        resolve(&fx, OTHER, RebaseKeep::Branch).await.unwrap();
+        let file = record(&fx);
+
+        let resolved = |path: &str, keep: RebaseKeep| ConflictFile {
+            resolved: true,
+            resolution: Some(keep),
+            ..conflict(path, ConflictKind::Content, &d)
+        };
+        assert_eq!(
+            fx.build(true).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 1,
+                total_steps: 1,
+                current_commit: Some(info(&d.branch, "branch change")),
+                conflicts: vec![
+                    resolved("a.txt", RebaseKeep::Main),
+                    resolved(OTHER, RebaseKeep::Branch),
+                ],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: d.branch.clone(),
+                ..Default::default()
+            }
+        );
+        assert_eq!(fx.head().await, d.main);
+
+        continue_rebase(&fx).await.expect("continue");
+        assert_eq!(state(&fx).await, completed(&file, vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_eq!(read(&fx, "a.txt").as_deref(), Some(&b"main\n"[..]));
+        assert_eq!(read(&fx, OTHER).as_deref(), Some(&b"branch o\n"[..]));
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m8a_aborted_in_a_terminal_between_steps() {
+        let fx = Fixture::new().await;
+        let d = diverge_two_conflicts(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        fx.run(&["rebase", "--abort"]).await;
+
+        assert_eq!(
+            state(&fx).await,
+            stale(&file, RebaseStaleReason::AbortedOutside)
+        );
+        dismiss(&fx).await;
+        assert_eq!(fx.head().await, d.branch);
+        assert_eq!(fx.sha(&file.backup_ref).await, d.branch);
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m8b_continued_in_a_terminal_between_steps() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        fx.run(&["checkout", "--theirs", "--", "a.txt"]).await;
+        fx.run(&["add", "--", "a.txt"]).await;
+        let editor: &[(&str, &str)] = &[("GIT_EDITOR", "true")];
+        let continued = fx
+            .git
+            .run_with_status(
+                &["rebase", "--continue"],
+                git::Opts::new_without_logs().with_env(editor),
+            )
+            .await
+            .unwrap();
+        assert_eq!(continued.exit_code, 0, "{}", continued.stderr);
+
+        assert_eq!(state(&fx).await, completed(&record(&fx), vec![]));
+        assert_eq!(fx.sha("HEAD~1").await, d.main);
+        assert_kept(&fx, &before, false).await;
+        assert_finished(&fx).await;
+        assert_kept(&fx, &before, true).await;
+    }
+
+    #[tokio::test]
+    async fn m8c_pushed_in_a_terminal_between_steps() {
+        let fx = Fixture::new().await;
+        diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        let head = fx.head().await;
+        let refspec = format!("HEAD:refs/heads/{BRANCH}");
+        fx.run(&["push", "-q", "--force-with-lease", "origin", &refspec])
+            .await;
+
+        assert_eq!(
+            state(&fx).await,
+            stale(&file, RebaseStaleReason::PushedOutside)
+        );
+        dismiss(&fx).await;
+        assert_eq!(fx.head().await, head);
+        assert_eq!(origin_tip(&fx, BRANCH).await, Some(head));
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        assert_kept(&fx, &before, true).await;
+    }
+
+    /// A rebase waiting to be pushed whose Finish fails on the network and then on a pre-push
+    /// hook; returns the hook and what must be kept.
+    async fn finish_failed_twice(fx: &Fixture) -> (PathBuf, Kept) {
+        diverge_clean(fx).await;
+        let before = watch(fx).await;
+        start(fx).await.expect("start");
+        let file = record(fx);
+        let json = fx.json_bytes();
+
+        let url = fx.out(&["remote", "get-url", "origin"]).await;
+        set_origin_url(fx, &slash_path(&fx.path().join("missing.git"))).await;
+        let message = internal_message(finish(fx).await);
+        assert!(message.starts_with("Push failed:"), "{message}");
+        assert_eq!(state(fx).await, completed(&file, vec![]));
+        assert_eq!(fx.json_bytes(), json);
+        set_origin_url(fx, &url).await;
+
+        let hook = install_hook(
+            fx,
+            "pre-push",
+            "#!/bin/sh\necho refused by pre-push >&2\nexit 1\n",
+        );
+        let message = internal_message(finish(fx).await);
+        assert!(message.starts_with("Push failed:"), "{message}");
+        assert!(message.contains("refused by pre-push"), "{message}");
+        assert_eq!(state(fx).await, completed(&file, vec![]));
+        assert_eq!(fx.json_bytes(), json);
+        assert_kept(fx, &before, false).await;
+        (hook, before)
+    }
+
+    #[tokio::test]
+    async fn m9_finish_push_failure_then_push_again() {
+        let fx = Fixture::new().await;
+        let (hook, before) = finish_failed_twice(&fx).await;
+        fs::remove_file(hook).unwrap();
+        assert_finished(&fx).await;
+        assert_kept(&fx, &before, true).await;
+    }
+
+    #[tokio::test]
+    async fn m9_finish_push_failure_then_reset_to_backup() {
+        let fx = Fixture::new().await;
+        let (_, before) = finish_failed_twice(&fx).await;
+        assert_reset(&fx).await;
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn m10_finish_interrupted_after_the_push() {
+        let fx = Fixture::new().await;
+        diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        let head = fx.head().await;
+        // Finish's push went through; the app died before deleting the record.
+        let push = leased_push(&fx.git, BRANCH, &head, &file.pre_rebase_origin_sha)
+            .await
+            .unwrap();
+        assert_eq!(push.outcome, PushOutcome::Pushed);
+
+        assert_eq!(
+            state(&fx).await,
+            stale(&file, RebaseStaleReason::PushedOutside)
+        );
+        dismiss(&fx).await;
+        assert_eq!(fx.head().await, head);
+        assert_eq!(origin_tip(&fx, BRANCH).await, Some(head));
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        assert_kept(&fx, &before, true).await;
+    }
+
+    #[tokio::test]
+    async fn m11_finish_post_steps_fail() {
+        let fx = Fixture::new().await;
+        diverge_clean(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        let head = fx.head().await;
+
+        assert_eq!(
+            finish(&fx).await.expect("finish"),
+            RebaseFinishResponse {
+                outcome: RebaseFinishOutcome::Pushed,
+                state: RebaseState::default(),
+                dropped_commits: vec![],
+                touches_cpp: false,
+                post_step_error: Some(POST_ERROR.to_string()),
+            }
+        );
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert!(!json_path(&fx.git_dir()).exists());
+        assert_eq!(fx.head().await, head);
+        assert_eq!(origin_tip(&fx, BRANCH).await, Some(head));
+        assert_eq!(fx.sha(&file.backup_ref).await, file.backup_sha);
+        assert_kept(&fx, &before, true).await;
+    }
+
+    #[tokio::test]
+    async fn m12_redo_interrupted_before_the_new_record() {
+        let fx = Fixture::new().await;
+        let d = diverge_clean(&fx).await;
+        watch(&fx).await;
+        start(&fx).await.expect("start");
+        let old = record(&fx);
+        let rebased = fx.head().await;
+        let collab = reject_push(&fx, "c.txt").await;
+        let push_failed = kept(&fx).await;
+
+        // Redo fetched, backed up, reset and deleted the record; the app died before Start.
+        assert!(fetch_origin(&fx.git, Some("main"), BRANCH).await.unwrap());
+        let origin = required_sha(&fx.git, &format!("refs/remotes/origin/{BRANCH}"))
+            .await
+            .unwrap();
+        assert_eq!(origin, collab);
+        backup_rebased_head(&fx.git, BRANCH, &rebased)
+            .await
+            .unwrap();
+        reset_keep(&fx.git, fx.path(), &origin).await.unwrap();
+        {
+            let _lock = REBASE_FILE_LOCK.lock().await;
+            delete_rebase_file(&fx.git_dir()).unwrap();
+        }
+
+        assert_eq!(state(&fx).await, RebaseState::default());
+        assert_eq!(fx.head().await, collab);
+        assert_eq!(
+            fx.out(&["symbolic-ref", "-q", "HEAD"]).await,
+            format!("refs/heads/{BRANCH}")
+        );
+        assert_eq!(fx.sha(&rebased_backups(&fx).await[0]).await, rebased);
+        assert_kept(&fx, &push_failed, false).await;
+
+        start(&fx).await.expect("start");
+        let new = record(&fx);
+        assert_eq!(new.backup_sha, collab);
+        assert_eq!(state(&fx).await, completed(&new, vec![]));
+        assert_eq!(
+            fx.out(&["log", "--format=%s", &format!("{}..HEAD", d.main)])
+                .await,
+            "collab commit\nbranch change"
+        );
+        assert_finished(&fx).await;
+        assert_eq!(fx.sha(&old.backup_ref).await, old.backup_sha);
+        assert_kept(&fx, &push_failed, true).await;
+    }
+
+    // Further failures
+
+    /// What `GET …/state` returns, caching unless `op_lock` is held.
+    async fn state_caching_unless_held(
+        fx: &Fixture,
+        op_lock: &tokio::sync::Mutex<()>,
+    ) -> RebaseState {
+        build_rebase_state(
+            &fx.git,
+            fx.path(),
+            &engine(fx.path()),
+            Path::new(""),
+            fx.derive().await,
+            Some(op_lock),
+        )
+        .await
+        .expect("build rebase state")
+    }
+
+    #[tokio::test]
+    async fn state_read_during_a_rebase_op_is_not_cached() {
+        let fx = Fixture::new().await;
+        let (d, _) = guided_stop_on_a_txt(&fx).await;
+        let json = fx.json_bytes();
+
+        let op_lock = tokio::sync::Mutex::new(());
+        let running = op_lock.lock().await;
+        assert_eq!(
+            state_caching_unless_held(&fx, &op_lock).await.conflicts,
+            vec![conflict("a.txt", ConflictKind::Content, &d)]
+        );
+        assert_eq!(fx.json_bytes(), json);
+        drop(running);
+
+        // A read after the op uses the step the op cached.
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        let cached = record(&fx).current_step.expect("cached step");
+        let conflicts = state_caching_unless_held(&fx, &op_lock).await.conflicts;
+        assert_eq!(conflicts, cached.conflicts);
+        assert_eq!(conflicts[0].resolution, Some(RebaseKeep::Main));
+    }
+
+    #[tokio::test]
+    async fn cached_step_of_an_older_commit_is_recomputed() {
+        let fx = Fixture::new().await;
+        let (d, mut file) = guided_stop_on_a_txt(&fx).await;
+        file.current_step = Some(CurrentStep {
+            sha: d.base.clone(),
+            conflicts: vec![conflict("old.txt", ConflictKind::Content, &d)],
+        });
+        fx.write_file_json(&file);
+
+        let current = vec![conflict("a.txt", ConflictKind::Content, &d)];
+        assert_eq!(fx.build(false).await.conflicts, current);
+        assert_eq!(fx.build(true).await.conflicts, current);
+        assert_eq!(
+            record(&fx).current_step,
+            Some(CurrentStep {
+                sha: fx.rebase_head(),
+                conflicts: current,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn corrupt_record_mid_rebase_is_external() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        let before = watch(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        let json = fx.json_bytes().unwrap();
+        fs::write(json_path(&fx.git_dir()), &json[..json.len() / 2]).unwrap();
+
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                state: RebaseStateKind::External,
+                stale_reason: Some(RebaseStaleReason::Unreadable),
+                ..Default::default()
+            }
+        );
+        guard_with_op_lock(&fx.git, fx.path(), &tokio::sync::Mutex::new(()))
+            .await
+            .expect("an external rebase is not guarded");
+        assert_eq!(
+            input_message(validate_repo_state(fx.path(), &RepoStatus::new())),
+            "A rebase is in progress. Resolve it in the Diagnostics tab before continuing."
+        );
+        assert_start_refused(&fx, EXTERNAL_REBASE).await;
+        assert_abort_refused(&fx).await;
+        assert_eq!(
+            input_message(dismiss_stale(&fx.git, fx.path(), &tokio::sync::Mutex::new(())).await),
+            "Nothing to dismiss."
+        );
+
+        // Diagnostics aborts git's rebase; the record is then a stale notice.
+        fx.run(&["rebase", "--abort"]).await;
+        let derived = fx.derive().await;
+        assert_eq!(
+            (derived.kind, derived.stale_reason),
+            (RebaseStateKind::Stale, Some(RebaseStaleReason::Unreadable))
+        );
+        dismiss(&fx).await;
+        assert_eq!(fx.head().await, d.branch);
+        assert_eq!(fx.sha(&file.backup_ref).await, d.branch);
+        assert_kept(&fx, &before, false).await;
+    }
+
+    #[tokio::test]
+    async fn missing_rebase_head_is_an_incomplete_step() {
+        let fx = Fixture::new().await;
+        let d = diverge_on_a_txt(&fx).await;
+        let before = add_bystanders(&fx).await;
+        start(&fx).await.expect("start");
+        let file = record(&fx);
+        fs::remove_file(fx.git_dir().join("REBASE_HEAD")).unwrap();
+
+        assert_eq!(
+            state(&fx).await,
+            RebaseState {
+                state: RebaseStateKind::InProgress,
+                branch: BRANCH.to_string(),
+                step: 1,
+                total_steps: 1,
+                step_incomplete: true,
+                dropped_commits: vec![dropped(&d.branch, "branch change")],
+                backup_ref: file.backup_ref.clone(),
+                backup_sha: d.branch.clone(),
+                ..Default::default()
+            }
+        );
+        assert_continue_refused(&fx, STEP_INCOMPLETE).await;
+        assert_eq!(
+            input_message(resolve(&fx, "a.txt", RebaseKeep::Main).await),
+            STEP_INCOMPLETE
+        );
+        abort(&fx).await.expect("abort");
+        assert_aborted(&fx, &file, &before).await;
+    }
+
+    #[tokio::test]
+    async fn second_start_in_a_row_keeps_the_first_backup() {
+        let fx = Fixture::new().await;
+        let d = diverge_clean(&fx).await;
+        start(&fx).await.expect("start");
+        let first = record(&fx);
+        input_message(reset_to_backup(&fx).await);
+        start(&fx).await.expect("start again");
+        let second = record(&fx);
+
+        // In the same second the second backup takes the next one.
+        let ts = |file: &GuidedRebaseFile| backup_ref_ts(&file.backup_ref).unwrap();
+        assert!(ts(&second) > ts(&first), "{first:?} {second:?}");
+        assert_eq!(fx.sha(&first.backup_ref).await, d.branch);
+        assert_eq!(fx.sha(&second.backup_ref).await, d.branch);
     }
 }
