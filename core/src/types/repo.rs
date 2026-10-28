@@ -469,6 +469,18 @@ pub fn is_feature_branch(name: &str) -> bool {
     name.starts_with(FEATURE_BRANCH_PREFIX)
 }
 
+/// Prefix of the origin branch holding a branch's version from before its last rebase push.
+pub const BACKUP_BRANCH_PREFIX: &str = "f11r-backup-";
+
+/// `f11r-backup-<slug>` for `f11r-branch-<slug>`, otherwise `f11r-backup--<branch>`. Slugs never
+/// start with '-', so the two forms never collide.
+pub fn backup_branch_name(branch: &str) -> String {
+    match branch.strip_prefix(FEATURE_BRANCH_PREFIX) {
+        Some(slug) => format!("{BACKUP_BRANCH_PREFIX}{slug}"),
+        None => format!("{BACKUP_BRANCH_PREFIX}-{branch}"),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchInfo {
@@ -887,6 +899,9 @@ pub struct RebaseFinishResponse {
     pub touches_cpp: bool,
     /// Updating editor binaries or the engine failed after the push succeeded.
     pub post_step_error: Option<String>,
+    /// Origin branch now holding the pre-rebase version; empty unless pushed.
+    #[serde(default)]
+    pub backup_branch: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -973,6 +988,16 @@ pub type ShowCommitFilesResponse = Vec<CommitFileInfo>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_branch_names() {
+        assert_eq!(backup_branch_name("f11r-branch-foo"), "f11r-backup-foo");
+        assert_eq!(backup_branch_name("foo"), "f11r-backup--foo");
+        assert_eq!(
+            backup_branch_name("release/1.2"),
+            "f11r-backup--release/1.2"
+        );
+    }
 
     #[test]
     fn repo_status_serializes_will_conflict_on_sync() {
