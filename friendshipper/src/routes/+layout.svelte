@@ -1510,7 +1510,7 @@
 		<code class="text-xs text-gray-500 dark:text-gray-500 truncate">{lastGitLogMessage}</code>
 	</div>
 </div>
-<div class="fixed top-0 w-full flex flex-col items-center z-50 pointer-events-none pt-2 gap-2">
+<div class="fixed top-0 w-full flex flex-col items-center z-[80] pointer-events-none pt-2 gap-2">
 	<ErrorToastStack {errors} onDismiss={onErrorDismissed} onDismissAll={onDismissAllErrors} />
 	<SuccessToast
 		bind:show={hasSuccess}

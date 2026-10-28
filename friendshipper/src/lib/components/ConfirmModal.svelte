@@ -4,6 +4,8 @@
 	export let showModal: boolean;
 	export let title: string = 'Are you sure?';
 	export let resultCallback: (result: boolean) => void;
+	/** Opens over another modal. */
+	export let stacked = false;
 
 	const handleYes = () => {
 		showModal = false;
@@ -19,8 +21,12 @@
 <Modal
 	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
 	bodyClass="!border-t-0"
-	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
-	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	backdropClass="fixed mt-8 inset-0 {stacked
+		? 'z-[60]'
+		: 'z-40'} bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full {stacked
+		? 'z-[70]'
+		: 'z-50'} w-full p-4 pb-12 flex"
 	dismissable={false}
 	size="sm"
 	outsideclose

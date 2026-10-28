@@ -9,6 +9,7 @@ import type {
 	CommitTagCategory,
 	ConflictFile,
 	Nullable,
+	RebaseCommitInfo,
 	RebaseState,
 	RebaseStateKind,
 	RepoConfig,
@@ -195,6 +196,8 @@ export const defaultPrTitle = (branch: string, trunk: string): string =>
 
 export const PR_TITLE_MAX = 256;
 
+export const EDITOR_OPEN = 'Unreal Editor is open. Close it to use Branch Management.';
+
 // Mirrors the Rust `validate_pr_title`: trimmed, non-empty, at most 256 code points.
 export const prTitleError = (title: string): string | null => {
 	const trimmed = title.trim();
@@ -349,6 +352,16 @@ export const resolutionLabel = (f: ConflictFile): string => {
 	return f.resolution === 'main' ? "Kept main's version" : "Kept branch's version";
 };
 
+// ' on <date>', or empty when the date is unknown.
+const onDate = (c: RebaseCommitInfo): string => {
+	if (c.date === '') return '';
+	const parsed = new Date(c.date);
+	const text = Number.isNaN(parsed.getTime())
+		? c.date
+		: parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+	return ` on ${text}`;
+};
+
 // The choice for the Continue confirmation; Continue can still refuse, e.g. for edits left
 // unstaged.
 export const confirmLine = (f: ConflictFile): string => {
@@ -360,25 +373,31 @@ export const confirmLine = (f: ConflictFile): string => {
 	}
 	if (f.resolution === 'main') {
 		return f.mainSide
-			? `Main's version — by ${f.mainSide.author} in ${sha7(f.mainSide.sha)}`
+			? `Main's version — by ${f.mainSide.author}${onDate(f.mainSide)} in ${sha7(f.mainSide.sha)}`
 			: "Main's version";
 	}
-	return `Branch's version — by ${f.branchSide.author} in ${sha7(f.branchSide.sha)}`;
+	return `Branch's version — by ${f.branchSide.author}${onDate(f.branchSide)} in ${sha7(
+		f.branchSide.sha
+	)}`;
 };
 
 export const mainSideText = (f: ConflictFile): string => {
 	if (f.deletedOn === 'main') {
-		return f.mainSide ? `deleted on main by ${f.mainSide.author}` : 'deleted on main';
+		return f.mainSide
+			? `deleted on main by ${f.mainSide.author}${onDate(f.mainSide)}`
+			: 'deleted on main';
 	}
 	return f.mainSide
-		? `last changed by ${f.mainSide.author} in ${sha7(f.mainSide.sha)} "${f.mainSide.subject}"`
+		? `last changed by ${f.mainSide.author}${onDate(f.mainSide)} in ${sha7(f.mainSide.sha)} "${
+				f.mainSide.subject
+		  }"`
 		: 'last changed on main';
 };
 
 export const branchSideText = (f: ConflictFile): string =>
 	f.deletedOn === 'branch'
-		? 'deleted on branch'
-		: `from ${sha7(f.branchSide.sha)} by ${f.branchSide.author}`;
+		? `deleted on branch${onDate(f.branchSide)}`
+		: `from ${sha7(f.branchSide.sha)} by ${f.branchSide.author}${onDate(f.branchSide)}`;
 
 // Mirrors the backend's stale messages.
 export const staleMessage = (state: RebaseState): string => {

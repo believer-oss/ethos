@@ -203,6 +203,10 @@ pub struct RepoStatus {
     #[serde(default)]
     pub guided_rebase_active: bool,
 
+    /// The Unreal Editor has this project open.
+    #[serde(default)]
+    pub editor_running: bool,
+
     // locks
     pub lock_user: String,
     pub locks_ours: Vec<Lock>,
@@ -238,6 +242,7 @@ impl RepoStatus {
             will_conflict_on_rebase: vec![],
             will_conflict_on_sync: vec![],
             guided_rebase_active: false,
+            editor_running: false,
             lock_user: String::new(),
             locks_ours: vec![],
             locks_theirs: vec![],
@@ -760,6 +765,9 @@ pub struct RebaseCommitInfo {
     pub subject: String,
     /// Author name.
     pub author: String,
+    /// Author date, ISO 8601; empty when unknown.
+    #[serde(default)]
+    pub date: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

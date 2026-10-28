@@ -368,6 +368,7 @@ export interface RepoStatus {
 	willConflictOnRebase: string[];
 	willConflictOnSync?: string[];
 	guidedRebaseActive: boolean;
+	editorRunning: boolean;
 	lastPullRequest?: PullRequestStatus;
 	lockUser: string;
 	locksOurs: Lock[];
@@ -865,6 +866,7 @@ export interface RebaseCommitInfo {
 	sha: string;
 	subject: string;
 	author: string;
+	date: string;
 }
 
 export type ConflictKind = 'content' | 'modifyDelete' | 'unsupported';

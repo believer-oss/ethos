@@ -48,7 +48,9 @@ it essentially replaces workflows that UGS and P4V support.
 - **Rebase onto latest main** on Branch Management (Git 2.43 or newer) replays the branch's pushed commits on top of
   the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. A backup is kept
   under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
-  it as a separate step; collaborators must Sync afterwards.
+  it as a separate step; collaborators must Sync afterwards. **Reset to remote version** instead discards the rebase
+  and puts the branch back the way it was on origin when the rebase started.
+- Branch Management is disabled while Unreal Editor has the project open.
 - Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can
   also be merged in an editor, except files Windows would run. A choice can be undone until you confirm the commit.
   Continue is refused while edits are unsaved, files you staged yourself are present or conflict markers remain. Abort

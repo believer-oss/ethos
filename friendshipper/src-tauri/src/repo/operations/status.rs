@@ -488,6 +488,8 @@ where
             );
         }
 
+        status.editor_running = self.engine.check_ready_to_sync_repo().await.is_err();
+
         if !self.skip_engine_update {
             self.engine.send_status_update(&status).await;
         }

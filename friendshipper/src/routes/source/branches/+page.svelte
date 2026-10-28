@@ -30,6 +30,7 @@
 		branchActionsDisabled,
 		branchLifecycle,
 		createPrBlockers,
+		EDITOR_OPEN,
 		isFeatureBranch,
 		isProtectedBranch,
 		isQuickSubmitBranch,
@@ -49,6 +50,7 @@
 		getEditorBinariesStatus,
 		getRebasePreflight,
 		getRebaseState,
+		getRepoStatus,
 		showCommitFiles,
 		startRebase,
 		triggerEditorRebuild
@@ -109,9 +111,13 @@
 	// Not loaded yet, or the last load failed: never treated as idle.
 	$: rebaseUnknown = rebaseState === null || rebaseStateError !== null;
 	// Switching and creating stay allowed in stale; dismissing it is housekeeping.
-	$: branchingBlocked = rebaseUnknown || (rebaseActive && rebaseState?.state !== 'stale');
+	$: editorOpen = !!$repoStatus?.editorRunning;
+	$: branchingBlocked =
+		editorOpen || rebaseUnknown || (rebaseActive && rebaseState?.state !== 'stale');
 	let rebaseGateReason: Nullable<string> = null;
-	$: if (rebaseUnknown) {
+	$: if (editorOpen) {
+		rebaseGateReason = EDITOR_OPEN;
+	} else if (rebaseUnknown) {
 		rebaseGateReason =
 			rebaseStateError !== null
 				? "Couldn't read the rebase state. Retry."
@@ -166,6 +172,18 @@
 		void loadEditorBinaries();
 	});
 
+	let editorChecking = false;
+	const recheckEditor = async () => {
+		editorChecking = true;
+		try {
+			repoStatus.set(await getRepoStatus());
+		} catch (e) {
+			await emit('error', e);
+		} finally {
+			editorChecking = false;
+		}
+	};
+
 	const openCreate = () => {
 		createOpen = true;
 	};
@@ -210,7 +228,7 @@
 	}
 
 	const openCleanup = () => {
-		if (busy || cleanupBlocked || rebaseUnknown || rebaseActive) return;
+		if (busy || editorOpen || cleanupBlocked || rebaseUnknown || rebaseActive) return;
 		cleanupOpen = true;
 	};
 
@@ -500,7 +518,18 @@
 		});
 </script>
 
-<div class="flex flex-col gap-2 w-full">
+{#if editorOpen}
+	<Alert class="{errorAlertClass} mb-2">
+		<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-red-300" />
+		<div class="flex flex-row items-center gap-2 flex-wrap">
+			<span>{EDITOR_OPEN}</span>
+			<Button size="xs" color="alternative" disabled={editorChecking} on:click={recheckEditor}>
+				Check again
+			</Button>
+		</div>
+	</Alert>
+{/if}
+<fieldset class="flex flex-col gap-2 w-full min-w-0" disabled={editorOpen}>
 	<Card
 		class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 	>
@@ -527,7 +556,7 @@
 				id="branch-cleanup"
 				size="xs"
 				color="alternative"
-				disabled={busy || cleanupBlocked || rebaseUnknown || rebaseActive}
+				disabled={busy || editorOpen || cleanupBlocked || rebaseUnknown || rebaseActive}
 				on:click={openCleanup}
 			>
 				<TrashBinOutline class="w-4 h-4 me-2" />
@@ -620,7 +649,10 @@
 				<InfoCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-primary-400" />
 				<div class="flex flex-row items-center gap-2 flex-wrap">
 					<span>
-						{#if merged}
+						{#if merged && gone}
+							<code>{analysis.branch}</code> was merged (PR #{analysis.pr?.number}) and deleted on
+							origin.
+						{:else if merged}
 							<code>{analysis.branch}</code> was merged (PR #{analysis.pr?.number}).
 						{:else}
 							<code>{analysis.branch}</code> no longer exists on origin (it was merged or deleted).
@@ -634,6 +666,11 @@
 						>
 							Return to {target}
 						</Button>
+						{#if !branchingBlocked}
+							<span class="text-gray-400">or pick another branch from the branch menu.</span>
+						{/if}
+					{:else if !branchingBlocked}
+						<span class="text-gray-400">Pick another branch from the branch menu.</span>
 					{/if}
 				</div>
 			</Alert>
@@ -751,6 +788,16 @@
 								: `Adds PR #${analysis.pr?.number} to the merge queue.`)}</Tooltip
 					>
 				{/if}
+				{#if analysis.pr}
+					<Button id="branch-open-pr" size="xs" color="alternative" on:click={openPrUrl}>
+						Open PR
+					</Button>
+					<Tooltip
+						triggeredBy="#branch-open-pr"
+						class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+						placement="right">Opens PR #{analysis.pr.number} on GitHub in your browser.</Tooltip
+					>
+				{/if}
 				<Button
 					id="branch-rebase"
 					size="xs"
@@ -848,7 +895,7 @@
 			</Card>
 		{/if}
 	{/if}
-</div>
+</fieldset>
 
 <CreateBranchModal bind:open={createOpen} on:created={loadRebaseState} />
 
