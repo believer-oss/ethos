@@ -2341,6 +2341,7 @@ mod tests {
             ("release", false),
             ("f11r-main-alice-123", false),
             ("f11r-branch-x", true),
+            ("f11r-backup-x", false),
             ("ar/foo", true),
             ("", false),
         ] {

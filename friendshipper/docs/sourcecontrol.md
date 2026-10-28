@@ -22,13 +22,17 @@ it essentially replaces workflows that UGS and P4V support.
 
 ### Feature branches
 
+- Branch features are off by default. In Preferences under **Branches**, "Enable branches" shows the branch selector
+  and Submit to branch, and "Enable Branch Management" also shows the Branch Management page. If branches are off
+  while you are on a branch, the submit page offers to switch back to your target branch. An unfinished rebase keeps
+  Branch Management available regardless.
 - Create a branch from Branch Management with "New branch". The name becomes `f11r-branch-<slug>` and must be unique.
   New branches start from the latest `origin/main` (your repository's trunk branch) and are pushed to origin immediately.
 - Switch branches with the branch selector on the submit page or on Branch Management. Switching requires no local
   changes and Unreal Editor closed. Binaries and the engine update as they do after a Sync.
 - The reset button returns you to your configured target branch.
-- By default the selector lists `f11r-branch-*` branches; turn on "Show all branches" in Preferences (Source Control
-  Options) to list every branch on origin except Quick Submit branches.
+- By default the selector lists `f11r-branch-*` branches; turn on "Show all branches" in Preferences (Branches) to
+  list every branch on origin except Quick Submit branches.
 - Quick Submit is available on your target branch and its Quick Submit branches. On another target branch, or on a Quick
   Submit branch made for another target, it is blocked. From a Quick Submit branch, Sync returns you to your target
   branch; the selector and reset button are disabled there.
@@ -48,7 +52,8 @@ it essentially replaces workflows that UGS and P4V support.
 - **Rebase onto latest main** on Branch Management (Git 2.43 or newer) replays the branch's pushed commits on top of
   the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. A backup is kept
   under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
-  it as a separate step; collaborators must Sync afterwards. **Reset to remote version** instead discards the rebase
+  it as a separate step; collaborators must Sync afterwards. The same push saves the branch's previous version on
+  origin as `f11r-backup-<slug>` (`f11r-backup--<name>` for other branches), replaced by the next rebase push; if that backup cannot be saved, nothing is pushed. **Reset to remote version** instead discards the rebase
   and puts the branch back the way it was on origin when the rebase started.
 - Branch Management is disabled while Unreal Editor has the project open.
 - Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can

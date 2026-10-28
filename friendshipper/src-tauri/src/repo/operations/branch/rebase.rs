@@ -13,11 +13,11 @@ use super::rebase_guard::guard_sentence;
 use super::rebase_state::{
     build_rebase_state, commit_info, create_backup_ref, delete_rebase_file, derive_rebase_state,
     ensure_current_step, is_ancestor, is_full_sha, parse_push_porcelain, parse_unmerged,
-    parse_untracked, prune_backup_refs, read_git, read_rebase_file, rebase_dir_exists, rebase_head,
-    refresh_resolved, replace_current_step, resolve_git_dir, rev_parse, set_resolution,
-    status_porcelain, write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase,
-    OriginalCommit, PushOutcome, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK,
-    REBASE_FILE_VERSION, REBASE_OP_LOCK,
+    parse_untracked, prune_backup_refs, push_ref_status, read_git, read_rebase_file,
+    rebase_dir_exists, rebase_head, refresh_resolved, replace_current_step, resolve_git_dir,
+    rev_parse, set_resolution, status_porcelain, write_rebase_file, DerivedState, GuidedRebaseFile,
+    GuidedRebasePhase, OriginalCommit, PushOutcome, RebaseFileRead, CPP_PATHSPECS,
+    REBASE_FILE_LOCK, REBASE_FILE_VERSION, REBASE_OP_LOCK,
 };
 use super::{git_too_old_message, is_valid_branch_name, require_aws_and_storage, run_sequence};
 use crate::engine::EngineProvider;
@@ -31,9 +31,9 @@ use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::{AppConfigRef, RepoConfigRef, UProject};
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{
-    ConflictFile, ConflictKind, ConflictSideName, OpenConflictFileRequest, RebaseCommitInfo,
-    RebaseFinishOutcome, RebaseFinishResponse, RebaseKeep, RebasePreflight, RebaseState,
-    RebaseStateKind, ResolveConflictRequest, UnresolveConflictRequest,
+    backup_branch_name, ConflictFile, ConflictKind, ConflictSideName, OpenConflictFileRequest,
+    RebaseCommitInfo, RebaseFinishOutcome, RebaseFinishResponse, RebaseKeep, RebasePreflight,
+    RebaseState, RebaseStateKind, ResolveConflictRequest, UnresolveConflictRequest,
 };
 use ethos_core::utils::process::describe_blocking_processes;
 use ethos_core::worker::Task;
@@ -360,36 +360,59 @@ impl PushResult {
 }
 
 /// Pushes `sha` to origin's `<branch>`, leased to origin's branch being exactly `expected`.
+/// With `backup`, the same atomic push also force-pushes `expected` to origin's `<backup>`.
 /// The guided rebase's only push.
 async fn leased_push(
     git: &git::Git,
     branch: &str,
     sha: &str,
     expected: &str,
+    backup: Option<&str>,
 ) -> Result<PushResult, CoreError> {
-    if !is_valid_branch_name(branch) || !is_full_sha(sha) || !is_full_sha(expected) {
+    if !is_valid_branch_name(branch)
+        || !is_full_sha(sha)
+        || !is_full_sha(expected)
+        || backup.is_some_and(|b| !is_valid_branch_name(b) || b == branch)
+    {
         return Err(internal(format!(
             "Refusing to push {sha} to {branch} leased to {expected}."
         )));
     }
     let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
     let refspec = format!("{sha}:refs/heads/{branch}");
+    let backup_refspec = backup.map(|b| format!("+{expected}:refs/heads/{b}"));
+    let mut args = vec![
+        "push",
+        "--porcelain",
+        "--no-follow-tags",
+        "--no-force-if-includes",
+    ];
+    if backup_refspec.is_some() {
+        args.push("--atomic");
+    }
+    args.extend([lease.as_str(), "origin", refspec.as_str()]);
+    args.extend(backup_refspec.as_deref());
     let output = git
         .run_with_status(
-            &[
-                "push",
-                "--porcelain",
-                "--no-follow-tags",
-                "--no-force-if-includes",
-                &lease,
-                "origin",
-                &refspec,
-            ],
+            &args,
             git::Opts::new_with_complete_error().with_env(REBASE_ENV),
         )
         .await?;
+    let mut outcome = parse_push_porcelain(&output.stdout, branch);
+    // An atomic push fails the branch too when only the backup was refused.
+    if let (Some(backup), PushOutcome::Rejected(summary)) = (backup, &outcome) {
+        if summary.contains("atomic") {
+            let detail = push_ref_status(&output.stdout, backup)
+                .map(|(_, s)| s)
+                .filter(|s| !s.contains("atomic"))
+                .unwrap_or_else(|| summary.clone());
+            outcome = PushOutcome::Rejected(format!(
+                "{branch} and its backup branch {backup} could not both be updated ({detail}), so nothing was pushed"
+            ));
+        }
+    }
     Ok(PushResult {
-        outcome: parse_push_porcelain(&output.stdout, branch),
+        outcome,
         stderr: output.stderr.trim().to_string(),
         exit_code: output.exit_code,
     })
@@ -1485,7 +1508,15 @@ where
         let _ = self
             .sync_phase_tx
             .send("Pushing rebased branch".to_string());
-        let push = leased_push(git, &file.branch, &head, &file.pre_rebase_origin_sha).await?;
+        let backup_branch = backup_branch_name(&file.branch);
+        let push = leased_push(
+            git,
+            &file.branch,
+            &head,
+            &file.pre_rebase_origin_sha,
+            Some(&backup_branch),
+        )
+        .await?;
         let (outcome, post_step_error) = match push.outcome {
             PushOutcome::Pushed => {
                 {
@@ -1529,6 +1560,11 @@ where
             dropped_commits,
             touches_cpp: file.touches_cpp,
             post_step_error,
+            backup_branch: if outcome == RebaseFinishOutcome::Pushed {
+                backup_branch
+            } else {
+                String::new()
+            },
         });
         Ok(())
     }
@@ -1780,7 +1816,7 @@ where
         let _ = self
             .sync_phase_tx
             .send("Pushing editor build commit".to_string());
-        let push = leased_push(git, &branch, &new, &head).await;
+        let push = leased_push(git, &branch, &new, &head, None).await;
         if let Ok(PushResult {
             outcome: PushOutcome::Pushed,
             ..
@@ -4884,6 +4920,7 @@ mod tests {
                 dropped_commits: vec![],
                 touches_cpp: false,
                 post_step_error: Some(POST_ERROR.to_string()),
+                backup_branch: backup_branch_name(BRANCH),
             }
         );
         assert_eq!(
@@ -4898,6 +4935,10 @@ mod tests {
         assert_eq!(
             phases.try_iter().collect::<Vec<_>>(),
             ["Pushing rebased branch", "Updating editor binaries"]
+        );
+        assert_eq!(
+            origin_tip(&fx, &backup_branch_name(BRANCH)).await,
+            Some(file.pre_rebase_origin_sha.clone())
         );
     }
 
@@ -4962,6 +5003,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn finish_refused_backup_pushes_nothing() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let file = record(&fx);
+        // A ref under `<backup>/` makes origin refuse to create the backup branch.
+        let blocker = format!("refs/heads/{}/x", backup_branch_name(BRANCH));
+        new_git(fx.origin_path())
+            .run(
+                &["update-ref", &blocker, &file.pre_rebase_origin_sha],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("update-ref in origin");
+
+        let e = finish(&fx).await.expect_err("refused backup");
+        assert!(
+            e.to_string()
+                .contains("its backup branch f11r-backup-feature could not"),
+            "{e}"
+        );
+        assert_eq!(
+            origin_tip(&fx, BRANCH).await,
+            Some(file.pre_rebase_origin_sha.clone())
+        );
+        assert_eq!(state(&fx).await.state, RebaseStateKind::CompletedUnpushed);
+    }
+
+    #[tokio::test]
+    async fn finish_backup_is_replaced_by_the_next_rebase_push() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let backup = backup_branch_name(BRANCH);
+        let earlier = origin_tip(&fx, "main").await.expect("origin main");
+        new_git(fx.origin_path())
+            .run(
+                &["update-ref", &format!("refs/heads/{backup}"), &earlier],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .expect("update-ref in origin");
+        let file = record(&fx);
+        assert_ne!(earlier, file.pre_rebase_origin_sha);
+
+        finish(&fx).await.expect("finish");
+        assert_eq!(
+            origin_tip(&fx, &backup).await,
+            Some(file.pre_rebase_origin_sha)
+        );
+    }
+
+    #[tokio::test]
     async fn finish_lease_rejected_keeps_the_collaborators_commit() {
         let fx = Fixture::new().await;
         completed_clean(&fx).await;
@@ -4971,6 +5063,7 @@ mod tests {
         let collab = origin_tip(&fx, BRANCH).await.expect("collaborator commit");
 
         let response = finish(&fx).await.expect("lease rejection is not an error");
+        assert_eq!(origin_tip(&fx, &backup_branch_name(BRANCH)).await, None);
         let expected_state = RebaseState {
             state: RebaseStateKind::PushFailed,
             push_failed_remote_sha: Some(collab.clone()),
@@ -4984,6 +5077,7 @@ mod tests {
                 dropped_commits: vec![],
                 touches_cpp: false,
                 post_step_error: None,
+                backup_branch: String::new(),
             }
         );
         assert_eq!(
@@ -6525,9 +6619,16 @@ mod tests {
         let file = record(&fx);
         let head = fx.head().await;
         // Finish's push went through; the app died before deleting the record.
-        let push = leased_push(&fx.git, BRANCH, &head, &file.pre_rebase_origin_sha)
-            .await
-            .unwrap();
+        let backup = backup_branch_name(BRANCH);
+        let push = leased_push(
+            &fx.git,
+            BRANCH,
+            &head,
+            &file.pre_rebase_origin_sha,
+            Some(&backup),
+        )
+        .await
+        .unwrap();
         assert_eq!(push.outcome, PushOutcome::Pushed);
 
         assert_eq!(
@@ -6558,6 +6659,7 @@ mod tests {
                 dropped_commits: vec![],
                 touches_cpp: false,
                 post_step_error: Some(POST_ERROR.to_string()),
+                backup_branch: backup_branch_name(BRANCH),
             }
         );
         assert_eq!(state(&fx).await, RebaseState::default());

@@ -29,6 +29,7 @@
 	import {
 		branchActionsDisabled,
 		branchLifecycle,
+		branchManagementVisible,
 		createPrBlockers,
 		EDITOR_OPEN,
 		isFeatureBranch,
@@ -112,6 +113,14 @@
 	$: rebaseUnknown = rebaseState === null || rebaseStateError !== null;
 	// Switching and creating stay allowed in stale; dismissing it is housekeeping.
 	$: editorOpen = !!$repoStatus?.editorRunning;
+	// A rebase or its result stays visible even with Branch Management turned off.
+	// Detached HEAD has no other way back to a branch.
+	$: managementOff =
+		!$branchManagementVisible &&
+		!$repoStatus?.detachedHead &&
+		!rebaseUnknown &&
+		!rebaseActive &&
+		!finishResult;
 	$: branchingBlocked =
 		editorOpen || rebaseUnknown || (rebaseActive && rebaseState?.state !== 'stale');
 	let rebaseGateReason: Nullable<string> = null;
@@ -518,7 +527,15 @@
 		});
 </script>
 
-{#if editorOpen}
+{#if managementOff}
+	<Card
+		class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+	>
+		<p class="text-primary-400">
+			Branch Management is turned off. Turn it on in Preferences under Branches.
+		</p>
+	</Card>
+{:else if editorOpen}
 	<Alert class="{errorAlertClass} mb-2">
 		<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-red-300" />
 		<div class="flex flex-row items-center gap-2 flex-wrap">
@@ -529,7 +546,11 @@
 		</div>
 	</Alert>
 {/if}
-<fieldset class="flex flex-col gap-2 w-full min-w-0" disabled={editorOpen}>
+<fieldset
+	class="flex flex-col gap-2 w-full min-w-0"
+	class:hidden={managementOff}
+	disabled={editorOpen || managementOff}
+>
 	<Card
 		class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 	>
@@ -616,6 +637,12 @@
 		<Alert class={successAlertClass} dismissable on:close={dismissFinishResult}>
 			<div class="flex flex-col gap-2">
 				<p><code>{finishedBranch}</code> was rebased and pushed. Collaborators must Sync.</p>
+				{#if finishResult.backupBranch}
+					<p class="text-sm">
+						The version from before the rebase is saved on origin as
+						<code>{finishResult.backupBranch}</code> until the next rebase.
+					</p>
+				{/if}
 				{#if finishResult.droppedCommits.length > 0}
 					<div class="text-sm">
 						<p>Not carried over:</p>
