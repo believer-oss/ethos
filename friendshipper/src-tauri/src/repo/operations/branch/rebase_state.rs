@@ -24,7 +24,7 @@ const BACKUP_RETENTION_SECS: u64 = 14 * 86400;
 const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 const TEXT_SNIFF_BYTES: u64 = 8000;
 const LOCALE_ENV: &[(&str, &str)] = &[("LC_ALL", "C")];
-pub(crate) const COMMIT_INFO_FORMAT: &str = "--format=%H%x1f%an%x1f%s";
+pub(crate) const COMMIT_INFO_FORMAT: &str = "--format=%H%x1f%an%x1f%aI%x1f%s";
 
 const BOTH_ADDED: &str = "Both main and the branch added this file.";
 const RENAMED_DIFFERENTLY: &str = "This file was renamed differently on main and on the branch.";
@@ -561,9 +561,9 @@ fn last_segment(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// Parses a `%H%x1f%an%x1f%s` line.
+/// Parses a `%H%x1f%an%x1f%aI%x1f%s` line.
 pub(crate) fn parse_commit_info(line: &str) -> Option<RebaseCommitInfo> {
-    let mut fields = line.trim_end_matches(['\r', '\n']).splitn(3, '\u{1f}');
+    let mut fields = line.trim_end_matches(['\r', '\n']).splitn(4, '\u{1f}');
     let sha = fields.next()?;
     if sha.is_empty() {
         return None;
@@ -571,6 +571,7 @@ pub(crate) fn parse_commit_info(line: &str) -> Option<RebaseCommitInfo> {
     Some(RebaseCommitInfo {
         sha: sha.to_string(),
         author: fields.next()?.to_string(),
+        date: fields.next()?.to_string(),
         subject: fields.next().unwrap_or_default().to_string(),
     })
 }
@@ -1272,6 +1273,7 @@ pub(crate) mod tests {
             sha: sha.to_string(),
             subject: subject.to_string(),
             author: "User".to_string(),
+            date: FIXTURE_DATE.to_string(),
         }
     }
 
@@ -1280,6 +1282,9 @@ pub(crate) mod tests {
         app_config.repo_path = slash_path(repo_path);
         UnrealEngineProvider::new_from_config(app_config, RepoConfig::default())
     }
+
+    /// Author date of every fixture commit.
+    pub(crate) const FIXTURE_DATE: &str = "2026-01-02T03:04:05-07:00";
 
     /// One file change of a commit.
     pub(crate) enum Change<'a> {
@@ -1420,8 +1425,16 @@ pub(crate) mod tests {
                     }
                 }
             }
-            self.run(&["commit", "-q", "--allow-empty", "-m", message])
-                .await;
+            self.run(&[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "--date",
+                FIXTURE_DATE,
+                "-m",
+                message,
+            ])
+            .await;
             self.head().await
         }
 
@@ -2743,17 +2756,26 @@ pub(crate) mod tests {
             sha: sha.to_string(),
             subject: subject.to_string(),
             author: author.to_string(),
+            date: FIXTURE_DATE.to_string(),
         };
         assert_eq!(
-            parse_commit_info("abc\u{1f}Jane Doe\u{1f}Fix: a\u{1f}b\n"),
+            parse_commit_info(&format!(
+                "abc\u{1f}Jane Doe\u{1f}{FIXTURE_DATE}\u{1f}Fix: a\u{1f}b\n"
+            )),
             Some(named("abc", "Jane Doe", "Fix: a\u{1f}b"))
         );
         assert_eq!(
-            parse_commit_info("abc\u{1f}Jane\u{1f}"),
+            parse_commit_info(&format!("abc\u{1f}Jane\u{1f}{FIXTURE_DATE}\u{1f}")),
             Some(named("abc", "Jane", ""))
         );
         assert_eq!(parse_commit_info(""), None);
         assert_eq!(parse_commit_info("abc"), None);
+        assert_eq!(parse_commit_info("abc\u{1f}Jane"), None);
+
+        let saved: RebaseCommitInfo =
+            serde_json::from_str(r#"{"sha":"abc","subject":"s","author":"Jane"}"#)
+                .expect("commit saved without a date");
+        assert_eq!(saved.date, "");
     }
 
     pub(crate) fn original(sha: &str, email: &str, date: &str, subject: &str) -> OriginalCommit {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Alert, Button } from 'flowbite-svelte';
+	import { Alert, Button, Tooltip } from 'flowbite-svelte';
 	import { ExclamationCircleSolid, InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { emit } from '@tauri-apps/api/event';
 	import { createEventDispatcher } from 'svelte';
@@ -43,7 +43,7 @@
 	$: branch = rebaseState.branch;
 	$: trunk = $repoConfig?.trunkBranch || 'main';
 	$: backupLabel = rebaseState.backupSha ? shortSha(rebaseState.backupSha) : 'unknown';
-	$: resetTitle = `${branch} will be reset to ${rebaseState.backupRef} (${backupLabel}), its state before the rebase. The rebased commits are discarded. Then Sync to pick up any new commits from origin.`;
+	$: resetTitle = `${branch} will be reset to ${rebaseState.backupRef} (${backupLabel}), its state before the rebase, when it matched origin. The rebased commits are discarded. Then Sync to pick up any new commits from origin.`;
 	$: redoTitle = `Your conflict resolutions will be lost. Friendshipper will back up your rebased result, reset ${branch} to the version on origin (which includes your collaborator's new commits), and start a fresh rebase onto the latest ${trunk}.`;
 
 	// The backend may have moved even when a request failed.
@@ -144,9 +144,22 @@
 			{/if}
 			<div class="flex flex-row gap-2 items-center flex-wrap">
 				<Button size="sm" disabled={inFlight} on:click={push}>Push rebased branch</Button>
-				<Button size="sm" color="alternative" disabled={inFlight} on:click={askReset}>
-					Reset to backup
+				<Button
+					id="rebase-reset-remote"
+					size="sm"
+					color="alternative"
+					disabled={inFlight}
+					on:click={askReset}
+				>
+					Reset to remote version
 				</Button>
+				<Tooltip
+					triggeredBy="#rebase-reset-remote"
+					class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+					placement="bottom"
+					>Discards the rebase and puts <code>{branch}</code> back the way it was on origin when the
+					rebase started. Nothing is pushed.</Tooltip
+				>
 			</div>
 			<p class="text-xs text-gray-300">
 				Force-pushes <code>{branch}</code> to origin, replacing the version collaborators have; they

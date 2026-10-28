@@ -13,12 +13,14 @@
 	import {
 		branchSideText,
 		canContinue,
+		EDITOR_OPEN,
 		mainSideText,
 		refreshAfterBranchChange,
 		resolutionLabel,
 		shortSha,
 		undoNeedsConfirm
 	} from '$lib/branches';
+	import { repoStatus } from '$lib/stores';
 	import type { ConflictFile, RebaseKeep, RebaseState } from '$lib/types';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import RebaseContinueConfirm from '$lib/components/RebaseContinueConfirm.svelte';
@@ -54,7 +56,8 @@
 	$: commit = rebaseState.currentCommit;
 	$: hasUnsupported = rebaseState.conflicts.some((c) => c.kind === 'unsupported');
 	$: hasSupported = rebaseState.conflicts.some((c) => c.kind !== 'unsupported');
-	$: rowsLocked = inFlight || hasUnsupported;
+	$: editorOpen = !!$repoStatus?.editorRunning;
+	$: rowsLocked = inFlight || hasUnsupported || editorOpen;
 	$: backupLabel = rebaseState.backupSha ? shortSha(rebaseState.backupSha) : 'its backup';
 	$: abortTitle = `Abort the rebase? ${rebaseState.branch} returns to ${backupLabel} and all resolutions are discarded.`;
 	$: editedFiles = rebaseState.unstagedEdits.slice(0, MAX_LISTED_EDITS);
@@ -215,6 +218,9 @@
 			— {commit.subject} by {commit.author}{/if}
 	</p>
 
+	{#if editorOpen}
+		<p class="text-sm text-red-300">{EDITOR_OPEN}</p>
+	{/if}
 	{#if rebaseState.stepIncomplete}
 		<p class="text-sm text-yellow-300">{STEP_INCOMPLETE}</p>
 	{:else}
@@ -307,11 +313,17 @@
 
 	<div class="flex flex-row-reverse gap-2">
 		{#if !rebaseState.stepIncomplete}
-			<Button size="sm" disabled={inFlight || !canContinue(rebaseState)} on:click={askContinue}>
+			<Button
+				size="sm"
+				disabled={inFlight || editorOpen || !canContinue(rebaseState)}
+				on:click={askContinue}
+			>
 				Continue
 			</Button>
 		{/if}
-		<Button size="sm" color="red" disabled={inFlight} on:click={askAbort}>Abort</Button>
+		<Button size="sm" color="red" disabled={inFlight || editorOpen} on:click={askAbort}
+			>Abort</Button
+		>
 	</div>
 </Modal>
 
@@ -324,15 +336,15 @@
 	on:confirm={onContinueConfirmed}
 />
 
-<ConfirmModal bind:showModal={undoOpen} title={undoTitle} resultCallback={onUndoAnswer} />
+<ConfirmModal bind:showModal={undoOpen} title={undoTitle} resultCallback={onUndoAnswer} stacked />
 
-<ConfirmModal bind:showModal={keepOpen} title={keepTitle} resultCallback={onKeepAnswer} />
+<ConfirmModal bind:showModal={keepOpen} title={keepTitle} resultCallback={onKeepAnswer} stacked />
 
 <Modal
 	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
 	bodyClass="!border-t-0"
-	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
-	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	backdropClass="fixed mt-8 inset-0 z-[60] bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-[70] w-full p-4 pb-12 flex"
 	dismissable={false}
 	size="sm"
 	bind:open={abortOpen}

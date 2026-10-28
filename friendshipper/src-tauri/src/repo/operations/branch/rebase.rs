@@ -2189,7 +2189,7 @@ mod tests {
     };
     use crate::repo::operations::branch::rebase_state::tests::{
         conflict, diverge_on_a_txt, engine, guided_stop_on_a_txt, info, new_git, original,
-        sample_file_for, slash_path, Change, Diverged, Fixture, BRANCH,
+        sample_file_for, slash_path, Change, Diverged, Fixture, BRANCH, FIXTURE_DATE,
     };
     use crate::repo::operations::branch::rebase_state::{
         backup_ref_ts, json_path, CurrentStep, UnmergedEntry,
@@ -5658,12 +5658,14 @@ mod tests {
 
         let commit = rebuild(&fx).await.expect("rebuild");
         let origin = origin_tip(&fx, BRANCH).await.expect("branch on origin");
+        assert_ne!(commit.date, FIXTURE_DATE);
         assert_eq!(
             commit,
             RebaseCommitInfo {
                 sha: origin.clone(),
                 subject: EDITOR_BUILD_MESSAGE.to_string(),
                 author: "User".to_string(),
+                date: commit.date.clone(),
             }
         );
         assert_eq!(fx.head().await, origin);
