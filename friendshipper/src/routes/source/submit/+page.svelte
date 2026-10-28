@@ -120,6 +120,7 @@
 	import {
 		type SubmitMode,
 		branchLifecycle,
+		branchesEnabled,
 		branchSubmitBlockReason,
 		composeCommitMessage,
 		deriveSubmitMode,
@@ -310,6 +311,9 @@
 	);
 	$: quickTarget = $appConfig.targetBranch;
 	$: modeInfo = deriveSubmitMode($repoStatus, $repoConfig, quickTarget, $appConfig.userDisplayName);
+	$: branchMode = modeInfo.mode === 'branch' && $branchesEnabled;
+	// On a branch with branches turned off: nothing submits until the user switches back.
+	$: branchesOffOnBranch = modeInfo.mode === 'branch' && !$branchesEnabled;
 	$: targetColor = targetBranchColor(quickTarget, $repoConfig);
 	$: targetMergeQueue = targetUsesMergeQueue(quickTarget, $repoConfig);
 	$: canSubmit =
@@ -318,22 +322,20 @@
 		commitMessageValid &&
 		!hasUnsubmittableFiles &&
 		modeInfo.mode !== 'unavailable' &&
+		!branchesOffOnBranch &&
 		!modeInfo.targetMismatch;
 	$: branchBlockReason =
-		modeInfo.mode === 'branch' && $repoStatus
-			? branchSubmitBlockReason($repoStatus, $branchLifecycle)
-			: null;
+		branchMode && $repoStatus ? branchSubmitBlockReason($repoStatus, $branchLifecycle) : null;
 	$: unpushedCommits = $repoStatus?.commitsAhead ?? 0;
 	// Branch mode, nothing selected, local commits waiting to be pushed.
-	$: pushOnly = modeInfo.mode === 'branch' && $selectedFiles.length === 0 && unpushedCommits > 0;
-	$: canSubmitBranch =
-		modeInfo.mode === 'branch' && branchBlockReason === null && (canSubmit || pushOnly);
-	$: showTagPicker = modeInfo.mode === 'quick' || (modeInfo.mode === 'branch' && !pushOnly);
+	$: pushOnly = branchMode && $selectedFiles.length === 0 && unpushedCommits > 0;
+	$: canSubmitBranch = branchMode && branchBlockReason === null && (canSubmit || pushOnly);
+	$: showTagPicker = modeInfo.mode === 'quick' || (branchMode && !pushOnly);
 	$: quickSubmitLabel = quickTarget === '' ? 'Quick Submit' : `Quick Submit to ${quickTarget}`;
-	$: submitLabel = modeInfo.mode === 'branch' ? 'Submit to branch' : quickSubmitLabel;
+	$: submitLabel = branchMode ? 'Submit to branch' : quickSubmitLabel;
 	// Branch mode pushes HEAD, so earlier unpushed commits go out with the new one.
 	$: previewUnpushedSuffix =
-		modeInfo.mode === 'branch' && unpushedCommits > 0
+		branchMode && unpushedCommits > 0
 			? `, plus ${unpushedCommits} unpushed commit${unpushedCommits === 1 ? '' : 's'}`
 			: '';
 	$: previewFileSummary = `${$selectedFiles.length} file${
@@ -1558,14 +1560,16 @@
 		>
 			<div class="flex flex-row items-center justify-between gap-2">
 				<div class="flex flex-row items-center gap-2">
-					<BranchSelector
-						current={$repoStatus?.branch ?? ''}
-						disabled={loading || quickSubmitting || syncing}
-						on:select={(e) => handleBranchSelected(e.detail)}
-					/>
+					{#if $branchesEnabled}
+						<BranchSelector
+							current={$repoStatus?.branch ?? ''}
+							disabled={loading || quickSubmitting || syncing}
+							on:select={(e) => handleBranchSelected(e.detail)}
+						/>
+					{/if}
 					{#if modeInfo.mode === 'quick'}
 						<Badge class={targetColor.chip}>{quickSubmitLabel}</Badge>
-					{:else if modeInfo.mode === 'branch'}
+					{:else if branchMode}
 						<Badge>Submit to branch</Badge>
 					{:else if modeInfo.reason !== ''}
 						<Badge color="yellow">Unavailable</Badge>
@@ -1573,13 +1577,45 @@
 				</div>
 			</div>
 		</Card>
-		{#if modeInfo.mode === 'branch' && $repoStatus && !isFeatureBranch($repoStatus.branch)}
+		{#if branchMode && $repoStatus && !isFeatureBranch($repoStatus.branch)}
 			<Alert
 				class="bg-yellow-900 dark:bg-yellow-900 border border-yellow-700 text-yellow-100 dark:text-yellow-100"
 			>
 				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
 				<code>{$repoStatus.branch}</code> was not created by Friendshipper. It may be shared or protected
 				differently, but actions are allowed.
+			</Alert>
+		{/if}
+		{#if branchesOffOnBranch && $repoStatus}
+			<Alert
+				class="bg-red-900 dark:bg-red-900 border border-red-700 text-red-100 dark:text-red-100"
+			>
+				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-red-300" />
+				<div class="flex flex-col gap-2">
+					<span
+						>You're on <code>{$repoStatus.branch}</code>, but branches are turned off. Switch back
+						to
+						<code>{quickTarget}</code> to submit.</span
+					>
+					<div class="flex flex-row flex-wrap gap-2">
+						{#if quickTarget !== '' && quickTarget !== $repoStatus.branch}
+							<Button
+								size="xs"
+								color="red"
+								disabled={loading || quickSubmitting || syncing}
+								on:click={async () => handleBranchSelected(quickTarget)}
+								>Switch to {quickTarget}</Button
+							>
+						{/if}
+						<Button
+							size="xs"
+							color="alternative"
+							on:click={() => {
+								$showPreferences = true;
+							}}>Open Preferences</Button
+						>
+					</div>
+				</div>
 			</Alert>
 		{/if}
 		{#if modeInfo.mode === 'quick' && modeInfo.targetMismatch && $repoStatus}
@@ -1726,7 +1762,7 @@
 								<QuestionCircleOutline class="w-6 pl-2 align-middle" />
 							</Button>
 						</ButtonGroup>
-					{:else if modeInfo.mode === 'branch'}
+					{:else if branchMode}
 						<Button
 							id="submit-to-branch"
 							color="primary"
@@ -1951,7 +1987,7 @@
 			<span class="font-mono {targetColor.text}">{quickTarget}</span> (change it in Preferences).
 		</p>
 	</Tooltip>
-{:else if modeInfo.mode === 'branch'}
+{:else if branchMode}
 	<Tooltip
 		triggeredBy="#submit-to-branch"
 		class="w-auto bg-secondary-700 dark:bg-space-900 font-semibold shadow-2xl"
@@ -2100,7 +2136,7 @@
 			</p>
 		{:else}
 			<p class="text-sm text-gray-300 break-words">{composedCommitMessage}</p>
-			{#if modeInfo.mode === 'branch'}
+			{#if branchMode}
 				<p class="text-sm text-gray-400">Branch: {previewBranch}. Your locks are kept.</p>
 			{/if}
 			<p class="text-sm text-gray-400">

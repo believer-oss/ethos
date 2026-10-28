@@ -1,6 +1,6 @@
 import { emit } from '@tauri-apps/api/event';
 import { derived, writable, type Readable } from 'svelte/store';
-import { commits, repoConfig, repoStatus } from '$lib/stores';
+import { appConfig, commits, repoConfig, repoStatus } from '$lib/stores';
 import { getAllCommits, getRepoStatus, switchBranch } from '$lib/repo';
 import type {
 	BranchAnalysis,
@@ -28,6 +28,14 @@ export const isProtectedBranch = (name: string, config: Nullable<RepoConfig>): b
 	!!config &&
 	((config.trunkBranch !== '' && name === config.trunkBranch) ||
 		config.targetBranches.some((b) => b.name === name));
+
+export const branchesEnabled: Readable<boolean> = derived(appConfig, ($c) => $c.enableBranches);
+
+// An unfinished guided rebase keeps Branch Management reachable whatever the settings.
+export const branchManagementVisible: Readable<boolean> = derived(
+	[appConfig, repoStatus],
+	([$c, $s]) => ($c.enableBranches && $c.enableBranchManagement) || $s?.guidedRebaseActive === true
+);
 
 // True when branch management must disable everything except create and select.
 export const branchActionsDisabled: Readable<boolean> = derived(

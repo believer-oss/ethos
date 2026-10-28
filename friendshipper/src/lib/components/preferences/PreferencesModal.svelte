@@ -818,17 +818,50 @@
 					<Tooltip class="text-sm" placement="bottom">
 						Copy and paste your GitHub Personal Access Token (PAT) here.
 					</Tooltip>
-
-					<div class="flex flex-row gap-2 items-center">
-						<Label class="text-white">Show all branches</Label>
-						<Toggle bind:checked={localAppConfig.showAllBranches} class="w-8 h-8 text-4xl" />
-					</div>
-					<Helper class="text-sm text-gray-300 dark:text-gray-300">
-						By default the branch selector lists only <code>f11r-branch-*</code> branches. Turn this
-						on to list every branch on origin, including <code>main</code> and branches created outside
-						Friendshipper. Takes effect when you press Apply.
-					</Helper>
 				</div>
+			</div>
+		</div>
+
+		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
+			<CodeBranchSolid />
+			Branches
+		</h1>
+		<div class="rounded-lg border border-gray-300 dark:border-gray-300">
+			<div class="m-4 flex flex-col gap-3">
+				<div class="flex flex-row gap-2 items-center">
+					<Label class="text-white">Enable branches</Label>
+					<Toggle bind:checked={localAppConfig.enableBranches} class="w-8 h-8 text-4xl" />
+				</div>
+				<p class="text-sm text-primary-400">
+					Shows the branch selector on the Submit page so you can switch to a branch and submit to
+					it.
+				</p>
+				<div class="flex flex-row gap-2 items-center">
+					<Label class="text-white">Enable Branch Management</Label>
+					<Toggle
+						bind:checked={localAppConfig.enableBranchManagement}
+						disabled={!localAppConfig.enableBranches}
+						class="w-8 h-8 text-4xl"
+					/>
+				</div>
+				<p class="text-sm text-primary-400">
+					Shows the Branch Management page for creating, rebasing, and cleaning up branches.
+					Rebasing rewrites a branch everyone on it shares, so leave this off unless you own the
+					branch. Requires Enable branches.
+				</p>
+				<div class="flex flex-row gap-2 items-center">
+					<Label class="text-white">Show all branches</Label>
+					<Toggle
+						bind:checked={localAppConfig.showAllBranches}
+						disabled={!localAppConfig.enableBranches}
+						class="w-8 h-8 text-4xl"
+					/>
+				</div>
+				<p class="text-sm text-primary-400">
+					By default the branch selector lists only <code>f11r-branch-*</code> branches. Turn this
+					on to list every branch on origin, including <code>main</code> and branches created outside
+					Friendshipper. Requires Enable branches.
+				</p>
 			</div>
 		</div>
 

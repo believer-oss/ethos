@@ -73,6 +73,7 @@
 		updateDismissed,
 		workflows
 	} from '$lib/stores';
+	import { branchManagementVisible } from '$lib/branches';
 	import { getPlaytests } from '$lib/playtests';
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
 	import { refreshLogin, exitApp } from '$lib/auth';
@@ -1377,14 +1378,16 @@
 									href="/source/repository"
 									active={activeUrl === '/source/repository'}
 								/>
-								<SidebarItem
-									label="Branch Management"
-									activeClass={sidebarSubItemActiveClass}
-									nonActiveClass={sidebarSubItemInactiveClass}
-									spanClass={sidebarSubItemClass}
-									href="/source/branches"
-									active={activeUrl === '/source/branches'}
-								/>
+								{#if $branchManagementVisible || activeUrl === '/source/branches'}
+									<SidebarItem
+										label="Branch Management"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										spanClass={sidebarSubItemClass}
+										href="/source/branches"
+										active={activeUrl === '/source/branches'}
+									/>
+								{/if}
 								<SidebarItem
 									label="Locks"
 									activeClass={sidebarSubItemActiveClass}

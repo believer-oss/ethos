@@ -135,6 +135,8 @@ export interface AppConfig {
 	lastQuickSubmitType?: string;
 	lastQuickSubmitScope?: string;
 	disableBackgroundGitOperations: boolean;
+	enableBranches: boolean;
+	enableBranchManagement: boolean;
 	showAllBranches: boolean;
 }
 
@@ -934,6 +936,7 @@ export interface RebaseFinishResponse {
 	droppedCommits: DroppedCommit[];
 	touchesCpp: boolean;
 	postStepError: Nullable<string>;
+	backupBranch: string;
 }
 
 export interface RebasePreflight {

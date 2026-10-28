@@ -201,6 +201,14 @@ pub struct AppConfig {
     #[serde(default, rename = "disableBackgroundGitOperations")]
     pub disable_background_git_operations: bool,
 
+    /// Shows the branch selector and submitting to a branch.
+    #[serde(default, rename = "enableBranches")]
+    pub enable_branches: bool,
+
+    /// Shows Branch Management; only applies with `enable_branches`.
+    #[serde(default, rename = "enableBranchManagement")]
+    pub enable_branch_management: bool,
+
     /// Lists every branch on origin in the branch selector, not just `f11r-branch-*`.
     #[serde(default, rename = "showAllBranches")]
     pub show_all_branches: bool,
@@ -278,6 +286,8 @@ impl AppConfig {
             last_quick_submit_type: None,
             last_quick_submit_scope: None,
             disable_background_git_operations: false,
+            enable_branches: false,
+            enable_branch_management: false,
             show_all_branches: false,
         }
     }
@@ -1224,6 +1234,8 @@ targetBranch: main
 "#;
         let config: AppConfig = serde_yaml::from_str(yaml).expect("deserialize legacy config");
         assert!(!config.show_all_branches);
+        assert!(!config.enable_branches);
+        assert!(!config.enable_branch_management);
     }
 
     #[test]
