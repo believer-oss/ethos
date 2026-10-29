@@ -1,0 +1,49 @@
+name: Fleet API
+
+# fleet-api depends on nothing else in the workspace, so only its own sources and the
+# workspace manifests can affect it.
+# Keep the two path lists below in sync - GitHub Actions does not support YAML anchors.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "fleet-api/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fleet-api.yml"
+  pull_request:
+    branches: ["main"]
+    types: ["labeled", "opened", "reopened", "synchronize"]
+    paths:
+      - "fleet-api/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fleet-api.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fleet-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: set up rust toolchain
+        uses: believer-oss/setup-rust-toolchain@ff4c7a2d9523e22eab355f13c7732a4ea3e7a9b1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check format and linting
+        run: |
+          cargo fmt -p fleet-api -- --check
+          cargo clippy --all-features --all-targets -p fleet-api -- -D warnings
+
+      # Includes the check that the committed CRD YAML matches the types.
+      - name: Run unit tests
+        run: cargo test --verbose -p fleet-api
