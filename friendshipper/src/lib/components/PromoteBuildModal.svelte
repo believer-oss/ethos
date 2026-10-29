@@ -3,6 +3,8 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { createPromoteBuildWorkflow, type CreatePromoteBuildWorkflowRequest } from '$lib/builds';
 	import { dynamicConfig } from '$lib/stores';
+	import { promotionViaCoordinator } from '$lib/fleets';
+	import CoordinatorPromoteForm from '$lib/components/fleets/CoordinatorPromoteForm.svelte';
 
 	export let showModal: boolean = false;
 	export let commit: string = '';
@@ -179,7 +181,16 @@
 			<p class="text-xl text-primary-400">Promote Build</p>
 		</div>
 
-		{#if !showSuccess}
+		{#if $promotionViaCoordinator}
+			{#if showModal}
+				<CoordinatorPromoteForm
+					bind:commit
+					close={() => {
+						showModal = false;
+					}}
+				/>
+			{/if}
+		{:else if !showSuccess}
 			{#if hasShards}
 				<div>
 					<Label for="shard" class="text-primary-400 mb-2">Target Shard</Label>
@@ -233,13 +244,17 @@
 			</div>
 		{/if}
 
-		{#if error}
+		{#if $promotionViaCoordinator}
+			<!-- CoordinatorPromoteForm has its own errors and buttons. -->
+		{:else if error}
 			<div class="text-red-400 text-sm bg-red-900/20 p-2 rounded">
 				{error}
 			</div>
 		{/if}
 
-		{#if showSuccess}
+		{#if $promotionViaCoordinator}
+			<!-- As above. -->
+		{:else if showSuccess}
 			<!-- Success Dialog -->
 			<div class="bg-green-900/20 border border-green-700 p-4 rounded">
 				<div class="flex items-start gap-3">

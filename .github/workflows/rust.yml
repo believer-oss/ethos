@@ -37,6 +37,12 @@ jobs:
           yarn
           yarn lint
 
+      - name: Test ${{ matrix.app }}
+        if: matrix.app == 'friendshipper'
+        run: |
+          cd ${{ matrix.app }}
+          yarn test
+
   build-linux:
     runs-on:
       group: ethos-linux

@@ -3050,6 +3050,7 @@ dependencies = [
  "embed-resource 2.5.2",
  "ethos-core",
  "fix-path-env",
+ "fleet-api",
  "fs_extra",
  "futures",
  "graphql_client",
