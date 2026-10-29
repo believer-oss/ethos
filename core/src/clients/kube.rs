@@ -92,21 +92,22 @@ impl KubeClient {
         };
 
         debug!("Creating kubeconfig");
-        let kubeconfig = kube::Config {
-            cluster_url: eks_cluster_url,
-            default_namespace: "game-servers".to_string(),
-            auth_info: kube::config::AuthInfo {
-                token: Some(token.clone().into()),
-                ..Default::default()
-            },
-            root_cert: Some(eks_cluster_cert),
-            accept_invalid_certs: false,
-            connect_timeout: Some(Duration::from_secs(30)),
-            read_timeout: Some(Duration::from_secs(295)),
-            write_timeout: None,
-            proxy_url: None,
-            tls_server_name: None,
+        // kube::Config is non-exhaustive, so start from `new` and set every field we rely on.
+        let mut kubeconfig = kube::Config::new(eks_cluster_url);
+        kubeconfig.default_namespace = "game-servers".to_string();
+        kubeconfig.auth_info = kube::config::AuthInfo {
+            token: Some(token.clone().into()),
+            ..Default::default()
         };
+        kubeconfig.root_cert = Some(eks_cluster_cert);
+        kubeconfig.accept_invalid_certs = false;
+        kubeconfig.connect_timeout = Some(Duration::from_secs(30));
+        kubeconfig.read_timeout = Some(Duration::from_secs(295));
+        kubeconfig.write_timeout = None;
+        kubeconfig.proxy_url = None;
+        kubeconfig.tls_server_name = None;
+        // kube 0.87 never retried; keep it that way rather than silently retrying 429/503/504.
+        kubeconfig.default_retry = false;
 
         let project = initialize_project_config(kubeconfig.clone()).await?;
 

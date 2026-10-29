@@ -602,7 +602,7 @@ where
                             name: "".to_string(),
                             display_name: "".to_string(),
                             version: "".to_string(),
-                            creation_timestamp: Time(Utc::now()),
+                            creation_timestamp: Time(k8s_openapi::jiff::Timestamp::now()),
 
                             // these fields matter
                             ip: status.ip,
@@ -837,7 +837,14 @@ where
         let commit_info = commit_map
             .entry(commit.clone())
             .or_insert(CommitWorkflowInfo {
-                creation_timestamp: creation_timestamp.unwrap().0.to_rfc3339(),
+                // k8s-openapi's Time is a jiff Timestamp; format through chrono to keep the
+                // "+00:00" RFC 3339 form the UI has always received.
+                creation_timestamp: {
+                    let ts = creation_timestamp.unwrap().0;
+                    DateTime::<Utc>::from_timestamp(ts.as_second(), ts.subsec_nanosecond() as u32)
+                        .unwrap_or_default()
+                        .to_rfc3339()
+                },
                 message,
                 compare_url,
                 commit: commit.clone(),

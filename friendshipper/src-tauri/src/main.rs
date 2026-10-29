@@ -74,6 +74,10 @@ fn find_available_port() -> Result<u16, CoreError> {
 }
 
 fn main() -> Result<(), CoreError> {
+    // Both rustls crypto providers are compiled in (ring via the updater, aws-lc-rs via the AWS SDK
+    // and kube), so rustls can't pick one itself and panics on first use. Choose aws-lc-rs up front.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     #[cfg(not(target_os = "macos"))]
     {
         let arg = std::env::args().nth(1).unwrap_or_default();

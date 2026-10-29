@@ -585,7 +585,7 @@ impl AWSClient {
         &self,
         cluster_name: &str,
         region: &str,
-    ) -> Result<(http::Uri, Vec<Vec<u8>>), CoreError> {
+    ) -> Result<(http1::Uri, Vec<Vec<u8>>), CoreError> {
         debug!("Creating EKS client");
 
         let region = region.to_string();
@@ -613,7 +613,7 @@ impl AWSClient {
         let endpoint = cluster
             .endpoint()
             .context("Unable to find endpoint")?
-            .parse::<http::Uri>()?;
+            .parse::<http1::Uri>()?;
 
         debug!("Returning cluster info");
         Ok((endpoint, [cert].to_vec()))
