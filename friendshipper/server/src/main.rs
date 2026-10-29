@@ -27,6 +27,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // rustls panics on first use if more than one crypto provider is compiled in and none was
+    // installed, so choose aws-lc-rs (the AWS SDK's provider) before anything opens a connection.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let args = Args::parse();
 
     println!("we are starting");
