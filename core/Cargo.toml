@@ -42,6 +42,8 @@ tracing-subscriber = { workspace = true }
 urlencoding = { workspace = true }
 
 ethos-types = { workspace = true }
+fleet-api = { path = "../fleet-api" }
+thiserror = "2"
 
 # Two http majors: 0.2 for the AWS SigV4 request signing, 1.x for kube's cluster URL.
 http = { version = "0.2.9" }
