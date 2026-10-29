@@ -1,5 +1,6 @@
 pub mod argo;
 pub mod aws;
+pub mod fleet;
 pub mod github;
 pub mod kube;
 pub mod obs;
