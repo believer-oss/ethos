@@ -37,6 +37,9 @@ export interface DynamicConfig {
 	// the build-time constant, so changing buckets needs no Friendshipper release.
 	promotedArtifactBucketName?: string;
 	gameServerClusters?: GameServerCluster[];
+	// Promote through the fleet coordinator (Promotion objects) instead of creating the
+	// promote workflow directly from promotableBuildShards.
+	promotionViaCoordinator?: boolean;
 }
 
 export interface ProjectConfig {
@@ -134,6 +137,7 @@ export interface AppConfig {
 	lastQuickSubmitType?: string;
 	lastQuickSubmitScope?: string;
 	disableBackgroundGitOperations: boolean;
+	releaseControlsEnabled?: boolean;
 }
 
 export interface PlaytestProfile {
@@ -682,4 +686,179 @@ export interface TraceEntry {
 export interface RecentTracesResponse {
 	traces: TraceEntry[];
 	nextCursor: string | null;
+}
+
+// Fleet objects (fleet.believer.dev/v1alpha1), as the fleet-api crate serializes them.
+// Timestamps are RFC 3339 strings; optional status fields may be null.
+
+export type ChannelKind = 'launcher' | 'steam';
+export type GameConfig = 'Development' | 'Test' | 'Shipping';
+export type PromotionPhase =
+	| 'Pending'
+	| 'Running'
+	| 'Succeeded'
+	| 'Failed'
+	| 'Rejected'
+	| 'Cancelled';
+
+export interface ChannelRef {
+	kind: ChannelKind;
+	metadataPath?: string;
+	branch?: string;
+}
+
+export interface ShardChannel extends ChannelRef {
+	gameConfig: GameConfig;
+}
+
+export interface ShardConfigSpec {
+	shardName: string;
+	displayName?: string;
+	healthcheckUrl: string;
+	channels: ShardChannel[];
+	promotion: { allowDeployBackend: boolean };
+}
+
+export interface BackendParts {
+	platform?: Nullable<string>;
+	portal?: Nullable<string>;
+	content?: Nullable<string>;
+	config?: Nullable<string>;
+}
+
+export interface BackendStatus {
+	healthy: boolean;
+	parts: BackendParts;
+	// When the backend process last started (a deploy, crash, OOM or reschedule): not a deploy time.
+	launchedAt?: Nullable<string>;
+	// The last successful observation; a failed one leaves it and sets error.
+	observedAt?: Nullable<string>;
+	error: string;
+}
+
+export interface ChannelStatus {
+	key: string;
+	kind: ChannelKind;
+	metadataPath?: string;
+	branch?: string;
+	version: string;
+	// When this version arrived (or the promotion that set it was recorded). Launcher: the pointer's
+	// S3 LastModified. Steam: when the coordinator first saw the build on the branch, lagging by up
+	// to a poll, or its first observation for a build already live then.
+	since?: Nullable<string>;
+	source?: Nullable<'observed' | 'promotion'>;
+	// The last successful observation; a failed one leaves it and sets error.
+	observedAt?: Nullable<string>;
+	error: string;
+	promotion?: Nullable<string>;
+	buildId?: Nullable<number>;
+	gameConfig?: Nullable<GameConfig>;
+	// When the build was uploaded to Steam, not when it was set live on the branch.
+	buildCreatedAt?: Nullable<string>;
+}
+
+export interface PromotionSummary {
+	name: string;
+	channel: string;
+	version: string;
+	phase?: Nullable<PromotionPhase>;
+	startedAt?: Nullable<string>;
+	finishedAt?: Nullable<string>;
+}
+
+export interface K8sCondition {
+	type: string;
+	status: string;
+	reason: string;
+	message: string;
+	lastTransitionTime?: string;
+}
+
+export interface ShardStatus {
+	observedGeneration?: Nullable<number>;
+	backend?: Nullable<BackendStatus>;
+	channels: ChannelStatus[];
+	promotions: PromotionSummary[];
+	conditions: K8sCondition[];
+}
+
+export interface ShardSummary {
+	name: string;
+	displayName: string;
+	config: Nullable<ShardConfigSpec>;
+	status: Nullable<ShardStatus>;
+}
+
+export interface PromotionSpec {
+	shard: string;
+	channel: ChannelRef;
+	version: string;
+	gameConfig?: GameConfig;
+	deployBackend: boolean;
+	sign?: boolean;
+}
+
+export interface PromotionStep {
+	name: string;
+	workflow: string;
+	phase: string;
+	startedAt?: Nullable<string>;
+	finishedAt?: Nullable<string>;
+	message: string;
+}
+
+export interface BackendPartChange {
+	name: string;
+	from: string;
+	to: string;
+}
+
+export interface PromotionStatus {
+	phase?: Nullable<PromotionPhase>;
+	reason: string;
+	message: string;
+	previousVersion?: Nullable<string>;
+	// Resolved at acceptance: spec.gameConfig, else the channel default.
+	gameConfig?: Nullable<GameConfig>;
+	plan?: Nullable<{
+		backend?: Nullable<{
+			deploy: boolean;
+			parts: BackendPartChange[];
+			// When the `from` values were read: a healthcheck at acceptance, or the Shard's last
+			// successful observation if that read failed.
+			observedAt?: Nullable<string>;
+		}>;
+	}>;
+	steps: PromotionStep[];
+	startedAt?: Nullable<string>;
+	finishedAt?: Nullable<string>;
+	conditions: K8sCondition[];
+}
+
+// A request to cancel, from the Promotion's cancel annotations.
+export interface PromotionCancel {
+	// Blank or missing annotation: unknown.
+	requestedBy: Nullable<string>;
+	// As written: RFC 3339 UTC when Friendshipper set it, but any value counts as a request.
+	requestedAt: string;
+}
+
+export interface Promotion {
+	metadata: {
+		name?: string;
+		creationTimestamp?: string;
+		labels?: Record<string, string>;
+		annotations?: Record<string, string>;
+	};
+	spec: PromotionSpec;
+	status?: Nullable<PromotionStatus>;
+}
+
+export interface ShardDetail extends ShardSummary {
+	promotions: Promotion[];
+}
+
+export interface CreatePromotionRequest {
+	spec: PromotionSpec;
+	note?: string;
 }

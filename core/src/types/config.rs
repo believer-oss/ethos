@@ -200,6 +200,11 @@ pub struct AppConfig {
     /// Read per tick, so toggling it takes effect without a restart.
     #[serde(default, rename = "disableBackgroundGitOperations")]
     pub disable_background_git_operations: bool,
+
+    /// Enables the shard and promotion write controls in the UI. A per-machine opt-in so
+    /// changes to shared shards are deliberate; not a security boundary.
+    #[serde(default, rename = "releaseControlsEnabled")]
+    pub release_controls_enabled: bool,
 }
 
 const BYTES_PER_GB: u64 = 1024 * 1024 * 1024;
@@ -274,6 +279,7 @@ impl AppConfig {
             last_quick_submit_type: None,
             last_quick_submit_scope: None,
             disable_background_git_operations: false,
+            release_controls_enabled: false,
         }
     }
 
@@ -806,6 +812,11 @@ pub struct DynamicConfig {
 
     #[serde(default, rename = "promotableBuildShards")]
     pub promotable_build_shards: Option<Vec<PromoteBuildShard>>,
+
+    /// Promote through the fleet coordinator (`Promotion` objects, targets from `ShardConfig`)
+    /// instead of creating the promote workflow directly from `promotable_build_shards`.
+    #[serde(default, rename = "promotionViaCoordinator")]
+    pub promotion_via_coordinator: bool,
 
     #[serde(default, rename = "gameServerClusters")]
     pub game_server_clusters: Option<Vec<GameServerCluster>>,

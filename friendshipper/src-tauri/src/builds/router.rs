@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
+use crate::fleets::PromotePath;
 use ethos_core::clients::argo::{
     LogChunk, ARGO_WORKFLOW_COMMIT_LABEL_KEY, ARGO_WORKFLOW_COMPARE_ANNOTATION_KEY,
     ARGO_WORKFLOW_MESSAGE_ANNOTATION_KEY, ARGO_WORKFLOW_PUSHER_LABEL_KEY,
@@ -952,19 +953,12 @@ where
 {
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
+    let via_coordinator = state.dynamic_config.read().promotion_via_coordinator;
+    PromotePath::Workflow.require(via_coordinator)?;
+
     // Get pusher from github client or fallback to user display name
     if payload.pusher.is_none() {
-        let pusher = if let Some(github_client) = state.github_client.read().clone() {
-            Some(github_client.username.clone())
-        } else {
-            let app_config = state.app_config.read();
-            if !app_config.user_display_name.is_empty() {
-                Some(app_config.user_display_name.clone())
-            } else {
-                None
-            }
-        };
-        payload.pusher = pusher;
+        payload.pusher = state.promoter_name();
     }
 
     info!(

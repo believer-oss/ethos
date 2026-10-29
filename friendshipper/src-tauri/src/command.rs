@@ -1728,3 +1728,126 @@ pub async fn logout(state: tauri::State<'_, State>) -> Result<(), TauriError> {
 
     Ok(())
 }
+
+// Fleets
+#[tauri::command]
+pub async fn get_shards(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<friendshipper::fleets::router::ShardSummary>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/fleets/shards", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_shard(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<friendshipper::fleets::router::ShardDetail, TauriError> {
+    let res = state
+        .client
+        .get(format!(
+            "{}/fleets/shards/{}",
+            state.server_url,
+            urlencoding::encode(&name)
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_promotions(
+    state: tauri::State<'_, State>,
+    shard: Option<String>,
+    channel: Option<String>,
+) -> Result<Vec<fleet_api::Promotion>, TauriError> {
+    let mut req = state
+        .client
+        .get(format!("{}/fleets/promotions", state.server_url));
+    if let Some(shard) = shard {
+        req = req.query(&[("shard", shard)]);
+    }
+    if let Some(channel) = channel {
+        req = req.query(&[("channel", channel)]);
+    }
+
+    let res = req.send().await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn create_promotion(
+    state: tauri::State<'_, State>,
+    request: friendshipper::fleets::router::CreatePromotionRequest,
+) -> Result<fleet_api::Promotion, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/fleets/promotions", state.server_url))
+        .json(&request)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_promoter_name(
+    state: tauri::State<'_, State>,
+) -> Result<Option<String>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/fleets/promoter", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn cancel_promotion(
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<(), TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/fleets/promotions/{}/cancel",
+            state.server_url,
+            urlencoding::encode(&name)
+        ))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(())
+}

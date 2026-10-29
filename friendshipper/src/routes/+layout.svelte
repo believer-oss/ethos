@@ -26,7 +26,8 @@
 		MinusOutline,
 		UserSolid,
 		WindowOutline,
-		ServerOutline
+		ServerOutline,
+		GlobeOutline
 	} from 'flowbite-svelte-icons';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { Canvas } from '@threlte/core';
@@ -64,6 +65,7 @@
 		onboardingInProgress,
 		playtests,
 		projectConfigs,
+		releaseControlsEnabled,
 		repoConfig,
 		repoFreshness,
 		repoStatus,
@@ -90,6 +92,14 @@
 		saveChangeSet
 	} from '$lib/repo';
 	import { formatFreshness } from '$lib/backgroundOps';
+	import {
+		fleetsAvailable,
+		promotionViaCoordinator,
+		startFleetPolling,
+		stopFleetPolling
+	} from '$lib/fleets';
+	import { showPromotionTray, type PromotionToast } from '$lib/fleetFormat';
+	import PromotionTray from '$lib/components/fleets/PromotionTray.svelte';
 
 	import WelcomeModal from '$lib/components/oobe/WelcomeModal.svelte';
 	import {
@@ -202,9 +212,26 @@
 	// success states
 	let hasSuccess = false;
 	let successMessage = '';
+	// Optional link shown after the message, e.g. to the shard a promotion targets.
+	let successLink: { href: string; label: string } | null = null;
 	const onSuccessDismissed = () => {
 		hasSuccess = false;
 		successMessage = '';
+		successLink = null;
+	};
+
+	const showShardSuccess = (message: string, shard: string) => {
+		successMessage = message;
+		successLink = { href: `/shards/detail?name=${encodeURIComponent(shard)}`, label: 'Open shard' };
+		hasSuccess = true;
+	};
+
+	const onPromotionToast = (toast: PromotionToast) => {
+		if (toast.kind === 'success') {
+			showShardSuccess(toast.message, toast.shard);
+		} else {
+			void emit('error', { message: toast.message });
+		}
 	};
 
 	const handleCheckForUpdates = async () => {
@@ -360,6 +387,9 @@
 			}
 
 			appDataLoaded = true;
+
+			// After the dynamic config is in, so the poller knows whether the coordinator switch is on.
+			startFleetPolling(onPromotionToast);
 		} catch (e) {
 			await logError('loadAppData: Failed to load application data', e);
 			await emit('error', e);
@@ -1009,9 +1039,17 @@
 	}
 
 	onDestroy(stopFreshnessTimer);
+	onDestroy(stopFleetPolling);
+
+	// A success toast with a link to a shard page, e.g. "Promotion started".
+	void listen('fleet-success', (e) => {
+		const { message, shard } = e.payload as { message: string; shard: string };
+		showShardSuccess(message, shard);
+	});
 
 	void listen('success', (e) => {
 		successMessage = e.payload as string;
+		successLink = null;
 		hasSuccess = true;
 
 		// Maintenance reports success through this channel, so re-read freshness rather than letting
@@ -1269,6 +1307,22 @@
 								</svelte:fragment>
 							</SidebarItem>
 						{/if}
+						<!-- Kept while on a Shards page, so failing polls don't pull the nav from under it. -->
+						{#if $promotionViaCoordinator || $fleetsAvailable || activeUrl.startsWith('/shards')}
+							<SidebarItem
+								class="group/item"
+								label="Shards"
+								href="/shards"
+								active={activeUrl.startsWith('/shards')}
+								{spanClass}
+							>
+								<svelte:fragment slot="icon">
+									<GlobeOutline
+										class="w-5 h-5 transition duration-75 text-gray-400 dark:text-gray-400 group-hover/item:text-white dark:group-hover/item:text-white"
+									/>
+								</svelte:fragment>
+							</SidebarItem>
+						{/if}
 
 						{#if $repoConfig == null || $repoConfig.buildsEnabled}
 							{#if loadingBuilds}
@@ -1482,10 +1536,14 @@
 	<ArtifactWarnings />
 	<DownloadStatusBar onCancel={handleCancelDownload} />
 	<div
-		class="flex items-center bg-secondary-800 dark:bg-space-950 h-6 max-h-6 w-full px-2 z-50 border-t border-secondary-700 dark:border-space-900"
-		title={lastGitLogMessage}
+		class="flex items-center gap-2 bg-secondary-800 dark:bg-space-950 h-6 max-h-6 w-full px-2 z-50 border-t border-secondary-700 dark:border-space-900"
 	>
-		<code class="text-xs text-gray-500 dark:text-gray-500 truncate">{lastGitLogMessage}</code>
+		<code class="text-xs text-gray-500 dark:text-gray-500 truncate" title={lastGitLogMessage}
+			>{lastGitLogMessage}</code
+		>
+		{#if showPromotionTray($promotionViaCoordinator, $releaseControlsEnabled)}
+			<PromotionTray />
+		{/if}
 	</div>
 </div>
 <div class="fixed top-0 w-full flex flex-col items-center z-50 pointer-events-none pt-2 gap-2">
@@ -1495,7 +1553,12 @@
 		message={successMessage}
 		onClose={onSuccessDismissed}
 		fixed={false}
-	/>
+	>
+		{successMessage}
+		{#if successLink}
+			<a class="pointer-events-auto underline ml-1" href={successLink.href}>{successLink.label}</a>
+		{/if}
+	</SuccessToast>
 </div>
 <ProgressModal bind:showModal={showProgressModal} title={progressModalTitle} />
 

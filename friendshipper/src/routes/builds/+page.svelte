@@ -10,6 +10,9 @@
 	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
 	import ActiveBuildsModal from '$lib/components/ActiveBuildsModal.svelte';
 	import { activeBuilds, appConfig, engineWorkflows, workflows } from '$lib/stores';
+	import { getShards, promotionViaCoordinator } from '$lib/fleets';
+	import { activeBuildsFromShards } from '$lib/fleetFormat';
+	import { goto } from '$app/navigation';
 	import WorkflowTable from '$lib/components/workflows/WorkflowTable.svelte';
 
 	let loading: boolean = false;
@@ -41,7 +44,10 @@
 	// credentials are not yet available.
 	const refreshActiveBuilds = async () => {
 		try {
-			$activeBuilds = await getActiveBuilds();
+			// With the coordinator switch on, what each channel serves comes from Shard status.
+			$activeBuilds = $promotionViaCoordinator
+				? activeBuildsFromShards(await getShards())
+				: await getActiveBuilds();
 		} catch (e) {
 			await logInfo(`Failed to refresh active build promotion status: ${String(e)}`);
 			$activeBuilds = [];
@@ -99,7 +105,11 @@
 		class="ml-auto"
 		primary
 		on:click={() => {
-			showActiveBuildsModal = true;
+			if ($promotionViaCoordinator) {
+				void goto('/shards');
+			} else {
+				showActiveBuildsModal = true;
+			}
 		}}
 	>
 		<RocketOutline class="w-4 h-4 mr-2" />

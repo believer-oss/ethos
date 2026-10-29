@@ -27,6 +27,6 @@
 		bind:open={show}
 	>
 		<CheckCircleSolid slot="icon" class="w-5 h-5 text-white" />
-		{message}
+		<slot>{message}</slot>
 	</Toast>
 </div>

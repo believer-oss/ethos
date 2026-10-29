@@ -162,3 +162,9 @@ export const allModifiedFiles = derived(repoStatus, ($repoStatus): ModifiedFile[
 });
 
 export const selectedCommit = writable(<Nullable<ArtifactEntry>>{});
+
+// Per-machine opt-in that enables the shard and promotion write controls. Not a security boundary.
+export const releaseControlsEnabled = derived(
+	appConfig,
+	($appConfig) => $appConfig.releaseControlsEnabled === true
+);

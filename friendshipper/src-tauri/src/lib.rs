@@ -17,6 +17,7 @@ pub mod builds;
 pub mod client;
 pub mod config;
 pub mod engine;
+pub mod fleets;
 pub mod obs;
 pub mod playtests;
 pub mod repo;
@@ -75,6 +76,7 @@ where
         .nest("/storage", storage::router())
         .nest("/system", system::router())
         .nest("/engine", engine::router())
+        .nest("/fleets", fleets::router())
         .nest("/utrace", utrace::router::router())
         .route_layer(middleware::from_fn(move |headers, req, next| {
             nonce::nonce(headers, req, next, NONCE.as_str())
