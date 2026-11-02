@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::{instrument, warn};
 
-use super::{guard_state, run_guarded_sequence};
+use super::{branch_management_trunk, guard_state, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{
     commit_files, is_branch_mode, reject_files_with_conflict_markers, reject_unsubmittable_files,
@@ -405,6 +405,47 @@ where
     }
 }
 
+/// GitHub rejects pushes to a branch whose PR is queued, so refuse before anything is committed.
+/// A failed lookup does not block; the push would still be rejected.
+async fn reject_if_in_merge_queue<T>(state: &AppState<T>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let (branch, owner, repo) = {
+        let status = state.repo_status.read();
+        (
+            status.branch.clone(),
+            status.repo_owner.clone(),
+            status.repo_name.clone(),
+        )
+    };
+    let Ok(trunk) = branch_management_trunk(&branch, &state.repo_config.read()) else {
+        return Ok(());
+    };
+    let Some(client) = state.github_client.read().clone() else {
+        return Ok(());
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return Ok(());
+    }
+    match client
+        .get_branch_pull_request(&owner, &repo, &branch, &trunk)
+        .await
+    {
+        Ok(Some(pr)) if pr.state == "OPEN" && pr.merge_queue_entry.is_some() => {
+            Err(input_error(format!(
+                "PR #{} for '{branch}' is in the merge queue, and GitHub blocks updates to queued branches. Remove it from the queue or wait for it to merge.",
+                pr.number
+            )))
+        }
+        Ok(_) => Ok(()),
+        Err(e) => {
+            warn!("Skipping the merge queue check for {branch}: {e}");
+            Ok(())
+        }
+    }
+}
+
 pub async fn branch_submit_handler<T>(
     State(state): State<AppState<T>>,
     Json(request): Json<PushRequest>,
@@ -413,6 +454,7 @@ where
     T: EngineProvider,
 {
     guard_state(&state).await?;
+    reject_if_in_merge_queue(&state).await?;
 
     let op = BranchSubmitOp {
         files: request.files,

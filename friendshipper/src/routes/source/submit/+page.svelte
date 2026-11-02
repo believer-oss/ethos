@@ -359,7 +359,8 @@
 	$: unpushedCommits = $repoStatus?.commitsAhead ?? 0;
 	// Branch mode, nothing selected, local commits waiting to be pushed.
 	$: pushOnly = branchMode && $selectedFiles.length === 0 && unpushedCommits > 0;
-	$: canSubmitBranch = branchMode && branchBlockReason === null && (canSubmit || pushOnly);
+	$: canSubmitBranch =
+		branchMode && branchBlockReason === null && !queuedPr && (canSubmit || pushOnly);
 	$: showTagPicker = modeInfo.mode === 'quick' || (branchMode && !pushOnly);
 	$: quickSubmitLabel = quickTarget === '' ? 'Quick Submit' : `Quick Submit to ${quickTarget}`;
 	$: submitLabel = branchMode ? 'Submit to branch' : quickSubmitLabel;
@@ -1633,13 +1634,13 @@
 		{/if}
 		{#if queuedPr}
 			<Alert
-				class="bg-yellow-900 dark:bg-yellow-900 border border-yellow-700 text-yellow-100 dark:text-yellow-100"
+				class="bg-red-900 dark:bg-red-900 border border-red-700 text-red-100 dark:text-red-100"
 			>
-				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
+				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-red-300" />
 				<div class="flex flex-col gap-2">
 					<span
-						>PR #{queuedPr.number} for this branch is in the merge queue. Submitting changes the branch
-						while it merges, and GitHub takes the PR out of the queue.</span
+						>PR #{queuedPr.number} for this branch is in the merge queue. GitHub blocks updates to queued
+						branches, so submitting is unavailable until it merges or leaves the queue.</span
 					>
 					<div>
 						<Button size="xs" color="alternative" on:click={() => openUrl(queuedPr?.url ?? '')}
