@@ -472,6 +472,10 @@ pub fn is_feature_branch(name: &str) -> bool {
 /// Prefix of the origin branch holding a branch's version from before its last rebase push.
 pub const BACKUP_BRANCH_PREFIX: &str = "f11r-backup-";
 
+pub fn is_backup_branch(name: &str) -> bool {
+    name.starts_with(BACKUP_BRANCH_PREFIX)
+}
+
 /// `f11r-backup-<slug>` for `f11r-branch-<slug>`, otherwise `f11r-backup--<branch>`. Slugs never
 /// start with '-', so the two forms never collide.
 pub fn backup_branch_name(branch: &str) -> String {

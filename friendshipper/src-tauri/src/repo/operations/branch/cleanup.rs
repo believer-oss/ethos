@@ -10,7 +10,7 @@ use futures::stream::{self, StreamExt};
 use tracing::{info, instrument, warn};
 
 use super::analyze::{merged_pr_covers_commit, quiet};
-use super::rebase_state::{read_rebase_file, RebaseFileRead};
+use super::rebase_state::{is_full_sha, read_rebase_file, RebaseFileRead};
 use super::{
     guard_state, is_valid_branch_name, run_guarded_sequence, run_sequence, GITHUB_PAT_MISSING,
 };
@@ -226,13 +226,6 @@ async fn prune_fetch(git: &git::Git) -> Result<(), CoreError> {
 
 fn is_cleanup_name(name: &str) -> bool {
     is_feature_branch(name) && is_valid_branch_name(name)
-}
-
-fn is_full_sha(sha: &str) -> bool {
-    (sha.len() == 40 || sha.len() == 64)
-        && sha
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
 /// Whether the branch tracked an origin branch that no longer exists: an upstream on origin is

@@ -10,7 +10,7 @@ use tracing::warn;
 use super::is_valid_branch_name;
 use crate::engine::{CommunicationType, EngineProvider};
 use crate::repo::operations::gh::submit::filter_to_textlike_paths;
-use ethos_core::clients::git;
+use ethos_core::clients::git::{self, UnmergedEntry};
 use ethos_core::types::repo::{
     ConflictFile, ConflictKind, ConflictSideName, DroppedCommit, RebaseCommitInfo, RebaseKeep,
     RebaseStaleReason, RebaseState, RebaseStateKind,
@@ -414,43 +414,6 @@ pub(crate) async fn rev_parse(git: &git::Git, rev: &str) -> anyhow::Result<Optio
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct UnmergedEntry {
-    pub xy: String,
-    /// `N...` unless the path is a submodule.
-    pub sub: String,
-    /// Repo-relative, `/` separators.
-    pub path: String,
-}
-
-impl UnmergedEntry {
-    fn is_submodule(&self) -> bool {
-        self.sub != "N..."
-    }
-}
-
-/// Unmerged (`u`) records of `git status --porcelain=v2 -z`.
-pub(crate) fn parse_unmerged(porcelain_z: &str) -> Vec<UnmergedEntry> {
-    let mut entries = vec![];
-    let mut records = porcelain_z.split('\0');
-    while let Some(record) = records.next() {
-        if record.starts_with("u ") {
-            let fields: Vec<&str> = record.splitn(11, ' ').collect();
-            if fields.len() == 11 {
-                entries.push(UnmergedEntry {
-                    xy: fields[1].to_string(),
-                    sub: fields[2].to_string(),
-                    path: fields[10].to_string(),
-                });
-            }
-        } else if record.starts_with("2 ") {
-            // A rename or copy is followed by its original path.
-            records.next();
-        }
-    }
-    entries
-}
-
 /// Untracked (`?`) paths of `git status --porcelain=v2 -z`.
 pub(crate) fn parse_untracked(porcelain_z: &str) -> Vec<String> {
     let mut paths = vec![];
@@ -532,7 +495,7 @@ fn classify_entry(
             Some(UNRESOLVABLE.to_string()),
         )
     } else {
-        classify_xy(&entry.xy)
+        classify_xy(entry.xy())
     }
 }
 
@@ -639,7 +602,7 @@ pub(crate) async fn classify_conflicts<T: EngineProvider>(
     merge_base: &str,
     rebase_head: &str,
 ) -> anyhow::Result<Vec<ConflictFile>> {
-    let unmerged = parse_unmerged(&status_porcelain(git).await?);
+    let unmerged = git.unmerged_entries().await?;
     if unmerged.is_empty() {
         return Ok(vec![]);
     }
@@ -651,7 +614,7 @@ pub(crate) async fn classify_conflicts<T: EngineProvider>(
         .into_iter()
         .collect();
     let display_names = engine
-        .get_asset_display_names(CommunicationType::OfflineFallback, engine_path, &paths)
+        .get_asset_display_names(CommunicationType::None, engine_path, &paths)
         .await;
 
     let mut conflicts = Vec::with_capacity(unmerged.len());
@@ -660,7 +623,7 @@ pub(crate) async fn classify_conflicts<T: EngineProvider>(
         // Git moves a file that collides with a folder aside to `<path>~<side>`, which exists
         // in neither tree; real modify/delete and rename paths exist on at least one side.
         if !entry.is_submodule()
-            && matches!(entry.xy.as_str(), "UD" | "DU" | "AU" | "UA")
+            && matches!(entry.xy(), "UD" | "DU" | "AU" | "UA")
             && !exists_in_tree(git, "HEAD", &entry.path).await?
             && !exists_in_tree(git, rebase_head, &entry.path).await?
         {
@@ -750,7 +713,7 @@ async fn cache_if_unchanged(
     };
     let unchanged = rebase_head(git_dir).as_deref() == Some(step.sha.as_str())
         && matches!(rev_parse(git, "HEAD").await, Ok(Some(now)) if now == head)
-        && matches!(status_porcelain(git).await, Ok(status) if parse_unmerged(&status) == unmerged);
+        && matches!(git.unmerged_entries().await, Ok(now) if now == unmerged);
     if !unchanged {
         return;
     }
@@ -996,7 +959,7 @@ pub(crate) async fn build_rebase_state<T: EngineProvider>(
         }
 
         let porcelain = status_porcelain(git).await?;
-        let unmerged = parse_unmerged(&porcelain);
+        let unmerged = git.unmerged_entries().await?;
         state.unstaged_edits = parse_unstaged(&porcelain);
         match rebase_head(&git_dir) {
             Some(rebase_head) => {
@@ -2503,7 +2466,7 @@ pub(crate) mod tests {
         let (file, _, _) = three_commit_stop(&fx).await;
         let op_lock = tokio::sync::Mutex::new(());
         let head = fx.head().await;
-        let unmerged = parse_unmerged(&fx.porcelain_v2().await);
+        let unmerged = fx.git.unmerged_entries().await.unwrap();
         let step = CurrentStep {
             sha: fx.rebase_head(),
             conflicts: fx.classify(&file.merge_base).await,
@@ -2544,7 +2507,7 @@ pub(crate) mod tests {
         let fx = Fixture::new().await;
         let (file, _, _) = three_commit_stop(&fx).await;
         let head = fx.head().await;
-        let unmerged = parse_unmerged(&fx.porcelain_v2().await);
+        let unmerged = fx.git.unmerged_entries().await.unwrap();
         let classified = CurrentStep {
             sha: fx.rebase_head(),
             conflicts: fx.classify(&file.merge_base).await,
@@ -2635,7 +2598,7 @@ pub(crate) mod tests {
     // Pure helpers
 
     #[test]
-    fn parses_unmerged_records() {
+    fn porcelain_parsers_skip_unmerged_records() {
         let porcelain = [
             "1 .M N... 100644 100644 100644 aaaa bbbb plain.txt",
             "2 R. N... 100644 100644 100644 aaaa bbbb R100 new name.txt",
@@ -2644,34 +2607,35 @@ pub(crate) mod tests {
             "? untracked file.txt",
             "! ignored.txt",
             "u DU N... 100644 000000 100644 100644 h1 h2 h3 gone.txt",
-            "u UU S... 160000 160000 160000 160000 h1 h2 h3 Plugins/Sub",
             "",
         ]
         .join("\0");
-        let entries = parse_unmerged(&porcelain);
+        assert_eq!(parse_untracked(&porcelain), vec!["untracked file.txt"]);
+        assert_eq!(parse_unstaged(&porcelain), vec!["plain.txt"]);
+    }
+
+    #[test]
+    fn classifies_unmerged_entries() {
         assert_eq!(
-            entries,
-            vec![
-                unmerged("UU", "N...", "Content/a b/c d.txt"),
-                unmerged("DU", "N...", "gone.txt"),
-                unmerged("UU", "S...", "Plugins/Sub"),
-            ]
-        );
-        assert_eq!(
-            classify_entry(&entries[0]),
+            classify_entry(&unmerged([true, true, true], "100644")),
             (ConflictKind::Content, None, None)
         );
         assert_eq!(
-            classify_entry(&entries[2]),
+            classify_entry(&unmerged([true, false, true], "100644")),
+            (
+                ConflictKind::ModifyDelete,
+                Some(ConflictSideName::Main),
+                None
+            )
+        );
+        assert_eq!(
+            classify_entry(&unmerged([true, true, true], "160000")),
             (
                 ConflictKind::Unsupported,
                 None,
                 Some(UNRESOLVABLE.to_string())
             )
         );
-        assert_eq!(parse_untracked(&porcelain), vec!["untracked file.txt"]);
-        assert_eq!(parse_unstaged(&porcelain), vec!["plain.txt"]);
-        assert!(parse_unmerged("").is_empty());
     }
 
     #[test]
@@ -2696,27 +2660,20 @@ pub(crate) mod tests {
         assert!(parse_unstaged("").is_empty());
     }
 
-    fn unmerged(xy: &str, sub: &str, path: &str) -> UnmergedEntry {
+    /// An entry with the given stages present, each with `mode`.
+    fn unmerged(present: [bool; 3], mode: &str) -> UnmergedEntry {
+        let at = |on: bool, value: &str| on.then(|| value.to_string());
         UnmergedEntry {
-            xy: xy.to_string(),
-            sub: sub.to_string(),
-            path: path.to_string(),
+            path: "a.txt".to_string(),
+            stages: present.map(|on| at(on, "h")),
+            modes: present.map(|on| at(on, mode)),
         }
     }
 
     #[test]
-    fn rename_original_path_is_not_a_record() {
-        // The original path of a `2` record is consumed even when it looks like a record.
-        let porcelain = [
-            "2 R. N... 100644 100644 100644 aaaa bbbb R100 new.txt",
-            "u UU N... 100644 100644 100644 100644 h1 h2 h3 fake.txt",
-            "u XY N... 000000 100644 100644 100644 h1 h2 h3 real.txt",
-        ]
-        .join("\0");
-        let entries = parse_unmerged(&porcelain);
-        assert_eq!(entries, vec![unmerged("XY", "N...", "real.txt")]);
+    fn unknown_xy_is_unsupported() {
         assert_eq!(
-            classify_xy(&entries[0].xy),
+            classify_xy("XY"),
             (
                 ConflictKind::Unsupported,
                 None,
