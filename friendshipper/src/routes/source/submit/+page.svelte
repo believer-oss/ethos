@@ -121,6 +121,7 @@
 		type SubmitMode,
 		branchLifecycle,
 		branchesEnabled,
+		EDITOR_OPEN_SWITCH,
 		branchSubmitBlockReason,
 		composeCommitMessage,
 		deriveSubmitMode,
@@ -314,6 +315,8 @@
 	$: branchMode = modeInfo.mode === 'branch' && $branchesEnabled;
 	// On a branch with branches turned off: nothing submits until the user switches back.
 	$: branchesOffOnBranch = modeInfo.mode === 'branch' && !$branchesEnabled;
+	$: editorOpen = !!$repoStatus?.editorRunning;
+	$: switchDisabled = loading || quickSubmitting || syncing || editorOpen;
 	$: targetColor = targetBranchColor(quickTarget, $repoConfig);
 	$: targetMergeQueue = targetUsesMergeQueue(quickTarget, $repoConfig);
 	$: canSubmit =
@@ -1561,11 +1564,20 @@
 			<div class="flex flex-row items-center justify-between gap-2">
 				<div class="flex flex-row items-center gap-2">
 					{#if $branchesEnabled}
-						<BranchSelector
-							current={$repoStatus?.branch ?? ''}
-							disabled={loading || quickSubmitting || syncing}
-							on:select={(e) => handleBranchSelected(e.detail)}
-						/>
+						<div id="submit-branch-select">
+							<BranchSelector
+								current={$repoStatus?.branch ?? ''}
+								disabled={switchDisabled}
+								on:select={(e) => handleBranchSelected(e.detail)}
+							/>
+						</div>
+						{#if editorOpen}
+							<Tooltip
+								triggeredBy="#submit-branch-select"
+								class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+								placement="bottom">{EDITOR_OPEN_SWITCH}</Tooltip
+							>
+						{/if}
 					{/if}
 					{#if modeInfo.mode === 'quick'}
 						<Badge class={targetColor.chip}>{quickSubmitLabel}</Badge>
@@ -1602,7 +1614,8 @@
 							<Button
 								size="xs"
 								color="red"
-								disabled={loading || quickSubmitting || syncing}
+								disabled={switchDisabled}
+								title={editorOpen ? EDITOR_OPEN_SWITCH : undefined}
 								on:click={async () => handleBranchSelected(quickTarget)}
 								>Switch to {quickTarget}</Button
 							>
@@ -1641,7 +1654,8 @@
 							<Button
 								size="xs"
 								color="red"
-								disabled={loading || quickSubmitting || syncing}
+								disabled={switchDisabled}
+								title={editorOpen ? EDITOR_OPEN_SWITCH : undefined}
 								on:click={async () => handleBranchSelected(quickTarget)}
 								>Switch to {quickTarget}</Button
 							>

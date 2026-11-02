@@ -205,6 +205,7 @@ export const defaultPrTitle = (branch: string, trunk: string): string =>
 export const PR_TITLE_MAX = 256;
 
 export const EDITOR_OPEN = 'Unreal Editor is open. Close it to use Branch Management.';
+export const EDITOR_OPEN_SWITCH = 'Unreal Editor is open. Close it to switch branches.';
 
 // Mirrors the Rust `validate_pr_title`: trimmed, non-empty, at most 256 code points.
 export const prTitleError = (title: string): string | null => {
