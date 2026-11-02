@@ -576,7 +576,6 @@
 			<Button
 				id="branch-cleanup"
 				size="xs"
-				color="alternative"
 				disabled={busy || editorOpen || cleanupBlocked || rebaseUnknown || rebaseActive}
 				on:click={openCleanup}
 			>
