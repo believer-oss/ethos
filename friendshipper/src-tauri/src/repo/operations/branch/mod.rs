@@ -58,6 +58,47 @@ const MAX_SLUG_LEN: usize = 48;
 pub(crate) const GITHUB_PAT_MISSING: &str =
     "GitHub PAT is not configured. Please configure it in the settings.";
 
+/// GitHub rejects pushes to a branch whose PR is queued, so refuse before changing anything.
+/// A failed lookup does not block; the push would still be rejected.
+pub(crate) async fn reject_if_in_merge_queue<T>(state: &AppState<T>) -> Result<(), CoreError>
+where
+    T: EngineProvider,
+{
+    let (branch, owner, repo) = {
+        let status = state.repo_status.read();
+        (
+            status.branch.clone(),
+            status.repo_owner.clone(),
+            status.repo_name.clone(),
+        )
+    };
+    let Ok(trunk) = branch_management_trunk(&branch, &state.repo_config.read()) else {
+        return Ok(());
+    };
+    let Some(client) = state.github_client.read().clone() else {
+        return Ok(());
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return Ok(());
+    }
+    match client
+        .get_branch_pull_request(&owner, &repo, &branch, &trunk)
+        .await
+    {
+        Ok(Some(pr)) if pr.state == "OPEN" && pr.merge_queue_entry.is_some() => {
+            Err(CoreError::Input(anyhow!(
+                "PR #{} for '{branch}' is in the merge queue, and GitHub blocks updates to queued branches. Remove it from the queue or wait for it to merge.",
+                pr.number
+            )))
+        }
+        Ok(_) => Ok(()),
+        Err(e) => {
+            tracing::warn!("Skipping the merge queue check for {branch}: {e}");
+            Ok(())
+        }
+    }
+}
+
 /// The refusal for a git older than Branch Management needs.
 pub(crate) fn unsupported_git_message(version: &str) -> String {
     git_too_old_message(version, git::MIN_BRANCH_GIT)

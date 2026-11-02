@@ -21,8 +21,12 @@ const MAX_SLUG_LEN = 48;
 
 export const isFeatureBranch = (name: string): boolean => name.startsWith(FEATURE_BRANCH_PREFIX);
 
+// Mirrors the Rust `is_backup_branch`: a rebase backup on origin. Read-only in Friendshipper.
+export const isBackupBranch = (name: string): boolean => name.startsWith('f11r-backup-');
+
+// Backups are not Quick Submit branches, so Sync never deletes them.
 export const isQuickSubmitBranch = (name: string): boolean =>
-	name.startsWith('f11r') && !isFeatureBranch(name);
+	name.startsWith('f11r') && !isFeatureBranch(name) && !isBackupBranch(name);
 
 export const isProtectedBranch = (name: string, config: Nullable<RepoConfig>): boolean =>
 	!!config &&
@@ -42,7 +46,11 @@ export const branchActionsDisabled: Readable<boolean> = derived(
 	[repoStatus, repoConfig],
 	([$s, $c]) =>
 		!!$s &&
-		($s.branch === '' ? false : isProtectedBranch($s.branch, $c) || isQuickSubmitBranch($s.branch))
+		($s.branch === ''
+			? false
+			: isProtectedBranch($s.branch, $c) ||
+			  isQuickSubmitBranch($s.branch) ||
+			  isBackupBranch($s.branch))
 );
 
 // Mirrors the Rust `normalize_and_validate_slug`.
@@ -136,7 +144,7 @@ export type SubmitMode = 'quick' | 'branch' | 'unavailable';
 // RepoStatus.guidedRebaseActive is set by the backend for inProgress, completedUnpushed and pushFailed.
 export const isGuidedRebaseActive = (status: RepoStatus): boolean => status.guidedRebaseActive;
 
-// Mirrors the Rust `is_branch_mode`: branch mode is any branch that is neither protected nor Quick Submit.
+// Mirrors the Rust `is_branch_mode`: branch mode is any branch that is not protected, Quick Submit or a backup.
 // `targetMismatch` blocks Quick Submit, as the backend's `ensure_quick_submit_allowed` does.
 export const deriveSubmitMode = (
 	status: Nullable<RepoStatus>,
@@ -160,6 +168,14 @@ export const deriveSubmitMode = (
 			mode: 'quick',
 			reason: '',
 			targetMismatch: quickSubmitTargetMismatch(status.branch, target, cfg, displayName)
+		};
+	}
+	if (isBackupBranch(status.branch)) {
+		return {
+			mode: 'unavailable',
+			reason:
+				'This is a rebase backup, which the next rebase push replaces. Switch to a feature branch to submit.',
+			targetMismatch: false
 		};
 	}
 	return { mode: 'branch', reason: '', targetMismatch: false };
