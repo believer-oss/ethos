@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::{instrument, warn};
 
-use super::{branch_management_trunk, guard_state, run_guarded_sequence};
+use super::{guard_state, reject_if_in_merge_queue, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{
     commit_files, is_branch_mode, reject_files_with_conflict_markers, reject_unsubmittable_files,
@@ -54,6 +54,12 @@ fn detached_error() -> CoreError {
 fn protected_branch_error(branch: &str) -> CoreError {
     input_error(format!(
         "'{branch}' is a protected branch. Use Quick Submit to change it."
+    ))
+}
+
+fn backup_branch_error(branch: &str) -> CoreError {
+    input_error(format!(
+        "'{branch}' is a rebase backup, which the next rebase push replaces. Switch to a feature branch to submit."
     ))
 }
 
@@ -307,6 +313,8 @@ where
         if !branch_mode {
             return Err(if protected {
                 protected_branch_error(&branch)
+            } else if ethos_core::types::repo::is_backup_branch(&branch) {
+                backup_branch_error(&branch)
             } else {
                 quick_submit_branch_error(&branch, &target)
             });
@@ -402,47 +410,6 @@ where
 
     fn get_name(&self) -> String {
         String::from("BranchSubmitOp")
-    }
-}
-
-/// GitHub rejects pushes to a branch whose PR is queued, so refuse before anything is committed.
-/// A failed lookup does not block; the push would still be rejected.
-async fn reject_if_in_merge_queue<T>(state: &AppState<T>) -> Result<(), CoreError>
-where
-    T: EngineProvider,
-{
-    let (branch, owner, repo) = {
-        let status = state.repo_status.read();
-        (
-            status.branch.clone(),
-            status.repo_owner.clone(),
-            status.repo_name.clone(),
-        )
-    };
-    let Ok(trunk) = branch_management_trunk(&branch, &state.repo_config.read()) else {
-        return Ok(());
-    };
-    let Some(client) = state.github_client.read().clone() else {
-        return Ok(());
-    };
-    if owner.is_empty() || repo.is_empty() {
-        return Ok(());
-    }
-    match client
-        .get_branch_pull_request(&owner, &repo, &branch, &trunk)
-        .await
-    {
-        Ok(Some(pr)) if pr.state == "OPEN" && pr.merge_queue_entry.is_some() => {
-            Err(input_error(format!(
-                "PR #{} for '{branch}' is in the merge queue, and GitHub blocks updates to queued branches. Remove it from the queue or wait for it to merge.",
-                pr.number
-            )))
-        }
-        Ok(_) => Ok(()),
-        Err(e) => {
-            warn!("Skipping the merge queue check for {branch}: {e}");
-            Ok(())
-        }
     }
 }
 
@@ -1017,6 +984,21 @@ mod tests {
                 .expect("branch lookup"),
             "Quick Submit branch reached origin"
         );
+    }
+
+    #[tokio::test]
+    async fn branch_submit_op_refused_on_backup_branch() {
+        let fx = Fixture::new().await;
+        run_git(&fx.user, &["checkout", "-q", "-b", "f11r-backup-x", "main"]).await;
+        fx.edit("seed.txt", "seed\nedited\n");
+        let before = Unchanged::capture(&fx, "main").await;
+
+        let (op, _phases, _status) = fx.op(&["seed.txt"], "msg");
+        assert_eq!(
+            input_message(op.execute().await),
+            "'f11r-backup-x' is a rebase backup, which the next rebase push replaces. Switch to a feature branch to submit."
+        );
+        before.assert(&fx, "main").await;
     }
 
     #[tokio::test]

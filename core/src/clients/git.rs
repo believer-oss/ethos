@@ -266,6 +266,28 @@ impl std::error::Error for AutostashConflict {}
 pub struct UnmergedEntry {
     pub path: String,
     pub stages: [Option<String>; 3],
+    /// The file mode at each stage.
+    pub modes: [Option<String>; 3],
+}
+
+impl UnmergedEntry {
+    /// The `git status` XY code, from which stages are present.
+    pub fn xy(&self) -> &'static str {
+        match self.stages.each_ref().map(Option::is_some) {
+            [true, true, true] => "UU",
+            [false, true, true] => "AA",
+            [true, true, false] => "UD",
+            [true, false, true] => "DU",
+            [false, true, false] => "AU",
+            [false, false, true] => "UA",
+            [true, false, false] => "DD",
+            [false, false, false] => "",
+        }
+    }
+
+    pub fn is_submodule(&self) -> bool {
+        self.modes.iter().flatten().any(|mode| mode == "160000")
+    }
 }
 
 /// Parses `git ls-files -u -z` output into one entry per path, in output order.
@@ -277,7 +299,7 @@ fn parse_unmerged_entries(output: &str) -> Vec<UnmergedEntry> {
             continue;
         };
         let mut fields = meta.split_whitespace();
-        let (Some(_mode), Some(blob), Some(stage)) = (fields.next(), fields.next(), fields.next())
+        let (Some(mode), Some(blob), Some(stage)) = (fields.next(), fields.next(), fields.next())
         else {
             continue;
         };
@@ -291,10 +313,12 @@ fn parse_unmerged_entries(output: &str) -> Vec<UnmergedEntry> {
             entries.push(UnmergedEntry {
                 path: path.to_string(),
                 stages: Default::default(),
+                modes: Default::default(),
             });
         }
         if let Some(entry) = entries.last_mut() {
             entry.stages[slot] = Some(blob.to_string());
+            entry.modes[slot] = Some(mode.to_string());
         }
     }
     entries
@@ -3524,8 +3548,9 @@ mod tests {
     async fn test_with_env_reaches_git_and_does_not_leak() {
         let (git, _dir) = setup_repo();
 
+        // Compared whole: with no editor configured, `git var GIT_EDITOR` fails on some hosts.
         let before = git
-            .run_and_collect_output(&["var", "GIT_EDITOR"], Opts::default())
+            .run_with_status(&["var", "GIT_EDITOR"], Opts::default())
             .await
             .unwrap();
         let with_env = git
@@ -3538,7 +3563,7 @@ mod tests {
         assert_eq!(with_env, "true");
 
         let after = git
-            .run_and_collect_output(&["var", "GIT_EDITOR"], Opts::default())
+            .run_with_status(&["var", "GIT_EDITOR"], Opts::default())
             .await
             .unwrap();
         assert_eq!(after, before);
@@ -4519,7 +4544,8 @@ mod tests {
         let output = concat!(
             "100644 aaaa 1\ta b.txt\x00100644 bbbb 2\ta b.txt\x00100644 cccc 3\ta b.txt\x00",
             "100644 dddd 1\tud.txt\x00100644 eeee 2\tud.txt\x00",
-            "100644 ffff 1\tdu.txt\x00100644 9999 3\tdu.txt\x00"
+            "100644 ffff 1\tdu.txt\x00100644 9999 3\tdu.txt\x00",
+            "160000 1111 2\tPlugins/Sub\x00160000 2222 3\tPlugins/Sub\x00"
         );
         let entries = parse_unmerged_entries(output);
         let s = |v: &str| Some(v.to_string());
@@ -4529,17 +4555,29 @@ mod tests {
                 UnmergedEntry {
                     path: "a b.txt".to_string(),
                     stages: [s("aaaa"), s("bbbb"), s("cccc")],
+                    modes: [s("100644"), s("100644"), s("100644")],
                 },
                 UnmergedEntry {
                     path: "ud.txt".to_string(),
                     stages: [s("dddd"), s("eeee"), None],
+                    modes: [s("100644"), s("100644"), None],
                 },
                 UnmergedEntry {
                     path: "du.txt".to_string(),
                     stages: [s("ffff"), None, s("9999")],
+                    modes: [s("100644"), None, s("100644")],
+                },
+                UnmergedEntry {
+                    path: "Plugins/Sub".to_string(),
+                    stages: [None, s("1111"), s("2222")],
+                    modes: [None, s("160000"), s("160000")],
                 },
             ]
         );
+        let xy: Vec<&str> = entries.iter().map(UnmergedEntry::xy).collect();
+        assert_eq!(xy, vec!["UU", "UD", "DU", "AA"]);
+        let submodule: Vec<bool> = entries.iter().map(UnmergedEntry::is_submodule).collect();
+        assert_eq!(submodule, vec![false, false, false, true]);
         assert!(parse_unmerged_entries("").is_empty());
     }
 

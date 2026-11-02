@@ -1337,8 +1337,11 @@ where
                         info!("Successfully re-enqueued PR {}", pr_id);
                     }
                     Err(e) => {
-                        error!("Failed to re-enqueue PR {}: {}", pr_id, e);
-                        return Err(requeue_failed_error(pr.number, &pr.url, e));
+                        // Not Err: the push succeeded, and Err would run the destructive
+                        // snapshot restore in execute().
+                        let msg = requeue_failed_message(pr.number, &pr.url, e);
+                        error!("{}", msg);
+                        let _ = self.notification_tx.send(Notification::Error(msg));
                     }
                 }
                 cleanup_worktree_branch(&git_client_worktree, &worktree_branch, git_opts_lfs_stubs)
@@ -1585,12 +1588,18 @@ where
 
 /// A Quick Submit branch (e.g. `f11r-main-Jane-1761000000`); `f11r-branch-*` feature branches are excluded.
 pub fn is_quicksubmit_branch(branch: &str) -> bool {
-    branch.starts_with("f11r") && !ethos_core::types::repo::is_feature_branch(branch)
+    branch.starts_with("f11r")
+        && !ethos_core::types::repo::is_feature_branch(branch)
+        && !ethos_core::types::repo::is_backup_branch(branch)
 }
 
-/// A branch that submits with Submit to branch: named, not protected, not a Quick Submit branch.
+/// A branch that submits with Submit to branch: named, not protected, not a Quick Submit branch
+/// and not a rebase backup, which the next rebase push replaces.
 pub fn is_branch_mode(repo_config: &RepoConfig, branch: &str) -> bool {
-    !branch.is_empty() && !repo_config.is_protected_branch(branch) && !is_quicksubmit_branch(branch)
+    !branch.is_empty()
+        && !repo_config.is_protected_branch(branch)
+        && !is_quicksubmit_branch(branch)
+        && !ethos_core::types::repo::is_backup_branch(branch)
 }
 
 /// The name of the user's Quick Submit branches for `target_branch`, up to the timestamp.
@@ -1688,10 +1697,10 @@ fn reusable_quicksubmit_pr(
 }
 
 /// The changes are already pushed to the PR, so submitting again is not the fix.
-fn requeue_failed_error(number: i64, url: &str, error: impl std::fmt::Display) -> CoreError {
-    CoreError::Internal(anyhow!(
+fn requeue_failed_message(number: i64, url: &str, error: impl std::fmt::Display) -> String {
+    format!(
         "Your changes were pushed to PR #{number} ({url}), but it could not be added back to the merge queue: {error}. Re-enqueue it from GitHub or Friendshipper instead of submitting again."
-    ))
+    )
 }
 
 /// Whether the in-flight Quick Submit PR was taken out of the merge queue, so its branch can be reused.
@@ -2316,6 +2325,8 @@ mod tests {
         assert!(is_quicksubmit_branch("f11r-main-Jane-1761000000-wt"));
         assert!(!is_quicksubmit_branch("f11r-branch-foo"));
         assert!(!is_quicksubmit_branch("f11r-branch-"));
+        assert!(!is_quicksubmit_branch("f11r-backup-foo"));
+        assert!(!is_quicksubmit_branch("f11r-backup--release/1.2"));
         assert!(!is_quicksubmit_branch("main"));
         assert!(is_quicksubmit_branch("f11r"));
         assert!(!is_quicksubmit_branch("my-f11r-branch-x"));
@@ -2626,14 +2637,11 @@ mod tests {
 
     #[test]
     fn requeue_failure_names_the_pr() {
-        let message = match requeue_failed_error(
+        let message = requeue_failed_message(
             42,
             "https://github.com/o/r/pull/42",
             "Error enqueuing PR: not mergeable",
-        ) {
-            CoreError::Internal(e) => e.to_string(),
-            other => panic!("expected Internal error, got {other:?}"),
-        };
+        );
         assert_eq!(
             message,
             "Your changes were pushed to PR #42 (https://github.com/o/r/pull/42), but it could not be added back to the merge queue: Error enqueuing PR: not mergeable. Re-enqueue it from GitHub or Friendshipper instead of submitting again."

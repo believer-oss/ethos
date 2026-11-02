@@ -12,14 +12,17 @@ use super::post_head_change::{run_post_head_change, PostHeadChangeCtx};
 use super::rebase_guard::guard_sentence;
 use super::rebase_state::{
     build_rebase_state, commit_info, create_backup_ref, delete_rebase_file, derive_rebase_state,
-    ensure_current_step, is_ancestor, is_full_sha, parse_push_porcelain, parse_unmerged,
-    parse_untracked, prune_backup_refs, push_ref_status, read_git, read_rebase_file,
-    rebase_dir_exists, rebase_head, refresh_resolved, replace_current_step, resolve_git_dir,
-    rev_parse, set_resolution, status_porcelain, write_rebase_file, DerivedState, GuidedRebaseFile,
-    GuidedRebasePhase, OriginalCommit, PushOutcome, RebaseFileRead, CPP_PATHSPECS,
-    REBASE_FILE_LOCK, REBASE_FILE_VERSION, REBASE_OP_LOCK,
+    ensure_current_step, is_ancestor, is_full_sha, parse_push_porcelain, parse_untracked,
+    prune_backup_refs, push_ref_status, read_git, read_rebase_file, rebase_dir_exists, rebase_head,
+    refresh_resolved, replace_current_step, resolve_git_dir, rev_parse, set_resolution,
+    write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase, OriginalCommit,
+    PushOutcome, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK, REBASE_FILE_VERSION,
+    REBASE_OP_LOCK,
 };
-use super::{git_too_old_message, is_valid_branch_name, require_aws_and_storage, run_sequence};
+use super::{
+    git_too_old_message, is_valid_branch_name, reject_if_in_merge_queue, require_aws_and_storage,
+    run_sequence,
+};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{find_files_with_conflict_markers, is_branch_mode};
 use crate::repo::operations::validate::validate_repo_state;
@@ -616,9 +619,11 @@ async fn run_on_path(
 }
 
 async fn is_unmerged(git: &git::Git, path: &str, xy: Option<&str>) -> Result<bool, CoreError> {
-    Ok(parse_unmerged(&status_porcelain(git).await?)
+    Ok(git
+        .unmerged_entries()
+        .await?
         .iter()
-        .any(|entry| entry.path == path && xy.is_none_or(|xy| entry.xy == xy)))
+        .any(|entry| entry.path == path && xy.is_none_or(|xy| entry.xy() == xy)))
 }
 
 /// The commit git stopped on, with its conflicts and their current `resolved`.
@@ -651,10 +656,7 @@ async fn stopped_step<T: EngineProvider>(
         return Ok(None);
     };
     let mut conflicts = step.conflicts;
-    refresh_resolved(
-        &mut conflicts,
-        &parse_unmerged(&status_porcelain(git).await?),
-    );
+    refresh_resolved(&mut conflicts, &git.unmerged_entries().await?);
     Ok(Some(StoppedStep {
         file,
         rebase_head,
@@ -1040,7 +1042,7 @@ where
 
         if exit_code != 0
             && git_dir.join("rebase-merge").is_dir()
-            && !parse_unmerged(&status_porcelain(git).await?).is_empty()
+            && !git.unmerged_entries().await?.is_empty()
         {
             if let Some(rebase_head) = rebase_head(&git_dir) {
                 let engine_path = engine_path_of(&self.app_config, &self.repo_config);
@@ -1303,7 +1305,7 @@ where
         {
             return Err(input(UNRESOLVABLE_STEP));
         }
-        if !parse_unmerged(&status_porcelain(git).await?).is_empty() {
+        if !git.unmerged_entries().await?.is_empty() {
             return Err(input(RESOLVE_EVERY_FILE));
         }
 
@@ -1339,7 +1341,7 @@ where
                 )
                 .await?;
             let rebase_dir = rebase_dir_exists(&git_dir);
-            let unmerged = rebase_dir && !parse_unmerged(&status_porcelain(git).await?).is_empty();
+            let unmerged = rebase_dir && !git.unmerged_entries().await?.is_empty();
             let clean_tree = rebase_dir && !unmerged && tree_matches_head(git).await?;
             let head = rev_parse(git, "HEAD").await?;
             let rebase_head_now = rebase_head(&git_dir);
@@ -1657,16 +1659,21 @@ where
                 file.branch
             )));
         }
-        if file
-            .push_failed_remote_sha
-            .as_deref()
-            .is_some_and(|seen| seen != origin_sha)
-        {
+        // An unknown tip (the post-rejection fetch failed) was never shown, so it is reviewed too.
+        if file.push_failed_remote_sha.as_deref() != Some(origin_sha.as_str()) {
+            let message = if file.push_failed_remote_sha.is_some() {
+                format!(
+                    "{} changed on origin again. Review it and try again.",
+                    file.branch
+                )
+            } else {
+                format!(
+                    "Review {} on origin, which wasn't available when the push failed, and try again.",
+                    file.branch
+                )
+            };
             record_push_failed(&git_dir, &file, Some(origin_sha)).await?;
-            return Err(input(format!(
-                "{} changed on origin again. Review it and try again.",
-                file.branch
-            )));
+            return Err(input(message));
         }
         let head = required_sha(git, "HEAD").await?;
         backup_rebased_head(git, &file.branch, &head).await?;
@@ -1979,6 +1986,7 @@ pub async fn guided_rebase_start_handler<T>(
 where
     T: EngineProvider,
 {
+    reject_if_in_merge_queue(&state).await?;
     let op = RebaseStartOp {
         git_client: state.git(),
         engine: state.engine.clone(),
@@ -2152,6 +2160,7 @@ pub async fn guided_rebase_finish_handler<T>(
 where
     T: EngineProvider,
 {
+    reject_if_in_merge_queue(&state).await?;
     let aws = require_aws_and_storage(&state).await;
     let result = Arc::new(parking_lot::Mutex::new(None));
     let op = RebaseFinishOp {
@@ -2258,9 +2267,7 @@ mod tests {
         conflict, diverge_on_a_txt, engine, guided_stop_on_a_txt, info, new_git, original,
         sample_file_for, slash_path, Change, Diverged, Fixture, BRANCH, FIXTURE_DATE,
     };
-    use crate::repo::operations::branch::rebase_state::{
-        backup_ref_ts, json_path, CurrentStep, UnmergedEntry,
-    };
+    use crate::repo::operations::branch::rebase_state::{backup_ref_ts, json_path, CurrentStep};
     use ethos_core::types::config::{AppConfig, RepoConfig, TargetBranchConfig};
     use ethos_core::types::repo::{DroppedCommit, RebaseStaleReason, RepoStatus};
 
@@ -2397,8 +2404,8 @@ mod tests {
         }
     }
 
-    async fn unmerged(fx: &Fixture) -> Vec<UnmergedEntry> {
-        parse_unmerged(&fx.porcelain_v2().await)
+    async fn unmerged(fx: &Fixture) -> Vec<git::UnmergedEntry> {
+        fx.git.unmerged_entries().await.expect("ls-files -u")
     }
 
     async fn xy_of(fx: &Fixture, path: &str) -> Option<String> {
@@ -2406,7 +2413,7 @@ mod tests {
             .await
             .into_iter()
             .find(|entry| entry.path == path)
-            .map(|entry| entry.xy)
+            .map(|entry| entry.xy().to_string())
     }
 
     async fn backup_refs(fx: &Fixture) -> Vec<String> {
@@ -5579,6 +5586,32 @@ mod tests {
         // Once seen, the same origin can be redone onto.
         redo(&fx).await.expect("redo");
         assert_eq!(record(&fx).backup_sha, moved);
+    }
+
+    #[tokio::test]
+    async fn redo_refused_when_origin_was_never_seen() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        let rebased = fx.head().await;
+        reject_push(&fx, "c.txt").await;
+        // As if the fetch after the rejection had failed.
+        let mut unseen = record(&fx);
+        unseen.push_failed_remote_sha = None;
+        write_rebase_file(&fx.git_dir(), &unseen).unwrap();
+        let origin = origin_tip(&fx, BRANCH).await.expect("branch on origin");
+
+        let message = input_message(redo(&fx).await);
+        assert_eq!(
+            message,
+            format!("Review {BRANCH} on origin, which wasn't available when the push failed, and try again.")
+        );
+        let state = state(&fx).await;
+        assert_eq!(state.state, RebaseStateKind::PushFailed);
+        assert_eq!(state.push_failed_remote_sha, Some(origin.clone()));
+        assert_eq!(fx.head().await, rebased);
+
+        redo(&fx).await.expect("redo");
+        assert_eq!(record(&fx).backup_sha, origin);
     }
 
     #[tokio::test]
