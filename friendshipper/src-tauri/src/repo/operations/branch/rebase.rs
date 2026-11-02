@@ -833,8 +833,42 @@ const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;
 
 /// Extensions Windows runs or follows rather than opens, besides `PATHEXT`.
 const RUNNABLE_EXTENSIONS: &[&str] = &[
-    "bat", "cmd", "com", "exe", "msi", "vbs", "vbe", "js", "jse", "wsf", "wsh", "ps1", "psm1",
-    "py", "pyw", "hta", "msc", "lnk", "url", "reg", "scr", "cpl", "jar",
+    "bat",
+    "cmd",
+    "com",
+    "exe",
+    "msi",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "ws",
+    "wsc",
+    "sct",
+    "ps1",
+    "psm1",
+    "py",
+    "pyw",
+    "hta",
+    "msc",
+    "lnk",
+    "url",
+    "website",
+    "reg",
+    "scr",
+    "cpl",
+    "pif",
+    "jar",
+    "jnlp",
+    "scf",
+    "appref-ms",
+    "application",
+    "settingcontent-ms",
+    // Git for Windows opens these with Git Bash.
+    "sh",
+    "bash",
 ];
 
 /// Whether opening `path` with its default handler would run it instead of showing it.
@@ -2232,6 +2266,7 @@ pub async fn editor_rebuild_handler<T>(
 where
     T: EngineProvider,
 {
+    reject_if_in_merge_queue(&state).await?;
     let result = Arc::new(parking_lot::Mutex::new(None));
     let op = EditorRebuildOp {
         git_client: state.git(),
@@ -4758,6 +4793,10 @@ mod tests {
             "trailing.bat.",
             "trailing.vbs ",
             "x.msc",
+            "GenerateProjectFiles.sh",
+            "x.appref-ms",
+            "x.jnlp",
+            "x.SettingContent-ms",
         ] {
             assert!(windows_would_run(path, None), "{path}");
         }

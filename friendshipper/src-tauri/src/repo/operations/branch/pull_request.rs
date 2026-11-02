@@ -12,6 +12,7 @@ use octocrab::Octocrab;
 use tracing::{info, instrument, warn};
 
 use super::analyze::{collect_branch_facts, merged_pr_covers_tip, BranchFacts};
+use super::rebase_state::rev_parse;
 use super::{
     branch_management_trunk, guard_state, run_guarded_sequence, trunk_uses_merge_queue,
     unsupported_git_message, GITHUB_PAT_MISSING,
@@ -593,6 +594,19 @@ impl Task for BranchPullRequestOp {
             PrAction::Enqueue(existing) => existing,
         };
 
+        // The gates checked origin's tip; queue only that commit, so a later push isn't queued
+        // unchecked while the enqueue waits for mergeability.
+        let tip = rev_parse(&self.git_client, &format!("refs/remotes/origin/{branch}"))
+            .await
+            .map_err(CoreError::Internal)?
+            .ok_or_else(|| CoreError::Input(anyhow!("{branch} does not exist on origin.")))?;
+        if existing.head_ref_oid != tip {
+            return Err(CoreError::Input(anyhow!(
+                "PR #{} does not point at {branch}'s latest commit on origin yet. Refresh and try again.",
+                existing.number
+            )));
+        }
+
         let pr = self
             .get_open_pull_request(&octocrab, &target, existing.number)
             .await?;
@@ -615,7 +629,7 @@ impl Task for BranchPullRequestOp {
                 MERGEABLE_TIMEOUT,
                 wait_until_queueable(&octocrab, pr, &owner, &repo),
                 || github_client.get_pull_request_id(owner.clone(), repo.clone(), number),
-                |id| github_client.enqueue_pull_request(id),
+                |id| github_client.enqueue_pull_request(id, Some(tip)),
             )
             .await;
             let _ = notification_tx.send(notification);

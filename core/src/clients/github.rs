@@ -416,14 +416,23 @@ impl GraphQLClient {
         Ok(prs)
     }
 
+    /// Adds the PR to the merge queue. With `expected_head_oid`, GitHub refuses if the PR's head
+    /// has moved since.
     #[instrument(skip(self))]
-    pub async fn enqueue_pull_request(&self, id: String) -> Result<()> {
+    pub async fn enqueue_pull_request(
+        &self,
+        id: String,
+        expected_head_oid: Option<String>,
+    ) -> Result<()> {
         mutation_result(
             "enqueuing PR",
             post_graphql::<EnqueuePullRequest, _>(
                 &self.client,
                 GITHUB_GRAPHQL_URL,
-                enqueue_pull_request::Variables { id },
+                enqueue_pull_request::Variables {
+                    id,
+                    expected_head_oid,
+                },
             )
             .await,
         )
