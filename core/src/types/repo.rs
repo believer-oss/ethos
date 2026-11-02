@@ -476,12 +476,15 @@ pub fn is_backup_branch(name: &str) -> bool {
     name.starts_with(BACKUP_BRANCH_PREFIX)
 }
 
-/// `f11r-backup-<slug>` for `f11r-branch-<slug>`, otherwise `f11r-backup--<branch>`. Slugs never
-/// start with '-', so the two forms never collide.
+/// `f11r-backup-<slug>` for `f11r-branch-<slug>`, otherwise `f11r-backup--<branch>`. A slug that
+/// is empty or starts with '-' (possible for branches made outside Friendshipper) takes the
+/// second form, so the two forms never collide.
 pub fn backup_branch_name(branch: &str) -> String {
     match branch.strip_prefix(FEATURE_BRANCH_PREFIX) {
-        Some(slug) => format!("{BACKUP_BRANCH_PREFIX}{slug}"),
-        None => format!("{BACKUP_BRANCH_PREFIX}-{branch}"),
+        Some(slug) if !slug.is_empty() && !slug.starts_with('-') => {
+            format!("{BACKUP_BRANCH_PREFIX}{slug}")
+        }
+        _ => format!("{BACKUP_BRANCH_PREFIX}-{branch}"),
     }
 }
 
@@ -997,6 +1000,14 @@ mod tests {
     fn backup_branch_names() {
         assert_eq!(backup_branch_name("f11r-branch-foo"), "f11r-backup-foo");
         assert_eq!(backup_branch_name("foo"), "f11r-backup--foo");
+        assert_eq!(
+            backup_branch_name("f11r-branch--foo"),
+            "f11r-backup--f11r-branch--foo"
+        );
+        assert_eq!(
+            backup_branch_name("f11r-branch-"),
+            "f11r-backup--f11r-branch-"
+        );
         assert_eq!(
             backup_branch_name("release/1.2"),
             "f11r-backup--release/1.2"

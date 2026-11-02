@@ -12,7 +12,7 @@ use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{EditorBinariesState, EditorBinariesStatus, RebaseCommitInfo};
 
 /// Whether the editor binaries built at `dll_commit` are still current, given the latest
-/// commit after it that changed C++.
+/// commit on either side of it and HEAD that changed C++.
 pub(crate) fn editor_binaries_status(
     dll_commit: &str,
     latest_cpp: Option<RebaseCommitInfo>,
@@ -34,12 +34,13 @@ pub(crate) fn editor_binaries_status(
     }
 }
 
-/// The latest commit in `dll_commit..HEAD` that changed C++.
+/// The latest commit in `dll_commit...HEAD` that changed C++. Both sides count: binaries built
+/// at a descendant of HEAD include C++ that HEAD lacks.
 async fn latest_cpp_commit(
     git: &git::Git,
     dll_commit: &str,
 ) -> Result<Option<RebaseCommitInfo>, CoreError> {
-    let range = format!("{dll_commit}..HEAD");
+    let range = format!("{dll_commit}...HEAD");
     let mut args = vec!["log", "-1", COMMIT_INFO_FORMAT, &range, "--"];
     args.extend(CPP_PATHSPECS);
     let output = read_git(git, &args).await?;
@@ -153,6 +154,20 @@ mod tests {
             }
         );
         assert_eq!(status(&fx, "").await, unknown());
+    }
+
+    #[tokio::test]
+    async fn binaries_from_a_descendant_with_cpp_changes_mismatch() {
+        let fx = Fixture::new().await;
+        let older = fx.head().await;
+        let cpp = fx
+            .commit_file("Game/Source/G/a.cpp", b"int a;\n", "cpp change")
+            .await;
+        fx.out(&["checkout", "-q", "--detach", &older]).await;
+
+        let status = status(&fx, &cpp).await;
+        assert_eq!(status.state, EditorBinariesState::Mismatch);
+        assert_eq!(status.latest_cpp_commit, Some(info(&cpp, "cpp change")));
     }
 
     #[tokio::test]
