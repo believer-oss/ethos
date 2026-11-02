@@ -7,6 +7,7 @@ import type {
 	BranchCleanupRequest,
 	BranchCleanupResult,
 	BranchInfo,
+	BranchPullRequest,
 	BranchPullRequestResult,
 	CloneRequest,
 	CommitInfo,
@@ -19,6 +20,7 @@ import type {
 	ImportZippedChangesResponse,
 	IncomingEngineChange,
 	MergeQueue,
+	Nullable,
 	ObjectCountResponse,
 	OpenConflictFileRequest,
 	PushRequest,
@@ -117,6 +119,9 @@ export const submitToBranch = async (req: PushRequest): Promise<void> =>
 	invoke('submit_to_branch', { req });
 
 export const getBranchAnalysis = async (): Promise<BranchAnalysis> => invoke('get_branch_analysis');
+
+export const getBranchOpenPr = async (): Promise<Nullable<BranchPullRequest>> =>
+	invoke('get_branch_open_pr');
 
 export const createBranchPullRequest = async (
 	req: CreateBranchPullRequestRequest

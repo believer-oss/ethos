@@ -130,6 +130,8 @@ force-pushes, and a pre-submit snapshot is kept.
 - **Locks:** they are kept, and freed when the branch merges to main. On a branch that never merges, release them by hand.
 - **Behind origin:** Sync first. If someone pushed in the meantime, your commit is kept locally; Sync, then use "Push N commits".
 - **Files changed on main:** they show a yellow "will conflict at rebase" badge and do not block the submit.
+- **In the merge queue:** a banner warns when the branch's pull request is queued, since submitting takes it out of the
+  queue. It does not block the submit.
 - **Detached HEAD or rebase in progress:** submitting is unavailable. Open Branch Management.
 
 # [Unreal Plugin](https://github.com/believer-oss/FriendshipperSourceControl)

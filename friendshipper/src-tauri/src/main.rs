@@ -236,6 +236,7 @@ fn main() -> Result<(), CoreError> {
                 quick_submit,
                 submit_to_branch,
                 get_branch_analysis,
+                get_branch_open_pr,
                 create_branch_pull_request,
                 enqueue_branch_pull_request,
                 get_branch_cleanup_candidates,
