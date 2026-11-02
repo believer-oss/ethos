@@ -166,6 +166,18 @@ where
                 .run(&["checkout", branch, "--"], opts)
                 .await?;
             self.head_moved.store(true, Ordering::SeqCst);
+            // Submit to branch and Sync need the same-named origin branch as the upstream. A
+            // failure only leaves submit blocked, so it doesn't fail the switch.
+            if let Err(e) = ctx
+                .git_client
+                .run(
+                    &["branch", &format!("--set-upstream-to={remote_ref}"), branch],
+                    opts,
+                )
+                .await
+            {
+                warn!("Could not set the upstream of {branch} to {remote_ref}: {e}");
+            }
 
             let (ahead, behind) = ctx.git_client.get_ahead_behind(&remote_ref, branch).await?;
             if ahead == 0 && behind > 0 {

@@ -803,7 +803,7 @@ impl Task for GitHubSubmitOp {
                             )
                             .await
                         {
-                            if let Err(e) = self_clone.client.enqueue_pull_request(id).await {
+                            if let Err(e) = self_clone.client.enqueue_pull_request(id, None).await {
                                 warn!("Failed to enqueue pull request: {:?}", e);
                             }
                         } else {
@@ -1332,7 +1332,11 @@ where
                 tokio::time::sleep(std::time::Duration::from_secs(15)).await;
 
                 info!("Re-enqueueing PR {} to merge queue", pr_id);
-                match self.github_client.enqueue_pull_request(pr_id.clone()).await {
+                match self
+                    .github_client
+                    .enqueue_pull_request(pr_id.clone(), None)
+                    .await
+                {
                     Ok(_) => {
                         info!("Successfully re-enqueued PR {}", pr_id);
                     }
