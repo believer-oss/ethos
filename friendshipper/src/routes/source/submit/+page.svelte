@@ -56,6 +56,7 @@
 	import { Menu, MenuItem } from '@tauri-apps/api/menu';
 	import { goto } from '$app/navigation';
 	import {
+		type BranchPullRequest,
 		type GitHubPullRequest,
 		type Nullable,
 		type PushRequest,
@@ -75,6 +76,7 @@
 		generateSln,
 		getCommitFileTextClass,
 		getPullRequests,
+		getBranchOpenPr,
 		getRepoStatus,
 		importZippedChanges,
 		listSnapshots,
@@ -317,6 +319,31 @@
 	$: branchesOffOnBranch = modeInfo.mode === 'branch' && !$branchesEnabled;
 	$: editorOpen = !!$repoStatus?.editorRunning;
 	$: switchDisabled = loading || quickSubmitting || syncing || editorOpen;
+
+	// The current branch's open PR, checked on each branch change and every 30 seconds.
+	let branchPr: Nullable<BranchPullRequest> = null;
+	let branchPrFor = '';
+	let fetchingBranchPr = false;
+	const refreshBranchPr = async () => {
+		const branch = $repoStatus?.branch ?? '';
+		if (!branchMode || branch === '' || $appConfig.githubPAT === '' || fetchingBranchPr) return;
+		fetchingBranchPr = true;
+		try {
+			const pr = await getBranchOpenPr();
+			if (branch === $repoStatus?.branch) branchPr = pr;
+		} catch {
+			// Advisory only; the notice stays hidden until a check succeeds.
+			branchPr = null;
+		} finally {
+			branchPrFor = branch;
+			fetchingBranchPr = false;
+		}
+	};
+	$: if (branchMode && $repoStatus && $repoStatus.branch !== branchPrFor) void refreshBranchPr();
+	$: queuedPr =
+		branchMode && branchPr?.mergeQueueEntry && branchPrFor === $repoStatus?.branch
+			? branchPr
+			: null;
 	$: targetColor = targetBranchColor(quickTarget, $repoConfig);
 	$: targetMergeQueue = targetUsesMergeQueue(quickTarget, $repoConfig);
 	$: canSubmit =
@@ -754,6 +781,7 @@
 				successMessage = `Changes submitted to ${branch}.`;
 			}
 			await emit('success', successMessage);
+			if (mode === 'branch') void refreshBranchPr();
 		}
 
 		showProgressModal = false;
@@ -1346,9 +1374,14 @@
 			}
 		}, 10000);
 
+		const branchPrInterval = setInterval(() => {
+			void refreshBranchPr();
+		}, 30000);
+
 		return () => {
 			clearInterval(interval);
 			clearInterval(pullsInterval);
+			clearInterval(branchPrInterval);
 		};
 	});
 
@@ -1596,6 +1629,24 @@
 				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
 				<code>{$repoStatus.branch}</code> was not created by Friendshipper. It may be shared or protected
 				differently, but actions are allowed.
+			</Alert>
+		{/if}
+		{#if queuedPr}
+			<Alert
+				class="bg-yellow-900 dark:bg-yellow-900 border border-yellow-700 text-yellow-100 dark:text-yellow-100"
+			>
+				<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
+				<div class="flex flex-col gap-2">
+					<span
+						>PR #{queuedPr.number} for this branch is in the merge queue. Submitting changes the branch
+						while it merges, and GitHub takes the PR out of the queue.</span
+					>
+					<div>
+						<Button size="xs" color="alternative" on:click={() => openUrl(queuedPr?.url ?? '')}
+							>Open PR #{queuedPr.number}</Button
+						>
+					</div>
+				</div>
 			</Alert>
 		{/if}
 		{#if branchesOffOnBranch && $repoStatus}

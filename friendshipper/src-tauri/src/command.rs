@@ -19,11 +19,12 @@ use ethos_core::types::playtests::{
 use ethos_core::types::project::ProjectConfig;
 use ethos_core::types::repo::{
     BranchAnalysis, BranchCleanupCandidates, BranchCleanupRequest, BranchCleanupResult, BranchInfo,
-    BranchPullRequestResult, ChangeSet, CommitFileInfo, CommitInfo, CreateBranchPullRequestRequest,
-    CreateBranchRequest, CreateBranchResponse, EditorBinariesStatus, FileHistoryResponse,
-    OpenConflictFileRequest, PushRequest, RebaseCommitInfo, RebaseFinishResponse, RebasePreflight,
-    RebaseState, RepoDirectoryListing, RepoStatus, ResolveConflictRequest, Snapshot,
-    SwitchBranchRequest, SwitchBranchResponse, UnresolveConflictRequest,
+    BranchPullRequest, BranchPullRequestResult, ChangeSet, CommitFileInfo, CommitInfo,
+    CreateBranchPullRequestRequest, CreateBranchRequest, CreateBranchResponse,
+    EditorBinariesStatus, FileHistoryResponse, OpenConflictFileRequest, PushRequest,
+    RebaseCommitInfo, RebaseFinishResponse, RebasePreflight, RebaseState, RepoDirectoryListing,
+    RepoStatus, ResolveConflictRequest, Snapshot, SwitchBranchRequest, SwitchBranchResponse,
+    UnresolveConflictRequest,
 };
 use ethos_core::types::utrace::{
     DownloadTraceRequest, OpenTraceRequest, RecentTracesResponse, TraceEntry,
@@ -669,6 +670,23 @@ pub async fn get_branch_analysis(
     let res = state
         .client
         .get(format!("{}/repo/branch/analysis", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_branch_open_pr(
+    state: tauri::State<'_, State>,
+) -> Result<Option<BranchPullRequest>, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/repo/branch/pr/open", state.server_url))
         .send()
         .await?;
 

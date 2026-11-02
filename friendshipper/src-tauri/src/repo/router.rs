@@ -76,6 +76,7 @@ where
         .route("/branch/submit", post(operations::branch_submit_handler))
         .route("/branch/analysis", get(operations::branch_analysis_handler))
         .route("/branch/pr", post(operations::branch_pull_request_handler))
+        .route("/branch/pr/open", get(operations::branch_open_pr_handler))
         .route(
             "/branch/pr/enqueue",
             post(operations::branch_pull_request_enqueue_handler),
