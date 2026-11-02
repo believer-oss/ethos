@@ -359,20 +359,50 @@ impl PushResult {
     }
 }
 
+/// An empty commit on `sha` whose message carries no CI tags, so pushing it as `branch`'s backup
+/// starts no build.
+async fn backup_commit(git: &git::Git, branch: &str, sha: &str) -> Result<String, CoreError> {
+    if !is_full_sha(sha) {
+        return Err(internal(format!("Refusing to back up {sha}.")));
+    }
+    let tree = format!("{sha}^{{tree}}");
+    let message = format!(
+        "Backup of {branch} before rebase
+
+Previous version: {sha}"
+    );
+    let output = git
+        .run_with_status(
+            &["commit-tree", &tree, "-p", sha, "-m", &message],
+            git::Opts::new_with_complete_error().with_env(REBASE_ENV),
+        )
+        .await?;
+    let commit = output.stdout.trim();
+    if output.exit_code != 0 || !is_full_sha(commit) {
+        return Err(internal(format!(
+            "Could not create the backup commit for {branch}: {}",
+            output.stderr.trim()
+        )));
+    }
+    Ok(commit.to_string())
+}
+
 /// Pushes `sha` to origin's `<branch>`, leased to origin's branch being exactly `expected`.
-/// With `backup`, the same atomic push also force-pushes `expected` to origin's `<backup>`.
-/// The guided rebase's only push.
+/// With `backup` (`<name>`, `<sha>`), the same atomic push also force-pushes that sha to origin's
+/// `<name>`. The guided rebase's only push.
 async fn leased_push(
     git: &git::Git,
     branch: &str,
     sha: &str,
     expected: &str,
-    backup: Option<&str>,
+    backup: Option<(&str, &str)>,
 ) -> Result<PushResult, CoreError> {
     if !is_valid_branch_name(branch)
         || !is_full_sha(sha)
         || !is_full_sha(expected)
-        || backup.is_some_and(|b| !is_valid_branch_name(b) || b == branch)
+        || backup.is_some_and(|(b, b_sha)| {
+            !is_valid_branch_name(b) || b == branch || !is_full_sha(b_sha)
+        })
     {
         return Err(internal(format!(
             "Refusing to push {sha} to {branch} leased to {expected}."
@@ -380,7 +410,7 @@ async fn leased_push(
     }
     let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
     let refspec = format!("{sha}:refs/heads/{branch}");
-    let backup_refspec = backup.map(|b| format!("+{expected}:refs/heads/{b}"));
+    let backup_refspec = backup.map(|(b, b_sha)| format!("+{b_sha}:refs/heads/{b}"));
     let mut args = vec![
         "push",
         "--porcelain",
@@ -400,7 +430,7 @@ async fn leased_push(
         .await?;
     let mut outcome = parse_push_porcelain(&output.stdout, branch);
     // An atomic push fails the branch too when only the backup was refused.
-    if let (Some(backup), PushOutcome::Rejected(summary)) = (backup, &outcome) {
+    if let (Some((backup, _)), PushOutcome::Rejected(summary)) = (backup, &outcome) {
         if summary.contains("atomic") {
             let detail = push_ref_status(&output.stdout, backup)
                 .map(|(_, s)| s)
@@ -1509,12 +1539,13 @@ where
             .sync_phase_tx
             .send("Pushing rebased branch".to_string());
         let backup_branch = backup_branch_name(&file.branch);
+        let backup_sha = backup_commit(git, &file.branch, &file.pre_rebase_origin_sha).await?;
         let push = leased_push(
             git,
             &file.branch,
             &head,
             &file.pre_rebase_origin_sha,
-            Some(&backup_branch),
+            Some((&backup_branch, &backup_sha)),
         )
         .await?;
         let (outcome, post_step_error) = match push.outcome {
@@ -4875,6 +4906,33 @@ mod tests {
             .to_string()
     }
 
+    /// Origin's backup branch is an untagged empty commit on `previous`.
+    async fn assert_backup(fx: &Fixture, previous: &str) {
+        let tip = origin_tip(fx, &backup_branch_name(BRANCH))
+            .await
+            .expect("backup branch on origin");
+        let origin = new_git(fx.origin_path());
+        let rev = |r: String| {
+            let origin = origin.clone();
+            async move {
+                origin
+                    .run_and_collect_output(&["rev-parse", &r], git::Opts::new_without_logs())
+                    .await
+                    .expect("rev-parse in origin")
+                    .trim()
+                    .to_string()
+            }
+        };
+        assert_eq!(rev(format!("{tip}^@")).await, previous);
+        assert_eq!(
+            rev(format!("{tip}^{{tree}}")).await,
+            rev(format!("{previous}^{{tree}}")).await
+        );
+        let subject = origin_subject(fx, &tip).await;
+        assert_eq!(subject, format!("Backup of {BRANCH} before rebase"));
+        assert!(!subject.contains('['), "{subject}");
+    }
+
     /// A rebase of `diverge_clean` that replayed and waits to be pushed.
     async fn completed_clean(fx: &Fixture) -> Diverged {
         let d = diverge_clean(fx).await;
@@ -4936,10 +4994,7 @@ mod tests {
             phases.try_iter().collect::<Vec<_>>(),
             ["Pushing rebased branch", "Updating editor binaries"]
         );
-        assert_eq!(
-            origin_tip(&fx, &backup_branch_name(BRANCH)).await,
-            Some(file.pre_rebase_origin_sha.clone())
-        );
+        assert_backup(&fx, &file.pre_rebase_origin_sha).await;
     }
 
     #[tokio::test]
@@ -5047,10 +5102,7 @@ mod tests {
         assert_ne!(earlier, file.pre_rebase_origin_sha);
 
         finish(&fx).await.expect("finish");
-        assert_eq!(
-            origin_tip(&fx, &backup).await,
-            Some(file.pre_rebase_origin_sha)
-        );
+        assert_backup(&fx, &file.pre_rebase_origin_sha).await;
     }
 
     #[tokio::test]
@@ -6625,7 +6677,7 @@ mod tests {
             BRANCH,
             &head,
             &file.pre_rebase_origin_sha,
-            Some(&backup),
+            Some((&backup, &file.pre_rebase_origin_sha)),
         )
         .await
         .unwrap();

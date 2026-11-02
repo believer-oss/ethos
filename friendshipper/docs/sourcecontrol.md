@@ -53,8 +53,10 @@ it essentially replaces workflows that UGS and P4V support.
   the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. A backup is kept
   under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
   it as a separate step; collaborators must Sync afterwards. The same push saves the branch's previous version on
-  origin as `f11r-backup-<slug>` (`f11r-backup--<name>` for other branches), replaced by the next rebase push; if that backup cannot be saved, nothing is pushed. **Reset to remote version** instead discards the rebase
-  and puts the branch back the way it was on origin when the rebase started.
+  origin as `f11r-backup-<slug>` (`f11r-backup--<name>` for other branches), replaced by the next rebase push. Its
+  tip is an empty commit on top of the previous version with no CI tags, so it starts no builds. If that backup
+  cannot be saved, nothing is pushed. **Reset to remote version** instead discards the rebase and puts the branch
+  back the way it was on origin when the rebase started.
 - Branch Management is disabled while Unreal Editor has the project open.
 - Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can
   also be merged in an editor, except files Windows would run. A choice can be undone until you confirm the commit.
