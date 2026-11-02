@@ -1,7 +1,7 @@
 pub use branch::{
     branch_analysis_handler, branch_cleanup_candidates_handler, branch_cleanup_handler,
-    branch_pull_request_enqueue_handler, branch_pull_request_handler, branch_submit_handler,
-    create_branch_handler, editor_binaries_handler, editor_rebuild_handler,
+    branch_open_pr_handler, branch_pull_request_enqueue_handler, branch_pull_request_handler,
+    branch_submit_handler, create_branch_handler, editor_binaries_handler, editor_rebuild_handler,
     guided_rebase_abort_handler, guided_rebase_continue_handler, guided_rebase_dismiss_handler,
     guided_rebase_finish_handler, guided_rebase_open_file_handler, guided_rebase_preflight_handler,
     guided_rebase_redo_handler, guided_rebase_reset_to_backup_handler,

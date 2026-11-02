@@ -24,7 +24,7 @@ mod rebase_state;
 mod submit;
 mod switch;
 
-pub use analyze::{branch_analysis_handler, BranchAnalysisOp};
+pub use analyze::{branch_analysis_handler, branch_open_pr_handler, BranchAnalysisOp};
 pub use cleanup::{branch_cleanup_candidates_handler, branch_cleanup_handler};
 pub use create::{create_branch_handler, CreateBranchOp};
 pub use editor_binaries::editor_binaries_handler;

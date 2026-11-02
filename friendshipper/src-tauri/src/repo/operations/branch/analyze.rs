@@ -462,6 +462,36 @@ impl Task for MergedRuleOp {
     }
 }
 
+/// The current branch's open pull request, without the rest of the analysis.
+#[instrument(skip(state))]
+pub async fn branch_open_pr_handler<T>(
+    State(state): State<AppState<T>>,
+) -> Result<Json<Option<BranchPullRequest>>, CoreError>
+where
+    T: EngineProvider,
+{
+    let (branch, owner, repo) = {
+        let status = state.repo_status.read();
+        (
+            status.branch.clone(),
+            status.repo_owner.clone(),
+            status.repo_name.clone(),
+        )
+    };
+    let trunk = branch_management_trunk(&branch, &state.repo_config.read())?;
+    let Some(client) = state.github_client.read().clone() else {
+        return Err(CoreError::Input(anyhow!(GITHUB_PAT_MISSING)));
+    };
+    if owner.is_empty() || repo.is_empty() {
+        return Ok(Json(None));
+    }
+    let pr = client
+        .get_branch_pull_request(&owner, &repo, &branch, &trunk)
+        .await
+        .map_err(CoreError::Internal)?;
+    Ok(Json(pr.filter(|pr| pr.state == "OPEN")))
+}
+
 #[instrument(skip(state))]
 pub async fn branch_analysis_handler<T>(
     State(state): State<AppState<T>>,
