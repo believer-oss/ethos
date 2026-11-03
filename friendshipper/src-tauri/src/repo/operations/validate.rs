@@ -21,6 +21,22 @@ fn is_guided_rebase(git_dir: &Path) -> bool {
 /// Checks for rebase-in-progress, merge-in-progress, and detached HEAD states
 /// that would cause confusing failures mid-operation.
 pub fn validate_repo_state(repo_path: &Path, repo_status: &RepoStatus) -> Result<(), CoreError> {
+    validate_no_operation_in_progress(repo_path)?;
+
+    // Check for detached HEAD
+    if repo_status.detached_head {
+        info!("Detached HEAD detected at {:?}", repo_path);
+        return Err(CoreError::Input(anyhow!(
+            "Repository is in a detached HEAD state. Check out a branch before continuing."
+        )));
+    }
+
+    Ok(())
+}
+
+/// [`validate_repo_state`] without the detached HEAD check, for checking out a branch, which is
+/// how a clean detached HEAD is left.
+pub fn validate_no_operation_in_progress(repo_path: &Path) -> Result<(), CoreError> {
     let git_dir = resolve_git_dir(repo_path);
 
     // Check for rebase in progress in this working tree
@@ -44,14 +60,6 @@ pub fn validate_repo_state(repo_path: &Path, repo_status: &RepoStatus) -> Result
         info!("Merge in progress detected at {:?}", repo_path);
         return Err(CoreError::Input(anyhow!(
             "A merge is in progress. Resolve or abort it before continuing."
-        )));
-    }
-
-    // Check for detached HEAD
-    if repo_status.detached_head {
-        info!("Detached HEAD detected at {:?}", repo_path);
-        return Err(CoreError::Input(anyhow!(
-            "Repository is in a detached HEAD state. Check out a branch before continuing."
         )));
     }
 
@@ -198,5 +206,18 @@ mod tests {
         let result = validate_repo_state(dir.path(), &status);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("detached HEAD"));
+    }
+
+    #[test]
+    fn checkout_check_allows_a_clean_detached_head() {
+        // Detached or not, only an operation in progress refuses.
+        let (dir, _status) = create_test_repo();
+        validate_no_operation_in_progress(dir.path()).expect("clean detached HEAD");
+
+        fs::write(dir.path().join(".git/MERGE_HEAD"), "abc123").unwrap();
+        assert!(validate_no_operation_in_progress(dir.path())
+            .unwrap_err()
+            .to_string()
+            .contains("merge is in progress"));
     }
 }

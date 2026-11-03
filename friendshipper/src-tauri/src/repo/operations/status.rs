@@ -340,19 +340,17 @@ where
             };
 
             // https://github.com/owner/repository.git
-            let parts = remote_url.split('/');
-            if parts.count() < 4 {
-                status.repo_owner = "".to_string();
-                status.repo_name = "".to_string();
-            } else {
-                status.repo_owner = remote_url.split('/').nth(3).unwrap().to_string();
-                status.repo_name = remote_url
-                    .split('/')
-                    .nth(4)
-                    .unwrap()
-                    .trim_end()
-                    .trim_end_matches(".git")
-                    .to_string();
+            // Other shapes, such as a local path with exactly four parts, leave both empty.
+            let mut parts = remote_url.split('/');
+            match (parts.nth(3), parts.next()) {
+                (Some(owner), Some(name)) => {
+                    status.repo_owner = owner.to_string();
+                    status.repo_name = name.trim_end().trim_end_matches(".git").to_string();
+                }
+                _ => {
+                    status.repo_owner = "".to_string();
+                    status.repo_name = "".to_string();
+                }
             }
 
             info!(

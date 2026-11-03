@@ -29,10 +29,11 @@ it essentially replaces workflows that UGS and P4V support.
 - Create a branch from Branch Management with "New branch". The name becomes `f11r-branch-<slug>` and must be unique.
   New branches start from the latest `origin/main` (your repository's trunk branch) and are pushed to origin immediately.
 - Switch branches with the branch selector on the submit page or on Branch Management. Switching requires no local
-  changes and Unreal Editor closed. Binaries and the engine update as they do after a Sync.
+  changes and Unreal Editor closed. Binaries and the engine update as they do after a Sync. Switching also works from
+  a clean detached HEAD.
 - The reset button returns you to your configured target branch.
 - By default the selector lists `f11r-branch-*` branches; turn on "Show all branches" in Preferences (Branches) to
-  list every branch on origin except Quick Submit branches.
+  list every branch on origin except Quick Submit branches and rebase backups.
 - Quick Submit is available on your target branch and its Quick Submit branches. On another target branch, or on a Quick
   Submit branch made for another target, it is blocked. From a Quick Submit branch, Sync returns you to your target
   branch; the selector and reset button are disabled there.

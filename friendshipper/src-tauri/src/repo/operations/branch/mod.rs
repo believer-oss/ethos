@@ -99,6 +99,27 @@ where
     }
 }
 
+/// The branches a merge into counts as the branch being done: the trunk and the target branches.
+pub(crate) fn merge_targets(repo_config: &RepoConfig) -> Vec<String> {
+    let mut targets = vec![repo_config.trunk_branch.clone()];
+    targets.extend(
+        repo_config
+            .target_branches
+            .iter()
+            .map(|target| target.name.clone()),
+    );
+    targets
+}
+
+/// Drops a MERGED PR that merged somewhere other than a merge target, such as another feature
+/// branch: the branch's own work isn't done.
+pub(crate) fn drop_merged_elsewhere(
+    pr: Option<ethos_core::types::repo::BranchPullRequest>,
+    repo_config: &RepoConfig,
+) -> Option<ethos_core::types::repo::BranchPullRequest> {
+    pr.filter(|pr| pr.state != "MERGED" || merge_targets(repo_config).contains(&pr.base_ref_name))
+}
+
 /// The refusal for a git older than Branch Management needs.
 pub(crate) fn unsupported_git_message(version: &str) -> String {
     git_too_old_message(version, git::MIN_BRANCH_GIT)
@@ -268,6 +289,40 @@ pub fn is_valid_branch_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethos_core::types::config::TargetBranchConfig;
+    use ethos_core::types::repo::BranchPullRequest;
+
+    #[test]
+    fn merged_prs_count_only_into_merge_targets() {
+        let config = RepoConfig {
+            trunk_branch: "main".to_string(),
+            target_branches: vec![TargetBranchConfig {
+                name: "content-main".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let pr = |state: &str, base: &str| {
+            Some(BranchPullRequest {
+                state: state.to_string(),
+                base_ref_name: base.to_string(),
+                ..Default::default()
+            })
+        };
+        for (state, base, kept) in [
+            ("MERGED", "main", true),
+            ("MERGED", "content-main", true),
+            ("MERGED", "f11r-branch-other", false),
+            ("OPEN", "f11r-branch-other", true),
+        ] {
+            assert_eq!(
+                drop_merged_elsewhere(pr(state, base), &config).is_some(),
+                kept,
+                "{state} into {base}"
+            );
+        }
+        assert!(drop_merged_elsewhere(None, &config).is_none());
+    }
 
     fn slug_error(input: &str) -> String {
         match normalize_and_validate_slug(input) {
