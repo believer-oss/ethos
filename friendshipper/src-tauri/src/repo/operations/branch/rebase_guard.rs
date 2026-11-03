@@ -6,6 +6,7 @@ use tracing::error;
 
 use super::rebase_state::{
     derive_rebase_state, json_path, rebase_dir_exists, try_resolve_git_dir, REBASE_OP_LOCK,
+    REBASE_START_LOCK,
 };
 use crate::engine::EngineProvider;
 use crate::state::AppState;
@@ -51,28 +52,29 @@ pub(crate) async fn ensure_no_guided_rebase(
     git: &git::Git,
     repo_path: &Path,
 ) -> Result<(), CoreError> {
-    guard_with_op_lock(git, repo_path, &REBASE_OP_LOCK).await
+    guard_with_locks(git, repo_path, &REBASE_OP_LOCK, &REBASE_START_LOCK).await
 }
 
-/// [`ensure_no_guided_rebase`] against `op_lock` in place of `REBASE_OP_LOCK`. Without a record,
-/// only a rebase op holds the lock: the state endpoint takes it only to cache a conflict step.
-pub(super) async fn guard_with_op_lock(
+/// [`ensure_no_guided_rebase`] against `op_lock` and `start_lock` in place of `REBASE_OP_LOCK`
+/// and `REBASE_START_LOCK`.
+pub(super) async fn guard_with_locks(
     git: &git::Git,
     repo_path: &Path,
     op_lock: &tokio::sync::Mutex<()>,
+    start_lock: &tokio::sync::Mutex<()>,
 ) -> Result<(), CoreError> {
-    let has_record = has_rebase_record(repo_path).map_err(unknown_state)?;
-    // A running rebase op may not have written its record yet, or may have written it before
-    // git created its own rebase state, which derives as stale in between.
-    if op_lock.try_lock().is_err() {
-        return Err(CoreError::Input(anyhow!(if has_record {
-            GUARD_IN_PROGRESS
-        } else {
-            GUARD_OP_RUNNING
-        })));
-    }
-    if !has_record {
+    if !has_rebase_record(repo_path).map_err(unknown_state)? {
+        // A rebase start before it writes its record, such as during its fetch. Finish and
+        // Reset to backup hold only the op lock through their post steps, so those still queue.
+        if start_lock.try_lock().is_err() {
+            return Err(CoreError::Input(anyhow!(GUARD_OP_RUNNING)));
+        }
         return Ok(());
+    }
+    // A running rebase op may have written the record before git created its own rebase
+    // state, which derives as stale in between.
+    if op_lock.try_lock().is_err() {
+        return Err(CoreError::Input(anyhow!(GUARD_IN_PROGRESS)));
     }
     let derived = derive_rebase_state(git, repo_path)
         .await
@@ -108,12 +110,19 @@ where
 pub(crate) struct GuidedRebaseGuardOp {
     pub git_client: git::Git,
     pub op_lock: &'static tokio::sync::Mutex<()>,
+    pub start_lock: &'static tokio::sync::Mutex<()>,
 }
 
 #[async_trait]
 impl Task for GuidedRebaseGuardOp {
     async fn execute(&self) -> Result<(), CoreError> {
-        guard_with_op_lock(&self.git_client, &self.git_client.repo_path, self.op_lock).await
+        guard_with_locks(
+            &self.git_client,
+            &self.git_client.repo_path,
+            self.op_lock,
+            self.start_lock,
+        )
+        .await
     }
 
     fn get_name(&self) -> String {
@@ -129,6 +138,7 @@ where
     Box::new(GuidedRebaseGuardOp {
         git_client: state.git(),
         op_lock: &REBASE_OP_LOCK,
+        start_lock: &REBASE_START_LOCK,
     })
 }
 
@@ -156,14 +166,14 @@ mod tests {
     use ethos_core::types::repo::RebaseStaleReason;
     use ethos_core::worker::{RepoWorker, TaskSequence};
 
-    /// The guard against a private op lock, so rebase ops running in other tests can't hold it.
-    /// A private op lock: rebase ops in other tests hold `REBASE_OP_LOCK`.
-    fn test_op_lock() -> &'static tokio::sync::Mutex<()> {
+    /// A private lock: rebase ops in other tests hold `REBASE_OP_LOCK` and `REBASE_START_LOCK`.
+    fn test_lock() -> &'static tokio::sync::Mutex<()> {
         Box::leak(Box::new(tokio::sync::Mutex::new(())))
     }
 
+    /// The guard against private locks.
     async fn guard(fx: &Fixture) -> Result<(), CoreError> {
-        guard_with_op_lock(&fx.git, fx.path(), &tokio::sync::Mutex::new(())).await
+        guard_with_locks(&fx.git, fx.path(), test_lock(), test_lock()).await
     }
 
     fn assert_unknown(result: Result<(), CoreError>) {
@@ -210,7 +220,7 @@ mod tests {
         guard(&fx).await.expect("idle");
 
         let broken = new_git(&fx.path().join("missing"));
-        guard_with_op_lock(&broken, fx.path(), test_op_lock())
+        guard_with_locks(&broken, fx.path(), test_lock(), test_lock())
             .await
             .expect("no record means no git");
         // The same git fails once a record exists.
@@ -319,7 +329,7 @@ mod tests {
         fx.guided_complete().await;
         let broken = new_git(&fx.path().join("missing"));
         let op_lock = tokio::sync::Mutex::new(());
-        assert_unknown(guard_with_op_lock(&broken, fx.path(), &op_lock).await);
+        assert_unknown(guard_with_locks(&broken, fx.path(), &op_lock, test_lock()).await);
 
         // A record that exists but can't be read.
         let json = json_path(&fx.git_dir());
@@ -333,13 +343,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let git = new_git(&dir.path().join("missing"));
         fs::write(dir.path().join(".git"), "not a gitdir line\n").unwrap();
-        assert_unknown(guard_with_op_lock(&git, dir.path(), test_op_lock()).await);
+        assert_unknown(guard_with_locks(&git, dir.path(), test_lock(), test_lock()).await);
         assert!(recorded_rebase_kind(&git, dir.path()).await.is_err());
 
         let git_dir = tempfile::tempdir().unwrap();
         let gitdir_line = format!("gitdir: {}\n", git_dir.path().display());
         fs::write(dir.path().join(".git"), gitdir_line).unwrap();
-        guard_with_op_lock(&git, dir.path(), test_op_lock())
+        guard_with_locks(&git, dir.path(), test_lock(), test_lock())
             .await
             .expect("a readable gitdir file without a record");
     }
@@ -356,7 +366,7 @@ mod tests {
         let _file_lock = REBASE_FILE_LOCK.lock().await;
         let result = tokio::time::timeout(
             Duration::from_secs(60),
-            guard_with_op_lock(&fx.git, fx.path(), &op_lock),
+            guard_with_locks(&fx.git, fx.path(), &op_lock, test_lock()),
         )
         .await
         .expect("the guard must not wait for a rebase lock");
@@ -368,20 +378,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn running_rebase_op_without_a_record_is_refused() {
+    async fn starting_rebase_without_a_record_is_refused() {
         let fx = Fixture::new().await;
         // Start's window before it writes the record, such as its fetch.
-        let op_lock = tokio::sync::Mutex::new(());
-        let held = op_lock.lock().await;
+        let start_lock = tokio::sync::Mutex::new(());
+        let held = start_lock.lock().await;
         assert_refused(
-            guard_with_op_lock(&fx.git, fx.path(), &op_lock).await,
+            guard_with_locks(&fx.git, fx.path(), test_lock(), &start_lock).await,
             GUARD_OP_RUNNING,
         );
 
         drop(held);
-        guard_with_op_lock(&fx.git, fx.path(), &op_lock)
+        guard_with_locks(&fx.git, fx.path(), test_lock(), &start_lock)
             .await
-            .expect("idle once the op finishes");
+            .expect("idle once the start finishes");
+    }
+
+    #[tokio::test]
+    async fn held_op_lock_without_a_record_passes() {
+        // Finish and Reset to backup hold the op lock through their post steps after deleting
+        // the record; the guarded op then waits on the worker instead of being refused.
+        let fx = Fixture::new().await;
+        let op_lock = tokio::sync::Mutex::new(());
+        let _held = op_lock.lock().await;
+        guard_with_locks(&fx.git, fx.path(), &op_lock, test_lock())
+            .await
+            .expect("idle");
     }
 
     /// Writes the record and starts the rebase on the worker, as Start does.
@@ -444,7 +466,7 @@ mod tests {
         diverge_on_a_txt(&fx).await;
         let file = fx.guided_file("main").await;
         // The handler's check passes: nothing has started yet.
-        guard_with_op_lock(&fx.git, fx.path(), test_op_lock())
+        guard_with_locks(&fx.git, fx.path(), test_lock(), test_lock())
             .await
             .expect("idle");
 
@@ -463,7 +485,8 @@ mod tests {
             vec![
                 Box::new(GuidedRebaseGuardOp {
                     git_client: fx.git.clone(),
-                    op_lock: test_op_lock(),
+                    op_lock: test_lock(),
+                    start_lock: test_lock(),
                 }),
                 Box::new(MarkerTask(ran.clone())),
             ],
@@ -488,7 +511,8 @@ mod tests {
             vec![
                 Box::new(GuidedRebaseGuardOp {
                     git_client: fx.git.clone(),
-                    op_lock: test_op_lock(),
+                    op_lock: test_lock(),
+                    start_lock: test_lock(),
                 }),
                 Box::new(MarkerTask(ran.clone())),
             ],

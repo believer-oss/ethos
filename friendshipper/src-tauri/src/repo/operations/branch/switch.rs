@@ -11,7 +11,7 @@ use super::post_head_change::{run_post_head_change, PostHeadChangeCtx};
 use super::{guard_state, is_valid_branch_name, require_aws_and_storage, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_quicksubmit_branch;
-use crate::repo::operations::validate::validate_repo_state;
+use crate::repo::operations::validate::validate_no_operation_in_progress;
 use crate::repo::operations::StatusOp;
 use crate::state::AppState;
 use ethos_core::clients::git;
@@ -85,7 +85,8 @@ where
 
         let repo_path = PathBuf::from(ctx.app_config.read().repo_path.clone());
         let repo_status = ctx.repo_status.read().clone();
-        validate_repo_state(&repo_path, &repo_status)?;
+        // A clean detached HEAD may switch: checking out a branch is how it is left.
+        validate_no_operation_in_progress(&repo_path)?;
 
         // Leaving without Sync would strand the Quick Submit branch on origin.
         if is_quicksubmit_branch(&repo_status.branch) {

@@ -8,7 +8,7 @@ use crate::repo::operations::gh::submit::is_quicksubmit_branch;
 use crate::state::AppState;
 use ethos_core::clients::git;
 use ethos_core::types::errors::CoreError;
-use ethos_core::types::repo::{is_feature_branch, BranchInfo};
+use ethos_core::types::repo::{is_backup_branch, is_feature_branch, BranchInfo};
 
 #[derive(Debug, Deserialize)]
 pub struct ListBranchesParams {
@@ -37,8 +37,9 @@ where
     }
 
     let mut branches = git.list_remote_branches().await?;
-    // Quick Submit branches are transient and never switch targets.
-    branches.retain(|b| !is_quicksubmit_branch(&b.name));
+    // Quick Submit branches are transient and never switch targets; rebase backups are replaced
+    // by the next rebase push, so working on one would be lost.
+    branches.retain(|b| !is_quicksubmit_branch(&b.name) && !is_backup_branch(&b.name));
 
     let current = state.repo_status.read().branch.clone();
     {

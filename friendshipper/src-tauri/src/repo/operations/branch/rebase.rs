@@ -17,7 +17,7 @@ use super::rebase_state::{
     refresh_resolved, replace_current_step, resolve_git_dir, rev_parse, set_resolution,
     write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase, OriginalCommit,
     PushOutcome, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK, REBASE_FILE_VERSION,
-    REBASE_OP_LOCK,
+    REBASE_OP_LOCK, REBASE_START_LOCK,
 };
 use super::{
     git_too_old_message, is_valid_branch_name, reject_if_in_merge_queue, require_aws_and_storage,
@@ -1109,6 +1109,7 @@ where
 {
     async fn execute(&self) -> Result<(), CoreError> {
         let _op = REBASE_OP_LOCK.lock().await;
+        let _start = REBASE_START_LOCK.lock().await;
         self.emit_phase("Checking repository status");
         let derived = derive(&self.git_client, &repo_path_of(&self.app_config)).await?;
         match derived.kind {
@@ -1715,6 +1716,8 @@ where
         // branch at origin's version, as a finished Redo would. Deleting the record first would
         // instead leave the unpushed rebase unguarded.
         reset_keep(git, &repo_path, &origin_sha).await?;
+        // Until the new record exists, the guard sees no record and checks this lock.
+        let start_lock = REBASE_START_LOCK.lock().await;
         {
             let _lock = REBASE_FILE_LOCK.lock().await;
             delete_rebase_file(&git_dir)?;
@@ -1731,6 +1734,7 @@ where
             github_username: self.github_username.clone(),
         };
         let started = start.start_rebase_inner(Some(&file)).await;
+        drop(start_lock);
         let Err(e) = started else {
             return Ok(());
         };
@@ -2295,8 +2299,7 @@ mod tests {
     use super::*;
     use crate::engine::UnrealEngineProvider;
     use crate::repo::operations::branch::rebase_guard::{
-        guard_with_op_lock, may_remove_stale_index_lock, GUARD_COMPLETED_UNPUSHED,
-        GUARD_IN_PROGRESS,
+        guard_with_locks, may_remove_stale_index_lock, GUARD_COMPLETED_UNPUSHED, GUARD_IN_PROGRESS,
     };
     use crate::repo::operations::branch::rebase_state::tests::{
         conflict, diverge_on_a_txt, engine, guided_stop_on_a_txt, info, new_git, original,
@@ -2991,12 +2994,7 @@ mod tests {
         let fx = Fixture::new().await;
         let d = diverge_clean(&fx).await;
         let hook = fx.hooks_path().join("pre-rebase");
-        fs::write(&hook, "#!/bin/sh\necho refused by hook >&2\nexit 1\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        write_hook(&hook, "#!/bin/sh\necho refused by hook >&2\nexit 1\n");
 
         let message = internal_message(start(&fx).await);
         assert!(message.starts_with("Rebase could not start:"), "{message}");
@@ -5220,11 +5218,10 @@ mod tests {
     async fn refuse_pushes_on_origin(fx: &Fixture) {
         let origin_hooks = fx.origin_path().join("hooks");
         fs::create_dir_all(&origin_hooks).unwrap();
-        fs::write(
-            origin_hooks.join("pre-receive"),
+        write_hook(
+            &origin_hooks.join("pre-receive"),
             "#!/bin/sh\necho 'protected branch hook declined' >&2\nexit 1\n",
-        )
-        .unwrap();
+        );
         new_git(fx.origin_path())
             .run(
                 &["config", "core.hooksPath", &slash_path(&origin_hooks)],
@@ -5920,14 +5917,13 @@ mod tests {
             .trim()
             .to_string();
         let race_hooks = tempfile::tempdir().expect("hooks tempdir");
-        fs::write(
-            race_hooks.path().join("pre-push"),
-            format!(
+        write_hook(
+            &race_hooks.path().join("pre-push"),
+            &format!(
                 "#!/bin/sh\nrm -f \"$0\"\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_PARAMETERS\ncd '{}' && git push -q origin HEAD:refs/heads/{BRANCH}\n",
                 slash_path(collab_dir.path())
             ),
-        )
-        .unwrap();
+        );
         fx.run(&["config", "core.hooksPath", &slash_path(race_hooks.path())])
             .await;
 
@@ -6111,13 +6107,18 @@ mod tests {
 
     fn install_hook(fx: &Fixture, name: &str, script: &str) -> PathBuf {
         let hook = fx.hooks_path().join(name);
-        fs::write(&hook, script).unwrap();
+        write_hook(&hook, script);
+        hook
+    }
+
+    /// Writes an executable hook; git skips hooks without the executable bit on Unix.
+    fn write_hook(path: &Path, script: &str) {
+        fs::write(path, script).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        hook
     }
 
     /// Leaves what a crash between Start writing its record and running the rebase leaves: a
@@ -6925,7 +6926,8 @@ mod tests {
                 ..Default::default()
             }
         );
-        guard_with_op_lock(&fx.git, fx.path(), &tokio::sync::Mutex::new(()))
+        let (op_lock, start_lock) = (tokio::sync::Mutex::new(()), tokio::sync::Mutex::new(()));
+        guard_with_locks(&fx.git, fx.path(), &op_lock, &start_lock)
             .await
             .expect("an external rebase is not guarded");
         assert_eq!(

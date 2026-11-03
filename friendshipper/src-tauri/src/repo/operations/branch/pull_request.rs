@@ -14,8 +14,8 @@ use tracing::{info, instrument, warn};
 use super::analyze::{collect_branch_facts, merged_pr_covers_tip, BranchFacts};
 use super::rebase_state::rev_parse;
 use super::{
-    branch_management_trunk, guard_state, run_guarded_sequence, trunk_uses_merge_queue,
-    unsupported_git_message, GITHUB_PAT_MISSING,
+    branch_management_trunk, drop_merged_elsewhere, guard_state, run_guarded_sequence,
+    trunk_uses_merge_queue, unsupported_git_message, GITHUB_PAT_MISSING,
 };
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::create_pull_request;
@@ -540,6 +540,7 @@ impl Task for BranchPullRequestOp {
             .get_branch_pull_request(&owner, &repo, &branch, &trunk)
             .await
             .map_err(CoreError::Internal)?;
+        let found = drop_merged_elsewhere(found, &self.repo_config.read());
 
         self.emit_phase("Checking branch");
         let action =
