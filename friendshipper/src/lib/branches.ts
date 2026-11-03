@@ -432,7 +432,7 @@ export const staleMessage = (state: RebaseState): string => {
 		case 'pushedOutside':
 			return `The rebased ${state.branch} is already on origin. Sync and download editor binaries if needed.`;
 		case 'branchChanged':
-			return `You switched away from ${state.branch} outside Friendshipper while it was being rebased. Its backup is kept at ${state.backupRef}.`;
+			return `You switched away from ${state.branch} outside Friendshipper during its rebase. Switch back to ${state.branch} so Friendshipper can pick the rebase back up, rather than dismissing this. Its backup is kept at ${state.backupRef}.`;
 		case 'otherRebase':
 			return 'A different rebase was started outside Friendshipper. Finish it in your git client or in Diagnostics.';
 		case 'unreadable':

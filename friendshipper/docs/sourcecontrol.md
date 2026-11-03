@@ -52,14 +52,15 @@ it essentially replaces workflows that UGS and P4V support.
   not on the trunk is removed only when you pick it and confirm.
 - **Rebase onto latest main** on Branch Management (Git 2.43 or newer) replays the branch's pushed commits on top of
   the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. Starting or pushing
-  a rebase is blocked while the branch's pull request is in the merge queue. A backup is kept
+  a rebase is blocked while the branch's pull request is in the merge queue. Merge commits are flattened, so a branch
+  with a merge commit that changes files beyond resolving conflicts must be rebased in a git client. A backup is kept
   under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
   it as a separate step; collaborators must Sync afterwards. The same push saves the branch's previous version on
   origin as `f11r-backup-<slug>` (`f11r-backup--<name>` for other branches), replaced by the next rebase push. Its
   tip is an empty commit on top of the previous version with no CI tags, so it starts no builds. You can check out a
   backup to recover files from it, but not submit to it. If that backup
   cannot be saved, nothing is pushed. **Reset to remote version** instead discards the rebase and puts the branch
-  back the way it was on origin when the rebase started.
+  back the way it was on origin when the rebase started; unstage your changes first.
 - Branch Management is disabled while Unreal Editor has the project open.
 - Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can
   also be merged in an editor, except files Windows would run. A choice can be undone until you confirm the commit.
