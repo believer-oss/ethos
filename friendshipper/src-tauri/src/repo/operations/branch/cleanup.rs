@@ -628,6 +628,14 @@ async fn safety_refusal(
     }
 }
 
+/// Rechecks just before deleting, as another worktree may have checked `name` out since.
+async fn checked_out_now(git: &git::Git, name: &str) -> Option<String> {
+    match checked_out_branches(git).await {
+        Ok(checked_out) => checked_out.get(name).map(|reason| reason.to_string()),
+        Err(e) => Some(e.to_string()),
+    }
+}
+
 /// Deletes `refs/heads/<name>` itself (never a symref's target) only if it still points at
 /// `sha`, then drops its config section.
 async fn delete_local_branch(git: &git::Git, name: &str, sha: &str) -> Result<(), String> {
@@ -688,6 +696,10 @@ impl Task for BranchCleanupOp {
                     safety_refusal(git, &self.trunk_branch, target, branch).await
                 }
                 (refusal, _) => refusal,
+            };
+            let refusal = match refusal {
+                None => checked_out_now(git, &target.name).await,
+                refusal => refusal,
             };
             let outcome = match refusal {
                 Some(reason) => Err(reason),
@@ -1515,6 +1527,36 @@ mod tests {
             Some("The branch is checked out.")
         );
         assert_eq!(fx.local_tip(GONE).await, Some(tip));
+    }
+
+    #[tokio::test]
+    async fn branches_checked_out_during_cleanup_are_kept() {
+        let fx = Fixture::new().await;
+        let first = fx.gone_branch(GONE, &["g1"]).await;
+        let second = fx.gone_branch("f11r-branch-other", &["o1"]).await;
+        let wt_dir = tempfile::tempdir().expect("worktree tempdir");
+        // Deleting the first branch checks the second out in a new worktree.
+        let hook = fx._hooks.path().join("reference-transaction");
+        fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = committed ] || exit 0\ngrep -q ' refs/heads/{GONE}$' || exit 0\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\ngit worktree add -q '{}' f11r-branch-other\n",
+                slash_path(&wt_dir.path().join("wt"))
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let results = fx
+            .cleanup(&[(GONE, &first), ("f11r-branch-other", &second)])
+            .await;
+        assert!(results[0].deleted, "{:?}", results[0].error);
+        assert_eq!(results[1].error.as_deref(), Some(CHECKED_OUT));
+        assert_eq!(fx.local_tip("f11r-branch-other").await, Some(second));
     }
 
     #[tokio::test]

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -79,6 +80,7 @@ const REDO_ONLY_AFTER_PUSH_FAILED: &str =
 const RESET_ONLY_AFTER_REPLAY: &str =
     "Reset to backup is only available after a rebase finished replaying.";
 const UNSTAGE_FIRST: &str = "Unstage your changes before triggering an editor build.";
+const UNSTAGE_BEFORE_RESET: &str = "Unstage your changes before resetting to the backup.";
 const SYNC_FIRST: &str = "Sync before triggering an editor build.";
 const NEW_COMMITS_ON_ORIGIN: &str =
     "Branch has new commits on origin — Sync, then trigger the editor build again.";
@@ -187,6 +189,85 @@ async fn cpp_files(git: &git::Git, from: &str, to: &str) -> Result<Vec<String>, 
         .filter(|path| !path.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+/// Refuses when a merge in `merge_base..head` changes files beyond what git's own merge of its
+/// parents gives, outside conflicted paths. The rebase replays only non-merge commits, so it
+/// would drop those changes without a conflict.
+async fn reject_merges_with_own_changes(
+    git: &git::Git,
+    merge_base: &str,
+    head: &str,
+) -> Result<(), CoreError> {
+    let range = format!("{merge_base}..{head}");
+    let merges = read_git(git, &["rev-list", "--merges", "--parents", &range, "--"]).await?;
+    if merges.exit_code != 0 {
+        return Err(internal(format!(
+            "Could not list the branch's merges: {}",
+            merges.stderr.trim()
+        )));
+    }
+    for line in merges.stdout.lines().filter(|line| !line.trim().is_empty()) {
+        let shas: Vec<&str> = line.split_whitespace().collect();
+        let own_changes = match shas[..] {
+            [merge, first, second] => merge_has_own_changes(git, merge, first, second).await?,
+            _ => true,
+        };
+        if own_changes {
+            return Err(input(format!(
+                "Merge commit {} contains changes of its own, which a rebase would drop. Rebase this branch in a git client instead.",
+                &shas[0][..shas[0].len().min(7)]
+            )));
+        }
+    }
+    Ok(())
+}
+
+async fn merge_has_own_changes(
+    git: &git::Git,
+    merge: &str,
+    first: &str,
+    second: &str,
+) -> Result<bool, CoreError> {
+    let remerge = read_git(
+        git,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "-z",
+            first,
+            second,
+        ],
+    )
+    .await?;
+    let mut records = remerge.stdout.split('\0');
+    let tree = records.next().unwrap_or_default();
+    if !matches!(remerge.exit_code, 0 | 1) || !is_full_sha(tree) {
+        return Err(internal(format!(
+            "Could not recreate merge {merge}: {}",
+            remerge.stderr.trim()
+        )));
+    }
+    let conflicted: HashSet<&str> = records.take_while(|path| !path.is_empty()).collect();
+
+    let commit_tree = format!("{merge}^{{tree}}");
+    let diff = read_git(
+        git,
+        &["diff-tree", "-r", "--name-only", "-z", tree, &commit_tree],
+    )
+    .await?;
+    if diff.exit_code != 0 {
+        return Err(internal(format!(
+            "Could not compare merge {merge}: {}",
+            diff.stderr.trim()
+        )));
+    }
+    Ok(diff
+        .stdout
+        .split('\0')
+        .any(|path| !path.is_empty() && !conflicted.contains(path)))
 }
 
 async fn merge_base(git: &git::Git, a: &str, b: &str) -> Result<String, CoreError> {
@@ -996,6 +1077,7 @@ where
         }
 
         let merge_base = merge_base(git, &onto, &head).await?;
+        reject_merges_with_own_changes(git, &merge_base, &head).await?;
         let original_commits = original_commits(git, &merge_base, &head).await?;
         let touches_cpp = !cpp_files(git, &merge_base, &head).await?.is_empty();
         let engine_association = match previous {
@@ -1796,6 +1878,14 @@ where
             )));
         }
 
+        // `reset --keep` resets the index, dropping a staged version that differs from the file.
+        if read_git(git, &["diff", "--cached", "--quiet", "HEAD", "--"])
+            .await?
+            .exit_code
+            != 0
+        {
+            return Err(input(UNSTAGE_BEFORE_RESET));
+        }
         let head = required_sha(git, "HEAD").await?;
         backup_rebased_head(git, &file.branch, &head).await?;
         reset_keep(git, &repo_path, &file.backup_sha).await?;
@@ -1999,6 +2089,7 @@ async fn preflight(
         }));
     }
 
+    reject_merges_with_own_changes(git, merge_base, "HEAD").await?;
     let range = format!("{merge_base}..HEAD");
     let count = read_git(git, &["rev-list", "--count", "--no-merges", &range, "--"]).await?;
     let commit_count = count.stdout.trim().parse().map_err(|_| {
@@ -3005,6 +3096,74 @@ mod tests {
         let backups = backup_refs(&fx).await;
         assert_eq!(backups.len(), 1, "{backups:?}");
         assert_eq!(fx.sha(&backups[0]).await, d.branch);
+    }
+
+    #[tokio::test]
+    async fn start_refuses_a_merge_with_changes_of_its_own() {
+        let fx = Fixture::new().await;
+        fx.branch(BRANCH).await;
+        fx.commit_file("x.txt", b"x\n", "x").await;
+        fx.branch("side").await;
+        fx.commit_file("y.txt", b"y\n", "y").await;
+        fx.checkout(BRANCH).await;
+        fx.run(&["merge", "-q", "--no-ff", "--no-commit", "side"])
+            .await;
+        fx.write("fix.txt", b"fix\n");
+        fx.run(&["add", "fix.txt"]).await;
+        fx.run(&["commit", "-q", "-m", "merge side"]).await;
+        let merge = fx.head().await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        fx.commit_file("m.txt", b"main\n", "main change").await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+
+        let expected = format!(
+            "Merge commit {} contains changes of its own, which a rebase would drop. Rebase this branch in a git client instead.",
+            &merge[..7]
+        );
+        assert_eq!(
+            input_message(preflight(&fx.git, fx.path(), "main").await),
+            expected
+        );
+        assert_start_refused_after_fetch(&fx, &expected).await;
+    }
+
+    #[tokio::test]
+    async fn start_allows_a_merge_that_only_resolved_conflicts() {
+        let fx = Fixture::new().await;
+        fx.branch(BRANCH).await;
+        fx.commit_file("x.txt", b"x\n", "x").await;
+        fx.branch("side").await;
+        fx.commit_file("a.txt", b"side\n", "side a").await;
+        fx.checkout(BRANCH).await;
+        fx.commit_file("a.txt", b"branch\n", "branch a").await;
+        let merged = fx
+            .git
+            .run_with_status(
+                &["merge", "-q", "--no-ff", "side"],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(merged.exit_code, 1, "{}", merged.stderr);
+        fx.write("a.txt", b"resolved\n");
+        fx.run(&["add", "a.txt"]).await;
+        fx.run(&["commit", "-q", "--no-edit"]).await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        fx.commit_file("m.txt", b"main\n", "main change").await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+
+        assert_eq!(
+            preflight(&fx.git, fx.path(), "main")
+                .await
+                .unwrap()
+                .commit_count,
+            3
+        );
+        start(&fx).await.expect("start");
     }
 
     #[tokio::test]
@@ -5776,6 +5935,26 @@ mod tests {
         assert_eq!(fx.head().await, file.backup_sha);
         assert_eq!(read(&fx, "seed.txt").as_deref(), Some(&b"edited\n"[..]));
         assert!(!json_path(&fx.git_dir()).exists());
+    }
+
+    #[tokio::test]
+    async fn reset_to_backup_refused_with_staged_changes() {
+        let fx = Fixture::new().await;
+        completed_clean(&fx).await;
+        fx.write("seed.txt", b"staged\n");
+        fx.run(&["add", "seed.txt"]).await;
+        fx.write("seed.txt", b"edited\n");
+        let head = fx.head().await;
+        let json_before = fx.json_bytes();
+
+        assert_eq!(
+            input_message(reset_to_backup(&fx).await),
+            UNSTAGE_BEFORE_RESET
+        );
+        assert_eq!(fx.head().await, head);
+        assert_eq!(fx.json_bytes(), json_before);
+        assert_eq!(fx.out(&["show", ":seed.txt"]).await, "staged");
+        assert_eq!(read(&fx, "seed.txt").as_deref(), Some(&b"edited\n"[..]));
     }
 
     #[tokio::test]
