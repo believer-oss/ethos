@@ -12,12 +12,12 @@ use tracing::{info, instrument, warn};
 use super::analyze::{merged_pr_covers_commit, quiet};
 use super::rebase_state::{is_full_sha, read_rebase_file, RebaseFileRead};
 use super::{
-    guard_state, is_valid_branch_name, run_guarded_sequence, run_sequence, GITHUB_PAT_MISSING,
+    guard_state, is_valid_branch_name, merge_targets, run_guarded_sequence, run_sequence,
+    GITHUB_PAT_MISSING,
 };
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 use ethos_core::clients::git;
-use ethos_core::types::config::RepoConfig;
 use ethos_core::types::errors::CoreError;
 use ethos_core::types::repo::{
     is_feature_branch, BranchCleanupCandidate, BranchCleanupCandidates, BranchCleanupCommit,
@@ -437,17 +437,6 @@ fn apply_pr_lookups(
     first_error
 }
 
-fn merge_targets(repo_config: &RepoConfig) -> Vec<String> {
-    let mut targets = vec![repo_config.trunk_branch.clone()];
-    targets.extend(
-        repo_config
-            .target_branches
-            .iter()
-            .map(|target| target.name.clone()),
-    );
-    targets
-}
-
 /// Runs the merged-PR tip checks on the worker so their fetches never interleave with Sync.
 #[derive(Clone)]
 struct MergedPrCoversOp {
@@ -761,7 +750,7 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
-    use crate::repo::operations::branch::rebase_guard::{guard_with_op_lock, GUARD_UNKNOWN};
+    use crate::repo::operations::branch::rebase_guard::{guard_with_locks, GUARD_UNKNOWN};
     use crate::repo::operations::branch::rebase_state::tests::sample_file_for;
     use crate::repo::operations::branch::rebase_state::{
         derive_rebase_state, json_path, write_rebase_file,
@@ -1787,14 +1776,14 @@ mod tests {
         assert_eq!(fx.local_tip(GONE).await, Some(tip));
     }
 
-    /// What `branch_cleanup_handler` runs: the guard, then the op (a private op lock stands in
-    /// for `REBASE_OP_LOCK`, which rebase ops in other tests may hold).
+    /// What `branch_cleanup_handler` runs: the guard, then the op (private locks stand in for
+    /// the rebase locks, which rebase ops in other tests may hold).
     async fn handler_cleanup(
         fx: &Fixture,
         targets: &[(&str, &str)],
     ) -> Result<Vec<BranchCleanupResult>, CoreError> {
-        let op_lock = tokio::sync::Mutex::new(());
-        guard_with_op_lock(&fx.user, fx.user_dir.path(), &op_lock).await?;
+        let (op_lock, start_lock) = (tokio::sync::Mutex::new(()), tokio::sync::Mutex::new(()));
+        guard_with_locks(&fx.user, fx.user_dir.path(), &op_lock, &start_lock).await?;
         fx.cleanup_result(targets).await
     }
 

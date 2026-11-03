@@ -6,7 +6,10 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::instrument;
 
-use super::{branch_management_trunk, run_sequence, trunk_uses_merge_queue, GITHUB_PAT_MISSING};
+use super::{
+    branch_management_trunk, drop_merged_elsewhere, run_sequence, trunk_uses_merge_queue,
+    GITHUB_PAT_MISSING,
+};
 use crate::engine::{CommunicationType, EngineProvider};
 use crate::repo::operations::is_valid_sha;
 use crate::state::AppState;
@@ -522,6 +525,7 @@ where
 
     // The GitHub lookup runs off the worker so a slow GitHub never delays Sync or status.
     let github_client = state.github_client.read().clone();
+    let repo_config = state.repo_config.read().clone();
     let pr_future = async {
         let Some(client) = github_client else {
             return (None, Some(GITHUB_PAT_MISSING.to_string()));
@@ -536,7 +540,7 @@ where
             .get_branch_pull_request(&owner, &repo, &branch, &trunk)
             .await
         {
-            Ok(pr) => (pr, None),
+            Ok(pr) => (drop_merged_elsewhere(pr, &repo_config), None),
             Err(e) => (None, Some(e.to_string())),
         }
     };

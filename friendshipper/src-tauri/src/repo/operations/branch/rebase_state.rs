@@ -44,6 +44,9 @@ lazy_static! {
     pub(crate) static ref REBASE_FILE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
     /// Held by every queued rebase op for its whole run; taken before `REBASE_FILE_LOCK`.
     pub(crate) static ref REBASE_OP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+    /// Held by Start, and by Redo while it replaces the record, so the guard refuses before a
+    /// record exists. Taken after `REBASE_OP_LOCK`.
+    pub(crate) static ref REBASE_START_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
 }
 
 /// Read-only git calls that never take `index.lock`.
@@ -1912,7 +1915,8 @@ pub(crate) mod tests {
         fx.commit_file("k.txt", b"kept\n", "kept").await;
         fx.push(BRANCH).await;
         fx.checkout("main").await;
-        fx.run(&["cherry-pick", &picked]).await;
+        // -x makes a distinct commit even within the same second as `picked`.
+        fx.run(&["cherry-pick", "-x", &picked]).await;
         fx.push("main").await;
         fx.checkout(BRANCH).await;
         let file = fx.guided_file("main").await;
@@ -2583,7 +2587,8 @@ pub(crate) mod tests {
         fx.commit_file("y.txt", b"y\n", "later").await;
         fx.push(BRANCH).await;
         fx.checkout("main").await;
-        fx.run(&["cherry-pick", &picked]).await;
+        // -x makes a distinct commit even within the same second as `picked`.
+        fx.run(&["cherry-pick", "-x", &picked]).await;
         fx.commit_file("a.txt", b"main\n", "main change").await;
         fx.push("main").await;
         fx.checkout(BRANCH).await;
