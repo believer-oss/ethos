@@ -1667,7 +1667,7 @@ fn ensure_quick_submit_allowed(
     }
 
     Err(CoreError::Input(anyhow!(
-        "Quick Submit is only available on a target branch or a Quick Submit branch, but you are on '{branch}'. Switch back to '{target_branch}' with the reset button on the submit page."
+        "Quick Submit is only available on a target branch or a Quick Submit branch, but you are on '{branch}'. Switch back to '{target_branch}' from the submit page."
     )))
 }
 

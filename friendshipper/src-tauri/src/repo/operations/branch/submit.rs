@@ -664,6 +664,7 @@ mod tests {
         ) {
             let mut app_config = AppConfig::new(crate::APP_NAME);
             app_config.repo_path = self.user_path().to_str().expect("utf8").to_string();
+            app_config.enable_branches = true;
             app_config.target_branch = "main".to_string();
             let repo_config = RepoConfig {
                 trunk_branch: "main".to_string(),
