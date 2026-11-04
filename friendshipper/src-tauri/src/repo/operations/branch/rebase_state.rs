@@ -1246,6 +1246,7 @@ pub(crate) mod tests {
     pub(crate) fn engine(repo_path: &Path) -> UnrealEngineProvider {
         let mut app_config = AppConfig::new(crate::APP_NAME);
         app_config.repo_path = slash_path(repo_path);
+        app_config.enable_branches = true;
         UnrealEngineProvider::new_from_config(app_config, RepoConfig::default())
     }
 

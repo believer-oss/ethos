@@ -30,7 +30,9 @@ use ethos_core::worker::{RepoWorker, TaskSequence};
 
 use crate::client::FriendshipperClient;
 use crate::engine::{EngineProvider, UnrealEngineProvider};
-use crate::repo::operations::{may_remove_stale_index_lock, resolve_git_dir, InstallGitHooksOp};
+use crate::repo::operations::{
+    git_process_running, may_remove_stale_index_lock, resolve_git_dir, InstallGitHooksOp,
+};
 use crate::state::{FrontendOp, Notification};
 use crate::APP_NAME;
 use crate::{state::AppState, KEYRING_USER, VERSION};
@@ -300,7 +302,7 @@ impl Server {
             let git_dir = resolve_git_dir(Path::new(&repo_path));
             let index_lock_path = git_dir.join("index.lock");
             if index_lock_path.exists() {
-                if !may_remove_stale_index_lock(&git_dir) {
+                if !may_remove_stale_index_lock(&git_dir, git_process_running()) {
                     warn!("Not removing index.lock: a rebase may still be running");
                 } else {
                     match fs::remove_file(&index_lock_path) {

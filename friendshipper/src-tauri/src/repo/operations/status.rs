@@ -486,7 +486,10 @@ where
             );
         }
 
-        status.editor_running = self.engine.check_ready_to_sync_repo().await.is_err();
+        // Only branch features read it, and listing processes is slow on Windows.
+        if self.app_config.read().enable_branches || status.guided_rebase_active {
+            status.editor_running = self.engine.check_ready_to_sync_repo().await.is_err();
+        }
 
         if !self.skip_engine_update {
             self.engine.send_status_update(&status).await;
@@ -502,7 +505,8 @@ where
         &self,
         status: &RepoStatus,
     ) -> Result<UpstreamChanges, anyhow::Error> {
-        let branch_mode = {
+        // With branches turned off, every branch keeps the target branch checks.
+        let branch_mode = self.app_config.read().enable_branches && {
             let rc = self.repo_config.read();
             is_branch_mode(&rc, &status.branch)
         };
@@ -1584,6 +1588,7 @@ mod tests {
             let (status_op, _repo_status) =
                 build_status_op(self.git.clone(), self.dir.path(), "main", target_branches);
             status_op.repo_config.write().trunk_branch = trunk.to_string();
+            status_op.app_config.write().enable_branches = true;
             status_op
         }
 
@@ -1638,6 +1643,40 @@ mod tests {
         for path in ["Content/A.uasset", "Content/E.uasset"] {
             assert_ne!(submit_status_of(&status, path), SubmitStatus::Conflicted);
         }
+    }
+
+    #[tokio::test]
+    async fn branches_off_feature_branch_keeps_target_branch_union() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.collab_push(
+            "content-main",
+            "Content/D.uasset",
+            "content\n",
+            "content edit d",
+        )
+        .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let op = fx.status_op("main");
+        op.app_config.write().enable_branches = false;
+        let status = op.run().await.expect("status run");
+        assert_eq!(
+            status.modified_upstream,
+            vec![
+                "Content/A.uasset".to_string(),
+                "Content/D.uasset".to_string()
+            ]
+        );
+        assert_eq!(status.conflicts, vec!["Content/A.uasset".to_string()]);
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert_eq!(
+            submit_status_of(&status, "Content/A.uasset"),
+            SubmitStatus::Conflicted
+        );
     }
 
     #[tokio::test]

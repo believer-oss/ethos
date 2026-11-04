@@ -12,7 +12,8 @@ pub use branch::{
     RebaseResolveOp, RebaseStartOp, RebaseUnresolveOp, SwitchBranchOp,
 };
 pub(crate) use branch::{
-    ensure_no_guided_rebase, guard_op, guard_state, may_remove_stale_index_lock, resolve_git_dir,
+    ensure_no_guided_rebase, git_process_running, guard_op, guard_state,
+    may_remove_stale_index_lock, resolve_git_dir,
 };
 pub use branch_compare::branch_compare_handler;
 pub use browse::list_directory_handler;

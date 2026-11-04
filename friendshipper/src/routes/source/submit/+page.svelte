@@ -1612,6 +1612,10 @@
 								placement="bottom">{EDITOR_OPEN_SWITCH}</Tooltip
 							>
 						{/if}
+					{:else}
+						<p class="font-semibold text-sm text-gray-400">
+							On branch: <span class="font-normal text-primary-400">{$repoStatus?.branch}</span>
+						</p>
 					{/if}
 					{#if modeInfo.mode === 'quick'}
 						<Badge class={targetColor.chip}>{quickSubmitLabel}</Badge>
