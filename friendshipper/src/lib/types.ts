@@ -1,4 +1,4 @@
-import type { ModifiedFile } from '@ethos/core';
+import type { Commit as CoreCommit, ModifiedFile } from '@ethos/core';
 
 export type Nullable<T> = T | null;
 
@@ -37,6 +37,7 @@ export interface DynamicConfig {
 	// the build-time constant, so changing buckets needs no Friendshipper release.
 	promotedArtifactBucketName?: string;
 	gameServerClusters?: GameServerCluster[];
+	commitTags?: CommitTagCategory[];
 }
 
 export interface ProjectConfig {
@@ -134,6 +135,44 @@ export interface AppConfig {
 	lastQuickSubmitType?: string;
 	lastQuickSubmitScope?: string;
 	disableBackgroundGitOperations: boolean;
+	enableBranches: boolean;
+	enableBranchManagement: boolean;
+	showAllBranches: boolean;
+}
+
+export interface BranchInfo {
+	name: string;
+	sha: string;
+	shortSha: string;
+	commitDate: string;
+	author: string;
+	subject: string;
+	message: string;
+	isFeatureBranch: boolean;
+	isProtected: boolean;
+	isCurrent: boolean;
+}
+
+export interface CreateBranchResponse {
+	branch: string;
+	switched: boolean;
+	message: Nullable<string>;
+}
+
+export interface SwitchBranchResponse {
+	branch: string;
+	warning: Nullable<string>;
+}
+
+export interface CommitTagOption {
+	tag: string;
+	label: string;
+	description: string;
+}
+
+export interface CommitTagCategory {
+	name: string;
+	options: CommitTagOption[];
 }
 
 export interface PlaytestProfile {
@@ -309,6 +348,7 @@ export interface RepoStatus {
 	remoteBranch: string;
 	repoOwner: string;
 	repoName: string;
+	commitHead: string;
 	commitsAhead: number;
 	commitsBehind: number;
 	commitsAheadOfTrunk: number;
@@ -327,6 +367,10 @@ export interface RepoStatus {
 	conflictUpstream: boolean;
 	conflicts: string[];
 	modifiedUpstream: string[];
+	willConflictOnRebase: string[];
+	willConflictOnSync?: string[];
+	guidedRebaseActive: boolean;
+	editorRunning: boolean;
 	lastPullRequest?: PullRequestStatus;
 	lockUser: string;
 	locksOurs: Lock[];
@@ -404,6 +448,7 @@ export interface CloneRequest {
 export interface PushRequest {
 	commitMessage: string;
 	files: string[];
+	expectedBranch?: string;
 }
 
 export interface RevertFilesRequest {
@@ -427,6 +472,7 @@ export interface Lock {
 export interface RebaseStatusResponse {
 	rebaseMergeExists: boolean;
 	headNameExists: boolean;
+	guidedRebaseActive: boolean;
 }
 
 export interface ObjectCountResponse {
@@ -682,4 +728,227 @@ export interface TraceEntry {
 export interface RecentTracesResponse {
 	traces: TraceEntry[];
 	nextCursor: string | null;
+}
+
+export type BranchUpstream = 'present' | 'gone' | 'notPushed';
+
+export type BranchLocalSync = 'inSync' | 'ahead' | 'behind' | 'diverged' | 'unknown';
+
+export interface FileTouch {
+	sha: string;
+	author: string;
+	date: string;
+}
+
+export interface LockableFileRow {
+	path: string;
+	displayName: string;
+	branchCommit: Nullable<FileTouch>;
+	changedOnMain: boolean;
+	mainCommit: Nullable<FileTouch>;
+}
+
+export interface BranchMergeQueueEntry {
+	state: string;
+	position: number;
+}
+
+export interface BranchPullRequest {
+	number: number;
+	id: string;
+	url: string;
+	headRefOid: string;
+	baseRefName: string;
+	headRepository: Nullable<string>;
+	state: 'OPEN' | 'MERGED';
+	mergeable: string;
+	mergeQueueEntry: Nullable<BranchMergeQueueEntry>;
+}
+
+export interface BranchAnalysis {
+	gitSupported: boolean;
+	gitVersion: string;
+	branch: string;
+	trunkBranch: string;
+	usesMergeQueue: boolean;
+	upstream: BranchUpstream;
+	localSync: BranchLocalSync;
+	localAheadOfOrigin: number;
+	localBehindOrigin: number;
+	commitsAhead: number;
+	commitsBehind: number;
+	mergeBase: Nullable<string>;
+	predictedConflicts: string[];
+	lockableFiles: LockableFileRow[];
+	lockableFileCount: number;
+	commits: CoreCommit[];
+	pr: Nullable<BranchPullRequest>;
+	prError: Nullable<string>;
+}
+
+export interface CreateBranchPullRequestRequest {
+	title: string;
+}
+
+export interface BranchPullRequestResult {
+	number: number;
+	url: string;
+	created: boolean;
+	alreadyQueued: boolean;
+}
+
+export interface BranchCleanupPr {
+	number: number;
+	url: string;
+	baseRefName: string;
+}
+
+export interface BranchCleanupCommit {
+	sha: string;
+	subject: string;
+}
+
+export interface BranchCleanupCandidate {
+	name: string;
+	sha: string;
+	subject: string;
+	author: string;
+	date: string;
+	mergedIntoTrunk: boolean;
+	patchEquivalent: boolean;
+	mergedViaPr: Nullable<BranchCleanupPr>;
+	prUnknown: boolean;
+	unmergedCommitCount: number;
+	unmergedCommits: BranchCleanupCommit[];
+	safe: boolean;
+}
+
+export interface BranchCleanupCandidates {
+	trunkBranch: string;
+	candidates: BranchCleanupCandidate[];
+	prError: Nullable<string>;
+}
+
+export interface BranchCleanupTarget {
+	name: string;
+	sha: string;
+	// Safety the user saw; a branch safe by git checks is rechecked before deletion.
+	safe: boolean;
+	safeViaPr: boolean;
+}
+
+export interface BranchCleanupRequest {
+	branches: BranchCleanupTarget[];
+}
+
+export interface BranchCleanupResult {
+	name: string;
+	sha: string;
+	deleted: boolean;
+	error: Nullable<string>;
+}
+
+export type RebaseStateKind =
+	| 'idle'
+	| 'inProgress'
+	| 'completedUnpushed'
+	| 'pushFailed'
+	| 'stale'
+	| 'external';
+
+export type RebaseStaleReason =
+	| 'abortedOutside'
+	| 'pushedOutside'
+	| 'branchChanged'
+	| 'otherRebase'
+	| 'unreadable'
+	| 'unknown';
+
+export interface RebaseCommitInfo {
+	sha: string;
+	subject: string;
+	author: string;
+	date: string;
+}
+
+export type ConflictKind = 'content' | 'modifyDelete' | 'unsupported';
+
+export type ConflictSideName = 'main' | 'branch';
+
+export type RebaseKeep = 'main' | 'branch' | 'manual';
+
+export interface ConflictFile {
+	path: string;
+	displayName: string;
+	kind: ConflictKind;
+	// Set only for modifyDelete.
+	deletedOn: Nullable<ConflictSideName>;
+	unsupportedReason: Nullable<string>;
+	isText: boolean;
+	resolved: boolean;
+	resolution: Nullable<RebaseKeep>;
+	mainSide: Nullable<RebaseCommitInfo>;
+	branchSide: RebaseCommitInfo;
+}
+
+export interface DroppedCommit {
+	sha: string;
+	subject: string;
+}
+
+export interface RebaseState {
+	state: RebaseStateKind;
+	// Empty when idle or external.
+	branch: string;
+	step: number;
+	totalSteps: number;
+	currentCommit: Nullable<RebaseCommitInfo>;
+	conflicts: ConflictFile[];
+	stepIncomplete: boolean;
+	// Tracked files edited but not staged during the step; aborting discards the edits.
+	unstagedEdits: string[];
+	droppedCommits: DroppedCommit[];
+	staleReason: Nullable<RebaseStaleReason>;
+	touchesCpp: boolean;
+	backupRef: string;
+	backupSha: string;
+	pushFailedRemoteSha: Nullable<string>;
+}
+
+export interface ResolveConflictRequest {
+	path: string;
+	keep: RebaseKeep;
+}
+
+export interface OpenConflictFileRequest {
+	path: string;
+}
+
+export interface UnresolveConflictRequest {
+	path: string;
+}
+
+export type RebaseFinishOutcome = 'pushed' | 'leaseRejected';
+
+export interface RebaseFinishResponse {
+	outcome: RebaseFinishOutcome;
+	state: RebaseState;
+	droppedCommits: DroppedCommit[];
+	touchesCpp: boolean;
+	postStepError: Nullable<string>;
+	backupBranch: string;
+}
+
+export interface RebasePreflight {
+	touchesCpp: boolean;
+	cppFiles: string[];
+	commitCount: number;
+}
+
+export type EditorBinariesState = 'match' | 'mismatch' | 'unknown';
+
+export interface EditorBinariesStatus {
+	state: EditorBinariesState;
+	dllCommit: string;
+	latestCppCommit: Nullable<RebaseCommitInfo>;
 }

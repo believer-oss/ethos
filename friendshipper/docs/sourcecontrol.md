@@ -20,10 +20,59 @@ it essentially replaces workflows that UGS and P4V support.
 - Must be hosted on Github with merge queue enabled
 - LFS server with locking support (see [lfs-rs](https://github.com/believer-oss/lfs-rs))
 
+### Feature branches
+
+- Branch features are off by default. In Preferences under **Branches**, "Enable branches" shows the branch selector
+  and Submit to branch, and "Enable Branch Management" also shows the Branch Management page. If branches are off
+  while you are on a branch, the submit page offers to switch back to your target branch. An unfinished rebase keeps
+  Branch Management available regardless.
+- Create a branch from Branch Management with "New branch". The name becomes `f11r-branch-<slug>` and must be unique.
+  New branches start from the latest `origin/main` (your repository's trunk branch) and are pushed to origin immediately.
+- Switch branches with the branch selector on the submit page or on Branch Management. Switching requires no local
+  changes and Unreal Editor closed. Binaries and the engine update as they do after a Sync. Switching also works from
+  a clean detached HEAD.
+- The reset button returns you to your configured target branch.
+- By default the selector lists `f11r-branch-*` branches; turn on "Show all branches" in Preferences (Branches) to
+  list every branch on origin except Quick Submit branches and rebase backups.
+- Quick Submit is available on your target branch and its Quick Submit branches. On another target branch, or on a Quick
+  Submit branch made for another target, it is blocked. From a Quick Submit branch, Sync returns you to your target
+  branch; the selector and reset button are disabled there.
+- On any other branch, the submit page offers **Submit to branch** instead: it commits the selected files to the current
+  branch and pushes them to origin, and your locks are kept. See [Submit to branch](#submit-to-branch).
+- Branch Management (Git 2.38 or newer) shows how the current branch compares with the trunk: commits ahead and behind,
+  sync with origin and predicted conflicts. Under **Changes on branch**, which covers pushed commits only, the Lockable
+  files tab flags files also changed on the trunk ("will conflict at rebase"), and the Commits tab lists the branch's
+  commits. **Create PR** opens a pull request into the trunk and shows it in your browser; it does not queue it. Once
+  the branch has an open pull request, **Add to merge queue** queues it as soon as GitHub reports it mergeable, and a
+  notification reports the result. Both are disabled while the branch is behind origin, has unpushed commits or is
+  predicted to conflict. After the branch is merged or deleted, a banner offers "Return to <target branch>".
+- Branches are deleted on GitHub, not in Friendshipper. **Clean up deleted branches** on Branch Management then removes
+  your local copies of `f11r-branch-*` branches deleted on origin, after a preview that shows each branch's SHA and
+  flags commits that are not on the trunk. **Clean up all merged** removes only merged branches; a branch with commits
+  not on the trunk is removed only when you pick it and confirm.
+- **Rebase onto latest main** on Branch Management (Git 2.43 or newer) replays the branch's pushed commits on top of
+  the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. Starting or pushing
+  a rebase is blocked while the branch's pull request is in the merge queue. Merge commits are flattened, so a branch
+  with a merge commit that changes files beyond resolving conflicts must be rebased in a git client. A backup is kept
+  under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
+  it as a separate step; collaborators must Sync afterwards. The same push saves the branch's previous version on
+  origin as `f11r-backup-<slug>` (`f11r-backup--<name>` for other branches), replaced by the next rebase push. Its
+  tip is an empty commit on top of the previous version with no CI tags, so it starts no builds. You can check out a
+  backup to recover files from it, but not submit to it. If that backup
+  cannot be saved, nothing is pushed. **Reset to remote version** instead discards the rebase and puts the branch
+  back the way it was on origin when the rebase started; unstage your changes first.
+- Branch Management is disabled while Unreal Editor has the project open.
+- Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can
+  also be merged in an editor, except files Windows would run. A choice can be undone until you confirm the commit.
+  Continue is refused while edits are unsaved, files you staged yourself are present or conflict markers remain. Abort
+  returns the branch to where it started.
+- While a rebase is in progress or waiting to be pushed, Sync, submit and other changes are blocked; locking still works.
+- If someone pushes to the branch during the rebase, choose **Redo rebase on new origin**, or **Reset to backup** if
+  origin's branch was rewritten. Branches that change C++ get an offer to trigger an editor build afterwards.
+
 ### Limitations
 
 - Assumes all development happens on a single trunk branch
-- Creating and switching between branches is not supported
 - Only supports a single project at a time
 
 # Setup
@@ -65,9 +114,29 @@ The way this works:
 Because the Quick Submit process leaves the user on a leaf branch, Friendshipper uses the Sync
 operation to switch the user back to the trunk branch if they're not on it already.
 
+Quick Submit always sends to the target branch set in Preferences. The submit button and the colored
+mode badge (one color per target branch) read "Quick Submit to <target>". The preview names the target and says
+whether it merges via the merge queue or directly. If you're on a different target branch (for example on `main`
+while the target is `content-main`), Quick Submit is blocked and a red banner offers "Switch to <target>" (or
+"Sync to <target>" when you're on a Quick Submit branch) and "Open Preferences".
+
 It should be noted that this process is mainly intended to be used by nontechnical users, or for
 content-only submits. Engineers may want to have more control over their submission process and
 are empowered to do so.
+
+## Submit to branch
+
+On a branch that is neither a target branch nor a Quick Submit branch, the submit page offers **Submit to branch**.
+A banner appears when the branch was not created by Friendshipper. Submit to branch commits the selected files, then
+fast-forward pushes to `origin/<branch>`, but only if origin has not changed since the up-to-date check. It never
+force-pushes, and a pre-submit snapshot is kept.
+
+- **Locks:** they are kept, and freed when the branch merges to main. On a branch that never merges, release them by hand.
+- **Behind origin:** Sync first. If someone pushed in the meantime, your commit is kept locally; Sync, then use "Push N commits".
+- **Files changed on main:** they show a yellow "will conflict at rebase" badge and do not block the submit.
+- **In the merge queue:** submitting is blocked while the branch's pull request is queued, since GitHub rejects updates
+  to queued branches. Wait for it to merge, or remove it from the queue.
+- **Detached HEAD or rebase in progress:** submitting is unavailable. Open Branch Management.
 
 # [Unreal Plugin](https://github.com/believer-oss/FriendshipperSourceControl)
 

@@ -5,7 +5,7 @@ use ethos_core::types::errors::CoreError;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use super::{is_valid_sha, sanitize_repo_path};
+use super::{guard_state, is_valid_sha, sanitize_repo_path};
 use crate::engine::EngineProvider;
 use crate::state::AppState;
 
@@ -32,6 +32,8 @@ pub async fn restore_file_to_revision_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let path = sanitize_repo_path(&req.path)?;
     if path.is_empty() {
         return Err(CoreError::Input(anyhow::anyhow!("path is required")));

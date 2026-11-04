@@ -2,24 +2,43 @@ import type { ChangeSet, Commit, CommitFileInfo, ModifiedFile } from '@ethos/cor
 import { invoke } from '@tauri-apps/api/core';
 import type {
 	ArtifactStatus,
+	BranchAnalysis,
+	BranchCleanupCandidates,
+	BranchCleanupRequest,
+	BranchCleanupResult,
+	BranchInfo,
+	BranchPullRequest,
+	BranchPullRequestResult,
 	CloneRequest,
 	CommitInfo,
+	CreateBranchPullRequestRequest,
+	CreateBranchResponse,
+	EditorBinariesStatus,
 	FileHistoryResponse,
 	GitHubPullRequest,
 	GitHubStatusResponse,
 	ImportZippedChangesResponse,
 	IncomingEngineChange,
 	MergeQueue,
+	Nullable,
 	ObjectCountResponse,
+	OpenConflictFileRequest,
 	PushRequest,
+	RebaseCommitInfo,
+	RebaseFinishResponse,
+	RebasePreflight,
+	RebaseState,
 	RebaseStatusResponse,
 	RepoDirectoryListing,
 	RepoStatus,
+	ResolveConflictRequest,
 	RestoreFileToRevisionRequest,
 	RevertFilesRequest,
 	Snapshot,
 	SnapshotPreviewResponse,
+	SwitchBranchResponse,
 	SyncKind,
+	UnresolveConflictRequest,
 	VerifyResponse,
 	ZipLocalChangesResponse,
 	ZipPreviewResponse
@@ -95,6 +114,63 @@ export const submit = async (req: PushRequest): Promise<void> => invoke('submit'
 
 export const quickSubmit = async (req: PushRequest): Promise<void> =>
 	invoke('quick_submit', { req });
+
+export const submitToBranch = async (req: PushRequest): Promise<void> =>
+	invoke('submit_to_branch', { req });
+
+export const getBranchAnalysis = async (): Promise<BranchAnalysis> => invoke('get_branch_analysis');
+
+export const getBranchOpenPr = async (): Promise<Nullable<BranchPullRequest>> =>
+	invoke('get_branch_open_pr');
+
+export const createBranchPullRequest = async (
+	req: CreateBranchPullRequestRequest
+): Promise<BranchPullRequestResult> => invoke('create_branch_pull_request', { req });
+
+export const enqueueBranchPullRequest = async (): Promise<BranchPullRequestResult> =>
+	invoke('enqueue_branch_pull_request');
+
+export const getBranchCleanupCandidates = async (): Promise<BranchCleanupCandidates> =>
+	invoke('get_branch_cleanup_candidates');
+
+export const cleanupBranches = async (req: BranchCleanupRequest): Promise<BranchCleanupResult[]> =>
+	invoke('cleanup_branches', { req });
+
+export const getRebaseState = async (): Promise<RebaseState> => invoke('get_rebase_state');
+
+export const getRebasePreflight = async (): Promise<RebasePreflight> =>
+	invoke('get_rebase_preflight');
+
+export const startRebase = async (): Promise<RebaseState> => invoke('start_rebase');
+
+export const resolveRebaseConflict = async (req: ResolveConflictRequest): Promise<RebaseState> =>
+	invoke('resolve_rebase_conflict', { req });
+
+export const unresolveRebaseConflict = async (
+	req: UnresolveConflictRequest
+): Promise<RebaseState> => invoke('unresolve_rebase_conflict', { req });
+
+export const openRebaseConflictFile = async (req: OpenConflictFileRequest): Promise<void> =>
+	invoke('open_rebase_conflict_file', { req });
+
+export const continueRebase = async (): Promise<RebaseState> => invoke('continue_rebase');
+
+export const abortGuidedRebase = async (): Promise<RebaseState> => invoke('abort_guided_rebase');
+
+export const finishRebase = async (): Promise<RebaseFinishResponse> => invoke('finish_rebase');
+
+export const redoRebase = async (): Promise<RebaseState> => invoke('redo_rebase');
+
+export const resetRebaseToBackup = async (): Promise<RebaseState> =>
+	invoke('reset_rebase_to_backup');
+
+export const dismissRebaseState = async (): Promise<RebaseState> => invoke('dismiss_rebase_state');
+
+export const triggerEditorRebuild = async (): Promise<RebaseCommitInfo> =>
+	invoke('trigger_editor_rebuild');
+
+export const getEditorBinariesStatus = async (): Promise<EditorBinariesStatus> =>
+	invoke('get_editor_binaries_status');
 
 export const listSnapshots = async (): Promise<Snapshot[]> => invoke('list_snapshots');
 
@@ -279,6 +355,15 @@ export const getCommitFileTextClass = (action: string) => {
 export const getMergeQueue = async (): Promise<MergeQueue> => invoke('get_merge_queue');
 
 export const checkoutTargetBranch = async (): Promise<void> => invoke('checkout_target_branch');
+
+export const listBranches = async (all: boolean): Promise<BranchInfo[]> =>
+	invoke('list_branches', { all });
+
+export const createBranch = async (slug: string): Promise<CreateBranchResponse> =>
+	invoke('create_branch', { slug });
+
+export const switchBranch = async (branch: string): Promise<SwitchBranchResponse> =>
+	invoke('switch_branch', { branch });
 
 export const listRepoDirectory = async (path: string): Promise<RepoDirectoryListing> =>
 	invoke('list_repo_directory', { path });

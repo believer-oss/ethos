@@ -49,6 +49,53 @@ impl Task for CommitOp {
 
 pub type LogResponse = Vec<Commit>;
 
+/// Parses `Git::log` output into commits, newest first.
+pub fn parse_log_output(output: &str) -> Vec<Commit> {
+    output
+        .split("\x1e\n")
+        .filter_map(|line| {
+            let parts = line.split('\x1f').collect::<Vec<_>>();
+
+            // Ensure we have at least 4 parts
+            if parts.len() < 4 {
+                warn!(
+                    "Invalid git log line format (expected at least 4 parts): {}",
+                    line
+                );
+                return None;
+            }
+
+            // Safely parse timestamp
+            let timestamp = match DateTime::parse_from_rfc3339(parts[3]) {
+                Ok(ts) => Some(ts.with_timezone(&chrono::Local).to_string()),
+                Err(e) => {
+                    warn!(
+                        "Failed to parse timestamp '{}' from git log: {}",
+                        parts[3], e
+                    );
+                    None
+                }
+            };
+
+            // Safely extract SHA (ensure it has enough characters)
+            let sha = if parts[0].len() >= 8 {
+                parts[0][..8].to_string()
+            } else {
+                parts[0].to_string()
+            };
+
+            Some(Commit {
+                sha,
+                message: Some(parts[1].to_string()),
+                author: Some(parts[2].to_string()),
+                timestamp,
+                status: None,
+                merge_timestamp: None,
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
 #[derive(Clone)]
 pub struct LogOp {
     pub limit: usize,
@@ -88,51 +135,7 @@ impl LogOp {
         }
 
         let output = self.git_client.log(self.limit, &git_ref).await?;
-        let result = output
-            .split("\x1e\n")
-            .filter_map(|line| {
-                let parts = line.split('\x1f').collect::<Vec<_>>();
-
-                // Ensure we have at least 4 parts
-                if parts.len() < 4 {
-                    warn!(
-                        "Invalid git log line format (expected at least 4 parts): {}",
-                        line
-                    );
-                    return None;
-                }
-
-                // Safely parse timestamp
-                let timestamp = match DateTime::parse_from_rfc3339(parts[3]) {
-                    Ok(ts) => Some(ts.with_timezone(&chrono::Local).to_string()),
-                    Err(e) => {
-                        warn!(
-                            "Failed to parse timestamp '{}' from git log: {}",
-                            parts[3], e
-                        );
-                        None
-                    }
-                };
-
-                // Safely extract SHA (ensure it has enough characters)
-                let sha = if parts[0].len() >= 8 {
-                    parts[0][..8].to_string()
-                } else {
-                    parts[0].to_string()
-                };
-
-                Some(Commit {
-                    sha,
-                    message: Some(parts[1].to_string()),
-                    author: Some(parts[2].to_string()),
-                    timestamp,
-                    status: None,
-                    merge_timestamp: None,
-                })
-            })
-            .collect::<Vec<_>>();
-
-        Ok(result)
+        Ok(parse_log_output(&output))
     }
 }
 
@@ -903,5 +906,63 @@ mod tests {
             git_client: git::Git::new(PathBuf::from("."), tx),
         };
         assert_eq!(op.get_name(), "RepoMaintenance");
+    }
+
+    #[tokio::test]
+    async fn test_parse_log_output_real_log() {
+        let (git_client, dir) = setup_repo();
+        let path = dir.path().to_path_buf();
+        std::fs::write(path.join("a.txt"), "a").unwrap();
+        run_git(&path, &["add", "a.txt"]);
+        run_git(
+            &path,
+            &[
+                "commit",
+                "-m",
+                "Subject line\n\nBody line one\nBody line two",
+            ],
+        );
+        let newest = run_git(&path, &["rev-parse", "HEAD"]);
+        let seed = run_git(&path, &["rev-parse", "HEAD~1"]);
+
+        let output = git_client.log(10, "HEAD").await.unwrap();
+        let commits = parse_log_output(&output);
+
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].sha, newest.trim()[..8]);
+        assert_eq!(commits[1].sha, seed.trim()[..8]);
+        assert_eq!(
+            commits[0].message.as_deref().map(str::trim_end),
+            Some("Subject line\n\nBody line one\nBody line two")
+        );
+        assert_eq!(
+            commits[1].message.as_deref().map(str::trim_end),
+            Some("seed")
+        );
+        for commit in &commits {
+            assert_eq!(commit.sha.len(), 8);
+            assert_eq!(commit.author.as_deref(), Some("test"));
+            assert!(commit.timestamp.is_some());
+            assert!(commit.status.is_none());
+            assert!(commit.merge_timestamp.is_none());
+        }
+    }
+
+    #[test]
+    fn test_parse_log_output_skips_malformed_records() {
+        let output = concat!(
+            "aaaaaaaa1111\x1fFirst\n\x1fAlice\x1f2026-10-22T10:00:00-07:00\x1f\x1e\n",
+            "broken\x1fno fields\x1e\n",
+            "bbbb\x1fSecond\n\x1fBob\x1fnot a date\x1f\x1e"
+        );
+        let commits = parse_log_output(output);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].sha, "aaaaaaaa");
+        assert_eq!(commits[0].message.as_deref(), Some("First\n"));
+        assert_eq!(commits[0].author.as_deref(), Some("Alice"));
+        assert!(commits[0].timestamp.is_some());
+        assert_eq!(commits[1].sha, "bbbb");
+        assert!(commits[1].timestamp.is_none());
+        assert!(parse_log_output("").is_empty());
     }
 }

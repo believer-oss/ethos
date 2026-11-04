@@ -13,6 +13,7 @@ use crate::engine::EngineProvider;
 use crate::repo::operations::pull::PullOp;
 use crate::repo::operations::validate::validate_repo_state;
 use crate::repo::operations::StatusOp;
+use crate::repo::operations::{ensure_no_guided_rebase, guard_state};
 use crate::repo::RepoStatusRef;
 use crate::state::AppState;
 use crate::state::Notification;
@@ -23,8 +24,11 @@ use ethos_core::clients::github;
 use ethos_core::operations::{AddOp, CommitOp, LockOp, RestoreOp};
 use ethos_core::storage::ArtifactStorage;
 use ethos_core::types::config::AppConfigRef;
-use ethos_core::types::config::RepoConfigRef;
+use ethos_core::types::config::{RepoConfig, RepoConfigRef};
 use ethos_core::types::errors::CoreError;
+use ethos_core::types::github::merge_queue::get_merge_queue::{
+    GetMergeQueueRepositoryMergeQueue, GetMergeQueueRepositoryMergeQueueEntriesNodesPullRequest,
+};
 use ethos_core::types::github::TokenNotFoundError;
 use ethos_core::types::locks::LockOperation;
 use ethos_core::types::repo::SubmitStatus;
@@ -93,7 +97,7 @@ const SUBMIT_PREFIX: &str = "[quick submit]";
 /// Files with `text=auto` or `text=unspecified` are kept; `--check` will run
 /// its own NUL-byte heuristic on them at diff time. That costs an extra
 /// staging round-trip for those files but doesn't change the result.
-async fn filter_to_textlike_paths(
+pub(crate) async fn filter_to_textlike_paths(
     git_client: &git::Git,
     paths: &[String],
 ) -> anyhow::Result<Vec<String>> {
@@ -207,7 +211,7 @@ async fn filter_to_textlike_paths(
 ///   deliberately contains both a `<<<<<<<` and a `>>>>>>>` line (e.g. a
 ///   merge tutorial) carries the full shape and will be caught. That's far
 ///   rarer than the lone-divider case and is the accepted residual.
-async fn find_files_with_conflict_markers(
+pub(crate) async fn find_files_with_conflict_markers(
     git_client: &git::Git,
     paths: &[String],
 ) -> Result<Vec<String>, CoreError> {
@@ -226,10 +230,11 @@ async fn find_files_with_conflict_markers(
     }
 
     // Write the pathspec list once and reuse it for both `git add` and
-    // `git diff` so they stay scoped to the same files.
+    // `git diff` so they stay scoped to the same files. NUL-separated and
+    // read literally, so no path is unquoted or taken as a glob or magic.
     let mut pathspec = tempfile::NamedTempFile::new()?;
     for path in &paths {
-        writeln!(pathspec, "{path}")?;
+        write!(pathspec, "{path}\0")?;
     }
     pathspec.flush()?;
     let pathspec_arg = pathspec
@@ -268,7 +273,14 @@ async fn find_files_with_conflict_markers(
     //    additions/modifications/deletions in one shot.
     let add_out = run_git_with_index(
         git_client,
-        &["add", "-A", "--pathspec-from-file", &pathspec_arg],
+        &[
+            "--literal-pathspecs",
+            "add",
+            "-A",
+            "--pathspec-from-file",
+            &pathspec_arg,
+            "--pathspec-file-nul",
+        ],
         &temp_index,
     )
     .await?;
@@ -340,7 +352,7 @@ async fn find_files_with_conflict_markers(
 /// GitHub interaction, and keeping it free of that dependency lets it be
 /// exercised in tests without a live, authenticated GitHub client (which
 /// `GraphQLClient::new` requires — see `core/src/clients/github.rs`).
-async fn reject_unsubmittable_files<T: EngineProvider>(
+pub(crate) async fn reject_unsubmittable_files<T: EngineProvider>(
     requested_files: &[String],
     repo_status: &RepoStatus,
     app_config: &AppConfigRef,
@@ -442,6 +454,131 @@ async fn reject_unsubmittable_files<T: EngineProvider>(
     }
 
     Err(CoreError::Input(anyhow!(message)))
+}
+
+/// Returns an `Input` error naming every requested file that still contains
+/// unresolved merge conflict markers.
+pub(crate) async fn reject_files_with_conflict_markers(
+    git_client: &git::Git,
+    files: &[String],
+) -> Result<(), CoreError> {
+    let conflicted = find_files_with_conflict_markers(git_client, files).await?;
+    if !conflicted.is_empty() {
+        for path in &conflicted {
+            tracing::error!("Unresolved conflict markers in {}", path);
+        }
+        return Err(CoreError::Input(anyhow!(
+            "Cannot submit: {} file(s) still contain unresolved merge conflict markers:\n  - {}\n\nResolve the conflict markers (the <<<<<<<, =======, >>>>>>> lines) before submitting.",
+            conflicted.len(),
+            conflicted.join("\n  - ")
+        )));
+    }
+    Ok(())
+}
+
+/// Stages `files`, unstages anything else that was staged, and commits them
+/// with `message` on the current branch.
+pub(crate) async fn commit_files(
+    git_client: &git::Git,
+    repo_status: &RepoStatusRef,
+    files: &[String],
+    message: &str,
+) -> Result<(), CoreError> {
+    let add_op = AddOp {
+        files: files.to_vec(),
+        git_client: git_client.clone(),
+    };
+
+    add_op.execute().await?;
+
+    // unstage any files that are staged but not in the request
+    let mut staged_files = Vec::new();
+    {
+        let repo_status = repo_status.read();
+        let modified = repo_status.modified_files.clone();
+        for file in modified.into_iter() {
+            if file.is_staged {
+                staged_files.push(file.path.clone());
+            }
+        }
+    }
+
+    let files_to_unstage: Vec<String> = staged_files
+        .into_iter()
+        .filter(|file| !files.contains(file))
+        .collect();
+
+    if !files_to_unstage.is_empty() {
+        let restore_op = RestoreOp {
+            files: files_to_unstage,
+            git_client: git_client.clone(),
+        };
+
+        restore_op.execute().await?;
+    }
+
+    // Debug logging to diagnose commit failures
+    let current_branch = git_client.current_branch().await?;
+    debug!("About to commit on branch: {}", current_branch);
+
+    // Check what's actually staged before committing
+    let status_output = git_client
+        .run_and_collect_output(&["status", "--short"], git::Opts::default())
+        .await
+        .unwrap_or_else(|_| "Failed to get status".to_string());
+    debug!("Git status before commit:\n{}", status_output);
+
+    // We can skip the status check because we know for a fact that there are staged files
+    let commit_op = CommitOp {
+        message: message.to_string(),
+        repo_status: repo_status.clone(),
+        git_client: git_client.clone(),
+        skip_status_check: true,
+    };
+
+    match commit_op.execute().await {
+        Ok(_) => debug!("Commit succeeded"),
+        Err(e) => {
+            error!(
+                "Commit failed on branch '{}' with error: {}",
+                current_branch, e
+            );
+            error!("Status was:\n{}", status_output);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Hard-resets to `branch` and restores the pre-submit snapshot, unless the
+/// editor is running.
+pub(crate) async fn restore_pre_submit_state<T: EngineProvider>(
+    git_client: &git::Git,
+    engine: &T,
+    branch: &str,
+    snapshot_commit: &str,
+) -> Result<(), CoreError> {
+    // can't touch the working tree unless the engine isn't running
+    if engine.check_ready_to_sync_repo().await.is_ok() {
+        // attempt to reset to original branch and restore snapshot
+        // if this fails for any reason, we should simply log, then return the original error
+        git_client.hard_reset(branch).await?;
+
+        match git_client
+            .restore_snapshot_via_cherry_pick(snapshot_commit, vec![])
+            .await
+        {
+            Ok(_) => {}
+            Err(e) => {
+                // log the error, but don't return it
+                warn!("Failed to restore snapshot after failed submit: {}", e);
+            }
+        }
+    } else {
+        warn!("Unable to automatically restore pre-submit state due to editor running.")
+    }
+    Ok(())
 }
 
 /// Count the leading run of byte `c` at the start of `s`. Used to recognize a
@@ -628,15 +765,16 @@ impl Task for GitHubSubmitOp {
             repo = status.repo_name.clone();
         }
 
-        let pr = octocrab
-            .pulls(owner.clone(), repo.clone())
-            .create(
-                format!("{SUBMIT_PREFIX} {truncated_message}"),
-                self.head_branch.clone(),
-                self.base_branch.clone(),
-            )
-            .send()
-            .await?;
+        let pr = create_pull_request(
+            &octocrab,
+            &owner,
+            &repo,
+            format!("{SUBMIT_PREFIX} {truncated_message}"),
+            self.head_branch.clone(),
+            self.base_branch.clone(),
+            None,
+        )
+        .await?;
 
         if self.use_merge_queue {
             // Fire-and-forget for merge queue path
@@ -665,7 +803,7 @@ impl Task for GitHubSubmitOp {
                             )
                             .await
                         {
-                            if let Err(e) = self_clone.client.enqueue_pull_request(id).await {
+                            if let Err(e) = self_clone.client.enqueue_pull_request(id, None).await {
                                 warn!("Failed to enqueue pull request: {:?}", e);
                             }
                         } else {
@@ -722,30 +860,58 @@ impl GitHubSubmitOp {
         owner: String,
         repo: String,
     ) -> Result<PullRequest, CoreError> {
-        let mut pr = pr.clone();
-        while let Some(state) = pr.mergeable_state.clone() {
-            match state {
-                MergeableState::Blocked | MergeableState::Behind | MergeableState::Unknown => {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    pr = octocrab
-                        .pulls(owner.clone(), repo.clone())
-                        .get(pr.clone().number)
-                        .await?;
-                }
-                MergeableState::Dirty => {
-                    return Err(CoreError::Input(anyhow!(
-                        "PR state is 'dirty'. It's likely a commit check has failed."
-                    )));
-                }
-                _ => {
-                    info!("mergeable state: {:?}", state);
-                    break;
-                }
+        poll_for_mergeable(&octocrab, pr, &owner, &repo).await
+    }
+}
+
+/// Opens a pull request from `head` into `base`; a `None` body is omitted from the request.
+pub(crate) async fn create_pull_request(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
+    title: String,
+    head: String,
+    base: String,
+    body: Option<String>,
+) -> Result<PullRequest, CoreError> {
+    octocrab
+        .pulls(owner, repo)
+        .create(title, head, base)
+        .body::<String>(body)
+        .send()
+        .await
+        .map_err(CoreError::from)
+}
+
+/// Re-reads the PR every 2 s while GitHub reports it blocked, behind or unknown, and fails on
+/// dirty. It has no timeout of its own.
+#[instrument(skip(octocrab, pr))]
+pub(crate) async fn poll_for_mergeable(
+    octocrab: &Octocrab,
+    pr: PullRequest,
+    owner: &str,
+    repo: &str,
+) -> Result<PullRequest, CoreError> {
+    let mut pr = pr;
+    while let Some(state) = pr.mergeable_state.clone() {
+        match state {
+            MergeableState::Blocked | MergeableState::Behind | MergeableState::Unknown => {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                pr = octocrab.pulls(owner, repo).get(pr.number).await?;
+            }
+            MergeableState::Dirty => {
+                return Err(CoreError::Input(anyhow!(
+                    "PR state is 'dirty'. It's likely a commit check has failed."
+                )));
+            }
+            _ => {
+                info!("mergeable state: {:?}", state);
+                break;
             }
         }
-
-        Ok(pr)
     }
+
+    Ok(pr)
 }
 
 // Quick submit is a workflow that submits changes via GitHub Pull Requests, taking advantage of the GitHub merge queue to avoid having
@@ -785,6 +951,7 @@ where
             let repo_path = PathBuf::from(self.app_config.read().repo_path.clone());
             let repo_status = self.repo_status.read().clone();
             validate_repo_state(&repo_path, &repo_status)?;
+            ensure_no_guided_rebase(&self.git_client, &repo_path).await?;
         }
 
         self.emit_phase("Checking repository status");
@@ -810,6 +977,19 @@ where
         // some submit-specific behavior.
         status_op.execute().await?;
 
+        // refuse before the snapshot so nothing is mutated
+        {
+            let branch = self.repo_status.read().branch.clone();
+            let (target, display_name) = {
+                let app_config = self.app_config.read();
+                (
+                    app_config.target_branch.clone(),
+                    app_config.user_display_name.clone(),
+                )
+            };
+            ensure_quick_submit_allowed(&branch, &self.repo_config.read(), &target, &display_name)?;
+        }
+
         // abort if we are trying to submit any conflicted files, or files that should be locked, but aren't
         {
             let repo_status = self.repo_status.read().clone();
@@ -830,20 +1010,7 @@ where
         // and only complains about markers in changes being introduced (not
         // pre-existing markers in unrelated content). Runs before the
         // snapshot so a doomed submit doesn't waste one.
-        {
-            let conflicted =
-                find_files_with_conflict_markers(&self.git_client, &self.files).await?;
-            if !conflicted.is_empty() {
-                for path in &conflicted {
-                    tracing::error!("Unresolved conflict markers in {}", path);
-                }
-                return Err(CoreError::Input(anyhow!(
-                    "Cannot submit: {} file(s) still contain unresolved merge conflict markers:\n  - {}\n\nResolve the conflict markers (the <<<<<<<, =======, >>>>>>> lines) before submitting.",
-                    conflicted.len(),
-                    conflicted.join("\n  - ")
-                )));
-            }
-        }
+        reject_files_with_conflict_markers(&self.git_client, &self.files).await?;
 
         // save a snapshot before submitting with all modified/added files
         // make sure we have a temp dir for copying our files
@@ -866,27 +1033,9 @@ where
         match self.execute_internal().await {
             Ok(_) => Ok(()),
             Err(e) => {
-                // can't touch the working tree unless the engine isn't running
-                if self.engine.check_ready_to_sync_repo().await.is_ok() {
-                    // attempt to reset to original branch and restore snapshot
-                    // if this fails for any reason, we should simply log, then return the original error
-                    let branch = self.repo_status.read().branch.clone();
-                    self.git_client.hard_reset(&branch).await?;
-
-                    match self
-                        .git_client
-                        .restore_snapshot_via_cherry_pick(&snapshot.commit, vec![])
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => {
-                            // log the error, but don't return it
-                            warn!("Failed to restore snapshot after failed submit: {}", e);
-                        }
-                    }
-                } else {
-                    warn!("Unable to automatically restore pre-submit state due to editor running.")
-                }
+                let branch = self.repo_status.read().branch.clone();
+                restore_pre_submit_state(&self.git_client, &self.engine, &branch, &snapshot.commit)
+                    .await?;
                 Err(e)
             }
         }
@@ -926,21 +1075,16 @@ where
             })?
             .uses_merge_queue;
 
-        let mut f11r_branch = {
-            let display_name = &self.app_config.read().user_display_name;
-            let santized_display_name = display_name.replace(' ', "-");
-            format!(
-                "f11r-{}-{}-{}",
-                target_branch,
-                santized_display_name,
-                chrono::Utc::now().timestamp()
-            )
-        };
+        let mut f11r_branch = format!(
+            "{}{}",
+            quick_submit_branch_prefix(&target_branch, &self.app_config.read().user_display_name),
+            chrono::Utc::now().timestamp()
+        );
 
         // If the target branch uses merge queue, it's possible there's an inflight quicksubmit.
         // Cancel it - we can be reasonably sure
         let mut needs_new_pr = true;
-        let mut quicksubmit_pr_id: Option<String> = None;
+        let mut quicksubmit_pr = None;
         if use_merge_queue && is_quicksubmit_branch(&prev_branch) {
             let owner: String;
             let repo: String;
@@ -960,44 +1104,21 @@ where
                 .github_client
                 .get_merge_queue_no_retry(&owner, &repo)
                 .await?;
-            if let Some(entries) = merge_queue.entries {
-                if let Some(nodes) = entries.nodes {
-                    for node in nodes.into_iter().flatten() {
-                        if let Some(commit) = node.head_commit {
-                            if let Some(author) = commit.author {
-                                if let Some(pr) = node.pull_request {
-                                    if let Some(user) = author.user {
-                                        if user.login == self.github_client.username
-                                            && pr.title.starts_with(SUBMIT_PREFIX)
-                                        {
-                                            // There should only be one quicksubmit PR in merge queue at a time
-                                            quicksubmit_pr_id = Some(pr.id);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            quicksubmit_pr = reusable_quicksubmit_pr(
+                merge_queue,
+                &self.github_client.username,
+                &target_branch,
+                &prev_branch,
+            );
 
-            if let Some(id) = &quicksubmit_pr_id {
-                // Silently absorb errors - the PR may have been already merged in this case
-                let res = self
-                    .github_client
-                    .dequeue_pull_request(id.to_string())
-                    .await;
-                match res {
-                    Ok(_) => {
-                        needs_new_pr = false;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to cancel existing pull request {}. Reason: {}",
-                            id, e
-                        );
-                    }
+            if let Some(id) = quicksubmit_pr.as_ref().map(|pr| pr.id.clone()) {
+                // A failed dequeue (e.g. the PR already merged) means a new branch and PR
+                needs_new_pr = !existing_pr_dequeued(
+                    &id,
+                    self.github_client.dequeue_pull_request(id.clone()).await,
+                );
+                if needs_new_pr {
+                    quicksubmit_pr = None;
                 }
             }
         }
@@ -1057,72 +1178,13 @@ where
 
         // commit changes
         self.emit_phase("Committing changes");
-        {
-            let add_op = AddOp {
-                files: self.files.clone(),
-                git_client: self.git_client.clone(),
-            };
-
-            add_op.execute().await?;
-
-            // unstage any files that are staged but not in the request
-            let mut staged_files = Vec::new();
-            {
-                let repo_status = self.repo_status.read();
-                let modified = repo_status.modified_files.clone();
-                for file in modified.into_iter() {
-                    if file.is_staged {
-                        staged_files.push(file.path.clone());
-                    }
-                }
-            }
-
-            let files_to_unstage: Vec<String> = staged_files
-                .into_iter()
-                .filter(|file| !self.files.contains(file))
-                .collect();
-
-            if !files_to_unstage.is_empty() {
-                let restore_op = RestoreOp {
-                    files: files_to_unstage,
-                    git_client: self.git_client.clone(),
-                };
-
-                restore_op.execute().await?;
-            }
-
-            // Debug logging to diagnose commit failures
-            let current_branch = self.git_client.current_branch().await?;
-            debug!("About to commit on branch: {}", current_branch);
-
-            // Check what's actually staged before committing
-            let status_output = self
-                .git_client
-                .run_and_collect_output(&["status", "--short"], git::Opts::default())
-                .await
-                .unwrap_or_else(|_| "Failed to get status".to_string());
-            debug!("Git status before commit:\n{}", status_output);
-
-            // We can skip the status check because we know for a fact that there are staged files
-            let commit_op = CommitOp {
-                message: self.commit_message.clone(),
-                repo_status: self.repo_status.clone(),
-                git_client: self.git_client.clone(),
-                skip_status_check: true,
-            };
-
-            match commit_op.execute().await {
-                Ok(_) => debug!("Commit succeeded"),
-                Err(e) => {
-                    error!(
-                        "Commit failed on branch '{}' with error: {}",
-                        current_branch, e
-                    );
-                    error!("Status was:\n{}", status_output);
-                    return Err(e);
-                }
-            }
-        }
+        commit_files(
+            &self.git_client,
+            &self.repo_status,
+            &self.files,
+            &self.commit_message,
+        )
+        .await?;
 
         self.emit_phase("Pushing to GitHub");
         let worktree_path: PathBuf = 'path: {
@@ -1255,9 +1317,10 @@ where
 
         // If we already have a PR, we must be using the merge queue so just requeue it.
         // Otherwise create a whole new Github submit op.
-        match quicksubmit_pr_id {
+        match quicksubmit_pr {
             // We have a PR, this is a requeue
-            Some(pr_id) => {
+            Some(pr) => {
+                let pr_id = pr.id;
                 self.emit_phase("Re-queuing pull request");
                 info!("Reusing existing PR with ID: {}", pr_id);
 
@@ -1269,13 +1332,20 @@ where
                 tokio::time::sleep(std::time::Duration::from_secs(15)).await;
 
                 info!("Re-enqueueing PR {} to merge queue", pr_id);
-                match self.github_client.enqueue_pull_request(pr_id.clone()).await {
+                match self
+                    .github_client
+                    .enqueue_pull_request(pr_id.clone(), None)
+                    .await
+                {
                     Ok(_) => {
                         info!("Successfully re-enqueued PR {}", pr_id);
                     }
                     Err(e) => {
-                        error!("Failed to re-enqueue PR {}: {}", pr_id, e);
-                        return Err(e.into());
+                        // Not Err: the push succeeded, and Err would run the destructive
+                        // snapshot restore in execute().
+                        let msg = requeue_failed_message(pr.number, &pr.url, e);
+                        error!("{}", msg);
+                        let _ = self.notification_tx.send(Notification::Error(msg));
                     }
                 }
                 cleanup_worktree_branch(&git_client_worktree, &worktree_branch, git_opts_lfs_stubs)
@@ -1365,14 +1435,29 @@ where
                                         // Don't return Err here — the commit/push/merge all
                                         // succeeded, and returning Err would trigger the
                                         // destructive snapshot-restore in execute().
-                                        let msg = format!(
-                                            "Your changes were submitted successfully! \
-                                            Auto-sync back to the target branch failed: {}. \
-                                            If you see conflicts with your local files, you can \
-                                            restore them from the pre-submit snapshot in the \
-                                            Snapshots tab. Otherwise, just Sync manually when ready.",
-                                            e
-                                        );
+                                        let conflict = match &e {
+                                            CoreError::Input(e) => {
+                                                e.downcast_ref::<git::AutostashConflict>()
+                                            }
+                                            _ => None,
+                                        };
+                                        let msg = if let Some(conflict) = conflict {
+                                            format!(
+                                                "Your changes were submitted and synced back to \
+                                                the target branch, but {}",
+                                                conflict.details()
+                                            )
+                                        } else {
+                                            format!(
+                                                "Your changes were submitted successfully! \
+                                                Auto-sync back to the target branch failed: {}. \
+                                                If you see conflicts with your local files, you \
+                                                can restore them from the pre-submit snapshot in \
+                                                the Snapshots tab. Otherwise, just Sync manually \
+                                                when ready.",
+                                                e
+                                            )
+                                        };
                                         error!("{}", msg);
                                         let _ = self.notification_tx.send(Notification::Error(msg));
                                         return Ok(());
@@ -1442,6 +1527,8 @@ pub async fn submit_handler<T>(
 where
     T: EngineProvider,
 {
+    guard_state(&state).await?;
+
     let token = state
         .app_config
         .read()
@@ -1503,8 +1590,135 @@ where
     Ok(Json("ok".to_string()))
 }
 
+/// A Quick Submit branch (e.g. `f11r-main-Jane-1761000000`); `f11r-branch-*` feature branches are excluded.
 pub fn is_quicksubmit_branch(branch: &str) -> bool {
     branch.starts_with("f11r")
+        && !ethos_core::types::repo::is_feature_branch(branch)
+        && !ethos_core::types::repo::is_backup_branch(branch)
+}
+
+/// A branch that submits with Submit to branch: named, not protected, not a Quick Submit branch
+/// and not a rebase backup, which the next rebase push replaces.
+pub fn is_branch_mode(repo_config: &RepoConfig, branch: &str) -> bool {
+    !branch.is_empty()
+        && !repo_config.is_protected_branch(branch)
+        && !is_quicksubmit_branch(branch)
+        && !ethos_core::types::repo::is_backup_branch(branch)
+}
+
+/// The name of the user's Quick Submit branches for `target_branch`, up to the timestamp.
+fn quick_submit_branch_prefix(target_branch: &str, display_name: &str) -> String {
+    format!("f11r-{target_branch}-{}-", display_name.replace(' ', "-"))
+}
+
+/// The target a Quick Submit branch (`f11r-<target>-<name>-<ts>`) was made for. Targets and
+/// display names can both contain '-', so the longest matching candidate wins.
+fn quick_submit_branch_target<'a>(
+    branch: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let rest = branch.strip_prefix("f11r-")?;
+    candidates
+        .into_iter()
+        .filter(|t| !t.is_empty() && rest.strip_prefix(t).is_some_and(|r| r.starts_with('-')))
+        .max_by_key(|t| t.len())
+}
+
+/// Whether Quick Submit would send to a different target than the current branch belongs to.
+fn quick_submit_target_mismatch(
+    branch: &str,
+    repo_config: &RepoConfig,
+    target_branch: &str,
+    display_name: &str,
+) -> bool {
+    if target_branch.is_empty() || branch == target_branch {
+        return false;
+    }
+    if is_quicksubmit_branch(branch) {
+        // The user's own branch for the target, even if the name also parses as another target.
+        if branch.starts_with(&quick_submit_branch_prefix(target_branch, display_name)) {
+            return false;
+        }
+        let candidates = repo_config
+            .target_branches
+            .iter()
+            .map(|b| b.name.as_str())
+            .chain(std::iter::once(target_branch));
+        // Unparseable names (e.g. a target removed from config) are allowed.
+        return quick_submit_branch_target(branch, candidates).is_some_and(|t| t != target_branch);
+    }
+    repo_config.is_protected_branch(branch)
+}
+
+/// Quick Submit is only allowed from the target branch or one of its Quick Submit branches.
+fn ensure_quick_submit_allowed(
+    branch: &str,
+    repo_config: &RepoConfig,
+    target_branch: &str,
+    display_name: &str,
+) -> Result<(), CoreError> {
+    if quick_submit_target_mismatch(branch, repo_config, target_branch, display_name) {
+        return Err(CoreError::Input(anyhow!(
+            "You're on '{branch}', but Quick Submit sends to '{target_branch}'. Switch to '{target_branch}' or change your target branch in Preferences."
+        )));
+    }
+    if repo_config.is_protected_branch(branch) || is_quicksubmit_branch(branch) {
+        return Ok(());
+    }
+
+    Err(CoreError::Input(anyhow!(
+        "Quick Submit is only available on a target branch or a Quick Submit branch, but you are on '{branch}'. Switch back to '{target_branch}' from the submit page."
+    )))
+}
+
+/// The user's queued Quick Submit PR that `prev_branch` pushed to: same base target and
+/// `<prev_branch>-wt` head. Any other PR is left alone and a new one is made.
+fn reusable_quicksubmit_pr(
+    merge_queue: GetMergeQueueRepositoryMergeQueue,
+    username: &str,
+    target_branch: &str,
+    prev_branch: &str,
+) -> Option<GetMergeQueueRepositoryMergeQueueEntriesNodesPullRequest> {
+    let head_ref = format!("{prev_branch}-wt");
+    merge_queue
+        .entries?
+        .nodes?
+        .into_iter()
+        .flatten()
+        .filter(|node| {
+            node.head_commit
+                .as_ref()
+                .and_then(|commit| commit.author.as_ref())
+                .and_then(|author| author.user.as_ref())
+                .is_some_and(|user| user.login == username)
+        })
+        .filter_map(|node| node.pull_request)
+        .find(|pr| {
+            pr.title.starts_with(SUBMIT_PREFIX)
+                && pr.base_ref_name == target_branch
+                && pr.head_ref_name == head_ref
+        })
+}
+
+/// The changes are already pushed to the PR, so submitting again is not the fix.
+fn requeue_failed_message(number: i64, url: &str, error: impl std::fmt::Display) -> String {
+    format!(
+        "Your changes were pushed to PR #{number} ({url}), but it could not be added back to the merge queue: {error}. Re-enqueue it from GitHub or Friendshipper instead of submitting again."
+    )
+}
+
+/// Whether the in-flight Quick Submit PR was taken out of the merge queue, so its branch can be reused.
+fn existing_pr_dequeued(id: &str, res: anyhow::Result<()>) -> bool {
+    match res {
+        Ok(()) => true,
+        Err(e) => {
+            warn!(
+                "Failed to cancel existing pull request {}. Reason: {}",
+                id, e
+            );
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1966,6 +2180,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paths_are_not_read_as_globs() {
+        // `[a].txt` as a glob matches `a.txt`; only the clean `[a].txt` itself may be checked.
+        let (dir, git) = make_test_repo().await;
+        fs::write(dir.path().join("[a].txt"), "clean\n").unwrap();
+        fs::write(
+            dir.path().join("a.txt"),
+            "ok\n<<<<<<< HEAD\nm\n=======\nt\n>>>>>>> b\nok\n",
+        )
+        .unwrap();
+
+        let result = find_files_with_conflict_markers(&git, &["[a].txt".to_string()])
+            .await
+            .expect("check ran");
+        assert!(result.is_empty(), "{result:?}");
+        let result = find_files_with_conflict_markers(&git, &["a.txt".to_string()])
+            .await
+            .expect("check ran");
+        assert_eq!(result, vec!["a.txt".to_string()]);
+    }
+
+    #[tokio::test]
     async fn stale_file_list_is_input_error() {
         // A selected path that is neither tracked nor present in the working
         // tree makes `git add --pathspec-from-file` fail with "pathspec did
@@ -2086,5 +2321,372 @@ mod tests {
             result.is_empty(),
             "lone === divider should not be flagged, got {result:?}"
         );
+    }
+
+    #[test]
+    fn quicksubmit_branch_excludes_feature_branches() {
+        assert!(is_quicksubmit_branch("f11r-main-Jane-1761000000"));
+        assert!(is_quicksubmit_branch("f11r-main-Jane-1761000000-wt"));
+        assert!(!is_quicksubmit_branch("f11r-branch-foo"));
+        assert!(!is_quicksubmit_branch("f11r-branch-"));
+        assert!(!is_quicksubmit_branch("f11r-backup-foo"));
+        assert!(!is_quicksubmit_branch("f11r-backup--release/1.2"));
+        assert!(!is_quicksubmit_branch("main"));
+        assert!(is_quicksubmit_branch("f11r"));
+        assert!(!is_quicksubmit_branch("my-f11r-branch-x"));
+    }
+
+    fn guard_repo_config() -> RepoConfig {
+        RepoConfig {
+            trunk_branch: "main".to_string(),
+            target_branches: vec![ethos_core::types::config::TargetBranchConfig {
+                name: "release".to_string(),
+                uses_merge_queue: true,
+                blocked_file_globs: Vec::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn is_branch_mode_cases() {
+        let config = guard_repo_config();
+        for (branch, expected) in [
+            ("main", false),
+            ("release", false),
+            ("f11r-main-alice-123", false),
+            ("f11r-branch-x", true),
+            ("f11r-backup-x", false),
+            ("ar/foo", true),
+            ("", false),
+        ] {
+            assert_eq!(is_branch_mode(&config, branch), expected, "{branch:?}");
+        }
+
+        let no_trunk = RepoConfig {
+            trunk_branch: String::new(),
+            ..guard_repo_config()
+        };
+        assert!(!is_branch_mode(&no_trunk, ""));
+    }
+
+    fn multi_target_config() -> RepoConfig {
+        let target = |name: &str| ethos_core::types::config::TargetBranchConfig {
+            name: name.to_string(),
+            uses_merge_queue: true,
+            blocked_file_globs: Vec::new(),
+        };
+        RepoConfig {
+            trunk_branch: "main".to_string(),
+            target_branches: vec![target("main"), target("content-main"), target("content")],
+            ..Default::default()
+        }
+    }
+
+    /// A display name that matches none of the fixture branches.
+    const OTHER_USER: &str = "Pat";
+
+    fn assert_mismatch_refused(branch: &str, target: &str) {
+        match ensure_quick_submit_allowed(branch, &multi_target_config(), target, OTHER_USER) {
+            Err(CoreError::Input(e)) => assert_eq!(
+                e.to_string(),
+                format!("You're on '{branch}', but Quick Submit sends to '{target}'. Switch to '{target}' or change your target branch in Preferences.")
+            ),
+            other => panic!("{branch} -> {target} should be refused with Input, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quick_submit_allowed_on_protected_and_quicksubmit_branches() {
+        let config = guard_repo_config();
+        for branch in ["main", "f11r-main-Jane-1", "f11r"] {
+            assert!(
+                ensure_quick_submit_allowed(branch, &config, "main", OTHER_USER).is_ok(),
+                "{branch} should be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_submit_allowed_on_target() {
+        let config = multi_target_config();
+        for target in ["main", "content-main", "content"] {
+            assert!(ensure_quick_submit_allowed(target, &config, target, OTHER_USER).is_ok());
+        }
+    }
+
+    #[test]
+    fn quick_submit_refused_on_other_protected_branch() {
+        assert_mismatch_refused("main", "content-main");
+        assert_mismatch_refused("content-main", "main");
+        assert_mismatch_refused("content", "content-main");
+    }
+
+    #[test]
+    fn quick_submit_allowed_on_quicksubmit_branch_of_target() {
+        let config = multi_target_config();
+        for (branch, target) in [
+            ("f11r-main-Jane-1761000000", "main"),
+            ("f11r-content-main-Jane-Doe-1761000000", "content-main"),
+            ("f11r-content-main-Jane-1761000000-wt", "content-main"),
+            ("f11r-content-Jane-1761000000", "content"),
+            // Not a configured target: the target can't be determined, so allowed.
+            ("f11r-old-target-Jane-1", "main"),
+            ("f11r", "main"),
+        ] {
+            assert!(
+                ensure_quick_submit_allowed(branch, &config, target, OTHER_USER).is_ok(),
+                "{branch} -> {target} should be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_submit_refused_on_quicksubmit_branch_of_other_target() {
+        assert_mismatch_refused("f11r-main-Jane-1761000000", "content-main");
+        assert_mismatch_refused("f11r-content-main-Jane-1761000000", "main");
+        assert_mismatch_refused("f11r-content-main-Jane-1761000000", "content");
+        assert_mismatch_refused("f11r-content-Jane-1761000000", "content-main");
+    }
+
+    fn main_content_config() -> RepoConfig {
+        RepoConfig {
+            target_branches: ["main", "main-content"]
+                .into_iter()
+                .map(|name| ethos_core::types::config::TargetBranchConfig {
+                    name: name.to_string(),
+                    uses_merge_queue: true,
+                    blocked_file_globs: Vec::new(),
+                })
+                .collect(),
+            ..multi_target_config()
+        }
+    }
+
+    #[test]
+    fn quick_submit_allowed_on_own_branch_that_parses_as_another_target() {
+        let config = main_content_config();
+        for (branch, target, display_name) in [
+            // "content Bob" for main reads as a main-content branch by the longest prefix.
+            ("f11r-main-content-Bob-1", "main", "content Bob"),
+            ("f11r-main-content-Bob-1-wt", "main", "content Bob"),
+            // "Bob" for main-content.
+            ("f11r-main-content-Bob-1", "main-content", "content Bob"),
+            ("f11r-main-content-Bob-1", "main-content", "Bob"),
+        ] {
+            assert!(
+                ensure_quick_submit_allowed(branch, &config, target, display_name).is_ok(),
+                "{branch} -> {target} should be allowed for {display_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_submit_refused_across_targets_with_ambiguous_display_name() {
+        let config = main_content_config();
+        for (branch, target) in [
+            // "content Bob"'s own branch for main-content.
+            ("f11r-main-content-content-Bob-1", "main"),
+            ("f11r-main-Jane-1", "main-content"),
+            ("f11r-main-content-Jane-1", "main"),
+        ] {
+            match ensure_quick_submit_allowed(branch, &config, target, "content Bob") {
+                Err(CoreError::Input(e)) => {
+                    assert!(e.to_string().starts_with("You're on '"), "{e}")
+                }
+                other => panic!("{branch} -> {target} should be refused with Input, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn quick_submit_branch_prefix_matches_submit_naming() {
+        assert_eq!(
+            quick_submit_branch_prefix("main", "content Bob"),
+            "f11r-main-content-Bob-"
+        );
+        assert_eq!(
+            quick_submit_branch_prefix("main-content", "Jane Q Doe"),
+            "f11r-main-content-Jane-Q-Doe-"
+        );
+    }
+
+    fn merge_queue_entry(login: &str, title: &str, base: &str, head: &str) -> serde_json::Value {
+        serde_json::json!({
+            "__typename": "MergeQueueEntry",
+            "headCommit": {
+                "__typename": "Commit",
+                "author": { "__typename": "GitActor", "name": login, "user": { "login": login } },
+                "message": title,
+            },
+            "enqueuedAt": "2026-01-01T00:00:00Z",
+            "state": "QUEUED",
+            "pullRequest": {
+                "id": format!("{login}:{base}:{head}"),
+                "number": 1,
+                "url": "https://github.com/o/r/pull/1",
+                "title": title,
+                "baseRefName": base,
+                "headRefName": head,
+            },
+        })
+    }
+
+    fn merge_queue(entries: Vec<serde_json::Value>) -> GetMergeQueueRepositoryMergeQueue {
+        serde_json::from_value(serde_json::json!({
+            "__typename": "MergeQueue",
+            "url": "https://github.com/o/r/queue/main",
+            "entries": { "__typename": "MergeQueueEntryConnection", "nodes": entries },
+        }))
+        .expect("parse merge queue fixture")
+    }
+
+    const PREV: &str = "f11r-main-Jane-1";
+
+    fn reusable_id(entries: Vec<serde_json::Value>) -> Option<String> {
+        reusable_quicksubmit_pr(merge_queue(entries), "jane", "main", PREV).map(|pr| pr.id)
+    }
+
+    #[test]
+    fn reusable_quicksubmit_pr_matches_author_title_base_and_head() {
+        let title = format!("{SUBMIT_PREFIX} update");
+        assert_eq!(
+            reusable_id(vec![merge_queue_entry(
+                "jane",
+                &title,
+                "main",
+                "f11r-main-Jane-1-wt"
+            )]),
+            Some("jane:main:f11r-main-Jane-1-wt".to_string())
+        );
+    }
+
+    #[test]
+    fn reusable_quicksubmit_pr_skips_other_base_or_head() {
+        let title = format!("{SUBMIT_PREFIX} update");
+        for entry in [
+            merge_queue_entry("jane", &title, "main-content", "f11r-main-Jane-1-wt"),
+            merge_queue_entry("jane", &title, "main", "f11r-main-Jane-2-wt"),
+            merge_queue_entry("jane", &title, "main", PREV),
+            merge_queue_entry("jane", "feat: unrelated", "main", "f11r-main-Jane-1-wt"),
+            merge_queue_entry("bob", &title, "main", "f11r-main-Jane-1-wt"),
+        ] {
+            assert_eq!(reusable_id(vec![entry.clone()]), None, "{entry}");
+        }
+    }
+
+    #[test]
+    fn reusable_quicksubmit_pr_finds_match_after_other_quicksubmit_prs() {
+        let title = format!("{SUBMIT_PREFIX} update");
+        assert_eq!(
+            reusable_id(vec![
+                merge_queue_entry(
+                    "jane",
+                    &title,
+                    "main-content",
+                    "f11r-main-content-Jane-9-wt"
+                ),
+                serde_json::Value::Null,
+                merge_queue_entry("jane", &title, "main", "f11r-main-Jane-1-wt"),
+            ]),
+            Some("jane:main:f11r-main-Jane-1-wt".to_string())
+        );
+    }
+
+    #[test]
+    fn reusable_quicksubmit_pr_none_for_empty_queue() {
+        assert_eq!(reusable_id(Vec::new()), None);
+        let empty: GetMergeQueueRepositoryMergeQueue = serde_json::from_value(serde_json::json!({
+            "__typename": "MergeQueue",
+            "url": "https://github.com/o/r/queue/main",
+            "entries": null,
+        }))
+        .expect("parse merge queue fixture");
+        assert!(reusable_quicksubmit_pr(empty, "jane", "main", PREV).is_none());
+    }
+
+    #[test]
+    fn quick_submit_branch_target_prefers_longest_match() {
+        let targets = ["main", "content", "content-main"];
+        assert_eq!(
+            quick_submit_branch_target("f11r-content-main-Jo-1", targets),
+            Some("content-main")
+        );
+        assert_eq!(
+            quick_submit_branch_target("f11r-content-Jo-1", targets),
+            Some("content")
+        );
+        assert_eq!(
+            quick_submit_branch_target("f11r-mainline-Jo-1", targets),
+            None
+        );
+        assert_eq!(quick_submit_branch_target("f11r-main", targets), None);
+        assert_eq!(quick_submit_branch_target("main-Jo-1", targets), None);
+    }
+
+    #[test]
+    fn quick_submit_refused_on_other_branches() {
+        let config = guard_repo_config();
+        for branch in ["f11r-branch-foo", "someone/topic"] {
+            match ensure_quick_submit_allowed(branch, &config, "main", OTHER_USER) {
+                Err(CoreError::Input(e)) => {
+                    let msg = e.to_string();
+                    assert!(msg.contains(&format!("'{branch}'")), "{msg}");
+                    assert!(msg.contains("'main'"), "{msg}");
+                }
+                other => panic!("{branch} should be refused with Input, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn requeue_failure_names_the_pr() {
+        let message = requeue_failed_message(
+            42,
+            "https://github.com/o/r/pull/42",
+            "Error enqueuing PR: not mergeable",
+        );
+        assert_eq!(
+            message,
+            "Your changes were pushed to PR #42 (https://github.com/o/r/pull/42), but it could not be added back to the merge queue: Error enqueuing PR: not mergeable. Re-enqueue it from GitHub or Friendshipper instead of submitting again."
+        );
+    }
+
+    #[test]
+    fn existing_pr_dequeued_when_dequeue_succeeds() {
+        assert!(existing_pr_dequeued("id", Ok(())));
+    }
+
+    #[test]
+    fn existing_pr_dequeued_false_for_merged_pr() {
+        use ethos_core::types::github::pulls::dequeue_pull_request;
+        let res: graphql_client::Response<dequeue_pull_request::ResponseData> =
+            serde_json::from_str(
+                r#"{"data":null,"errors":[{"message":"Pull request is already merged"}]}"#,
+            )
+            .expect("parse dequeue response");
+        let dequeued =
+            existing_pr_dequeued("id", github::mutation_result("dequeueing PR", Ok(res)));
+        assert!(!dequeued, "a merged PR must lead to a new branch and PR");
+    }
+
+    #[tokio::test]
+    async fn pull_request_create_omits_a_none_body() {
+        let octocrab = Octocrab::default();
+        let pulls = octocrab.pulls("owner", "repo");
+        let without =
+            serde_json::to_value(pulls.create("title", "head", "base").body::<String>(None))
+                .unwrap();
+        assert_eq!(
+            without,
+            serde_json::json!({"title": "title", "head": "head", "base": "base"})
+        );
+        let with = serde_json::to_value(
+            pulls
+                .create("title", "head", "base")
+                .body::<String>(Some("body".to_string())),
+        )
+        .unwrap();
+        assert_eq!(with["body"], "body");
     }
 }

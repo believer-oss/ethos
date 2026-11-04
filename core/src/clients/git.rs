@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, bail};
 use chrono::{DateTime, Utc};
@@ -22,8 +23,10 @@ use tracing::{debug, error, info, instrument};
 
 use crate::types::errors::CoreError;
 use crate::types::locks::VerifyLocksResponse;
+use crate::types::repo::BranchInfo;
 use crate::types::repo::File;
 use crate::types::repo::FileState;
+use crate::types::repo::FileTouch;
 use crate::types::repo::Snapshot;
 
 static SNAPSHOT_PREFIX: &str = "snapshot";
@@ -32,6 +35,7 @@ lazy_static! {
     static ref WORKTREE_DIR_REGEX: Regex = Regex::new(r"^worktree (.+)").unwrap();
     static ref WORKTREE_SHA_REGEX: Regex = Regex::new(r"^HEAD (.+)").unwrap();
     static ref WORKTREE_BRANCH_REGEX: Regex = Regex::new(r"^(branch|detached)\s*(.+)?").unwrap();
+    static ref GIT_VERSION_REGEX: Regex = Regex::new(r"^git version (\d+)\.(\d+)").unwrap();
     static ref GIT_FETCH_LOCK: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 }
 
@@ -61,6 +65,270 @@ pub enum MergeType {
     FF,
     FFOnly,
     NoFF,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateRemoteBranchOutcome {
+    Created,
+    AlreadyExists,
+}
+
+/// Oldest git with `merge-tree --write-tree`.
+pub const MIN_BRANCH_GIT: (u32, u32) = (2, 38);
+
+/// Version string of a git already found to be supported; unsupported results are never cached.
+static SUPPORTED_GIT: OnceLock<String> = OnceLock::new();
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitVersionCheck {
+    pub version: String,
+    pub supported: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergeTreeOutcome {
+    Clean,
+    Conflicts(Vec<String>),
+}
+
+/// Parses `(major, minor)` from the first line of `git version` output.
+pub fn parse_git_version(output: &str) -> Option<(u32, u32)> {
+    let first_line = output.trim().lines().next()?;
+    let caps = GIT_VERSION_REGEX.captures(first_line)?;
+    let major = caps[1].parse().ok()?;
+    let minor = caps[2].parse().ok()?;
+    Some((major, minor))
+}
+
+/// `version` is the token after `git version `, or the trimmed raw output when unparseable.
+fn version_check_from_output(raw: &str) -> GitVersionCheck {
+    let trimmed = raw.trim();
+    let Some(parsed) = parse_git_version(trimmed) else {
+        return GitVersionCheck {
+            version: trimmed.to_string(),
+            supported: false,
+        };
+    };
+    let version = trimmed
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("git version "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or(trimmed)
+        .to_string();
+    GitVersionCheck {
+        version,
+        supported: parsed >= MIN_BRANCH_GIT,
+    }
+}
+
+fn is_tree_oid(record: &[u8]) -> bool {
+    (record.len() == 40 || record.len() == 64)
+        && record
+            .iter()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+}
+
+/// Interprets `git merge-tree --write-tree --name-only --no-messages -z` output. Exit 1 alone is
+/// not a conflict: a bad ref also exits 1, so a conflict requires a leading tree OID and paths.
+pub fn parse_merge_tree_output(
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &str,
+) -> anyhow::Result<MergeTreeOutcome> {
+    let code = exit_code.map_or_else(|| "signal".to_string(), |c| c.to_string());
+    let stderr = stderr.trim();
+
+    let mut records: Vec<&[u8]> = stdout.split(|b| *b == b'\0').collect();
+    if records.last().is_some_and(|r| r.is_empty()) {
+        records.pop();
+    }
+
+    if !records.first().is_some_and(|r| is_tree_oid(r)) {
+        bail!("git merge-tree did not return a tree OID (exit {code}): {stderr}");
+    }
+
+    match exit_code {
+        Some(0) => Ok(MergeTreeOutcome::Clean),
+        Some(1) => {
+            let paths: Vec<String> = records[1..]
+                .iter()
+                .take_while(|r| !r.is_empty())
+                .map(|r| String::from_utf8_lossy(r).into_owned())
+                .collect();
+            if paths.is_empty() {
+                bail!("git merge-tree reported conflicts but listed no paths");
+            }
+            Ok(MergeTreeOutcome::Conflicts(paths))
+        }
+        _ => bail!("git merge-tree failed (exit {code}): {stderr}"),
+    }
+}
+
+/// Parses `log --name-only --format=%x1e%H%x1f%an%x1f%aI` output into each path's newest touch.
+pub fn parse_last_touch(output: &str) -> HashMap<String, FileTouch> {
+    let mut touches: HashMap<String, FileTouch> = HashMap::new();
+    for record in output.split('\x1e') {
+        if record.trim().is_empty() {
+            continue;
+        }
+        let mut lines = record.lines();
+        let Some(header) = lines.next() else {
+            continue;
+        };
+        let fields: Vec<&str> = header.split('\x1f').collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        let sha: String = fields[0].chars().take(8).collect();
+        for path in lines.filter(|l| !l.is_empty()) {
+            touches
+                .entry(path.to_string())
+                .or_insert_with(|| FileTouch {
+                    sha: sha.clone(),
+                    author: fields[1].to_string(),
+                    date: fields[2].to_string(),
+                });
+        }
+    }
+    touches
+}
+
+/// Files that git's autostash apply left conflicted after a pull, and how each was settled.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutostashConflict {
+    /// Text files left with git's conflict markers.
+    pub marker_files: Vec<String>,
+    /// Files whose local version replaced the pulled one.
+    pub kept_local_files: Vec<String>,
+    /// Files deleted locally whose pulled version was removed again.
+    pub kept_deleted_files: Vec<String>,
+    /// Files in a state the settling did not recognize, left as git wrote them.
+    pub unresolved_files: Vec<String>,
+    /// A pre-pull snapshot holds the local versions.
+    pub snapshot_saved: bool,
+    /// Git's `autostash` stash entry was dropped because the snapshot covers it.
+    pub autostash_dropped: bool,
+}
+
+impl AutostashConflict {
+    /// What the pull left to the user, starting lower-case after "Synced, but".
+    pub fn details(&self) -> String {
+        let mut out = "some files changed both locally and on origin.".to_string();
+        if !self.marker_files.is_empty() {
+            out.push_str(&format!(
+                " Resolve the conflict markers in {} before submitting.",
+                self.marker_files.join(", ")
+            ));
+        }
+        let kept: Vec<String> = self
+            .kept_local_files
+            .iter()
+            .cloned()
+            .chain(
+                self.kept_deleted_files
+                    .iter()
+                    .map(|p| format!("{p} (deleted)")),
+            )
+            .collect();
+        if !kept.is_empty() {
+            out.push_str(&format!(
+                " Kept your local version of {}; submitting will overwrite origin's changes to them.",
+                kept.join(", ")
+            ));
+        }
+        if !self.unresolved_files.is_empty() {
+            out.push_str(&format!(
+                " Could not merge {}; check them before submitting.",
+                self.unresolved_files.join(", ")
+            ));
+        }
+        let saved_in = match (self.snapshot_saved, self.autostash_dropped) {
+            (true, true) => "the 'pre-pull' snapshot",
+            (true, false) => "the 'pre-pull' snapshot and in git's 'autostash' stash entry",
+            (false, _) => "git's 'autostash' stash entry",
+        };
+        out.push_str(&format!(" Your local versions are saved in {saved_in}."));
+        out
+    }
+}
+
+impl std::fmt::Display for AutostashConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Synced, but {}", self.details())
+    }
+}
+
+impl std::error::Error for AutostashConflict {}
+
+/// An unmerged index path with the blob id at stages 1-3 (base, ours, theirs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmergedEntry {
+    pub path: String,
+    pub stages: [Option<String>; 3],
+    /// The file mode at each stage.
+    pub modes: [Option<String>; 3],
+}
+
+impl UnmergedEntry {
+    /// The `git status` XY code, from which stages are present.
+    pub fn xy(&self) -> &'static str {
+        match self.stages.each_ref().map(Option::is_some) {
+            [true, true, true] => "UU",
+            [false, true, true] => "AA",
+            [true, true, false] => "UD",
+            [true, false, true] => "DU",
+            [false, true, false] => "AU",
+            [false, false, true] => "UA",
+            [true, false, false] => "DD",
+            [false, false, false] => "",
+        }
+    }
+
+    pub fn is_submodule(&self) -> bool {
+        self.modes.iter().flatten().any(|mode| mode == "160000")
+    }
+}
+
+/// Parses `git ls-files -u -z` output into one entry per path, in output order.
+fn parse_unmerged_entries(output: &str) -> Vec<UnmergedEntry> {
+    let mut entries: Vec<UnmergedEntry> = Vec::new();
+    for record in output.split('\0') {
+        let record = record.trim_start_matches('\n');
+        let Some((meta, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let mut fields = meta.split_whitespace();
+        let (Some(mode), Some(blob), Some(stage)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let Some(slot) = stage.parse::<usize>().ok().and_then(|s| s.checked_sub(1)) else {
+            continue;
+        };
+        if slot > 2 {
+            continue;
+        }
+        if entries.last().is_none_or(|e| e.path != path) {
+            entries.push(UnmergedEntry {
+                path: path.to_string(),
+                stages: Default::default(),
+                modes: Default::default(),
+            });
+        }
+        if let Some(entry) = entries.last_mut() {
+            entry.stages[slot] = Some(blob.to_string());
+            entry.modes[slot] = Some(mode.to_string());
+        }
+    }
+    entries
+}
+
+enum UnmergedOutcome {
+    Markers,
+    KeptLocal,
+    KeptDeletion,
+    Unresolved,
 }
 
 #[derive(Eq, PartialEq)]
@@ -99,13 +367,22 @@ pub struct Git {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Opts<'a> {
     pub ignored_errors: &'a [&'a str],
     pub should_log_stdout: bool,
     pub return_complete_error: bool,
     pub lfs_mode: LfsMode,
     pub skip_notify_frontend: bool,
+    pub env: &'a [(&'a str, &'a str)],
+}
+
+/// A finished git process, whatever its exit code.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitRunOutput {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -123,6 +400,7 @@ impl Default for Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 }
@@ -135,6 +413,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 
@@ -145,6 +424,7 @@ impl Opts<'_> {
             return_complete_error: false,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 
@@ -155,6 +435,7 @@ impl Opts<'_> {
             return_complete_error: true,
             lfs_mode: LfsMode::Inflated,
             skip_notify_frontend: false,
+            env: &[],
         }
     }
 
@@ -174,6 +455,27 @@ impl Opts<'_> {
     }
 }
 
+// Prints env keys only: values may hold credentials and `Opts` is recorded in tracing spans.
+impl std::fmt::Debug for Opts<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Opts")
+            .field("ignored_errors", &self.ignored_errors)
+            .field("should_log_stdout", &self.should_log_stdout)
+            .field("return_complete_error", &self.return_complete_error)
+            .field("lfs_mode", &self.lfs_mode)
+            .field("skip_notify_frontend", &self.skip_notify_frontend)
+            .field("env", &self.env.iter().map(|(k, _)| *k).collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl<'a> Opts<'a> {
+    pub fn with_env(mut self, env: &'a [(&'a str, &'a str)]) -> Self {
+        self.env = env;
+        self
+    }
+}
+
 pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     if bool_str == "true" || bool_str == "yes" || bool_str == "1" {
         return Ok(true);
@@ -182,6 +484,44 @@ pub fn parse_bool_string(bool_str: &str) -> anyhow::Result<bool> {
     }
 
     bail!("Unable to parse string")
+}
+
+/// Parses `for-each-ref` output written with `%1f` field and `%1e` record separators.
+pub(crate) fn parse_branch_records(output: &str) -> Vec<BranchInfo> {
+    output
+        .split('\x1e')
+        .map(|record| record.trim_start_matches('\n'))
+        .filter(|record| !record.is_empty())
+        .filter_map(|record| {
+            let fields: Vec<&str> = record.split('\x1f').collect();
+            let [name, sha, short_sha, commit_date, author, subject, contents] = fields[..] else {
+                return None;
+            };
+            if name == "HEAD" {
+                return None;
+            }
+            Some(BranchInfo {
+                name: name.to_string(),
+                sha: sha.to_string(),
+                short_sha: short_sha.to_string(),
+                commit_date: commit_date.to_string(),
+                author: author.to_string(),
+                subject: subject.to_string(),
+                message: contents.trim_end().to_string(),
+                is_feature_branch: false,
+                is_protected: false,
+                is_current: false,
+            })
+        })
+        .collect()
+}
+
+/// Whether `git push --porcelain` output reports `refs/heads/<name>` as a newly created ref.
+pub(crate) fn push_created_new_ref(porcelain_stdout: &str, name: &str) -> bool {
+    let target = format!(":refs/heads/{name}\t");
+    porcelain_stdout
+        .lines()
+        .any(|line| line.starts_with("*\t") && line.contains(&target))
 }
 
 impl Git {
@@ -835,7 +1175,7 @@ impl Git {
                 .collect();
 
             let conflict_message = format!(
-                "{} untracked file conflicts were found during snapshot restore:\n{}\n\nYour local untracked files have been preserved. The snapshot versions have been saved with '.snapshotcopy' extensions. Please review and resolve these conflicts manually.",
+                "{} local file conflicts were found during snapshot restore:\n{}\n\nYour local files have been preserved. The snapshot versions have been saved with '.snapshotcopy' extensions. Please review and resolve these conflicts manually.",
                 conflicts.len(),
                 conflict_details.join("\n")
             );
@@ -868,6 +1208,317 @@ impl Git {
             bail!(error_msg);
         }
         Ok(())
+    }
+
+    /// The commit at the top of `refs/stash`, if any.
+    pub async fn stash_top(&self) -> anyhow::Result<Option<String>> {
+        let output = self
+            .run_and_collect_output(
+                &["stash", "list", "-n1", "--format=%H"],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .find(|s| !s.is_empty())
+            .map(str::to_string))
+    }
+
+    /// Runs a `-z` name-only command and returns its paths.
+    async fn collect_nul_paths(&self, args: &[&str]) -> anyhow::Result<Vec<String>> {
+        let output = self
+            .run_and_collect_output(args, Opts::new_without_logs())
+            .await?;
+        Ok(output
+            .split('\0')
+            .map(|s| s.trim_matches('\n'))
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Unmerged index entries, read from the index only.
+    pub async fn unmerged_entries(&self) -> anyhow::Result<Vec<UnmergedEntry>> {
+        let output = self
+            .run_and_collect_output(&["ls-files", "-u", "-z"], Opts::new_without_logs())
+            .await?;
+        Ok(parse_unmerged_entries(&output))
+    }
+
+    /// Paths with unmerged index entries.
+    pub async fn unmerged_paths(&self) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .unmerged_entries()
+            .await?
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect())
+    }
+
+    /// Blob id of the working-tree file at `path` after clean filters, or `None` if it is
+    /// missing.
+    async fn worktree_blob(&self, path: &str) -> anyhow::Result<Option<String>> {
+        if std::fs::symlink_metadata(self.repo_path.join(path)).is_err() {
+            return Ok(None);
+        }
+        let output = self
+            .run_and_collect_output(&["hash-object", "--", path], Opts::new_without_logs())
+            .await?;
+        Ok(Some(output.trim().to_string()))
+    }
+
+    fn has_conflict_markers(&self, path: &str) -> bool {
+        std::fs::read(self.repo_path.join(path)).is_ok_and(|bytes| {
+            bytes.starts_with(b"<<<<<<<") || bytes.windows(8).any(|w| w == b"\n<<<<<<<")
+        })
+    }
+
+    async fn is_lfs_file(&self, path: &str) -> anyhow::Result<bool> {
+        let output = self
+            .run_and_collect_output(
+                &["check-attr", "-z", "filter", "--", path],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        Ok(output.split('\0').nth(2) == Some("lfs"))
+    }
+
+    async fn checkout_theirs(&self, path: &str) -> UnmergedOutcome {
+        let pathspec = format!(":(literal){path}");
+        match self
+            .run(&["checkout", "--theirs", "--", &pathspec], Opts::default())
+            .await
+        {
+            Ok(()) => UnmergedOutcome::KeptLocal,
+            Err(e) => {
+                warn!(path, "Could not restore the local version: {e}");
+                UnmergedOutcome::Unresolved
+            }
+        }
+    }
+
+    /// Settles one path that git's autostash apply left unmerged. Stage 2 is the pulled
+    /// version and stage 3 the stashed local one. Where git could not merge textually, the
+    /// local version or deletion is put back: binary files and modify/delete conflicts hold
+    /// the pulled version, and LFS pointers hold a pointer with conflict markers.
+    async fn settle_unmerged_entry(&self, entry: &UnmergedEntry) -> UnmergedOutcome {
+        let path = entry.path.as_str();
+        let ours = entry.stages[1].as_deref();
+        let theirs = entry.stages[2].as_deref();
+        if theirs.is_some() {
+            match self.is_lfs_file(path).await {
+                Ok(true) => return self.checkout_theirs(path).await,
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(path, "Could not read attributes of conflicted file: {e}");
+                    return UnmergedOutcome::Unresolved;
+                }
+            }
+        }
+        let worktree = match self.worktree_blob(path).await {
+            Ok(blob) => blob,
+            Err(e) => {
+                warn!(path, "Could not hash conflicted file: {e}");
+                return UnmergedOutcome::Unresolved;
+            }
+        };
+        match (theirs, worktree.as_deref()) {
+            (Some(theirs), Some(w)) if w == theirs => UnmergedOutcome::KeptLocal,
+            (Some(_), Some(w)) if Some(w) == ours => self.checkout_theirs(path).await,
+            (Some(_), Some(_)) if self.has_conflict_markers(path) => UnmergedOutcome::Markers,
+            (None, None) => UnmergedOutcome::KeptDeletion,
+            (None, Some(w)) if Some(w) == ours => {
+                match std::fs::remove_file(self.repo_path.join(path)) {
+                    Ok(()) => UnmergedOutcome::KeptDeletion,
+                    Err(e) => {
+                        warn!(path, "Could not restore the local deletion: {e}");
+                        UnmergedOutcome::Unresolved
+                    }
+                }
+            }
+            _ => UnmergedOutcome::Unresolved,
+        }
+    }
+
+    /// Settles the conflicts git's autostash apply left after a pull, or returns `None` if
+    /// there are none.
+    ///
+    /// Text conflicts keep git's markers. Binary and modify/delete conflicts get the local
+    /// version or deletion back in the working tree. Conflicted and staged paths are then
+    /// reset to `HEAD` so they show as plain local edits. Git's leftover `autostash` entry is
+    /// dropped only when every path was settled and `snapshot_commit` holds the same content.
+    pub async fn settle_autostash_conflicts(
+        &self,
+        snapshot_commit: Option<&str>,
+        stash_before: Option<&str>,
+    ) -> anyhow::Result<Option<AutostashConflict>> {
+        let entries = self.unmerged_entries().await?;
+        if entries.is_empty() {
+            return Ok(None);
+        }
+
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        warn!(?paths, "Autostash apply after pull left conflicts");
+
+        let mut conflict = AutostashConflict {
+            snapshot_saved: snapshot_commit.is_some(),
+            ..Default::default()
+        };
+        for entry in &entries {
+            let list = match self.settle_unmerged_entry(entry).await {
+                UnmergedOutcome::Markers => &mut conflict.marker_files,
+                UnmergedOutcome::KeptLocal => &mut conflict.kept_local_files,
+                UnmergedOutcome::KeptDeletion => &mut conflict.kept_deleted_files,
+                UnmergedOutcome::Unresolved => &mut conflict.unresolved_files,
+            };
+            list.push(entry.path.clone());
+        }
+
+        let mut reset: Vec<String> = self
+            .collect_nul_paths(&["diff", "--cached", "--name-only", "-z"])
+            .await?;
+        reset.extend(entries.into_iter().map(|e| e.path));
+        reset.sort();
+        reset.dedup();
+        let reset_path = Self::write_pathspec_file(&reset)?;
+        self.run(
+            &[
+                "reset",
+                "-q",
+                "--pathspec-from-file",
+                reset_path.to_str().expect("temp file path is non-UTF-8"),
+            ],
+            Opts::default(),
+        )
+        .await?;
+
+        conflict.autostash_dropped = match snapshot_commit {
+            Some(commit) if conflict.unresolved_files.is_empty() => {
+                self.drop_autostash_covered_by(commit, stash_before).await
+            }
+            _ => false,
+        };
+        Ok(Some(conflict))
+    }
+
+    /// Finishes a `pull --autostash` that started with `stash_before` at the top of `refs/stash`.
+    ///
+    /// If git's autostash apply conflicted, the conflicts are settled as in
+    /// `settle_autostash_conflicts` and `snapshot` is not applied on top. Otherwise, or if
+    /// settling fails, `snapshot` is restored as usual, calling `on_restore` first.
+    pub async fn finish_autostash_pull(
+        &self,
+        snapshot: Option<&Snapshot>,
+        stash_before: Option<&str>,
+        modified_files: Vec<File>,
+        on_restore: impl FnOnce() + Send,
+    ) -> anyhow::Result<Option<AutostashConflict>> {
+        let snapshot_commit = snapshot.map(|s| s.commit.as_str());
+        match self
+            .settle_autostash_conflicts(snapshot_commit, stash_before)
+            .await
+        {
+            Ok(Some(conflict)) => return Ok(Some(conflict)),
+            Ok(None) => {}
+            Err(e) if snapshot.is_some() => {
+                warn!("Could not settle autostash conflicts, restoring the snapshot: {e:#}");
+            }
+            Err(e) => return Err(e),
+        }
+        if let Some(snapshot) = snapshot {
+            on_restore();
+            self.restore_snapshot_via_cherry_pick(&snapshot.commit, modified_files)
+                .await?;
+        }
+        Ok(None)
+    }
+
+    /// Drops `stash@{0}` if it is the `autostash` entry pushed directly on top of `stash_before`
+    /// and every path it changes, in its worktree and index trees, has the same content in
+    /// `snapshot_commit`.
+    async fn drop_autostash_covered_by(
+        &self,
+        snapshot_commit: &str,
+        stash_before: Option<&str>,
+    ) -> bool {
+        let autostash = match self
+            .autostash_covered_by(snapshot_commit, stash_before)
+            .await
+        {
+            Ok(Some(autostash)) => autostash,
+            Ok(None) => {
+                warn!("Keeping the autostash entry: the snapshot does not provably cover it");
+                return false;
+            }
+            Err(e) => {
+                warn!("Keeping the autostash entry: {e}");
+                return false;
+            }
+        };
+        match self
+            .run(&["stash", "drop", "-q", "stash@{0}"], Opts::default())
+            .await
+        {
+            Ok(()) => {
+                info!(%autostash, "Dropped the autostash entry covered by the snapshot");
+                true
+            }
+            Err(e) => {
+                warn!("Failed to drop autostash entry {autostash}: {e}");
+                false
+            }
+        }
+    }
+
+    /// The autostash commit when `drop_autostash_covered_by` may drop it.
+    async fn autostash_covered_by(
+        &self,
+        snapshot_commit: &str,
+        stash_before: Option<&str>,
+    ) -> anyhow::Result<Option<String>> {
+        let output = self
+            .run_and_collect_output(
+                &["stash", "list", "-n2", "--format=%H%x1f%gs"],
+                Opts::new_without_logs(),
+            )
+            .await?;
+        let entries: Vec<(&str, &str)> = output
+            .lines()
+            .filter_map(|line| line.split_once('\x1f'))
+            .collect();
+
+        let Some(&(autostash, subject)) = entries.first() else {
+            return Ok(None);
+        };
+        let below = entries.get(1).map(|(sha, _)| *sha);
+        if subject.trim() != "autostash" || below != stash_before {
+            return Ok(None);
+        }
+
+        for tree in [autostash.to_string(), format!("{autostash}^2")] {
+            let base = format!("{autostash}^1");
+            let changed = self
+                .collect_nul_paths(&["diff", "--name-only", "-z", "--no-renames", &base, &tree])
+                .await?;
+            let differs: HashSet<String> = self
+                .collect_nul_paths(&[
+                    "diff",
+                    "--name-only",
+                    "-z",
+                    "--no-renames",
+                    snapshot_commit,
+                    &tree,
+                ])
+                .await?
+                .into_iter()
+                .collect();
+            if changed.iter().any(|path| differs.contains(path)) {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(autostash.to_string()))
     }
 
     /// Restore only the requested subset of paths from a snapshot. The
@@ -1275,6 +1926,80 @@ impl Git {
         Ok(!output.is_empty())
     }
 
+    /// Lists `refs/remotes/origin/*`, newest commit first. Reads local refs only.
+    pub async fn list_remote_branches(&self) -> anyhow::Result<Vec<BranchInfo>> {
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "for-each-ref",
+                    "--sort=-committerdate",
+                    "refs/remotes/origin",
+                    "--format=%(refname:lstrip=3)%1f%(objectname)%1f%(objectname:short)%1f%(committerdate:iso-strict)%1f%(authorname)%1f%(subject)%1f%(contents)%1e",
+                ],
+                Opts {
+                    skip_notify_frontend: true,
+                    should_log_stdout: false,
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        Ok(parse_branch_records(&output))
+    }
+
+    /// Whether `refs/heads/<name>` exists on origin.
+    ///
+    /// The single fully qualified ls-remote check for branch existence. Use it instead of
+    /// `has_remote_branch`, which tail-matches (`foo` also matches `refs/heads/team/foo`).
+    pub async fn has_remote_branch_exact(&self, name: &str) -> anyhow::Result<bool> {
+        let refname = format!("refs/heads/{name}");
+        let output = self
+            .run_and_collect_output(
+                &["ls-remote", "--heads", "origin", &refname],
+                Opts::default(),
+            )
+            .await?;
+
+        Ok(output
+            .lines()
+            .any(|line| line.split_whitespace().nth(1) == Some(refname.as_str())))
+    }
+
+    /// Creates `name` on origin at `refs/remotes/origin/<base>`, failing if it already exists.
+    ///
+    /// The empty lease makes the push atomic: git rejects it if the ref exists at another SHA,
+    /// and reports "up to date" (no `*` line) if it exists at the same SHA.
+    pub async fn create_remote_branch(
+        &self,
+        name: &str,
+        base: &str,
+    ) -> anyhow::Result<CreateRemoteBranchOutcome> {
+        let lease = format!("--force-with-lease=refs/heads/{name}:");
+        let refspec = format!("refs/remotes/origin/{base}:refs/heads/{name}");
+        let result = self
+            .run_and_collect_output(
+                &["push", "--porcelain", &lease, "origin", &refspec],
+                Opts::default().with_complete_error(),
+            )
+            .await;
+
+        match result {
+            Ok(stdout) => {
+                if push_created_new_ref(&stdout, name) {
+                    Ok(CreateRemoteBranchOutcome::Created)
+                } else {
+                    Ok(CreateRemoteBranchOutcome::AlreadyExists)
+                }
+            }
+            Err(e) => match self.has_remote_branch_exact(name).await {
+                Ok(true) => Ok(CreateRemoteBranchOutcome::AlreadyExists),
+                Ok(false) | Err(_) => {
+                    Err(anyhow!("Failed to create branch '{name}' on origin: {e}"))
+                }
+            },
+        }
+    }
+
     /// Check whether `refs/remotes/origin/<branch>` exists locally.
     ///
     /// This is purely local — no network round-trip. Use this when you have
@@ -1351,6 +2076,94 @@ impl Git {
     pub async fn version(&self) -> anyhow::Result<String> {
         self.run_and_collect_output(&["version"], Opts::default())
             .await
+    }
+
+    /// Checks git against `MIN_BRANCH_GIT`. Only a supported result is cached, so an upgrade
+    /// is picked up on the next check.
+    pub async fn check_min_version(&self) -> anyhow::Result<GitVersionCheck> {
+        if let Some(version) = SUPPORTED_GIT.get() {
+            return Ok(GitVersionCheck {
+                version: version.clone(),
+                supported: true,
+            });
+        }
+
+        let raw = self.version().await?;
+        let check = version_check_from_output(&raw);
+        if check.supported {
+            let _ = SUPPORTED_GIT.set(check.version.clone());
+        }
+        Ok(check)
+    }
+
+    /// Predicts whether merging `head_ref` into `base_ref` conflicts, without touching the
+    /// working tree, index or refs. Spawned directly because the exit code and NUL-separated
+    /// stdout are both needed.
+    pub async fn predict_merge_conflicts(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> anyhow::Result<MergeTreeOutcome> {
+        if base_ref.starts_with('-') || head_ref.starts_with('-') {
+            bail!("Invalid ref for merge-tree: {base_ref} {head_ref}");
+        }
+
+        let args = [
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "-z",
+            base_ref,
+            head_ref,
+        ];
+        let mut cmd = Command::new("git");
+        cmd.args(args);
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+        cmd.env("LC_ALL", "C");
+        if !self.repo_path.as_os_str().is_empty() {
+            cmd.current_dir(self.repo_path.canonicalize()?);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        info!("Running: git {}", args.join(" "));
+
+        let output = cmd.output().await?;
+        parse_merge_tree_output(
+            output.status.code(),
+            &output.stdout,
+            &String::from_utf8_lossy(&output.stderr),
+        )
+    }
+
+    /// Maps each path changed in `range` (newest `limit` commits) to its newest commit.
+    pub async fn last_touch_by_path(
+        &self,
+        range: &str,
+        limit: usize,
+    ) -> anyhow::Result<HashMap<String, FileTouch>> {
+        if range.starts_with('-') {
+            bail!("Invalid log range: {range}");
+        }
+
+        let output = self
+            .run_and_collect_output(
+                &[
+                    "-c",
+                    "core.quotePath=false",
+                    "log",
+                    "--no-renames",
+                    "--name-only",
+                    "--format=%x1e%H%x1f%an%x1f%aI",
+                    &format!("-{limit}"),
+                    range,
+                    "--",
+                ],
+                Opts::new_without_logs().with_skip_notify_frontend(),
+            )
+            .await?;
+        Ok(parse_last_touch(&output))
     }
 
     pub async fn status(&self, paths: Vec<String>) -> anyhow::Result<String> {
@@ -1609,6 +2422,7 @@ impl Git {
                     return_complete_error: true,
                     lfs_mode: LfsMode::Stubs,
                     skip_notify_frontend: false,
+                    env: &[],
                 },
             )
             .await?;
@@ -1726,12 +2540,7 @@ impl Git {
             bail!("No arguments provided to git command");
         }
 
-        let mut sys = System::new();
-        sys.refresh_processes_specifics(
-            ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
-        );
-        // Just bail if we have more than 3 git-credential-manager procs running, because it might be death spiraling
-        if sys.processes_by_name("git-credential-manager").count() > 3 {
+        if Self::gcm_death_spiral() {
             bail!("User may need to authenticate with the git credential manager");
         }
 
@@ -1745,6 +2554,121 @@ impl Git {
             }
             Ok(_) => Ok(output.unwrap()),
         }
+    }
+
+    /// Runs git and returns its exit code and untrimmed output instead of failing on a non-zero
+    /// exit. Only a failure to spawn git is an error. `ignored_errors`, `return_complete_error`
+    /// and `should_log_stdout` have no effect here.
+    pub async fn run_with_status(
+        &self,
+        args: &[&str],
+        opts: Opts<'_>,
+    ) -> anyhow::Result<GitRunOutput> {
+        // assert we have at least one arg
+        if args.is_empty() {
+            bail!("No arguments provided to git command");
+        }
+
+        if Self::gcm_death_spiral() {
+            bail!("User may need to authenticate with the git credential manager");
+        }
+
+        let mut cmd = self.build_command(args, &opts)?;
+
+        if !opts.skip_notify_frontend {
+            if let Err(e) = self.tx.send(Self::running_message(args)) {
+                warn!("Failed to send git command message: {}", e);
+            }
+        }
+
+        let git_cmd_str = format!("git {}", args.join(" "));
+        info!("Running: {}", git_cmd_str);
+
+        let output = match cmd.output().await {
+            Ok(o) => o,
+            Err(e) => {
+                error!("Failed to run: {}. Reason: {}", git_cmd_str, e);
+                if !opts.skip_notify_frontend {
+                    let _ = self.tx.send(String::new());
+                }
+                bail!("Failed to run git command. Check the log for details.");
+            }
+        };
+
+        let result = GitRunOutput {
+            exit_code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        };
+
+        // A non-zero exit is often an answer (e.g. `merge-base --is-ancestor`), not a failure
+        if result.exit_code != 0 {
+            info!(
+                "{} exited with {}.\n{}",
+                git_cmd_str, result.exit_code, result.stderr
+            );
+        }
+
+        if !opts.skip_notify_frontend {
+            let _ = self.tx.send(String::new());
+        }
+
+        Ok(result)
+    }
+
+    fn running_message(args: &[&str]) -> String {
+        if args.len() <= 8 {
+            format!("Running 'git {}'", args.join(" "))
+        } else {
+            format!(
+                "Running 'git {} (+ {} more)'",
+                args[..8].join(" "),
+                args.len() - 8
+            )
+        }
+    }
+
+    /// Whether many git-credential-manager processes are running, which suggests it is death
+    /// spiraling.
+    fn gcm_death_spiral() -> bool {
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
+        );
+        sys.processes_by_name("git-credential-manager").count() > 3
+    }
+
+    fn build_command(&self, args: &[&str], opts: &Opts<'_>) -> anyhow::Result<Command> {
+        let mut cmd = Command::new("git");
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        // disable clone protection
+        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
+
+        if opts.lfs_mode == LfsMode::Stubs {
+            cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
+        }
+
+        // after the built-in vars so a caller can override them
+        for (k, v) in opts.env {
+            cmd.env(k, v);
+        }
+
+        if !&self.repo_path.as_os_str().is_empty() {
+            // if the first arg is clone, set current dir to the parent, then canonicalize
+            if args[0] == "clone" {
+                cmd.current_dir(&self.repo_path.parent().unwrap().canonicalize()?);
+            } else {
+                cmd.current_dir(&self.repo_path.canonicalize()?);
+            }
+        }
+
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        Ok(cmd)
     }
 
     pub async fn run_and_collect_output_into_lines(
@@ -1786,45 +2710,13 @@ impl Git {
         opts: Opts<'a>,
         output: &mut Option<String>,
     ) -> anyhow::Result<()> {
-        let message = if args.len() <= 8 {
-            format!("Running 'git {}'", args.join(" "))
-        } else {
-            format!(
-                "Running 'git {} (+ {} more)'",
-                args[..8].join(" "),
-                args.len() - 8
-            )
-        };
-
         if !opts.skip_notify_frontend {
-            if let Err(e) = self.tx.send(message) {
+            if let Err(e) = self.tx.send(Self::running_message(args)) {
                 warn!("Failed to send git command message: {}", e);
             }
         }
 
-        let mut cmd = Command::new("git");
-        for arg in args {
-            cmd.arg(arg);
-        }
-
-        // disable clone protection
-        cmd.env("GIT_CLONE_PROTECTION_ACTIVE", "false");
-
-        if opts.lfs_mode == LfsMode::Stubs {
-            cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
-        }
-
-        if !&self.repo_path.as_os_str().is_empty() {
-            // if the first arg is clone, set current dir to the parent, then canonicalize
-            if args[0] == "clone" {
-                cmd.current_dir(&self.repo_path.parent().unwrap().canonicalize()?);
-            } else {
-                cmd.current_dir(&self.repo_path.canonicalize()?);
-            }
-        }
-
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        let mut cmd = self.build_command(args, &opts)?;
 
         let mut git_cmd_str: String = "git".to_string();
         for arg in args {
@@ -1989,9 +2881,12 @@ mod tests {
             &["config", "commit.gpgsign", "false"],
             &["config", "core.autocrlf", "false"],
         ];
-        for args in config_steps {
+        // keep the developer's global hooks out of test commits
+        let hooks_dir = dir.path().join("no-hooks");
+        let hooks_step = ["config", "core.hooksPath", hooks_dir.to_str().unwrap()];
+        for args in config_steps.iter().copied().chain([&hooks_step[..]]) {
             let out = StdCommand::new("git")
-                .args(*args)
+                .args(args)
                 .current_dir(&path)
                 .output()
                 .expect("run git");
@@ -2551,6 +3446,10 @@ mod tests {
             msg.contains("foo.py.snapshotcopy"),
             "error message should name the .snapshotcopy file; got: {msg}"
         );
+        assert!(
+            msg.contains("1 local file conflicts") && !msg.contains("untracked"),
+            "a tracked file must not be described as untracked; got: {msg}"
+        );
 
         // foo.py on disk should hold the local edit (content B).
         let on_disk = std::fs::read_to_string(git.repo_path.join("foo.py")).unwrap();
@@ -2610,5 +3509,1411 @@ mod tests {
                 .exists(),
             "localcopy was not cleaned up after identical restore"
         );
+    }
+
+    /// Runs git in `dir`, asserts success and returns trimmed stdout.
+    fn git_ok(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = StdCommand::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// `setup_repo()` plus a local bare repo as `origin` with `main` pushed and fetched.
+    /// Returns (git, repo dir guard, origin dir guard).
+    fn setup_repo_with_bare_origin() -> (Git, TempDir, TempDir) {
+        let (git, dir) = setup_repo();
+        let origin = tempfile::tempdir().expect("create origin tempdir");
+        git_ok(origin.path(), &["init", "--bare"]);
+        let origin_path = origin.path().to_string_lossy().to_string();
+        git_ok(&git.repo_path, &["remote", "add", "origin", &origin_path]);
+        git_ok(&git.repo_path, &["push", "origin", "HEAD:refs/heads/main"]);
+        git_ok(&git.repo_path, &["fetch", "origin"]);
+        (git, dir, origin)
+    }
+
+    fn remote_sha(origin: &std::path::Path, refname: &str) -> String {
+        git_ok(origin, &["rev-parse", "--verify", refname])
+    }
+
+    #[tokio::test]
+    async fn test_with_env_reaches_git_and_does_not_leak() {
+        let (git, _dir) = setup_repo();
+
+        // Compared whole: with no editor configured, `git var GIT_EDITOR` fails on some hosts.
+        let before = git
+            .run_with_status(&["var", "GIT_EDITOR"], Opts::default())
+            .await
+            .unwrap();
+        let with_env = git
+            .run_and_collect_output(
+                &["var", "GIT_EDITOR"],
+                Opts::default().with_env(&[("GIT_EDITOR", "true")]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(with_env, "true");
+
+        let after = git
+            .run_with_status(&["var", "GIT_EDITOR"], Opts::default())
+            .await
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_applies_env() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(
+                &["var", "GIT_EDITOR"],
+                Opts::default().with_env(&[("GIT_EDITOR", "true")]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            out,
+            GitRunOutput {
+                exit_code: 0,
+                stdout: "true\n".to_string(),
+                stderr: String::new(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_returns_exit_code_for_is_ancestor() {
+        let (git, _dir) = setup_repo();
+        let older = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        std::fs::write(git.repo_path.join("seed.txt"), "second").unwrap();
+        git_ok(&git.repo_path, &["commit", "-a", "-m", "second"]);
+        let newer = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+
+        let not_ancestor = git
+            .run_with_status(
+                &["merge-base", "--is-ancestor", &newer, &older],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(not_ancestor.exit_code, 1);
+        assert!(not_ancestor.stdout.is_empty());
+
+        let ancestor = git
+            .run_with_status(
+                &["merge-base", "--is-ancestor", &older, &newer],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ancestor.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_diff_quiet() {
+        let (git, _dir) = setup_repo();
+
+        let clean = git
+            .run_with_status(&["diff", "--quiet"], Opts::default())
+            .await
+            .unwrap();
+        assert_eq!(clean.exit_code, 0);
+
+        std::fs::write(git.repo_path.join("seed.txt"), "modified").unwrap();
+        let dirty = git
+            .run_with_status(&["diff", "--quiet"], Opts::default())
+            .await
+            .unwrap();
+        assert_eq!(dirty.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_preserves_nul_separated_output() {
+        let (git, _dir) = setup_repo();
+        std::fs::write(git.repo_path.join("a b.txt"), "x").unwrap();
+
+        let out = git
+            .run_with_status(
+                &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("? a b.txt\0"), "{:?}", out.stdout);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_missing_ref_is_ok_with_exit_1() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(
+                &["rev-parse", "--verify", "-q", "refs/heads/nope"],
+                Opts::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_unknown_command_is_ok_with_nonzero_exit() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(&["not-a-command"], Opts::default())
+            .await
+            .unwrap();
+        assert_ne!(out.exit_code, 0);
+        assert!(out.stderr.contains("not-a-command"), "{:?}", out.stderr);
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_rejects_empty_args() {
+        let (git, _dir) = setup_repo();
+        assert!(git.run_with_status(&[], Opts::default()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_with_status_commit_amend_with_noop_editor() {
+        let (git, _dir) = setup_repo();
+        let out = git
+            .run_with_status(
+                &["commit", "--amend"],
+                Opts::default().with_env(&[("GIT_EDITOR", "true")]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 0, "{}", out.stderr);
+        assert_eq!(
+            git_ok(&git.repo_path, &["log", "-1", "--format=%s"]),
+            "seed"
+        );
+    }
+
+    #[test]
+    fn test_parse_branch_records() {
+        let output = concat!(
+            "f11r-branch-new\x1faaaa1111\x1faaaa111\x1f2026-10-21T13:01:46-07:00\x1fAlice\x1fAdd thing\x1fAdd thing\n\nBody line one\nBody line two\n\n\x1e\n",
+            "HEAD\x1fbbbb2222\x1fbbbb222\x1f2026-10-20T10:00:00-07:00\x1fBob\x1fHead\x1fHead\n\x1e\n",
+            "broken\x1fcccc\x1fccc\x1f2026-10-19T10:00:00-07:00\x1fCarol\x1e\n",
+            "main\x1fdddd4444\x1fdddd444\x1f2026-10-18T09:00:00-07:00\x1fDan\x1fOne-liner\x1fOne-liner\n\x1e"
+        );
+
+        let records = parse_branch_records(output);
+        let names: Vec<&str> = records.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, vec!["f11r-branch-new", "main"]);
+
+        let first = &records[0];
+        assert_eq!(first.sha, "aaaa1111");
+        assert_eq!(first.short_sha, "aaaa111");
+        assert_eq!(first.commit_date, "2026-10-21T13:01:46-07:00");
+        assert_eq!(first.author, "Alice");
+        assert_eq!(first.subject, "Add thing");
+        assert_eq!(first.message, "Add thing\n\nBody line one\nBody line two");
+        assert!(!first.is_feature_branch && !first.is_protected && !first.is_current);
+
+        assert_eq!(records[1].message, "One-liner");
+        assert!(parse_branch_records("").is_empty());
+        assert!(parse_branch_records("\n").is_empty());
+    }
+
+    #[test]
+    fn test_push_created_new_ref() {
+        let name = "f11r-branch-x";
+        assert!(push_created_new_ref(
+            "To C:/origin\n*\trefs/remotes/origin/main:refs/heads/f11r-branch-x\t[new branch]\nDone",
+            name
+        ));
+        assert!(!push_created_new_ref(
+            "To C:/origin\n=\trefs/remotes/origin/main:refs/heads/f11r-branch-x\t[up to date]\nDone",
+            name
+        ));
+        assert!(!push_created_new_ref(
+            "!\trefs/remotes/origin/main:refs/heads/f11r-branch-x\t[rejected] (stale info)",
+            name
+        ));
+        assert!(!push_created_new_ref("", name));
+        assert!(!push_created_new_ref(
+            "*\trefs/remotes/origin/main:refs/heads/f11r-branch-xy\t[new branch]",
+            name
+        ));
+        assert!(!push_created_new_ref(
+            "*\trefs/remotes/origin/main:refs/heads/team/f11r-branch-x\t[new branch]",
+            name
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_list_remote_branches_reads_origin_refs_and_skips_head() {
+        let (git, _dir) = setup_repo();
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/a", "HEAD"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/feature/b", "HEAD"],
+        );
+        git_ok(
+            &git.repo_path,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/a",
+            ],
+        );
+
+        let branches = git
+            .list_remote_branches()
+            .await
+            .expect("list_remote_branches");
+        let mut names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a", "feature/b"]);
+
+        let head_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        for b in &branches {
+            assert_eq!(b.sha, head_sha);
+            assert!(head_sha.starts_with(&b.short_sha));
+            assert_eq!(b.subject, "seed");
+            assert_eq!(b.message, "seed");
+            assert_eq!(b.author, "test");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_new_then_up_to_date() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+        let main_sha = git_ok(&git.repo_path, &["rev-parse", "refs/remotes/origin/main"]);
+
+        let outcome = git
+            .create_remote_branch("f11r-branch-x", "main")
+            .await
+            .expect("create_remote_branch");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::Created);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-x"),
+            main_sha
+        );
+
+        // Same name at the same SHA: git reports "up to date" and exits 0.
+        let outcome = git
+            .create_remote_branch("f11r-branch-x", "main")
+            .await
+            .expect("create_remote_branch again");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::AlreadyExists);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-x"),
+            main_sha
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_existing_at_different_sha() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+        let first_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+
+        std::fs::write(git.repo_path.join("seed.txt"), "second").unwrap();
+        git_ok(&git.repo_path, &["commit", "-am", "second"]);
+        let second_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/f11r-branch-y"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/main", &first_sha],
+        );
+
+        let outcome = git
+            .create_remote_branch("f11r-branch-y", "main")
+            .await
+            .expect("create_remote_branch");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::AlreadyExists);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-y"),
+            second_sha
+        );
+    }
+
+    // A plain push would fast-forward an existing branch; the empty lease must refuse it.
+    #[tokio::test]
+    async fn test_create_remote_branch_does_not_fast_forward_existing() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+        let first_sha = git_ok(&git.repo_path, &["rev-parse", "HEAD"]);
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/f11r-branch-z"],
+        );
+
+        std::fs::write(git.repo_path.join("seed.txt"), "second").unwrap();
+        git_ok(&git.repo_path, &["commit", "-am", "second"]);
+        git_ok(&git.repo_path, &["push", "origin", "HEAD:refs/heads/main"]);
+        git_ok(&git.repo_path, &["fetch", "origin"]);
+
+        let outcome = git
+            .create_remote_branch("f11r-branch-z", "main")
+            .await
+            .expect("create_remote_branch");
+        assert_eq!(outcome, CreateRemoteBranchOutcome::AlreadyExists);
+        assert_eq!(
+            remote_sha(origin.path(), "refs/heads/f11r-branch-z"),
+            first_sha
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_reports_push_failure() {
+        let (git, _dir) = setup_repo();
+        let missing = tempfile::tempdir().expect("create tempdir");
+        let missing_origin = missing.path().join("does-not-exist");
+        git_ok(
+            &git.repo_path,
+            &["remote", "add", "origin", &missing_origin.to_string_lossy()],
+        );
+        git_ok(
+            &git.repo_path,
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+
+        let err = git
+            .create_remote_branch("f11r-branch-x", "main")
+            .await
+            .expect_err("push to a missing origin must fail");
+        let msg = err.to_string();
+        // The existence re-check also fails here, so the original push error is returned.
+        assert!(
+            msg.contains("Git command failed:"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_remote_branch_wraps_error_when_branch_absent() {
+        let (git, _dir, origin) = setup_repo_with_bare_origin();
+
+        // Base ref missing locally: push fails, origin is reachable, branch absent.
+        let err = git
+            .create_remote_branch("f11r-branch-x", "no-such-base")
+            .await
+            .expect_err("push from a missing base must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("Failed to create branch 'f11r-branch-x' on origin:"),
+            "unexpected error: {msg}"
+        );
+        // git's stderr names the missing source ref.
+        assert!(msg.contains("no-such-base"), "unexpected error: {msg}");
+        assert!(
+            StdCommand::new("git")
+                .args(["rev-parse", "--verify", "refs/heads/f11r-branch-x"])
+                .current_dir(origin.path())
+                .output()
+                .map(|o| !o.status.success())
+                .unwrap(),
+            "branch must not exist on origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_remote_branch_exact() {
+        let (git, _dir, _origin) = setup_repo_with_bare_origin();
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/f11r-branch-x"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/team/f11r-branch-x"],
+        );
+        git_ok(
+            &git.repo_path,
+            &["push", "origin", "HEAD:refs/heads/team/f11r-branch-z"],
+        );
+
+        assert!(git.has_remote_branch_exact("f11r-branch-x").await.unwrap());
+        assert!(git.has_remote_branch_exact("main").await.unwrap());
+        assert!(!git.has_remote_branch_exact("branch-x").await.unwrap());
+        assert!(!git
+            .has_remote_branch_exact("f11r-branch-nope")
+            .await
+            .unwrap());
+        // Only `team/f11r-branch-z` exists; the tail-matching helper would say yes.
+        assert!(!git.has_remote_branch_exact("f11r-branch-z").await.unwrap());
+        assert!(git.has_remote_branch("f11r-branch-z").await.unwrap());
+    }
+
+    /// Commits `file` with `content` and message `msg` in `dir`.
+    fn commit_file(dir: &std::path::Path, file: &str, content: &str, msg: &str) {
+        std::fs::write(dir.join(file), content).unwrap();
+        git_ok(dir, &["add", file]);
+        git_ok(dir, &["commit", "-m", msg]);
+    }
+
+    /// User repo on `feat` (one pushed commit F, upstream set) plus a collaborator clone
+    /// that advances `main` and force-pushes `feat` rebased onto it, rewriting F.
+    /// Returns (git, user dir guard, origin dir guard, collaborator dir guard).
+    fn setup_remote_force_pushed_feat() -> (Git, TempDir, TempDir, TempDir) {
+        let (git, dir, origin) = setup_repo_with_bare_origin();
+        let repo = git.repo_path.clone();
+        git_ok(&repo, &["switch", "-c", "feat"]);
+        commit_file(&repo, "feat.txt", "feat", "F");
+        git_ok(&repo, &["push", "-u", "origin", "feat"]);
+
+        let collab = tempfile::tempdir().expect("create collaborator tempdir");
+        let origin_path = origin.path().to_string_lossy().to_string();
+        git_ok(
+            collab.path().parent().unwrap(),
+            &["clone", &origin_path, &collab.path().to_string_lossy()],
+        );
+        let c = collab.path();
+        git_ok(c, &["config", "user.email", "collab@example.com"]);
+        git_ok(c, &["config", "user.name", "collab"]);
+        git_ok(c, &["config", "commit.gpgsign", "false"]);
+        git_ok(c, &["config", "core.autocrlf", "false"]);
+
+        git_ok(c, &["switch", "-c", "feat", "origin/feat"]);
+        git_ok(c, &["switch", "-c", "trunk", "origin/main"]);
+        commit_file(c, "main.txt", "main", "M");
+        git_ok(c, &["push", "origin", "trunk:refs/heads/main"]);
+        git_ok(c, &["switch", "feat"]);
+        git_ok(c, &["rebase", "trunk"]);
+        // Reword the patch too, so only the fork point (not patch-id matching) can drop F.
+        std::fs::write(c.join("feat.txt"), "feat rewritten").unwrap();
+        git_ok(c, &["commit", "-a", "--amend", "--no-edit"]);
+        git_ok(c, &["push", "--force", "origin", "feat"]);
+
+        // The user's origin/feat still points at F; the pull fetches the rewrite.
+        (git, dir, origin, collab)
+    }
+
+    #[tokio::test]
+    async fn test_pull_rebase_after_remote_force_push_drops_old_commits() {
+        let (git, _dir, origin, _collab) = setup_remote_force_pushed_feat();
+        let repo = &git.repo_path;
+
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .expect("pull");
+
+        assert_eq!(
+            git_ok(repo, &["log", "--format=%s", "origin/feat..HEAD"]),
+            ""
+        );
+        let head = git_ok(repo, &["rev-parse", "HEAD"]);
+        assert_eq!(head, git_ok(repo, &["rev-parse", "origin/feat"]));
+        assert_eq!(head, remote_sha(origin.path(), "refs/heads/feat"));
+        assert_eq!(git_ok(repo, &["log", "--format=%s", "-3"]), "F\nM\nseed");
+    }
+
+    #[tokio::test]
+    async fn test_pull_rebase_after_remote_force_push_keeps_unpushed_local_commit() {
+        let (git, _dir, origin, _collab) = setup_remote_force_pushed_feat();
+        let repo = &git.repo_path;
+        commit_file(repo, "local.txt", "local", "L");
+        std::fs::write(repo.join("seed.txt"), "seed\ndirty edit").unwrap();
+        let stashes_before = git_ok(repo, &["stash", "list"]);
+
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .expect("pull");
+
+        assert_eq!(
+            git_ok(repo, &["log", "--format=%s", "origin/feat..HEAD"]),
+            "L"
+        );
+        assert_eq!(
+            git_ok(repo, &["rev-parse", "origin/feat"]),
+            remote_sha(origin.path(), "refs/heads/feat")
+        );
+        assert_eq!(
+            std::fs::read(repo.join("seed.txt")).unwrap(),
+            b"seed\ndirty edit"
+        );
+        assert_eq!(git_ok(repo, &["stash", "list"]), stashes_before);
+        assert_eq!(git_ok(repo, &["log", "--format=%s", "-4"]), "L\nF\nM\nseed");
+    }
+
+    const DUMMY_BASE: &str = "line1\nline2\nline3\n";
+
+    /// User repo on `feat` (pushed, upstream set) with `dummy.txt` and `other.txt`, plus a
+    /// collaborator commit on `origin/feat` writing `collab_content` to `collab_file`.
+    /// Returns (git, user dir guard, origin dir guard, collaborator dir guard).
+    fn setup_feat_with_collab_commit(
+        collab_file: &str,
+        collab_content: &str,
+    ) -> (Git, TempDir, TempDir, TempDir) {
+        setup_feat_with_collab(&[], |c| {
+            std::fs::write(c.join(collab_file), collab_content).unwrap();
+        })
+    }
+
+    /// Turns off any globally configured `lfs` filter so LFS pointers stay plain blobs.
+    fn disable_lfs_filter(dir: &std::path::Path) {
+        for key in ["process", "clean", "smudge"] {
+            git_ok(dir, &["config", &format!("filter.lfs.{key}"), ""]);
+        }
+        git_ok(dir, &["config", "filter.lfs.required", "false"]);
+    }
+
+    /// `setup_feat_with_collab_commit` with `seed` files in the base commit and a collaborator
+    /// commit of whatever `collab_edit` does to its working tree.
+    fn setup_feat_with_collab(
+        seed: &[(&str, &[u8])],
+        collab_edit: impl FnOnce(&std::path::Path),
+    ) -> (Git, TempDir, TempDir, TempDir) {
+        let (git, dir, origin) = setup_repo_with_bare_origin();
+        let repo = git.repo_path.clone();
+        disable_lfs_filter(&repo);
+        git_ok(&repo, &["switch", "-c", "feat"]);
+        std::fs::write(repo.join("other.txt"), "other\n").unwrap();
+        git_ok(&repo, &["add", "other.txt"]);
+        for (path, content) in seed {
+            std::fs::write(repo.join(path), content).unwrap();
+            git_ok(&repo, &["add", path]);
+        }
+        commit_file(&repo, "dummy.txt", DUMMY_BASE, "base");
+        git_ok(&repo, &["push", "-u", "origin", "feat"]);
+
+        let collab = tempfile::tempdir().expect("create collaborator tempdir");
+        let origin_path = origin.path().to_string_lossy().to_string();
+        git_ok(
+            collab.path().parent().unwrap(),
+            &["clone", &origin_path, &collab.path().to_string_lossy()],
+        );
+        let c = collab.path();
+        git_ok(c, &["config", "user.email", "collab@example.com"]);
+        git_ok(c, &["config", "user.name", "collab"]);
+        git_ok(c, &["config", "commit.gpgsign", "false"]);
+        git_ok(c, &["config", "core.autocrlf", "false"]);
+        disable_lfs_filter(c);
+        git_ok(c, &["switch", "-c", "feat", "origin/feat"]);
+        collab_edit(c);
+        git_ok(c, &["add", "-A"]);
+        git_ok(c, &["commit", "-m", "collab"]);
+        git_ok(c, &["push", "origin", "feat"]);
+
+        (git, dir, origin, collab)
+    }
+
+    fn modified(paths: &[&str]) -> Vec<File> {
+        paths
+            .iter()
+            .map(|path| File {
+                path: path.to_string(),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// The git half of `PullOp`: pre-pull snapshot, `pull --rebase --autostash`, then finish.
+    async fn snapshot_pull_finish(
+        git: &Git,
+        modified_paths: &[&str],
+        untracked_paths: &[&str],
+    ) -> (Snapshot, anyhow::Result<Option<AutostashConflict>>) {
+        let snapshot_paths = modified_paths
+            .iter()
+            .chain(untracked_paths)
+            .map(|p| p.to_string())
+            .collect();
+        let snapshot = git
+            .save_snapshot("pre-pull", snapshot_paths)
+            .await
+            .expect("save_snapshot");
+        let stash_before = git.stash_top().await.expect("stash_top");
+        assert_eq!(stash_before.as_deref(), Some(snapshot.commit.as_str()));
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .expect("pull");
+        let result = git
+            .finish_autostash_pull(
+                Some(&snapshot),
+                stash_before.as_deref(),
+                modified(modified_paths),
+                || {},
+            )
+            .await;
+        (snapshot, result)
+    }
+
+    fn stash_entries(repo: &std::path::Path) -> Vec<String> {
+        git_ok(repo, &["stash", "list", "--format=%H %gs"])
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn assert_no_restore_leftovers(repo: &std::path::Path) {
+        for name in [
+            "dummy.txt.snapshotcopy",
+            "dummy.txt.localcopy",
+            "other.txt.snapshotcopy",
+            "other.txt.localcopy",
+            "new.txt.localcopy",
+        ] {
+            assert!(!repo.join(name).exists(), "{name} must not exist");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_clean_restores_snapshot() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("other.txt", "collab other\n");
+        let repo = git.repo_path.clone();
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+
+        let (snapshot, result) = snapshot_pull_finish(&git, &["dummy.txt"], &["new.txt"]).await;
+
+        assert_eq!(result.expect("finish"), None);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("dummy.txt")).unwrap(),
+            "line1\nmine\nline3\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("other.txt")).unwrap(),
+            "collab other\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("new.txt")).unwrap(),
+            "new\n"
+        );
+        assert_no_restore_leftovers(&repo);
+        assert_eq!(git_ok(&repo, &["diff", "--cached", "--name-only"]), "");
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+    }
+
+    async fn assert_overlapping_edit_leaves_markers_only(local_commit: bool) {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        if local_commit {
+            commit_file(&repo, "local.txt", "local\n", "local");
+        }
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        std::fs::write(repo.join("other.txt"), "my other\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+
+        let (snapshot, result) =
+            snapshot_pull_finish(&git, &["dummy.txt", "other.txt"], &["new.txt"]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert_eq!(
+            conflict,
+            AutostashConflict {
+                marker_files: vec!["dummy.txt".to_string()],
+                snapshot_saved: true,
+                autostash_dropped: true,
+                ..Default::default()
+            }
+        );
+
+        let dummy = std::fs::read_to_string(repo.join("dummy.txt")).unwrap();
+        assert_eq!(dummy.matches("<<<<<<<").count(), 1, "{dummy}");
+        assert!(
+            dummy.contains("collab") && dummy.contains("mine"),
+            "{dummy}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("other.txt")).unwrap(),
+            "my other\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("new.txt")).unwrap(),
+            "new\n"
+        );
+        assert_no_restore_leftovers(&repo);
+
+        assert!(git.unmerged_paths().await.unwrap().is_empty());
+        assert_eq!(git_ok(&repo, &["diff", "--cached", "--name-only"]), "");
+        assert_eq!(
+            git_ok(&repo, &["show", "HEAD:dummy.txt"]),
+            "line1\ncollab\nline3"
+        );
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+        assert_eq!(
+            git_ok(&repo, &["show", &format!("{}:dummy.txt", snapshot.commit)]),
+            "line1\nmine\nline3"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_fast_forward_conflict_leaves_markers_only() {
+        assert_overlapping_edit_leaves_markers_only(false).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_rebase_conflict_leaves_markers_only() {
+        assert_overlapping_edit_leaves_markers_only(true).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_keeps_autostash_not_in_snapshot() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        // The staged version exists only in git's autostash index commit.
+        std::fs::write(repo.join("dummy.txt"), "line1\nstaged\nline3\n").unwrap();
+        git_ok(&repo, &["add", "dummy.txt"]);
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+
+        let (snapshot, result) = snapshot_pull_finish(&git, &["dummy.txt"], &[]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert!(conflict.snapshot_saved && !conflict.autostash_dropped);
+        assert!(conflict.to_string().contains("'autostash' stash entry"));
+        let entries = stash_entries(&repo);
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert!(entries[0].ends_with(" autostash"), "{entries:?}");
+        assert_eq!(entries[1], format!("{} snapshot pre-pull", snapshot.commit));
+        assert!(!repo.join("dummy.txt.snapshotcopy").exists());
+    }
+
+    const LFS_ATTRS: &str = "*.uasset filter=lfs diff=lfs merge=lfs -text\n";
+
+    fn lfs_pointer(oid: &str) -> String {
+        format!("version test-lfs\noid sha256:{oid}\nsize 10\n")
+    }
+
+    /// Seeds a binary file, an LFS pointer, `ud.txt` and `du.txt`; the collaborator changes the
+    /// binary, the pointer and `ud.txt`, deletes `du.txt` and changes `dummy.txt` when `text`.
+    fn setup_feat_with_mixed_collab(text: bool) -> (Git, TempDir, TempDir, TempDir) {
+        let base_pointer = lfs_pointer("base");
+        setup_feat_with_collab(
+            &[
+                (".gitattributes", LFS_ATTRS.as_bytes()),
+                ("a.bin", b"base\0bin"),
+                ("a.uasset", base_pointer.as_bytes()),
+                ("ud.txt", b"ud\n"),
+                ("du.txt", b"du\n"),
+            ],
+            |c| {
+                std::fs::write(c.join("a.bin"), b"remote\0bin").unwrap();
+                std::fs::write(c.join("a.uasset"), lfs_pointer("remote")).unwrap();
+                std::fs::write(c.join("ud.txt"), "ud remote\n").unwrap();
+                std::fs::remove_file(c.join("du.txt")).unwrap();
+                if text {
+                    std::fs::write(c.join("dummy.txt"), "line1\ncollab\nline3\n").unwrap();
+                }
+            },
+        )
+    }
+
+    /// Local edits that conflict with every change of `setup_feat_with_mixed_collab`.
+    fn write_mixed_local_edits(repo: &std::path::Path, text: bool) {
+        std::fs::write(repo.join("a.bin"), b"local\0bin").unwrap();
+        std::fs::write(repo.join("a.uasset"), lfs_pointer("local")).unwrap();
+        std::fs::remove_file(repo.join("ud.txt")).unwrap();
+        std::fs::write(repo.join("du.txt"), "du local\n").unwrap();
+        if text {
+            std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        }
+    }
+
+    fn assert_mixed_local_edits_kept(repo: &std::path::Path) {
+        assert_eq!(std::fs::read(repo.join("a.bin")).unwrap(), b"local\0bin");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.uasset")).unwrap(),
+            lfs_pointer("local")
+        );
+        assert!(!repo.join("ud.txt").exists(), "ud.txt must stay deleted");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("du.txt")).unwrap(),
+            "du local\n"
+        );
+        assert_eq!(git_ok(repo, &["show", "HEAD:a.bin"]), "remote\0bin");
+        assert_eq!(git_ok(repo, &["show", "HEAD:ud.txt"]), "ud remote");
+        assert_eq!(git_ok(repo, &["ls-files", "-u"]), "");
+        assert_eq!(git_ok(repo, &["diff", "--cached", "--name-only"]), "");
+        let status = git_ok(
+            repo,
+            &[
+                "status",
+                "--porcelain",
+                "--",
+                "a.bin",
+                "a.uasset",
+                "ud.txt",
+                "du.txt",
+            ],
+        );
+        // `git_ok` trims the leading space of the first line, so compare trimmed lines.
+        let mut status: Vec<&str> = status.lines().map(str::trim).collect();
+        status.sort();
+        assert_eq!(
+            status,
+            vec!["?? du.txt", "D ud.txt", "M a.bin", "M a.uasset"]
+        );
+    }
+
+    async fn assert_binary_and_delete_conflicts_keep_local(local_commit: bool) {
+        let (git, _dir, _origin, _collab) = setup_feat_with_mixed_collab(false);
+        let repo = git.repo_path.clone();
+        if local_commit {
+            commit_file(&repo, "local.txt", "local\n", "local");
+        }
+        write_mixed_local_edits(&repo, false);
+
+        let (snapshot, result) =
+            snapshot_pull_finish(&git, &["a.bin", "a.uasset", "ud.txt", "du.txt"], &[]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert_eq!(
+            conflict,
+            AutostashConflict {
+                kept_local_files: vec![
+                    "a.bin".to_string(),
+                    "a.uasset".to_string(),
+                    "du.txt".to_string()
+                ],
+                kept_deleted_files: vec!["ud.txt".to_string()],
+                snapshot_saved: true,
+                autostash_dropped: true,
+                ..Default::default()
+            }
+        );
+        assert_mixed_local_edits_kept(&repo);
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+        assert_eq!(
+            git_ok(&repo, &["show", &format!("{}:a.bin", snapshot.commit)]),
+            "local\0bin"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_fast_forward_binary_and_delete_conflicts_keep_local() {
+        assert_binary_and_delete_conflicts_keep_local(false).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_rebase_binary_and_delete_conflicts_keep_local() {
+        assert_binary_and_delete_conflicts_keep_local(true).await;
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_mixed_conflicts() {
+        let (git, _dir, _origin, _collab) = setup_feat_with_mixed_collab(true);
+        let repo = git.repo_path.clone();
+        commit_file(&repo, "local.txt", "local\n", "local");
+        write_mixed_local_edits(&repo, true);
+
+        let (snapshot, result) = snapshot_pull_finish(
+            &git,
+            &["a.bin", "a.uasset", "ud.txt", "du.txt", "dummy.txt"],
+            &[],
+        )
+        .await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert_eq!(
+            conflict,
+            AutostashConflict {
+                marker_files: vec!["dummy.txt".to_string()],
+                kept_local_files: vec![
+                    "a.bin".to_string(),
+                    "a.uasset".to_string(),
+                    "du.txt".to_string()
+                ],
+                kept_deleted_files: vec!["ud.txt".to_string()],
+                unresolved_files: vec![],
+                snapshot_saved: true,
+                autostash_dropped: true,
+            }
+        );
+        assert_mixed_local_edits_kept(&repo);
+        let dummy = std::fs::read_to_string(repo.join("dummy.txt")).unwrap();
+        assert!(
+            dummy.contains("<<<<<<<") && dummy.contains("collab") && dummy.contains("mine"),
+            "{dummy}"
+        );
+        assert_eq!(
+            stash_entries(&repo),
+            vec![format!("{} snapshot pre-pull", snapshot.commit)]
+        );
+        assert_eq!(
+            conflict.to_string(),
+            "Synced, but some files changed both locally and on origin. Resolve the conflict markers in dummy.txt before submitting. Kept your local version of a.bin, a.uasset, du.txt, ud.txt (deleted); submitting will overwrite origin's changes to them. Your local versions are saved in the 'pre-pull' snapshot."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_settle_autostash_conflicts_keeps_autostash_when_unresolved() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        let snapshot = git
+            .save_snapshot("pre-pull", vec!["dummy.txt".to_string()])
+            .await
+            .unwrap();
+        let stash_before = git.stash_top().await.unwrap();
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .unwrap();
+        // Neither side's version and no markers: not a state settling recognizes.
+        std::fs::write(repo.join("dummy.txt"), "edited\n").unwrap();
+
+        let conflict = git
+            .settle_autostash_conflicts(Some(&snapshot.commit), stash_before.as_deref())
+            .await
+            .unwrap()
+            .expect("autostash conflict");
+
+        assert_eq!(conflict.unresolved_files, vec!["dummy.txt".to_string()]);
+        assert!(!conflict.autostash_dropped);
+        assert!(conflict.to_string().contains("Could not merge dummy.txt"));
+        let entries = stash_entries(&repo);
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        assert!(entries[0].ends_with(" autostash"), "{entries:?}");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("dummy.txt")).unwrap(),
+            "edited\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finish_autostash_pull_falls_back_to_snapshot_restore() {
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab_commit("dummy.txt", "line1\ncollab\nline3\n");
+        let repo = git.repo_path.clone();
+        std::fs::write(repo.join("dummy.txt"), "line1\nmine\nline3\n").unwrap();
+        let snapshot = git
+            .save_snapshot("pre-pull", vec!["dummy.txt".to_string()])
+            .await
+            .unwrap();
+        let stash_before = git.stash_top().await.unwrap();
+        git.pull(PullStrategy::Rebase, PullStashStrategy::Autostash)
+            .await
+            .unwrap();
+
+        // A held index lock makes the reset fail.
+        let lock = repo.join(".git").join("index.lock");
+        std::fs::write(&lock, "").unwrap();
+        let settled = git
+            .settle_autostash_conflicts(Some(&snapshot.commit), stash_before.as_deref())
+            .await;
+        assert!(settled.is_err(), "{settled:?}");
+
+        let mut no_snapshot_restore = false;
+        let result = git
+            .finish_autostash_pull(None, stash_before.as_deref(), vec![], || {
+                no_snapshot_restore = true
+            })
+            .await;
+        assert!(!no_snapshot_restore);
+        assert!(result.is_err(), "{result:?}");
+
+        // The restore waits for the index lock, so release it when the restore starts.
+        let mut restore_started = false;
+        let result = git
+            .finish_autostash_pull(
+                Some(&snapshot),
+                stash_before.as_deref(),
+                modified(&["dummy.txt"]),
+                || {
+                    restore_started = true;
+                    std::fs::remove_file(&lock).unwrap();
+                },
+            )
+            .await;
+        assert!(restore_started, "the snapshot restore must run: {result:?}");
+        assert!(!lock.exists());
+    }
+
+    #[test]
+    fn test_parse_unmerged_entries() {
+        let output = concat!(
+            "100644 aaaa 1\ta b.txt\x00100644 bbbb 2\ta b.txt\x00100644 cccc 3\ta b.txt\x00",
+            "100644 dddd 1\tud.txt\x00100644 eeee 2\tud.txt\x00",
+            "100644 ffff 1\tdu.txt\x00100644 9999 3\tdu.txt\x00",
+            "160000 1111 2\tPlugins/Sub\x00160000 2222 3\tPlugins/Sub\x00"
+        );
+        let entries = parse_unmerged_entries(output);
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            entries,
+            vec![
+                UnmergedEntry {
+                    path: "a b.txt".to_string(),
+                    stages: [s("aaaa"), s("bbbb"), s("cccc")],
+                    modes: [s("100644"), s("100644"), s("100644")],
+                },
+                UnmergedEntry {
+                    path: "ud.txt".to_string(),
+                    stages: [s("dddd"), s("eeee"), None],
+                    modes: [s("100644"), s("100644"), None],
+                },
+                UnmergedEntry {
+                    path: "du.txt".to_string(),
+                    stages: [s("ffff"), None, s("9999")],
+                    modes: [s("100644"), None, s("100644")],
+                },
+                UnmergedEntry {
+                    path: "Plugins/Sub".to_string(),
+                    stages: [None, s("1111"), s("2222")],
+                    modes: [None, s("160000"), s("160000")],
+                },
+            ]
+        );
+        let xy: Vec<&str> = entries.iter().map(UnmergedEntry::xy).collect();
+        assert_eq!(xy, vec!["UU", "UD", "DU", "AA"]);
+        let submodule: Vec<bool> = entries.iter().map(UnmergedEntry::is_submodule).collect();
+        assert_eq!(submodule, vec![false, false, false, true]);
+        assert!(parse_unmerged_entries("").is_empty());
+    }
+
+    #[test]
+    fn test_autostash_conflict_message() {
+        let conflict = AutostashConflict {
+            marker_files: vec!["a.txt".to_string(), "b.txt".to_string()],
+            snapshot_saved: true,
+            autostash_dropped: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            conflict.to_string(),
+            "Synced, but some files changed both locally and on origin. Resolve the conflict markers in a.txt, b.txt before submitting. Your local versions are saved in the 'pre-pull' snapshot."
+        );
+        let conflict = AutostashConflict {
+            kept_local_files: vec!["a.uasset".to_string()],
+            kept_deleted_files: vec!["b.txt".to_string()],
+            unresolved_files: vec!["c.txt".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            conflict.details(),
+            "some files changed both locally and on origin. Kept your local version of a.uasset, b.txt (deleted); submitting will overwrite origin's changes to them. Could not merge c.txt; check them before submitting. Your local versions are saved in git's 'autostash' stash entry."
+        );
+    }
+
+    const OID40: &str = "0de5581443506c8d04fe12dacf3f30ebce63da91";
+
+    fn merge_tree_stdout(records: &[&str]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for r in records {
+            out.extend_from_slice(r.as_bytes());
+            out.push(b'\0');
+        }
+        out
+    }
+
+    #[test]
+    fn test_merge_tree_clean() {
+        let stdout = merge_tree_stdout(&[OID40]);
+        assert_eq!(
+            parse_merge_tree_output(Some(0), &stdout, "").unwrap(),
+            MergeTreeOutcome::Clean
+        );
+    }
+
+    #[test]
+    fn test_merge_tree_conflicts_in_order() {
+        let stdout = merge_tree_stdout(&[OID40, "dir/a b.uasset", "Content/Ünï.umap"]);
+        assert_eq!(
+            parse_merge_tree_output(Some(1), &stdout, "").unwrap(),
+            MergeTreeOutcome::Conflicts(vec![
+                "dir/a b.uasset".to_string(),
+                "Content/Ünï.umap".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_merge_tree_missing_ref_is_error() {
+        let stderr = "merge-tree: origin/x - not something we can merge";
+        let err = parse_merge_tree_output(Some(1), b"", stderr).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("did not return a tree OID"), "{msg}");
+        assert!(msg.contains(stderr), "{msg}");
+    }
+
+    #[test]
+    fn test_merge_tree_rejects_bad_output() {
+        // exit 1 with non-OID text
+        assert!(parse_merge_tree_output(Some(1), b"fatal: something\0", "").is_err());
+        // exit 1 with an OID but no paths
+        let err = parse_merge_tree_output(Some(1), &merge_tree_stdout(&[OID40]), "").unwrap_err();
+        assert!(err.to_string().contains("listed no paths"));
+        // exit 128 with an OID
+        let err =
+            parse_merge_tree_output(Some(128), &merge_tree_stdout(&[OID40]), "boom").unwrap_err();
+        assert!(err.to_string().contains("exit 128"));
+        // exit 0 without an OID
+        assert!(parse_merge_tree_output(Some(0), b"", "").is_err());
+        // killed by a signal
+        let err =
+            parse_merge_tree_output(None, &merge_tree_stdout(&[OID40, "a.txt"]), "").unwrap_err();
+        assert!(err.to_string().contains("exit signal"));
+        // uppercase hex is not an OID
+        let upper = OID40.to_uppercase();
+        assert!(parse_merge_tree_output(Some(0), &merge_tree_stdout(&[&upper]), "").is_err());
+    }
+
+    #[test]
+    fn test_merge_tree_oid_forms() {
+        let oid64 = "a".repeat(64);
+        assert_eq!(
+            parse_merge_tree_output(Some(0), &merge_tree_stdout(&[&oid64]), "").unwrap(),
+            MergeTreeOutcome::Clean
+        );
+        // no trailing NUL
+        assert_eq!(
+            parse_merge_tree_output(Some(1), format!("{OID40}\0a.txt").as_bytes(), "").unwrap(),
+            MergeTreeOutcome::Conflicts(vec!["a.txt".to_string()])
+        );
+        // paths stop at the first empty record
+        assert_eq!(
+            parse_merge_tree_output(Some(1), format!("{OID40}\0a.txt\0\0b.txt\0").as_bytes(), "")
+                .unwrap(),
+            MergeTreeOutcome::Conflicts(vec!["a.txt".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_git_version() {
+        assert_eq!(
+            parse_git_version("git version 2.47.1.windows.1\n"),
+            Some((2, 47))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.39.3 (Apple Git-146)"),
+            Some((2, 39))
+        );
+        assert_eq!(parse_git_version("garbage"), None);
+        assert_eq!(parse_git_version("git version abc"), None);
+        assert_eq!(parse_git_version(""), None);
+    }
+
+    #[test]
+    fn test_git_version_check_from_output() {
+        assert!(version_check_from_output("git version 2.38.0").supported);
+        assert!(!version_check_from_output("git version 2.37.9").supported);
+        assert!(version_check_from_output("git version 2.100.0").supported);
+        assert!(version_check_from_output("git version 3.0.0").supported);
+
+        let check = version_check_from_output("git version 2.47.1.windows.1\n");
+        assert_eq!(check.version, "2.47.1.windows.1");
+        assert!(check.supported);
+
+        let check = version_check_from_output("  git version abc \n");
+        assert!(!check.supported);
+        assert_eq!(check.version, "git version abc");
+
+        let check = version_check_from_output("garbage\n");
+        assert!(!check.supported);
+        assert_eq!(check.version, "garbage");
+    }
+
+    #[test]
+    fn test_parse_last_touch() {
+        let output = concat!(
+            "\x1eaaaaaaaa1111\x1fAlice\x1f2026-10-22T10:00:00-07:00\n\nContent/a b.uasset\nshared.txt\n\n",
+            "\x1ebbbbbbbb2222\x1fBob\x1f2026-10-21T10:00:00-07:00\n",
+            "\x1ecccc\x1fCarol\x1f2026-10-20T10:00:00-07:00\n\nshared.txt\nold.txt\n",
+            "\x1ebroken\x1fDan\n\nignored.txt\n"
+        );
+        let touches = parse_last_touch(output);
+        assert_eq!(touches.len(), 3);
+        assert_eq!(
+            touches["shared.txt"],
+            FileTouch {
+                sha: "aaaaaaaa".to_string(),
+                author: "Alice".to_string(),
+                date: "2026-10-22T10:00:00-07:00".to_string(),
+            }
+        );
+        assert_eq!(touches["Content/a b.uasset"].sha, "aaaaaaaa");
+        assert_eq!(touches["old.txt"].sha, "cccc");
+        assert_eq!(touches["old.txt"].author, "Carol");
+        assert!(!touches.contains_key("ignored.txt"));
+        assert!(parse_last_touch("").is_empty());
+    }
+
+    /// Writes `contents` to `path` and commits it on the current branch.
+    fn commit_bytes(dir: &std::path::Path, path: &str, contents: &[u8], msg: &str) -> String {
+        std::fs::write(dir.join(path), contents).unwrap();
+        git_ok(dir, &["add", "--", path]);
+        git_ok(dir, &["commit", "-m", msg]);
+        git_ok(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// Builds origin/main and origin/x from a common base: `x_files` are committed on x,
+    /// `main_files` on main, both pushed and fetched. HEAD is left on the original branch.
+    fn setup_diverged_origin(
+        main_files: &[(&str, &[u8])],
+        x_files: &[(&str, &[u8])],
+    ) -> (Git, TempDir, TempDir) {
+        let (git, dir, origin) = setup_repo_with_bare_origin();
+        let path = git.repo_path.clone();
+        git_ok(&path, &["switch", "-c", "x"]);
+        for (file, bytes) in x_files {
+            commit_bytes(&path, file, bytes, &format!("x {file}"));
+        }
+        git_ok(&path, &["push", "origin", "HEAD:refs/heads/x"]);
+        git_ok(&path, &["switch", "-"]);
+        for (file, bytes) in main_files {
+            commit_bytes(&path, file, bytes, &format!("main {file}"));
+        }
+        git_ok(&path, &["push", "origin", "HEAD:refs/heads/main"]);
+        git_ok(&path, &["fetch", "origin"]);
+        (git, dir, origin)
+    }
+
+    /// Working tree/index status, HEAD and every ref, to prove a call changed none of them.
+    fn repo_snapshot(dir: &std::path::Path) -> (String, String, String, String) {
+        (
+            git_ok(dir, &["status", "--porcelain", "--untracked-files=all"]),
+            git_ok(dir, &["rev-parse", "HEAD"]),
+            git_ok(dir, &["symbolic-ref", "HEAD"]),
+            git_ok(dir, &["for-each-ref"]),
+        )
+    }
+
+    async fn git_supported(git: &Git) -> bool {
+        let check = git.check_min_version().await.expect("git version");
+        if !check.supported {
+            println!("skipped: git {} is older than 2.38", check.version);
+        }
+        check.supported
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_clean() {
+        let (git, dir, _origin) =
+            setup_diverged_origin(&[("m.txt", b"main")], &[("x.txt", b"branch")]);
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let outcome = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/x")
+            .await
+            .unwrap();
+        assert_eq!(outcome, MergeTreeOutcome::Clean);
+        assert_eq!(repo_snapshot(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_conflict() {
+        let (git, dir, _origin) = setup_diverged_origin(
+            &[("seed.txt", b"main side"), ("m.txt", b"main")],
+            &[("seed.txt", b"branch side"), ("x.txt", b"branch")],
+        );
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let outcome = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/x")
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            MergeTreeOutcome::Conflicts(vec!["seed.txt".to_string()])
+        );
+        assert_eq!(repo_snapshot(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_binary_both_sided() {
+        let (git, dir, _origin) = setup_diverged_origin(
+            &[("a.uasset", b"main\0bytes")],
+            &[("a.uasset", b"branch\0bytes"), ("x.txt", b"branch")],
+        );
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let outcome = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/x")
+            .await
+            .unwrap();
+        match outcome {
+            MergeTreeOutcome::Conflicts(paths) => {
+                assert!(paths.contains(&"a.uasset".to_string()), "{paths:?}")
+            }
+            other => panic!("expected conflicts, got {other:?}"),
+        }
+        assert_eq!(repo_snapshot(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_merge_tree_real_missing_ref() {
+        let (git, dir, _origin) =
+            setup_diverged_origin(&[("m.txt", b"main")], &[("x.txt", b"branch")]);
+        if !git_supported(&git).await {
+            return;
+        }
+        let before = repo_snapshot(dir.path());
+        let err = git
+            .predict_merge_conflicts("refs/remotes/origin/main", "refs/remotes/origin/nope")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not something we can merge"),
+            "{err}"
+        );
+        assert_eq!(repo_snapshot(dir.path()), before);
+
+        assert!(git
+            .predict_merge_conflicts("--output=x", "refs/remotes/origin/x")
+            .await
+            .is_err());
+        assert!(git
+            .predict_merge_conflicts("refs/remotes/origin/main", "-x")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_last_touch_by_path_real() {
+        let (git, dir) = setup_repo();
+        let path = dir.path();
+        let base = git_ok(path, &["rev-parse", "HEAD"]);
+        let first = commit_bytes(path, "a.txt", b"one", "first");
+        commit_bytes(path, "b.txt", b"b", "second");
+        let third = commit_bytes(path, "a.txt", b"two", "third");
+
+        let range = format!("{base}..HEAD");
+        let touches = git.last_touch_by_path(&range, 2000).await.unwrap();
+        assert_eq!(touches.len(), 2);
+        assert_eq!(touches["a.txt"].sha, third[..8]);
+        assert_ne!(touches["a.txt"].sha, first[..8]);
+        assert_eq!(touches["a.txt"].author, "test");
+        assert!(!touches["a.txt"].date.is_empty());
+
+        let newest_only = git.last_touch_by_path(&range, 1).await.unwrap();
+        assert_eq!(newest_only.keys().collect::<Vec<_>>(), vec!["a.txt"]);
+
+        assert!(git.last_touch_by_path("--all", 10).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_min_version_real() {
+        let (git, _dir) = setup_repo();
+        let check = git.check_min_version().await.unwrap();
+        assert!(!check.version.is_empty());
+        assert!(check.supported, "git {} is unsupported", check.version);
+        // cached
+        assert_eq!(git.check_min_version().await.unwrap(), check);
     }
 }

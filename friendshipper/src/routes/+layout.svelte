@@ -73,6 +73,7 @@
 		updateDismissed,
 		workflows
 	} from '$lib/stores';
+	import { branchManagementVisible } from '$lib/branches';
 	import { getPlaytests } from '$lib/playtests';
 	import { cancelDownload, getBuilds, getWorkflows } from '$lib/builds';
 	import { refreshLogin, exitApp } from '$lib/auth';
@@ -83,6 +84,7 @@
 	import {
 		getAllCommits,
 		getObjectCount,
+		getRebaseState,
 		getRepoStatus,
 		SkipDllCheck,
 		AllowOfflineCommunication,
@@ -296,6 +298,8 @@
 		}
 	};
 
+	let startupRebaseChecked = false;
+
 	const loadAppData = async () => {
 		try {
 			// Initialize the current synced version from localStorage
@@ -327,6 +331,20 @@
 				repoConfig.set(repoConfigResponse);
 				repoStatus.set(repoStatusResponse);
 				commits.set(commitsResponse);
+
+				// An unfinished guided rebase opens Branch Management, which shows its view. Once per
+				// session: token renewals rerun loadAppData.
+				if (!startupRebaseChecked) {
+					startupRebaseChecked = true;
+					try {
+						const rs = await getRebaseState();
+						if (['inProgress', 'completedUnpushed', 'pushFailed', 'stale'].includes(rs.state)) {
+							await goto('/source/branches');
+						}
+					} catch (e) {
+						await logError('loadAppData: getRebaseState failed', e);
+					}
+				}
 
 				// Initialize changesets only AFTER repoStatus is set, so they can be
 				// reconciled against the live working-tree status. Doing this inside
@@ -1360,6 +1378,16 @@
 									href="/source/repository"
 									active={activeUrl === '/source/repository'}
 								/>
+								{#if $branchManagementVisible || activeUrl === '/source/branches'}
+									<SidebarItem
+										label="Branch Management"
+										activeClass={sidebarSubItemActiveClass}
+										nonActiveClass={sidebarSubItemInactiveClass}
+										spanClass={sidebarSubItemClass}
+										href="/source/branches"
+										active={activeUrl === '/source/branches'}
+									/>
+								{/if}
 								<SidebarItem
 									label="Locks"
 									activeClass={sidebarSubItemActiveClass}
@@ -1485,7 +1513,7 @@
 		<code class="text-xs text-gray-500 dark:text-gray-500 truncate">{lastGitLogMessage}</code>
 	</div>
 </div>
-<div class="fixed top-0 w-full flex flex-col items-center z-50 pointer-events-none pt-2 gap-2">
+<div class="fixed top-0 w-full flex flex-col items-center z-[80] pointer-events-none pt-2 gap-2">
 	<ErrorToastStack {errors} onDismiss={onErrorDismissed} onDismissAll={onDismissAllErrors} />
 	<SuccessToast
 		bind:show={hasSuccess}

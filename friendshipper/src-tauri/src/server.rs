@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender as STDSender;
 use std::sync::Arc;
@@ -30,7 +30,9 @@ use ethos_core::worker::{RepoWorker, TaskSequence};
 
 use crate::client::FriendshipperClient;
 use crate::engine::{EngineProvider, UnrealEngineProvider};
-use crate::repo::operations::InstallGitHooksOp;
+use crate::repo::operations::{
+    git_process_running, may_remove_stale_index_lock, resolve_git_dir, InstallGitHooksOp,
+};
 use crate::state::{FrontendOp, Notification};
 use crate::APP_NAME;
 use crate::{state::AppState, KEYRING_USER, VERSION};
@@ -112,17 +114,26 @@ impl Server {
         )?;
 
         let repo_path = shared_state.app_config.read().repo_path.clone();
+        let uproject_path = shared_state.repo_config.read().uproject_path.clone();
         if !repo_path.is_empty() {
-            let mut content_dir = PathBuf::from(shared_state.app_config.read().repo_path.clone());
-            content_dir.push(shared_state.repo_config.read().uproject_path.clone());
+            let mut content_dir = PathBuf::from(repo_path);
+            content_dir.push(&uproject_path);
             content_dir.pop(); // pop off uproject filename
             content_dir.push(shared_state.engine.get_default_content_subdir());
 
-            let inner_span = tracing::info_span!("watcher_start_watch").entered();
-            debouncer
-                .watcher()
-                .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
-            inner_span.exit();
+            // A checkout without friendshipper.yaml must not block startup.
+            if uproject_path.is_empty() || !content_dir.is_dir() {
+                warn!(
+                    "Content directory {} not found, skipping file watcher",
+                    content_dir.display()
+                );
+            } else {
+                let inner_span = tracing::info_span!("watcher_start_watch").entered();
+                debouncer
+                    .watcher()
+                    .watch(content_dir.as_path(), RecursiveMode::Recursive)?;
+                inner_span.exit();
+            }
         }
 
         info!("starting server at {}", address);
@@ -288,14 +299,19 @@ impl Server {
             // Check for and remove index.lock if it exists
             let span = tracing::info_span!("remove_index_lock").entered();
 
-            let index_lock_path = PathBuf::from(&repo_path).join(".git").join("index.lock");
+            let git_dir = resolve_git_dir(Path::new(&repo_path));
+            let index_lock_path = git_dir.join("index.lock");
             if index_lock_path.exists() {
-                match fs::remove_file(&index_lock_path) {
-                    Ok(_) => {
-                        info!("Removed existing index.lock file");
-                    }
-                    Err(e) => {
-                        warn!("Failed to remove index.lock file: {:?}", e);
+                if !may_remove_stale_index_lock(&git_dir, git_process_running()) {
+                    warn!("Not removing index.lock: a rebase may still be running");
+                } else {
+                    match fs::remove_file(&index_lock_path) {
+                        Ok(_) => {
+                            info!("Removed existing index.lock file");
+                        }
+                        Err(e) => {
+                            warn!("Failed to remove index.lock file: {:?}", e);
+                        }
                     }
                 }
             }

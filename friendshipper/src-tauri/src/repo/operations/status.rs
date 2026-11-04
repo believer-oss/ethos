@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str;
 use std::sync::Arc;
 
@@ -14,7 +15,10 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::engine;
 use crate::engine::EngineProvider;
-use crate::repo::operations::gh::submit::is_quicksubmit_branch;
+use crate::repo::operations::branch::{
+    is_active, rebase_dir_exists, recorded_rebase_kind, resolve_git_dir,
+};
+use crate::repo::operations::gh::submit::{is_branch_mode, is_quicksubmit_branch};
 use crate::state::AppState;
 use ethos_core::blocked_files::BlockedFileMatcher;
 use ethos_core::clients::aws::ensure_aws_client;
@@ -31,6 +35,30 @@ use ethos_core::worker::{Task, TaskSequence};
 use ethos_core::AWSClient;
 
 pub type RepoStatusRef = Arc<RwLock<RepoStatus>>;
+
+struct UpstreamChanges {
+    /// Blocking: becomes `RepoStatus::modified_upstream`.
+    modified_upstream: Vec<String>,
+    /// Non-blocking: becomes `RepoStatus::will_conflict_on_rebase`.
+    will_conflict_on_rebase: Vec<String>,
+    /// Non-blocking: becomes `RepoStatus::will_conflict_on_sync`.
+    will_conflict_on_sync: Vec<String>,
+}
+
+/// Locally modified tracked files that also changed on `origin/<branch>`, excluding files that
+/// already block. Sync's autostash merges them and leaves conflict markers where lines overlap.
+fn will_conflict_on_sync(
+    incoming: &[String],
+    local_modified: &FileList,
+    blocking: &[String],
+) -> Vec<String> {
+    incoming
+        .iter()
+        .filter(|file| local_modified.contains(file))
+        .filter(|file| !blocking.contains(file))
+        .cloned()
+        .collect()
+}
 
 /*
 git status --porcelain=v2 --branch --ignored
@@ -167,6 +195,19 @@ where
             );
         }
 
+        // Status never fails over the guided rebase state; an unknown one is treated as a rebase
+        // below, and the guard refuses other operations.
+        let repo_path = &self.git_client.repo_path;
+        let mut rebasing = rebase_dir_exists(&resolve_git_dir(repo_path));
+        match recorded_rebase_kind(&self.git_client, repo_path).await {
+            Ok(kind) => status.guided_rebase_active = kind.is_some_and(is_active),
+            Err(e) => {
+                warn!("Could not determine the guided rebase state: {e:#}");
+                rebasing = true;
+            }
+        }
+        rebasing |= status.guided_rebase_active;
+
         // if we're not on the main branch, we need to get the ahead/behind counts
         let target_branch = self.app_config.read().target_branch.clone();
         let remote_target_branch = format!("origin/{target_branch}");
@@ -299,19 +340,17 @@ where
             };
 
             // https://github.com/owner/repository.git
-            let parts = remote_url.split('/');
-            if parts.count() < 4 {
-                status.repo_owner = "".to_string();
-                status.repo_name = "".to_string();
-            } else {
-                status.repo_owner = remote_url.split('/').nth(3).unwrap().to_string();
-                status.repo_name = remote_url
-                    .split('/')
-                    .nth(4)
-                    .unwrap()
-                    .trim_end()
-                    .trim_end_matches(".git")
-                    .to_string();
+            // Other shapes, such as a local path with exactly four parts, leave both empty.
+            let mut parts = remote_url.split('/');
+            match (parts.nth(3), parts.next()) {
+                (Some(owner), Some(name)) => {
+                    status.repo_owner = owner.to_string();
+                    status.repo_name = name.trim_end().trim_end_matches(".git").to_string();
+                }
+                _ => {
+                    status.repo_owner = "".to_string();
+                    status.repo_name = "".to_string();
+                }
             }
 
             info!(
@@ -352,12 +391,23 @@ where
                 "editor binary archives");
         }
 
-        {
-            status.modified_upstream = self.get_modified_upstream(&status.branch).await?;
+        // While rebasing, HEAD is built on the new trunk, so diffing it against the old
+        // upstream would report main-side files as upstream changes.
+        if rebasing {
+            info!("Rebase in progress, skipping upstream changes");
+        } else {
+            let upstream = self.get_modified_upstream(&status).await?;
+            status.modified_upstream = upstream.modified_upstream;
+            status.will_conflict_on_rebase = upstream.will_conflict_on_rebase;
+            status.will_conflict_on_sync = upstream.will_conflict_on_sync;
 
             // remove duplicates
             status.modified_upstream.sort_unstable();
             status.modified_upstream.dedup();
+            status.will_conflict_on_rebase.sort_unstable();
+            status.will_conflict_on_rebase.dedup();
+            status.will_conflict_on_sync.sort_unstable();
+            status.will_conflict_on_sync.dedup();
 
             status.conflicts = self.get_upstream_conflicts(&status.modified_files, &status);
             if !status.conflicts.is_empty() {
@@ -366,6 +416,8 @@ where
 
             info!(?status.modified_upstream,
                 ?status.conflicts,
+                ?status.will_conflict_on_rebase,
+                ?status.will_conflict_on_sync,
                 "upstream");
         }
 
@@ -434,6 +486,11 @@ where
             );
         }
 
+        // Only branch features read it, and listing processes is slow on Windows.
+        if self.app_config.read().enable_branches || status.guided_rebase_active {
+            status.editor_running = self.engine.check_ready_to_sync_repo().await.is_err();
+        }
+
         if !self.skip_engine_update {
             self.engine.send_status_update(&status).await;
         }
@@ -444,15 +501,21 @@ where
         Ok(status)
     }
 
-    async fn get_modified_upstream(&self, branch: &str) -> Result<Vec<String>, anyhow::Error> {
-        let upstream_exists = self
-            .git_client
-            .run_and_collect_output(
-                &["ls-remote", "--exit-code", "--heads", "origin", branch],
-                git::Opts::default(),
-            )
-            .await
-            .is_ok();
+    async fn get_modified_upstream(
+        &self,
+        status: &RepoStatus,
+    ) -> Result<UpstreamChanges, anyhow::Error> {
+        // With branches turned off, every branch keeps the target branch checks.
+        let branch_mode = self.app_config.read().enable_branches && {
+            let rc = self.repo_config.read();
+            is_branch_mode(&rc, &status.branch)
+        };
+        if branch_mode {
+            return Ok(self.get_branch_mode_upstream(status).await);
+        }
+
+        let branch = status.branch.as_str();
+        let upstream_exists = self.upstream_branch_exists(branch).await;
 
         let commit_range = format!("HEAD...origin/{branch}");
 
@@ -516,7 +579,136 @@ where
             .cloned()
             .collect::<Vec<_>>();
 
-        Ok(filtered)
+        Ok(UpstreamChanges {
+            modified_upstream: filtered,
+            will_conflict_on_rebase: vec![],
+            will_conflict_on_sync: vec![],
+        })
+    }
+
+    /// Only lockable `origin/<branch>` changes block; other local overlaps with `origin/<branch>`
+    /// and trunk-side overlaps are reported as warnings. Git failures degrade to empty lists so
+    /// status never fails on a missing or gone upstream.
+    async fn get_branch_mode_upstream(&self, status: &RepoStatus) -> UpstreamChanges {
+        let branch = status.branch.as_str();
+
+        let (blocking, will_conflict_on_sync) = if self.upstream_branch_exists(branch).await {
+            let commit_range = format!("HEAD...refs/remotes/origin/{branch}");
+            let changed = self
+                .git_client
+                .diff_filenames(&commit_range)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!("Failed to diff {commit_range}: {e}");
+                    vec![]
+                });
+
+            // rebased copies of our own commits share a message on both sides
+            let shared = self
+                .git_client
+                .get_shared_changed_files(branch, branch)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!("Failed to find shared commits with origin/{branch}: {e}");
+                    vec![]
+                });
+
+            let incoming: Vec<String> = changed
+                .into_iter()
+                .filter(|file| !shared.contains(file))
+                .collect();
+            let blocking: Vec<String> = incoming
+                .iter()
+                .filter(|file| self.engine.is_lockable_file(file))
+                .cloned()
+                .collect();
+            let will_conflict_on_sync =
+                will_conflict_on_sync(&incoming, &status.modified_files, &blocking);
+            (blocking, will_conflict_on_sync)
+        } else {
+            (vec![], vec![])
+        };
+
+        let will_conflict_on_rebase = self.get_will_conflict_on_rebase(status, &blocking).await;
+
+        UpstreamChanges {
+            modified_upstream: blocking,
+            will_conflict_on_rebase,
+            will_conflict_on_sync,
+        }
+    }
+
+    /// Lockable files changed on both `origin/<trunk>` and this branch (committed or local)
+    /// since their merge-base, excluding anything already blocking.
+    async fn get_will_conflict_on_rebase(
+        &self,
+        status: &RepoStatus,
+        blocking: &[String],
+    ) -> Vec<String> {
+        let trunk = self.repo_config.read().trunk_branch.clone();
+        if trunk.is_empty() {
+            debug!("No trunk branch configured, skipping rebase conflict check");
+            return vec![];
+        }
+        if !self
+            .git_client
+            .has_local_remote_tracking_branch(&trunk)
+            .await
+            .unwrap_or(false)
+        {
+            warn!("origin/{trunk} has not been fetched, skipping rebase conflict check");
+            return vec![];
+        }
+
+        let main_range = format!("HEAD...refs/remotes/origin/{trunk}");
+        let main_side = match self.git_client.diff_filenames(&main_range).await {
+            Ok(files) => files,
+            Err(e) => {
+                warn!("Failed to diff {main_range}: {e}");
+                return vec![];
+            }
+        };
+
+        let branch_range = format!("refs/remotes/origin/{trunk}...HEAD");
+        let branch_committed = match self.git_client.diff_filenames(&branch_range).await {
+            Ok(files) => files,
+            Err(e) => {
+                warn!("Failed to diff {branch_range}: {e}");
+                return vec![];
+            }
+        };
+
+        let branch_side: HashSet<&str> = branch_committed
+            .iter()
+            .map(String::as_str)
+            .chain(status.modified_files.0.iter().map(|f| f.path.as_str()))
+            .chain(status.untracked_files.0.iter().map(|f| f.path.as_str()))
+            .collect();
+
+        main_side
+            .into_iter()
+            .filter(|file| self.engine.is_lockable_file(file))
+            .filter(|file| branch_side.contains(file.as_str()))
+            .filter(|file| !blocking.contains(file))
+            .collect()
+    }
+
+    /// True only if `origin/<branch>` exists on the remote and has been fetched.
+    async fn upstream_branch_exists(&self, branch: &str) -> bool {
+        if branch.is_empty() {
+            return false;
+        }
+        let on_remote = self
+            .git_client
+            .has_remote_branch_exact(branch)
+            .await
+            .unwrap_or(false);
+        on_remote
+            && self
+                .git_client
+                .has_local_remote_tracking_branch(branch)
+                .await
+                .unwrap_or(false)
     }
 
     fn get_upstream_conflicts(
@@ -768,6 +960,8 @@ mod tests {
     use ethos_core::types::config::{AppConfig, RepoConfig, TargetBranchConfig};
 
     use super::*;
+    use crate::repo::operations::branch::rebase_fixture::{guided_record, start_raw_rebase};
+    use crate::repo::operations::branch::{json_path, write_rebase_file};
 
     /// Initialize a local git repo with a real (also-local) `origin` remote,
     /// carrying both `main` and `content-main` branches — the two branches
@@ -1266,6 +1460,657 @@ mod tests {
             .get(path)
             .expect("file present in untracked files");
         assert_ne!(file.submit_status, SubmitStatus::Blocked);
+    }
+
+    const FEATURE: &str = "f11r-branch-x";
+
+    async fn run_git(git: &git::Git, args: &[&str]) {
+        git.run(args, git::Opts::default())
+            .await
+            .unwrap_or_else(|e| panic!("git {args:?} failed: {e}"));
+    }
+
+    fn write_file(dir: &std::path::Path, path: &str, contents: &str) {
+        let full = dir.join(path);
+        fs::create_dir_all(full.parent().expect("parent dir")).unwrap();
+        fs::write(full, contents).unwrap();
+    }
+
+    /// A user clone and a collaborator clone of one remote. `main` and `content-main` both carry
+    /// `Content/{A,B,C,D}.uasset`.
+    struct BranchFixture {
+        dir: tempfile::TempDir,
+        _remote: tempfile::TempDir,
+        _collab_dir: tempfile::TempDir,
+        _hooks: tempfile::TempDir,
+        git: git::Git,
+        collab: git::Git,
+    }
+
+    impl BranchFixture {
+        async fn new() -> Self {
+            let (dir, remote, git) = make_test_repo_with_remote().await;
+            for path in ["A", "B", "C", "D"] {
+                write_file(dir.path(), &format!("Content/{path}.uasset"), "base\n");
+            }
+            run_git(&git, &["add", "Content"]).await;
+            run_git(&git, &["commit", "-qm", "seed assets"]).await;
+            run_git(&git, &["push", "-q", "origin", "main", "main:content-main"]).await;
+
+            let collab_dir = tempfile::tempdir().expect("create collaborator tempdir");
+            run_git(
+                &git,
+                &[
+                    "clone",
+                    "-q",
+                    remote.path().to_str().expect("utf8 remote path"),
+                    collab_dir.path().to_str().expect("utf8 collaborator path"),
+                ],
+            )
+            .await;
+            let (tx, _rx) = mpsc::channel::<String>();
+            let collab = git::Git::new(collab_dir.path().to_path_buf(), tx);
+            run_git(&collab, &["config", "user.email", "collab@example.com"]).await;
+            run_git(&collab, &["config", "user.name", "Collaborator"]).await;
+
+            // Hooks come only from an empty temp dir.
+            let hooks = tempfile::tempdir().expect("create hooks tempdir");
+            let hooks_path = hooks.path().to_str().expect("utf8 hooks path");
+            for clone in [&git, &collab] {
+                run_git(clone, &["config", "core.hooksPath", hooks_path]).await;
+                run_git(clone, &["config", "commit.gpgsign", "false"]).await;
+            }
+
+            Self {
+                dir,
+                _remote: remote,
+                _collab_dir: collab_dir,
+                _hooks: hooks,
+                git,
+                collab,
+            }
+        }
+
+        fn git_dir(&self) -> std::path::PathBuf {
+            self.dir.path().join(".git")
+        }
+
+        /// Commits a local edit of `path` on the current branch and pushes it.
+        async fn push_edit(&self, path: &str, contents: &str, message: &str) {
+            self.edit(path, contents);
+            run_git(&self.git, &["commit", "-qam", message]).await;
+            run_git(&self.git, &["push", "-q"]).await;
+        }
+
+        /// Writes the guided rebase record for the current branch and rebases onto
+        /// `origin/main`; returns git's exit code.
+        async fn guided_rebase(&self) -> i32 {
+            let file = guided_record(&self.git, "refs/remotes/origin/main").await;
+            write_rebase_file(&self.git_dir(), &file).expect("write rebase record");
+            start_raw_rebase(&self.git, &file.onto).await
+        }
+
+        /// Creates `FEATURE` from local `main` and pushes it with an upstream.
+        async fn push_feature_branch(&self) {
+            run_git(&self.git, &["checkout", "-q", "-b", FEATURE]).await;
+            run_git(&self.git, &["push", "-q", "-u", "origin", FEATURE]).await;
+        }
+
+        /// Collaborator commits `path` on `branch` and pushes it.
+        async fn collab_push(&self, branch: &str, path: &str, contents: &str, message: &str) {
+            let tracking = format!("origin/{branch}");
+            run_git(&self.collab, &["fetch", "-q", "origin"]).await;
+            run_git(&self.collab, &["checkout", "-q", "-B", branch, &tracking]).await;
+            write_file(&self.collab.repo_path, path, contents);
+            run_git(&self.collab, &["add", path]).await;
+            run_git(&self.collab, &["commit", "-qm", message]).await;
+            run_git(&self.collab, &["push", "-q", "origin", branch]).await;
+        }
+
+        async fn fetch(&self) {
+            run_git(&self.git, &["fetch", "-q", "--prune", "origin"]).await;
+        }
+
+        fn edit(&self, path: &str, contents: &str) {
+            write_file(self.dir.path(), path, contents);
+        }
+
+        /// Trunk `main`, targets `main` and `content-main`.
+        fn status_op(&self, trunk: &str) -> StatusOp<crate::engine::UnrealEngineProvider> {
+            let target_branches = ["main", "content-main"]
+                .into_iter()
+                .map(|name| TargetBranchConfig {
+                    name: name.to_string(),
+                    uses_merge_queue: false,
+                    blocked_file_globs: vec![],
+                })
+                .collect();
+            let (status_op, _repo_status) =
+                build_status_op(self.git.clone(), self.dir.path(), "main", target_branches);
+            status_op.repo_config.write().trunk_branch = trunk.to_string();
+            status_op.app_config.write().enable_branches = true;
+            status_op
+        }
+
+        async fn status(&self) -> RepoStatus {
+            self.status_op("main").run().await.expect("status run")
+        }
+    }
+
+    fn submit_status_of(status: &RepoStatus, path: &str) -> SubmitStatus {
+        status
+            .modified_files
+            .get(path)
+            .or_else(|| status.untracked_files.get(path))
+            .unwrap_or_else(|| panic!("{path} missing from local changes"))
+            .submit_status
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn feature_branch_main_side_change_warns_but_does_not_block() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+
+        // B is changed on the branch (committed), A is edited locally, E is untracked locally.
+        fx.edit("Content/B.uasset", "branch\n");
+        run_git(&fx.git, &["commit", "-qam", "branch edit b"]).await;
+        run_git(&fx.git, &["push", "-q"]).await;
+
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.collab_push("main", "Content/B.uasset", "main\n", "main edit b")
+            .await;
+        fx.collab_push("main", "Content/E.uasset", "main\n", "main add e")
+            .await;
+        fx.fetch().await;
+
+        fx.edit("Content/A.uasset", "local\n");
+        fx.edit("Content/E.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(
+            status.will_conflict_on_rebase,
+            vec![
+                "Content/A.uasset".to_string(),
+                "Content/B.uasset".to_string(),
+                "Content/E.uasset".to_string(),
+            ]
+        );
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+        assert!(!status.conflict_upstream);
+        for path in ["Content/A.uasset", "Content/E.uasset"] {
+            assert_ne!(submit_status_of(&status, path), SubmitStatus::Conflicted);
+        }
+    }
+
+    #[tokio::test]
+    async fn branches_off_feature_branch_keeps_target_branch_union() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.collab_push(
+            "content-main",
+            "Content/D.uasset",
+            "content\n",
+            "content edit d",
+        )
+        .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let op = fx.status_op("main");
+        op.app_config.write().enable_branches = false;
+        let status = op.run().await.expect("status run");
+        assert_eq!(
+            status.modified_upstream,
+            vec![
+                "Content/A.uasset".to_string(),
+                "Content/D.uasset".to_string()
+            ]
+        );
+        assert_eq!(status.conflicts, vec!["Content/A.uasset".to_string()]);
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert_eq!(
+            submit_status_of(&status, "Content/A.uasset"),
+            SubmitStatus::Conflicted
+        );
+    }
+
+    #[tokio::test]
+    async fn feature_branch_main_only_change_is_not_listed() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push("main", "Content/C.uasset", "main\n", "main edit c")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn feature_branch_upstream_change_blocks() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push("main", "Content/B.uasset", "main\n", "main edit b")
+            .await;
+        fx.collab_push(FEATURE, "Content/B.uasset", "collab\n", "collab edit b")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/B.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_eq!(
+            status.modified_upstream,
+            vec!["Content/B.uasset".to_string()]
+        );
+        assert_eq!(status.conflicts, vec!["Content/B.uasset".to_string()]);
+        assert!(status.conflict_upstream);
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert_eq!(
+            submit_status_of(&status, "Content/B.uasset"),
+            SubmitStatus::Conflicted
+        );
+    }
+
+    #[tokio::test]
+    async fn feature_branch_rebased_copy_of_own_commit_does_not_block() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+
+        fx.edit("Content/C.uasset", "mine\n");
+        run_git(&fx.git, &["commit", "-qam", "edit c"]).await;
+        fx.collab_push(FEATURE, "Content/C.uasset", "mine\n", "edit c")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/C.uasset", "local\n");
+
+        let upstream_diff = fx
+            .git
+            .diff_filenames(&format!("HEAD...origin/{FEATURE}"))
+            .await
+            .unwrap();
+        assert!(
+            upstream_diff.iter().any(|p| p == "Content/C.uasset"),
+            "fixture sanity check: C must differ upstream, got {upstream_diff:?}"
+        );
+
+        let status = fx.status().await;
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn feature_branch_ignores_other_target_branches() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push(
+            "content-main",
+            "Content/D.uasset",
+            "content\n",
+            "content edit d",
+        )
+        .await;
+        fx.fetch().await;
+        fx.edit("Content/D.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn feature_branch_without_upstream_has_empty_blocking_list() {
+        let fx = BranchFixture::new().await;
+        run_git(&fx.git, &["checkout", "-q", "-b", FEATURE]).await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(status.branch, FEATURE);
+        assert_eq!(status.remote_branch, "");
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+        assert_eq!(
+            status.will_conflict_on_rebase,
+            vec!["Content/A.uasset".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn feature_branch_with_gone_upstream_status_ok() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        run_git(&fx.collab, &["push", "-q", "origin", "--delete", FEATURE]).await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(status.remote_branch, format!("origin/{FEATURE}"));
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+        assert_eq!(
+            status.will_conflict_on_rebase,
+            vec!["Content/A.uasset".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn feature_branch_empty_trunk_skips_warning_list() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status_op("").run().await.expect("status run");
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn protected_branch_keeps_target_branch_union() {
+        let fx = BranchFixture::new().await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.collab_push(
+            "content-main",
+            "Content/D.uasset",
+            "content\n",
+            "content edit d",
+        )
+        .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(status.branch, "main");
+        assert_eq!(
+            status.modified_upstream,
+            vec![
+                "Content/A.uasset".to_string(),
+                "Content/D.uasset".to_string()
+            ]
+        );
+        assert_eq!(status.conflicts, vec!["Content/A.uasset".to_string()]);
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn quick_submit_branch_keeps_target_branch_union() {
+        let fx = BranchFixture::new().await;
+        run_git(&fx.git, &["checkout", "-q", "-b", "f11r-main-test-1"]).await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.collab_push(
+            "content-main",
+            "Content/D.uasset",
+            "content\n",
+            "content edit d",
+        )
+        .await;
+        fx.fetch().await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(status.branch, "f11r-main-test-1");
+        assert_eq!(
+            status.modified_upstream,
+            vec![
+                "Content/A.uasset".to_string(),
+                "Content/D.uasset".to_string()
+            ]
+        );
+        assert_eq!(status.conflicts, vec!["Content/A.uasset".to_string()]);
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn detached_head_status_ok() {
+        let fx = BranchFixture::new().await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+        run_git(&fx.git, &["checkout", "-q", "--detach"]).await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert!(status.detached_head);
+        assert_eq!(status.branch, "");
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+    }
+
+    fn assert_no_upstream_lists(status: &RepoStatus) {
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+        assert!(status.conflicts.is_empty(), "{status:?}");
+        assert!(status.will_conflict_on_rebase.is_empty(), "{status:?}");
+        assert!(status.will_conflict_on_sync.is_empty(), "{status:?}");
+        assert!(!status.conflict_upstream);
+    }
+
+    /// `FEATURE` and `main` both changed `Content/A.uasset`.
+    async fn diverge_on_a(fx: &BranchFixture) {
+        fx.push_feature_branch().await;
+        fx.push_edit("Content/A.uasset", "branch\n", "branch edit a")
+            .await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+    }
+
+    #[tokio::test]
+    async fn guided_rebase_in_progress_status_ok() {
+        let fx = BranchFixture::new().await;
+        diverge_on_a(&fx).await;
+        assert_eq!(fx.guided_rebase().await, 1, "the rebase should stop");
+        fx.edit("Content/D.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert!(status.detached_head);
+        assert_eq!(status.branch, "");
+        assert!(status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+        assert_eq!(
+            submit_status_of(&status, "Content/A.uasset"),
+            SubmitStatus::Unmerged
+        );
+        assert_ne!(
+            submit_status_of(&status, "Content/D.uasset"),
+            SubmitStatus::Conflicted
+        );
+    }
+
+    /// Completes a guided rebase of `FEATURE`, then a collaborator changes `Content/C.uasset` on
+    /// `origin/FEATURE`, which the user also edits locally.
+    async fn completed_rebase_with_upstream_change(fx: &BranchFixture) {
+        fx.push_feature_branch().await;
+        fx.push_edit("Content/B.uasset", "branch\n", "branch edit b")
+            .await;
+        fx.collab_push("main", "Content/A.uasset", "main\n", "main edit a")
+            .await;
+        fx.fetch().await;
+        assert_eq!(fx.guided_rebase().await, 0);
+        fx.collab_push(FEATURE, "Content/C.uasset", "collab\n", "collab edit c")
+            .await;
+        fx.fetch().await;
+        fx.edit("Content/C.uasset", "local\n");
+    }
+
+    #[tokio::test]
+    async fn guided_rebase_completed_skips_upstream_changes() {
+        let fx = BranchFixture::new().await;
+        completed_rebase_with_upstream_change(&fx).await;
+
+        let status = fx.status().await;
+        assert_eq!(status.branch, FEATURE);
+        assert!(status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+        assert_ne!(
+            submit_status_of(&status, "Content/C.uasset"),
+            SubmitStatus::Conflicted
+        );
+
+        // The same repo without the record reports the collaborator's change.
+        fs::remove_file(json_path(&fx.git_dir())).unwrap();
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_eq!(
+            status.modified_upstream,
+            vec!["Content/C.uasset".to_string()]
+        );
+        assert_eq!(status.conflicts, vec!["Content/C.uasset".to_string()]);
+        assert!(status.conflict_upstream);
+    }
+
+    #[tokio::test]
+    async fn external_rebase_status_ok() {
+        let fx = BranchFixture::new().await;
+        diverge_on_a(&fx).await;
+        assert_eq!(
+            start_raw_rebase(&fx.git, "refs/remotes/origin/main").await,
+            1
+        );
+
+        let status = fx.status().await;
+        assert!(status.detached_head);
+        assert!(!status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+    }
+
+    #[tokio::test]
+    async fn unknown_rebase_state_does_not_fail_status() {
+        let fx = BranchFixture::new().await;
+        diverge_on_a(&fx).await;
+        assert_eq!(fx.guided_rebase().await, 1);
+        // A record that exists but can't be read.
+        let json = json_path(&fx.git_dir());
+        fs::remove_file(&json).unwrap();
+        fs::create_dir(&json).unwrap();
+
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+    }
+
+    #[tokio::test]
+    async fn unknown_rebase_state_skips_upstream_changes() {
+        let fx = BranchFixture::new().await;
+        completed_rebase_with_upstream_change(&fx).await;
+        let json = json_path(&fx.git_dir());
+        fs::remove_file(&json).unwrap();
+        fs::create_dir(&json).unwrap();
+
+        let status = fx.status().await;
+        assert!(!status.guided_rebase_active);
+        assert_no_upstream_lists(&status);
+    }
+
+    #[test]
+    fn will_conflict_on_sync_rule() {
+        let strings = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let local = FileList(
+            [
+                "notes.txt",
+                "Content/B.uasset",
+                "Content/Local.uasset",
+                "gone.txt",
+            ]
+            .into_iter()
+            .map(|path| File {
+                path: path.to_string(),
+                ..Default::default()
+            })
+            .collect(),
+        );
+        let incoming = strings(&[
+            "notes.txt",
+            "Content/B.uasset",
+            "Content/Upstream.uasset",
+            "gone.txt",
+        ]);
+        let blocking = strings(&["Content/B.uasset", "Content/Upstream.uasset"]);
+
+        assert_eq!(
+            will_conflict_on_sync(&incoming, &local, &blocking),
+            strings(&["notes.txt", "gone.txt"])
+        );
+        assert!(will_conflict_on_sync(&[], &local, &blocking).is_empty());
+        assert!(will_conflict_on_sync(&incoming, &FileList::default(), &[]).is_empty());
+    }
+
+    /// Commits `notes.txt` on `main` and pushes it, so branches made afterwards carry it.
+    async fn seed_text_file(fx: &BranchFixture) {
+        fx.edit("notes.txt", "base\n");
+        run_git(&fx.git, &["add", "notes.txt"]).await;
+        run_git(&fx.git, &["commit", "-qm", "seed notes"]).await;
+        run_git(&fx.git, &["push", "-q", "origin", "main"]).await;
+    }
+
+    #[tokio::test]
+    async fn feature_branch_lists_any_local_file_changed_on_origin_branch() {
+        let fx = BranchFixture::new().await;
+        seed_text_file(&fx).await;
+        fx.push_feature_branch().await;
+        for (path, message) in [
+            ("notes.txt", "collab edit notes"),
+            ("Content/B.uasset", "collab edit b"),
+            ("Content/C.uasset", "collab edit c"),
+        ] {
+            fx.collab_push(FEATURE, path, "collab\n", message).await;
+        }
+        fx.fetch().await;
+        fx.edit("notes.txt", "local\n");
+        fx.edit("Content/B.uasset", "local\n");
+        fx.edit("Content/A.uasset", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(status.will_conflict_on_sync, vec!["notes.txt".to_string()]);
+        assert_eq!(status.conflicts, vec!["Content/B.uasset".to_string()]);
+        assert_ne!(
+            submit_status_of(&status, "notes.txt"),
+            SubmitStatus::Conflicted
+        );
+    }
+
+    #[tokio::test]
+    async fn feature_branch_without_upstream_has_empty_sync_warning() {
+        let fx = BranchFixture::new().await;
+        seed_text_file(&fx).await;
+        run_git(&fx.git, &["checkout", "-q", "-b", FEATURE]).await;
+        fx.collab_push("main", "notes.txt", "collab\n", "collab edit notes")
+            .await;
+        fx.fetch().await;
+        fx.edit("notes.txt", "local\n");
+
+        let status = fx.status().await;
+        assert!(status.will_conflict_on_sync.is_empty(), "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn protected_branch_has_empty_sync_warning() {
+        let fx = BranchFixture::new().await;
+        seed_text_file(&fx).await;
+        fx.collab_push("main", "notes.txt", "collab\n", "collab edit notes")
+            .await;
+        fx.fetch().await;
+        fx.edit("notes.txt", "local\n");
+
+        let status = fx.status().await;
+        assert_eq!(status.branch, "main");
+        assert!(status.will_conflict_on_sync.is_empty(), "{status:?}");
     }
 
     #[test]
