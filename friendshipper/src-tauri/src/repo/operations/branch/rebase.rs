@@ -2413,6 +2413,7 @@ mod tests {
     fn refs(fx: &Fixture) -> Refs {
         let mut app_config = AppConfig::new(crate::APP_NAME);
         app_config.repo_path = fx.path().to_str().expect("utf8").to_string();
+        app_config.enable_branches = true;
         app_config.target_branch = "main".to_string();
         let repo_config = RepoConfig {
             trunk_branch: "main".to_string(),
@@ -6647,7 +6648,7 @@ mod tests {
         assert_refused_by_the_index_lock(&fx, &lock, GUARD_IN_PROGRESS).await;
         assert_eq!(state(&fx).await, in_progress);
         // Startup keeps it too, as git may still be rebasing.
-        assert!(!may_remove_stale_index_lock(&fx.git_dir()));
+        assert!(!may_remove_stale_index_lock(&fx.git_dir(), true));
 
         fs::remove_file(&lock).unwrap();
         resolve(&fx, "a.txt", RebaseKeep::Branch).await.unwrap();
@@ -6671,7 +6672,7 @@ mod tests {
         assert_refused_by_the_index_lock(&fx, &lock, GUARD_COMPLETED_UNPUSHED).await;
         assert_eq!(state(&fx).await, completed(&file, vec![]));
         // No git rebase can still run, so startup would remove it; no op does.
-        assert!(may_remove_stale_index_lock(&fx.git_dir()));
+        assert!(may_remove_stale_index_lock(&fx.git_dir(), true));
 
         fs::remove_file(&lock).unwrap();
         assert_kept(&fx, &before, false).await;

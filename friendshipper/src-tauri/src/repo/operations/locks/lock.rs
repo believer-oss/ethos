@@ -24,7 +24,8 @@ where
 
     let (branch, branch_mode) = {
         let branch = state.repo_status.read().branch.clone();
-        let branch_mode = is_branch_mode(&state.repo_config.read(), &branch);
+        let branch_mode = state.app_config.read().enable_branches
+            && is_branch_mode(&state.repo_config.read(), &branch);
         (branch, branch_mode)
     };
 

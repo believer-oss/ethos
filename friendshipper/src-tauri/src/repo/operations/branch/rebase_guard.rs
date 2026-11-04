@@ -142,10 +142,20 @@ where
     })
 }
 
-/// Whether startup may delete a leftover `index.lock`: not while git's rebase state exists, as
-/// a rebase in a git process that outlived Friendshipper may still hold it.
-pub(crate) fn may_remove_stale_index_lock(git_dir: &Path) -> bool {
-    !rebase_dir_exists(git_dir)
+/// Whether startup may delete a leftover `index.lock`: not while git's rebase state exists and
+/// a git process is running, as a rebase that outlived Friendshipper may still hold it.
+pub(crate) fn may_remove_stale_index_lock(git_dir: &Path, git_running: bool) -> bool {
+    !git_running || !rebase_dir_exists(git_dir)
+}
+
+/// Whether any git process is running on this machine.
+pub(crate) fn git_process_running() -> bool {
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(sysinfo::ProcessRefreshKind::new());
+    system.processes().values().any(|process| {
+        let name = process.name().to_lowercase();
+        name == "git" || name == "git.exe"
+    })
 }
 
 #[cfg(test)]
@@ -526,16 +536,18 @@ mod tests {
     fn stale_index_lock_is_kept_during_a_rebase() {
         let dir = tempfile::tempdir().unwrap();
         let git_dir = dir.path();
-        assert!(may_remove_stale_index_lock(git_dir));
+        assert!(may_remove_stale_index_lock(git_dir, true));
 
         for marker in ["rebase-merge", "rebase-apply"] {
             fs::create_dir(git_dir.join(marker)).unwrap();
-            assert!(!may_remove_stale_index_lock(git_dir), "{marker}");
+            assert!(!may_remove_stale_index_lock(git_dir, true), "{marker}");
+            // With no git process left, the lock is orphaned.
+            assert!(may_remove_stale_index_lock(git_dir, false), "{marker}");
             fs::remove_dir(git_dir.join(marker)).unwrap();
         }
 
         // A record alone means no git process can still be rebasing.
         fs::write(json_path(git_dir), "{").unwrap();
-        assert!(may_remove_stale_index_lock(git_dir));
+        assert!(may_remove_stale_index_lock(git_dir, true));
     }
 }

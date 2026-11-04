@@ -42,8 +42,8 @@ pub use rebase::{
     RebaseResetToBackupOp, RebaseResolveOp, RebaseStartOp, RebaseUnresolveOp,
 };
 pub(crate) use rebase_guard::{
-    ensure_no_guided_rebase, guard_op, guard_state, may_remove_stale_index_lock,
-    recorded_rebase_kind, GUARD_IN_PROGRESS,
+    ensure_no_guided_rebase, git_process_running, guard_op, guard_state,
+    may_remove_stale_index_lock, recorded_rebase_kind, GUARD_IN_PROGRESS,
 };
 pub(crate) use rebase_state::{
     is_active, read_rebase_file, rebase_dir_exists, resolve_git_dir, RebaseFileRead,
