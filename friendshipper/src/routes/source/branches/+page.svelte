@@ -547,7 +547,7 @@
 	</Alert>
 {/if}
 <fieldset
-	class="flex flex-col gap-2 w-full min-w-0"
+	class="flex flex-col flex-1 gap-2 w-full min-w-0 min-h-0 overflow-y-auto"
 	class:hidden={managementOff}
 	disabled={editorOpen || managementOff}
 >
@@ -842,82 +842,84 @@
 			</div>
 
 			<Card
-				class="w-full p-4 sm:p-4 max-w-full min-h-0 h-[24rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
+				class="flex flex-col flex-1 w-full p-4 sm:p-4 max-w-full min-h-[16rem] bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
 			>
 				<h3 class="text-primary-400 text-xl">Changes on branch</h3>
 				<p class="pb-2 text-xs text-gray-400">
 					Pushed changes compared with {analysis.trunkBranch}; unpushed commits appear after you
 					submit.
 				</p>
-				<Tabs
-					style="underline"
-					divider={false}
-					contentClass="bg-secondary-700 dark:bg-space-900 h-full overflow-y-auto"
-				>
-					<TabItem
-						open
-						title="Lockable files (assets & DLLs) ({analysis.lockableFileCount})"
-						class="bg-secondary-700 dark:bg-space-900"
+				<div class="flex flex-col flex-1 min-h-0">
+					<Tabs
+						style="underline"
+						divider={false}
+						contentClass="bg-secondary-700 dark:bg-space-900 flex-1 min-h-0 overflow-y-auto"
 					>
-						{#if analysis.lockableFiles.length === 0}
-							<p class="p-2 text-sm text-gray-300">No lockable files changed on this branch.</p>
-						{:else}
-							{#if analysis.lockableFileCount > analysis.lockableFiles.length}
+						<TabItem
+							open
+							title="Lockable files (assets & DLLs) ({analysis.lockableFileCount})"
+							class="bg-secondary-700 dark:bg-space-900"
+						>
+							{#if analysis.lockableFiles.length === 0}
+								<p class="p-2 text-sm text-gray-300">No lockable files changed on this branch.</p>
+							{:else}
+								{#if analysis.lockableFileCount > analysis.lockableFiles.length}
+									<p class="p-2 text-sm text-gray-400">
+										Showing the first {analysis.lockableFiles.length} of {analysis.lockableFileCount}
+									</p>
+								{/if}
+								<Table color="custom" striped>
+									<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
+										<TableHeadCell class="p-2">File</TableHeadCell>
+										<TableHeadCell class="p-2">Last branch commit</TableHeadCell>
+										<TableHeadCell class="p-2">Changed on {analysis.trunkBranch}</TableHeadCell>
+										<TableHeadCell class="p-2" />
+									</TableHead>
+									<TableBody>
+										{#each analysis.lockableFiles as row, index}
+											<TableBodyRow
+												class="text-left border-b-0 p-2 {index % 2 === 0
+													? 'bg-secondary-700 dark:bg-space-900'
+													: 'bg-secondary-800 dark:bg-space-950'}"
+											>
+												<TableBodyCell class="p-2 break-all whitespace-normal" title={row.path}
+													>{row.displayName || row.path}</TableBodyCell
+												>
+												<TableBodyCell class="p-2">{touchText(row.branchCommit)}</TableBodyCell>
+												<TableBodyCell class="p-2">
+													{#if !row.changedOnMain}
+														—
+													{:else if row.mainCommit}
+														Yes — {row.mainCommit.author} ({row.mainCommit.sha})
+													{:else}
+														Yes
+													{/if}
+												</TableBodyCell>
+												<TableBodyCell class="p-2">
+													{#if row.changedOnMain}
+														<Badge color="red">Will conflict at rebase</Badge>
+													{/if}
+												</TableBodyCell>
+											</TableBodyRow>
+										{/each}
+									</TableBody>
+								</Table>
+							{/if}
+						</TabItem>
+						<TabItem title="Commits ({analysis.commitsAhead})">
+							{#if analysis.commitsAhead > analysis.commits.length}
 								<p class="p-2 text-sm text-gray-400">
-									Showing the first {analysis.lockableFiles.length} of {analysis.lockableFileCount}
+									Showing the newest {analysis.commits.length} of {analysis.commitsAhead}
 								</p>
 							{/if}
-							<Table color="custom" striped>
-								<TableHead class="text-left border-b-0 p-2 bg-secondary-800 dark:bg-space-950">
-									<TableHeadCell class="p-2">File</TableHeadCell>
-									<TableHeadCell class="p-2">Last branch commit</TableHeadCell>
-									<TableHeadCell class="p-2">Changed on {analysis.trunkBranch}</TableHeadCell>
-									<TableHeadCell class="p-2" />
-								</TableHead>
-								<TableBody>
-									{#each analysis.lockableFiles as row, index}
-										<TableBodyRow
-											class="text-left border-b-0 p-2 {index % 2 === 0
-												? 'bg-secondary-700 dark:bg-space-900'
-												: 'bg-secondary-800 dark:bg-space-950'}"
-										>
-											<TableBodyCell class="p-2 break-all whitespace-normal" title={row.path}
-												>{row.displayName || row.path}</TableBodyCell
-											>
-											<TableBodyCell class="p-2">{touchText(row.branchCommit)}</TableBodyCell>
-											<TableBodyCell class="p-2">
-												{#if !row.changedOnMain}
-													—
-												{:else if row.mainCommit}
-													Yes — {row.mainCommit.author} ({row.mainCommit.sha})
-												{:else}
-													Yes
-												{/if}
-											</TableBodyCell>
-											<TableBodyCell class="p-2">
-												{#if row.changedOnMain}
-													<Badge color="red">Will conflict at rebase</Badge>
-												{/if}
-											</TableBodyCell>
-										</TableBodyRow>
-									{/each}
-								</TableBody>
-							</Table>
-						{/if}
-					</TabItem>
-					<TabItem title="Commits ({analysis.commitsAhead})">
-						{#if analysis.commitsAhead > analysis.commits.length}
-							<p class="p-2 text-sm text-gray-400">
-								Showing the newest {analysis.commits.length} of {analysis.commitsAhead}
-							</p>
-						{/if}
-						<CommitTable
-							commits={analysis.commits}
-							showFilesHandler={showCommitFiles}
-							onShowCommitInfo={showCommitInfo}
-						/>
-					</TabItem>
-				</Tabs>
+							<CommitTable
+								commits={analysis.commits}
+								showFilesHandler={showCommitFiles}
+								onShowCommitInfo={showCommitInfo}
+							/>
+						</TabItem>
+					</Tabs>
+				</div>
 			</Card>
 		{/if}
 	{/if}
