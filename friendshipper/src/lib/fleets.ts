@@ -2,10 +2,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { derived, get, writable } from 'svelte/store';
 import type {
 	CreatePromotionRequest,
+	FleetRelease,
 	Nullable,
 	Promotion,
+	PromotionPlan,
 	ShardDetail,
-	ShardSummary
+	ShardSpec,
+	ShardSummary,
+	SizingOverride
 } from '$lib/types';
 import {
 	ACTIVE_POLL_MS,
@@ -14,6 +18,7 @@ import {
 	PromotionTransitions,
 	type PromotionToast
 } from '$lib/fleetFormat';
+import { ReleaseTransitions } from '$lib/fleetReleases';
 import { dynamicConfig } from '$lib/stores';
 import { logInfo } from '$lib/utils';
 
@@ -34,6 +39,41 @@ export const getPromoterName = async (): Promise<Nullable<string>> => invoke('ge
 export const cancelPromotion = async (name: string): Promise<void> =>
 	invoke('cancel_promotion', { name });
 
+export const getFleetReleases = async (shard?: string): Promise<FleetRelease[]> =>
+	invoke('get_fleet_releases', { shard });
+
+/** Replaces the shard's Fleet settings, unless someone changed them since `generation`. */
+export const setShardSpec = async (
+	name: string,
+	generation: number,
+	spec: ShardSpec
+): Promise<void> => invoke('set_shard_spec', { name, request: { generation, spec } });
+
+/**
+ * The build's manifest next to the shard's backend. A build without a manifest gives a null
+ * `manifest`, not an error.
+ */
+export const getPromotionPlan = async (shard: string, version: string): Promise<PromotionPlan> =>
+	invoke('get_promotion_plan', { shard, version });
+
+/** Warms a build on a shard: creates its FleetRelease. */
+export const warmFleetRelease = async (shard: string, version: string): Promise<FleetRelease> =>
+	invoke('warm_fleet_release', { request: { shard, version } });
+
+export const pinFleetRelease = async (name: string, pinned: boolean): Promise<FleetRelease> =>
+	invoke('pin_fleet_release', { name, pinned });
+
+/** Without `force`, the Fleets go once the matches on them end; with it, those matches end now. */
+export const retireFleetRelease = async (name: string, force: boolean): Promise<FleetRelease> =>
+	invoke('retire_fleet_release', { name, force });
+
+export const setFleetReleaseOverrides = async (
+	name: string,
+	generation: number,
+	overrides: SizingOverride[]
+): Promise<FleetRelease> =>
+	invoke('set_fleet_release_overrides', { name, request: { generation, overrides } });
+
 export const promotionViaCoordinator = derived(
 	dynamicConfig,
 	($dynamicConfig) => $dynamicConfig.promotionViaCoordinator === true
@@ -42,6 +82,7 @@ export const promotionViaCoordinator = derived(
 // Every shard and promotion, refreshed by the poller below.
 export const fleetShards = writable(<ShardSummary[]>[]);
 export const fleetPromotions = writable(<Promotion[]>[]);
+export const fleetReleases = writable(<FleetRelease[]>[]);
 // Whether Shard objects can be listed: true after a successful poll, false again after a few
 // failures in a row. With the switch off, the Shards nav item shows only when this is true.
 export const fleetsAvailable = writable(false);
@@ -84,6 +125,8 @@ class FleetPoller {
 	// Only while the switch is on: off, polls are too sparse to tell what changed when.
 	private transitions: PromotionTransitions | null = null;
 
+	private releaseTransitions: ReleaseTransitions | null = null;
+
 	private onToast: Nullable<(toast: PromotionToast) => void> = null;
 
 	private unsubscribe: Nullable<() => void> = null;
@@ -96,6 +139,7 @@ class FleetPoller {
 			if (on === this.switchOn) return;
 			this.switchOn = on;
 			this.transitions = on ? new PromotionTransitions() : null;
+			this.releaseTransitions = on ? new ReleaseTransitions() : null;
 			if (on) {
 				this.pollInBackground();
 			} else {
@@ -112,8 +156,10 @@ class FleetPoller {
 		this.unsubscribe = null;
 		this.switchOn = false;
 		this.transitions = null;
+		this.releaseTransitions = null;
 		this.clearTimer();
 		fleetPromotions.set([]);
+		fleetReleases.set([]);
 	}
 
 	/** Keeps polling while the returned function hasn't been called. */
@@ -164,6 +210,7 @@ class FleetPoller {
 		if (delay === null) {
 			// Nothing keeps promotions current now, so don't leave a stale list for the tray.
 			fleetPromotions.set([]);
+			fleetReleases.set([]);
 			return;
 		}
 		this.timer = setTimeout(() => {
@@ -191,9 +238,14 @@ class FleetPoller {
 
 	private async fetch() {
 		try {
-			const [shards, promotions] = await Promise.all([getShards(), getPromotions()]);
+			const [shards, promotions, releases] = await Promise.all([
+				getShards(),
+				getPromotions(),
+				getFleetReleases()
+			]);
 			fleetShards.set(shards);
 			fleetPromotions.set(promotions);
+			fleetReleases.set(releases);
 			fleetsAvailable.set(true);
 			fleetError.set('');
 			fleetRevision.update((n) => n + 1);
@@ -202,6 +254,9 @@ class FleetPoller {
 				// Read each time: connecting GitHub or changing the display name changes it.
 				const localName = await getPromoterName().catch(() => null);
 				this.transitions.update(promotions, localName).forEach((t) => {
+					this.onToast?.(t);
+				});
+				this.releaseTransitions?.update(releases, localName).forEach((t) => {
 					this.onToast?.(t);
 				});
 			}
