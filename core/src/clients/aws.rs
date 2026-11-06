@@ -7,6 +7,7 @@ use aws_credential_types::provider::{future, ProvideCredentials, SharedCredentia
 use aws_credential_types::Credentials;
 use aws_sdk_ecr::{types::ImageIdentifier, Client as EcrClient};
 use aws_sdk_eks::Client as EksClient;
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client as S3Client;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SignatureLocation, SigningSettings};
@@ -352,6 +353,33 @@ impl AWSClient {
         let sha = parse_metadata_body(body)?;
 
         Ok((sha, last_modified))
+    }
+
+    /// Reads an object from the artifact bucket. `None` when it doesn't exist: S3 answers
+    /// AccessDenied rather than NoSuchKey for a missing key when the caller can't list the bucket,
+    /// so both read as missing.
+    #[instrument(skip(self))]
+    pub async fn get_artifact_object(&self, key: &str) -> Result<Option<Vec<u8>>, CoreError> {
+        let client = S3Client::new(&self.get_sdk_config().await);
+        match client
+            .get_object()
+            .bucket(self.get_artifact_bucket())
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(resp) => Ok(Some(resp.body.collect().await?.into_bytes().to_vec())),
+            Err(e) => {
+                if let Some(service) = e.as_service_error() {
+                    if service.is_no_such_key() || service.code() == Some("AccessDenied") {
+                        debug!("No readable artifact object {key}: {service}");
+                        return Ok(None);
+                    }
+                }
+                // Kept whole, so an unreachable AWS is reported as such.
+                Err(CoreError::Internal(anyhow::Error::new(e)))
+            }
+        }
     }
 
     #[instrument(skip(self), err)]

@@ -61,8 +61,19 @@ A minimal IAM policy for Friendshipper to work is below. Note that there are var
 			"Effect": "Allow",
 			"Action": ["s3:GetObject", "s3:GetObjectAcl"],
 			"Resource": ["arn:aws:s3:::BUCKET_NAME/friendshipper/*", "arn:aws:s3:::BUCKET_NAME/v1/*"]
-            "Resource": ["arn:aws:s3:::PROMOTED_ARTIFACT_BUCKET_NAME/metadata/*"]
+		},
+		{
+			"Effect": "Allow",
+			"Action": ["s3:GetObject"],
+			"Resource": ["arn:aws:s3:::PROMOTED_ARTIFACT_BUCKET_NAME/metadata/*"]
+		},
+		{
+			"Effect": "Allow",
+			"Action": ["s3:GetObject"],
+			"Resource": ["arn:aws:s3:::ARTIFACT_BUCKET/argo-artifacts/manifests/*"]
 		}
 	]
 }
 ```
+
+The last statement lets Friendshipper read build manifests (see [Build Manifests](build-artifacts.md#build-manifests)). Without it, promoting still works: the promote form leaves out the comparison of the build's backend parts with the shard's, and shows no error. Fleet settings then lists maps only from the shard's releases.
