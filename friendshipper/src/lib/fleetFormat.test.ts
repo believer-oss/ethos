@@ -2,10 +2,25 @@ import { describe, expect, it } from 'vitest';
 import {
 	activeBuildsFromShards,
 	backendParts,
+	cancelEffect,
+	currentStepText,
+	promotionProgressText,
+	gatePlan,
+	localTime,
+	mapPreflight,
+	promotionChanges,
+	promotionTimeline,
+	promotionWorkflow,
 	backendWarning,
 	channelSinceText,
 	channelKey,
 	formatAge,
+	formatAgo,
+	formatSpan,
+	fleetsConfigLine,
+	gateStableForMs,
+	parseDuration,
+	warmTtlMs,
 	formatBackendPart,
 	formatElapsed,
 	isActivePromotion,
@@ -25,6 +40,8 @@ import {
 } from '$lib/fleetFormat';
 import type {
 	ChannelStatus,
+	FleetRelease,
+	FleetsConfig,
 	Promotion,
 	PromotionPhase,
 	PromotionSpec,
@@ -105,6 +122,36 @@ describe('ages', () => {
 		expect(formatAge('not a date', NOW)).toBe('');
 	});
 
+	it('says "just now" rather than "now ago"', () => {
+		expect(formatAgo(new Date(NOW - 30_000), NOW)).toBe('just now');
+		expect(formatAgo(new Date(NOW - 12 * 60_000), NOW)).toBe('12 m ago');
+		expect(formatAgo(null, NOW)).toBe('');
+		const part = parseBackendVersion('2026-01-02-03-04-05_1.2.3_main_abc12345');
+		expect(
+			formatBackendPart({ name: 'content', raw: '', version: part }, Date.UTC(2026, 0, 2, 3, 4, 5))
+		).toBe('content abc12345 · built just now');
+	});
+
+	it('formats durations from the ShardConfig, as the local backend fills it', () => {
+		expect(formatSpan(parseDuration('1200s') ?? 0)).toBe('20 m');
+		expect(formatSpan(warmTtlMs({ warmTtl: '86400s' } as FleetsConfig))).toBe('24 h');
+		// No fleets section, no durations: the local backend fills them from the coordinator's defaults.
+		expect(gateStableForMs(null)).toBe(0);
+		expect(
+			fleetsConfigLine({
+				clusters: [
+					{ name: 'cluster-a', zone: 'cluster-a' },
+					{ name: 'cluster-b', zone: 'cluster-b' }
+				],
+				limits: { maxReplicasPerFleet: 50 },
+				gate: { stableFor: '120s', timeout: '1200s' }
+			} as FleetsConfig)
+		).toBe(
+			'Clusters: cluster-a, cluster-b · at most 50 servers per Fleet · gate 1 Ready for 2 m, timeout 20 m'
+		);
+		expect(fleetsConfigLine(null)).toBe('Clusters: none');
+	});
+
 	it('formats elapsed time', () => {
 		expect(formatElapsed(new Date(NOW - 45_000).toISOString(), NOW)).toBe('45 s');
 		expect(formatElapsed(new Date(NOW - 190_000).toISOString(), NOW)).toBe('3 m 10 s');
@@ -157,7 +204,7 @@ describe('channels', () => {
 	});
 
 	it('describes Steam channels', () => {
-		expect(steamChannelText(steam({ version: SHA }))).toBe('test: 0123456');
+		expect(steamChannelText(steam({ version: SHA }))).toBe('test: 01234567');
 		expect(steamChannelText(steam({ buildId: 1234, error: 'BuildNotFound' }))).toBe(
 			'test: build 1234'
 		);
@@ -263,7 +310,7 @@ describe('PromotionTransitions', () => {
 		const [toast] = t.update([promotion('p', 'Succeeded', created)], CREATOR);
 		expect(toast).toEqual({
 			kind: 'success',
-			message: 'Promotion succeeded: test steam: test → 0123456',
+			message: 'Promotion succeeded: test steam: test → 01234567',
 			shard: 'test'
 		});
 		// Only once.
@@ -284,7 +331,7 @@ describe('PromotionTransitions', () => {
 		// The creation time doesn't matter, even one far in the past by the local clock.
 		const old = new Date(NOW - 24 * HOUR).toISOString();
 		const [toast] = t.update([promotion('quick', 'Rejected', old, 'ChannelBusy')], CREATOR);
-		expect(toast.message).toBe('Promotion rejected: test steam: test → 0123456: ChannelBusy');
+		expect(toast.message).toBe('Promotion rejected: test steam: test → 01234567: ChannelBusy');
 	});
 
 	it('does not toast a name that comes back after missing a poll', () => {
@@ -299,7 +346,7 @@ describe('PromotionTransitions', () => {
 		t.update([], 'someone');
 		t.update([cancelled(promotion('p', 'Running', created))], 'someone');
 		const [toast] = t.update([cancelled(promotion('p', 'Cancelled', created))], 'someone');
-		expect(toast.message).toBe('Cancelled by someone: test steam: test → 0123456');
+		expect(toast.message).toBe('Cancelled by someone: test steam: test → 01234567');
 	});
 
 	it('toasts only the creator and the canceller', () => {
@@ -333,6 +380,8 @@ describe('activeBuildsFromShards', () => {
 				name: 'test',
 				displayName: 'Test',
 				config: null,
+				spec: null,
+				generation: null,
 				status: {
 					channels: [
 						steam({ version: SHA, since: '2026-01-01T00:00:00Z' }),
@@ -430,7 +479,10 @@ describe('promotionPreview', () => {
 			promotions: [],
 			conditions: []
 		},
-		promotions
+		spec: null,
+		generation: null,
+		promotions,
+		releases: []
 	});
 
 	it('shows current and requested side by side', () => {
@@ -439,8 +491,8 @@ describe('promotionPreview', () => {
 		expect(rows).toEqual([
 			{
 				label: 'Version',
-				current: '0123456 · build first seen on the branch 2 h ago',
-				requested: 'fedcba9'
+				current: '01234567 · build first seen on the branch 2 h ago',
+				requested: 'fedcba98'
 			},
 			{ label: 'Game config', current: 'Test', requested: 'Shipping' },
 			{ label: 'Deploy backend', current: '', requested: 'Yes' },
@@ -459,7 +511,9 @@ describe('promotionPreview', () => {
 		expect(blocked).toBe('');
 		expect(rows.map((r) => r.label)).not.toContain('Sign');
 		expect(rows[0].current).toBe('nothing known');
-		expect(rows[1].current).toBe('not reported');
+		// Not reported by a launcher: its default for promotions, said so on the label.
+		expect(rows[1].current).toBe('Test');
+		expect(rows[1].labelTitle).toMatch(/don't report/);
 	});
 
 	it('blocks a busy channel', () => {
@@ -534,5 +588,247 @@ describe('backendWarning', () => {
 	it('is quiet when the backend is fine', () => {
 		const fine = { ...backend, healthy: true, error: '' };
 		expect(backendWarning(fine, [deploying('p', 'Running')], 'test', NOW)).toBeNull();
+	});
+});
+
+// The status of a fixture made with one, so tests can edit it in place.
+const statusOf = (p: Promotion) => {
+	if (!p.status) throw new Error('fixture has no status');
+	return p.status;
+};
+
+describe('promotion steps', () => {
+	const stepped = (currentStep: string, phase: PromotionPhase = 'Running'): Promotion => {
+		const p = promotion('test-steam-abcde', phase);
+		statusOf(p).currentStep = currentStep;
+		statusOf(p).steps = [
+			{ name: 'deploy-backend', workflow: '', phase: 'Skipped', message: 'no part changes' },
+			{
+				name: 'warm-fleets',
+				workflow: '',
+				fleetRelease: 'test-01234567',
+				phase: 'Succeeded',
+				message: ''
+			},
+			{
+				name: 'publish-client',
+				workflow: 'promote-test-steam-abcde-publish-client',
+				phase: 'Running',
+				message: ''
+			},
+			{
+				name: 'flip-channel',
+				workflow: 'promote-test-steam-abcde-flip-channel',
+				phase: 'Pending',
+				message: ''
+			}
+		];
+		return p;
+	};
+
+	it('lists every step with its state', () => {
+		const timeline = promotionTimeline(stepped('publish-client'));
+		expect(timeline.map((s) => [s.label, s.state])).toEqual([
+			['Deploy backend', 'skipped'],
+			['Warm fleets', 'succeeded'],
+			['Publish client', 'running'],
+			['Flip channel', 'pending']
+		]);
+		expect(timeline[0].message).toBe('no part changes');
+		expect(timeline[1].fleetRelease).toBe('test-01234567');
+	});
+
+	it('says where a promotion is, cancelling first', () => {
+		expect(promotionProgressText(stepped('warm-fleets'))).toBe('Warm fleets');
+		expect(promotionProgressText(cancelled(stepped('warm-fleets')))).toBe('Cancelling…');
+		expect(promotionProgressText(promotion('p', 'Succeeded'))).toBe('Succeeded');
+	});
+
+	it('names the current step', () => {
+		expect(currentStepText(stepped('warm-fleets'))).toBe('warm fleets');
+		expect(currentStepText(promotion('p', 'Pending'))).toBe('pending');
+	});
+
+	it('links the running step’s workflow, else the last one that started', () => {
+		expect(promotionWorkflow(stepped('publish-client'))).toBe(
+			'promote-test-steam-abcde-publish-client'
+		);
+		const done = stepped('', 'Succeeded');
+		statusOf(done).steps[3].phase = 'Succeeded';
+		expect(promotionWorkflow(done)).toBe('promote-test-steam-abcde-flip-channel');
+		// A promotion run as one workflow: a single promote step.
+		const single = promotion('p', 'Running');
+		statusOf(single).steps = [
+			{ name: 'promote', workflow: 'promote-p', phase: 'Running', message: '' }
+		];
+		expect(promotionWorkflow(single)).toBe('promote-p');
+	});
+
+	it('says what cancelling does in each step', () => {
+		expect(cancelEffect(promotion('p', null))).toMatch(/nothing is submitted/);
+		expect(cancelEffect(stepped('deploy-backend'))).toMatch(/finishes first/);
+		expect(cancelEffect(stepped('warm-fleets'))).toMatch(/Nothing is stopped/);
+		expect(cancelEffect(stepped('publish-client'))).toMatch(/upload is stopped/);
+		expect(cancelEffect(stepped('flip-channel'))).toMatch(/can’t be undone/);
+	});
+
+	it('lists what changed', () => {
+		const p = stepped('', 'Cancelled');
+		const expires = new Date(NOW + 26 * 60 * 60_000);
+		statusOf(p).changes = [
+			{
+				kind: 'FleetReleaseWarming',
+				detail: `test-01234567, retires on its TTL at ${expires.toISOString()} unless used`
+			},
+			{
+				kind: 'FleetReleaseWarming',
+				detail:
+					'test-01234567, created afresh in place of the retired one, retires on its TTL unless used'
+			},
+			{ kind: 'BackendDeployed', detail: 'content a → b' },
+			{ kind: 'ClientUploaded', detail: 'Steam build 1234, not live on any branch' },
+			{ kind: 'FleetReleaseLive', detail: 'test-01234567' },
+			{ kind: 'FleetReleaseWarming', detail: 'something else' }
+		];
+		expect(promotionChanges(p, NOW)).toEqual([
+			`Release test-01234567 warmed (expires ${localTime(expires, NOW)} unless used)`,
+			'Release test-01234567 warmed, in place of the retired one (expires on its TTL unless used)',
+			'Client uploaded: Steam build 1234, not live on any branch',
+			'Release test-01234567 went live',
+			'Release warmed: something else'
+		]);
+	});
+
+	it('names local times by their day', () => {
+		const at = (day: number, hour: number) => new Date(2026, 0, day, hour, 5);
+		const now = at(2, 12).getTime();
+		expect(localTime(at(2, 19), now)).toBe('19:05');
+		expect(localTime(at(3, 9), now)).toBe('tomorrow 09:05');
+		expect(localTime(at(1, 9), now)).toBe('yesterday 09:05');
+		expect(localTime(at(7, 9), now)).toBe('7 Jan 09:05');
+		expect(localTime('not a time', now)).toBe('');
+	});
+
+	it('toasts a cancel with the coordinator’s summary', () => {
+		const t = new PromotionTransitions();
+		t.update([promotion('p', 'Running')], CREATOR);
+		const [toast] = t.update(
+			[promotion('p', 'Cancelled', undefined, 'release warming; client not published')],
+			CREATOR
+		);
+		expect(toast.message).toBe(
+			'Cancelled: test steam: test → 01234567: release warming; client not published'
+		);
+	});
+});
+
+describe('gate and map pre-flight', () => {
+	const fleetDetail = (enabled: boolean, maps?: string[]): ShardDetail => ({
+		name: 'test',
+		displayName: 'Test',
+		config: {
+			shardName: 'test',
+			healthcheckUrl: 'https://backend.example.com/v1/healthcheck',
+			channels: [{ kind: 'steam', branch: 'test', gameConfig: 'Test' }],
+			promotion: { allowDeployBackend: true },
+			fleets: {
+				clusters: [{ name: 'cluster-a', zone: 'a' }],
+				imageRepository: 'r',
+				limits: {},
+				gate: { timeout: '15m' }
+			}
+		},
+		spec: { fleetsEnabled: enabled, maps },
+		generation: 1,
+		status: {
+			channels: [],
+			promotions: [],
+			conditions: []
+		},
+		promotions: [],
+		releases: []
+	});
+
+	it('says whether the gate applies', () => {
+		expect(gatePlan(fleetDetail(true), false)).toEqual({
+			applies: true,
+			text: "Waits for the build's Fleets to pass the warm gate (up to 15 m) before publishing the client."
+		});
+		expect(gatePlan(fleetDetail(true), true).applies).toBe(false);
+		expect(gatePlan(fleetDetail(false), false).text).toMatch(/Fleets are off/);
+		expect(gatePlan(null, false).text).toMatch(/no Fleets/);
+	});
+
+	it('checks each fleet map against any existing release of the build', () => {
+		const IN_BUILD = 'in the build’s maps: its level is checked when warming';
+		expect(mapPreflight(fleetDetail(true, ['Arena']), SHA)).toEqual([
+			{ mapId: 'Arena', ok: true, text: 'checked against the build’s manifest when warming' }
+		]);
+		const withRelease = (status: NonNullable<FleetRelease['status']>) => {
+			const detail = fleetDetail(true, ['Arena', 'Gone']);
+			detail.releases = [
+				{
+					metadata: { name: 'test-01234567' },
+					spec: { shard: 'test', version: SHA, phase: 'Warm', pinned: false, force: false },
+					status
+				}
+			];
+			return detail;
+		};
+		// The manifest is read, the check not yet written: buildMapIds already tells.
+		expect(
+			mapPreflight(
+				withRelease({
+					servedBy: [],
+					buildMapIds: ['Arena'],
+					maps: [],
+					clusters: [],
+					conditions: []
+				}),
+				SHA
+			)
+		).toEqual([
+			{ mapId: 'Arena', ok: true, text: IN_BUILD },
+			{ mapId: 'Gone', ok: false, text: 'not in the build’s maps: the release fails' }
+		]);
+		// The manifest's own map IDs, with no release yet; an empty list (an older manifest) says nothing.
+		expect(
+			mapPreflight(fleetDetail(true, ['Arena', 'Gone']), SHA, ['Arena']).map((c) => c.text)
+		).toEqual([IN_BUILD, 'not in the build’s maps: the release fails']);
+		expect(mapPreflight(fleetDetail(true, ['Gone']), SHA, [])[0].ok).toBe(true);
+		const checked = mapPreflight(
+			withRelease({
+				servedBy: [],
+				buildMapIds: ['Arena'],
+				maps: [
+					{ mapId: 'Arena', check: 'NotCooked', levelUrl: '' },
+					{ mapId: 'Gone', check: 'NotInBuild', levelUrl: '' }
+				],
+				clusters: [],
+				conditions: []
+			}),
+			SHA
+		);
+		expect(checked.map((c) => c.ok)).toEqual([false, false]);
+		expect(checked[0].text).toBe('the build doesn’t contain its level: the release fails');
+		expect(mapPreflight(fleetDetail(false), SHA)).toEqual([]);
+	});
+
+	it('adds the gate to the promote preview, and needs a reason to skip it', () => {
+		const spec: PromotionSpec = {
+			shard: 'test',
+			channel: { kind: 'steam', branch: 'test' },
+			version: SHA,
+			deployBackend: false
+		};
+		const { rows } = promotionPreview(fleetDetail(true), spec, NOW);
+		expect(rows.find((r) => r.label === 'Warm gate')?.requested).toBe('Waits for Fleets');
+		const skipping = { ...spec, skipFleetGate: { reason: ' broken ' } };
+		expect(promotionPreview(fleetDetail(true), skipping, NOW).rows.at(-1)?.requested).toBe(
+			'Skipped: broken'
+		);
+		expect(
+			promotionPreview(fleetDetail(true), { ...spec, skipFleetGate: { reason: ' ' } }, NOW).blocked
+		).toBe('Skipping the warm gate needs a reason.');
 	});
 });

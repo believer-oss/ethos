@@ -711,12 +711,78 @@ export interface ShardChannel extends ChannelRef {
 	gameConfig: GameConfig;
 }
 
+export interface FleetCluster {
+	name: string;
+	zone: string;
+}
+
+export interface FleetsConfig {
+	clusters: FleetCluster[];
+	imageRepository: string;
+	limits: { maxReplicasPerFleet?: number };
+	// Durations are Go-style strings such as "2m"; unset fields take the coordinator's defaults.
+	gate: { minReady?: number; stableFor?: string; timeout?: string };
+	retireAfterIdle?: string;
+	warmTtl?: string;
+}
+
 export interface ShardConfigSpec {
 	shardName: string;
 	displayName?: string;
 	healthcheckUrl: string;
 	channels: ShardChannel[];
 	promotion: { allowDeployBackend: boolean };
+	shardId?: string;
+	backendAddress?: string;
+	// Absent: the shard can never have Fleets.
+	fleets?: Nullable<FleetsConfig>;
+}
+
+// An Agones Buffer policy, possibly partial. bufferSize is an integer or a percentage like "20%".
+// parked: true scales the Fleet to zero with no autoscaler; the other fields are then ignored.
+export interface Sizing {
+	bufferSize?: number | string;
+	minReplicas?: number;
+	maxReplicas?: number;
+	parked?: boolean;
+}
+
+export interface SizingOverride {
+	cluster: string;
+	mapId: string;
+	sizing: Sizing;
+}
+
+export interface LiveSizing {
+	default?: Sizing;
+	maps?: Record<string, Sizing>;
+	overrides?: SizingOverride[];
+}
+
+// The shard's Fleet settings, edited in Friendshipper.
+export interface ShardSpec {
+	fleetsEnabled: boolean;
+	maps?: string[];
+	warm?: Nullable<Sizing>;
+	live?: LiveSizing;
+}
+
+export type FleetReleasePhase =
+	| 'Warming'
+	| 'Warm'
+	| 'Live'
+	| 'Draining'
+	| 'Retiring'
+	| 'Retired'
+	| 'Failed';
+
+export interface ReleaseSummary {
+	name: string;
+	version: string;
+	phase?: Nullable<FleetReleasePhase>;
+	servedBy: string[];
+	ready: number;
+	allocated: number;
 }
 
 export interface BackendParts {
@@ -779,6 +845,7 @@ export interface ShardStatus {
 	backend?: Nullable<BackendStatus>;
 	channels: ChannelStatus[];
 	promotions: PromotionSummary[];
+	releases?: ReleaseSummary[];
 	conditions: K8sCondition[];
 }
 
@@ -786,7 +853,15 @@ export interface ShardSummary {
 	name: string;
 	displayName: string;
 	config: Nullable<ShardConfigSpec>;
+	// Null while there is no Shard object.
+	spec: Nullable<ShardSpec>;
 	status: Nullable<ShardStatus>;
+	// The Shard's generation, sent back with a spec edit so it can't overwrite a newer one. Status
+	// writes don't change it.
+	generation: Nullable<number>;
+	// The live sizing under spec.live.default: the coordinator's default, its max capped at the
+	// shard's limit. Null without a fleets section.
+	liveDefault?: Nullable<Sizing>;
 }
 
 export interface PromotionSpec {
@@ -796,15 +871,36 @@ export interface PromotionSpec {
 	gameConfig?: GameConfig;
 	deployBackend: boolean;
 	sign?: boolean;
+	// Don't wait for the warm gate; the release is still created.
+	skipFleetGate?: { reason: string };
 }
 
+// deploy-backend, warm-fleets, publish-client, flip-channel; or the single `promote` step of a
+// promotion run as one workflow.
 export interface PromotionStep {
 	name: string;
+	// Empty for steps the coordinator runs itself (warm-fleets) and for skipped steps.
 	workflow: string;
+	fleetRelease?: Nullable<string>;
+	// Argo's phase, or Pending / Skipped.
 	phase: string;
 	startedAt?: Nullable<string>;
 	finishedAt?: Nullable<string>;
 	message: string;
+	outputs?: Record<string, string>;
+}
+
+export type PromotionChangeKind =
+	| 'BackendDeployed'
+	| 'FleetReleaseWarming'
+	| 'ClientUploaded'
+	| 'ChannelFlipped'
+	| 'FleetReleaseLive';
+
+export interface PromotionChange {
+	kind: PromotionChangeKind;
+	detail: string;
+	at?: Nullable<string>;
 }
 
 export interface BackendPartChange {
@@ -829,7 +925,12 @@ export interface PromotionStatus {
 			observedAt?: Nullable<string>;
 		}>;
 	}>;
+	// The running step; empty when nothing runs.
+	currentStep?: string;
+	fleetRelease?: Nullable<string>;
 	steps: PromotionStep[];
+	// Each effect outside the cluster, in order, for every outcome.
+	changes?: PromotionChange[];
 	startedAt?: Nullable<string>;
 	finishedAt?: Nullable<string>;
 	conditions: K8sCondition[];
@@ -854,8 +955,89 @@ export interface Promotion {
 	status?: Nullable<PromotionStatus>;
 }
 
+export type GatePhase = 'Pending' | 'Passed' | 'Failed';
+
+export interface ReleaseClusterMap {
+	mapId: string;
+	fleet: string;
+	policy: string;
+	desired: number;
+	ready: number;
+	allocated: number;
+}
+
+export interface ReleaseCluster {
+	name: string;
+	gate?: Nullable<GatePhase>;
+	maps: ReleaseClusterMap[];
+	observedAt?: Nullable<string>;
+	error: string;
+	// Set once retiring has waited longer than cluster mode's --retire-stuck-after for its matches to
+	// end; `since` is when it was flagged. Kept as last seen while the cluster is unreachable.
+	retireStuck?: Nullable<{ since: string; message: string }>;
+}
+
+// Against the build manifest; anything but OK fails the release.
+export type MapCheck = 'OK' | 'NotInBuild' | 'NotCooked';
+
+export interface ReleaseMapCheck {
+	mapId: string;
+	check: MapCheck;
+	levelUrl: string;
+}
+
+export interface FleetRelease {
+	metadata: {
+		name?: string;
+		creationTimestamp?: string;
+		// Set once the release is being deleted; it goes when the coordinator removes its finalizer.
+		deletionTimestamp?: string;
+		// Bumped by spec changes only; an overrides edit is sent with it.
+		generation?: number;
+		labels?: Record<string, string>;
+		annotations?: Record<string, string>;
+	};
+	spec: {
+		shard: string;
+		version: string;
+		phase: 'Warm' | 'Live' | 'Retired';
+		pinned: boolean;
+		overrides?: SizingOverride[];
+		force: boolean;
+	};
+	status?: Nullable<{
+		phase?: Nullable<FleetReleasePhase>;
+		// When phase last changed.
+		phaseSince?: Nullable<string>;
+		servedBy: string[];
+		warmUntil?: Nullable<string>;
+		lastAllocationAt?: Nullable<string>;
+		idleSince?: Nullable<string>;
+		// Every map the build has a level for (its manifest's maps.levelAssets keys), sorted.
+		buildMapIds?: string[];
+		maps: ReleaseMapCheck[];
+		clusters: ReleaseCluster[];
+		conditions: K8sCondition[];
+	}>;
+}
+
 export interface ShardDetail extends ShardSummary {
 	promotions: Promotion[];
+	releases: FleetRelease[];
+}
+
+// From the build's manifest, for the promote form (G6) and the map list (G8).
+export interface BuildManifest {
+	backend: BackendParts;
+	// maps.levelAssets keys, sorted.
+	mapIds: string[];
+}
+
+export interface PromotionPlan {
+	// Null for a build with no readable manifest (older builds).
+	manifest: Nullable<BuildManifest>;
+	// The shard's backend as last observed.
+	shardBackend: Nullable<BackendParts>;
 }
 
 export interface CreatePromotionRequest {
