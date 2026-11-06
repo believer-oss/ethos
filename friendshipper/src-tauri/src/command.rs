@@ -1769,6 +1769,26 @@ pub async fn get_shard(
 }
 
 #[tauri::command]
+pub async fn get_promotion_plan(
+    state: tauri::State<'_, State>,
+    shard: String,
+    version: String,
+) -> Result<friendshipper::fleets::router::PromotionPlan, TauriError> {
+    let res = state
+        .client
+        .get(format!("{}/fleets/promotion-plan", state.server_url))
+        .query(&[("shard", shard), ("version", version)])
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
 pub async fn get_promotions(
     state: tauri::State<'_, State>,
     shard: Option<String>,
@@ -1819,6 +1839,142 @@ pub async fn get_promoter_name(
     let res = state
         .client
         .get(format!("{}/fleets/promoter", state.server_url))
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn get_fleet_releases(
+    state: tauri::State<'_, State>,
+    shard: Option<String>,
+) -> Result<Vec<fleet_api::FleetRelease>, TauriError> {
+    let mut req = state
+        .client
+        .get(format!("{}/fleets/releases", state.server_url));
+    if let Some(shard) = shard {
+        req = req.query(&[("shard", shard)]);
+    }
+
+    let res = req.send().await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn set_shard_spec(
+    state: tauri::State<'_, State>,
+    name: String,
+    request: friendshipper::fleets::router::SetShardSpecRequest,
+) -> Result<fleet_api::Shard, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/fleets/shards/{}/spec",
+            state.server_url,
+            urlencoding::encode(&name)
+        ))
+        .json(&request)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn warm_fleet_release(
+    state: tauri::State<'_, State>,
+    request: friendshipper::fleets::router::WarmReleaseRequest,
+) -> Result<fleet_api::FleetRelease, TauriError> {
+    let res = state
+        .client
+        .post(format!("{}/fleets/releases", state.server_url))
+        .json(&request)
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn pin_fleet_release(
+    state: tauri::State<'_, State>,
+    name: String,
+    pinned: bool,
+) -> Result<fleet_api::FleetRelease, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/fleets/releases/{}/pin",
+            state.server_url,
+            urlencoding::encode(&name)
+        ))
+        .json(&friendshipper::fleets::router::PinReleaseRequest { pinned })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn retire_fleet_release(
+    state: tauri::State<'_, State>,
+    name: String,
+    force: bool,
+) -> Result<fleet_api::FleetRelease, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/fleets/releases/{}/retire",
+            state.server_url,
+            urlencoding::encode(&name)
+        ))
+        .json(&friendshipper::fleets::router::RetireReleaseRequest { force })
+        .send()
+        .await?;
+
+    if is_error_status(res.status()) {
+        return Err(create_tauri_error(res).await);
+    }
+
+    Ok(res.json().await?)
+}
+
+#[tauri::command]
+pub async fn set_fleet_release_overrides(
+    state: tauri::State<'_, State>,
+    name: String,
+    request: friendshipper::fleets::router::SetReleaseOverridesRequest,
+) -> Result<fleet_api::FleetRelease, TauriError> {
+    let res = state
+        .client
+        .post(format!(
+            "{}/fleets/releases/{}/overrides",
+            state.server_url,
+            urlencoding::encode(&name)
+        ))
+        .json(&request)
         .send()
         .await?;
 

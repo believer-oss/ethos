@@ -5,13 +5,16 @@ use anyhow::anyhow;
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::kube::ensure_kube_client;
+use ethos_core::clients::manifest::{self, BuildManifest};
 use ethos_core::types::errors::CoreError;
 use fleet_api::{
-    ChannelKey, Promotion, PromotionSpec, Shard, ShardConfig, ShardConfigSpec, ShardStatus,
+    fleet_defaults, BackendParts, ChannelKey, FleetRelease, Promotion, PromotionSpec, Shard,
+    ShardConfig, ShardConfigSpec, ShardSpec, ShardStatus, Sizing, SizingOverride,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use crate::engine::EngineProvider;
 use crate::fleets::PromotePath;
@@ -27,6 +30,12 @@ where
         .route("/promotions", get(get_promotions).post(create_promotion))
         .route("/promotions/:name/cancel", post(cancel_promotion))
         .route("/promoter", get(get_promoter))
+        .route("/shards/:name/spec", post(set_shard_spec))
+        .route("/releases", get(get_releases).post(warm_release))
+        .route("/releases/:name/pin", post(pin_release))
+        .route("/releases/:name/retire", post(retire_release))
+        .route("/releases/:name/overrides", post(set_release_overrides))
+        .route("/promotion-plan", get(get_promotion_plan))
 }
 
 /// A shard as the UI shows it: its config joined with its observed status. Either half may be
@@ -37,7 +46,15 @@ pub struct ShardSummary {
     pub name: String,
     pub display_name: String,
     pub config: Option<ShardConfigSpec>,
+    /// The shard's Fleet settings; `None` while there is no `Shard`.
+    pub spec: Option<ShardSpec>,
     pub status: Option<ShardStatus>,
+    /// The `Shard`'s generation, sent back with a spec edit so it can't overwrite a newer one.
+    /// Status writes don't change it.
+    pub generation: Option<i64>,
+    /// The live sizing under `spec.live.default`: `fleet_defaults::LIVE`, its max capped at the
+    /// shard's `maxReplicasPerFleet` as the coordinator caps it. `None` without `fleets`.
+    pub live_default: Option<Sizing>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,6 +64,51 @@ pub struct ShardDetail {
     pub shard: ShardSummary,
     /// Running first, then the most recent.
     pub promotions: Vec<Promotion>,
+    /// Newest first.
+    pub releases: Vec<FleetRelease>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetReleasesParams {
+    pub shard: Option<String>,
+}
+
+/// A new Fleet setting for a shard, replacing the whole spec, if the `Shard`'s spec is still at
+/// `generation`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetShardSpecRequest {
+    pub generation: i64,
+    pub spec: ShardSpec,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WarmReleaseRequest {
+    pub shard: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinReleaseRequest {
+    pub pinned: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetireReleaseRequest {
+    /// Also end matches on Allocated servers. Without it, the Fleets go once those matches end.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetReleaseOverridesRequest {
+    pub generation: i64,
+    pub overrides: Vec<SizingOverride>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -67,8 +129,7 @@ pub struct CreatePromotionRequest {
 
 /// Joins configs and shards by name, sorted by name. Names come from both sides.
 pub fn summarize(configs: Vec<ShardConfig>, shards: Vec<Shard>) -> Vec<ShardSummary> {
-    let mut by_name: BTreeMap<String, (Option<ShardConfigSpec>, Option<ShardStatus>)> =
-        BTreeMap::new();
+    let mut by_name: BTreeMap<String, (Option<ShardConfigSpec>, Option<Shard>)> = BTreeMap::new();
     for config in configs {
         let name = config
             .metadata
@@ -77,24 +138,67 @@ pub fn summarize(configs: Vec<ShardConfig>, shards: Vec<Shard>) -> Vec<ShardSumm
         by_name.entry(name).or_default().0 = Some(config.spec);
     }
     for shard in shards {
-        let Some(name) = shard.metadata.name else {
+        let Some(name) = shard.metadata.name.clone() else {
             continue;
         };
-        by_name.entry(name).or_default().1 = Some(shard.status.unwrap_or_default());
+        by_name.entry(name).or_default().1 = Some(shard);
     }
     by_name
         .into_iter()
-        .map(|(name, (config, status))| ShardSummary {
-            display_name: config
-                .as_ref()
-                .and_then(|c| c.display_name.clone())
-                .filter(|d| !d.is_empty())
-                .unwrap_or_else(|| name.clone()),
-            name,
-            config,
-            status,
+        .map(|(name, (config, shard))| {
+            let config = config.map(with_fleet_defaults);
+            ShardSummary {
+                display_name: config
+                    .as_ref()
+                    .and_then(|c| c.display_name.clone())
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or_else(|| name.clone()),
+                name,
+                live_default: config
+                    .as_ref()
+                    .and_then(|c| c.fleets.as_ref())
+                    .map(|f| live_default(f.limits.max_replicas_per_fleet)),
+                config,
+                generation: shard.as_ref().and_then(|s| s.metadata.generation),
+                spec: shard.as_ref().map(|s| s.spec.clone()),
+                status: shard.map(|s| s.status.unwrap_or_default()),
+            }
         })
         .collect()
+}
+
+/// The config with every fleets field it leaves unset filled from `fleet_defaults`, as the
+/// coordinator applies them, so Friendshipper shows the values in force and keeps no copy of them.
+pub fn with_fleet_defaults(mut config: ShardConfigSpec) -> ShardConfigSpec {
+    if let Some(fleets) = config.fleets.as_mut() {
+        let gate = &mut fleets.gate;
+        gate.min_ready.get_or_insert(fleet_defaults::GATE_MIN_READY);
+        gate.stable_for
+            .get_or_insert(fleet_defaults::GATE_STABLE_FOR.into());
+        gate.timeout
+            .get_or_insert(fleet_defaults::GATE_TIMEOUT.into());
+        fleets
+            .retire_after_idle
+            .get_or_insert(fleet_defaults::RETIRE_AFTER_IDLE.into());
+        fleets
+            .warm_ttl
+            .get_or_insert(fleet_defaults::WARM_TTL.into());
+    }
+    config
+}
+
+/// `fleet_defaults::LIVE`, its max capped at the shard's limit as the coordinator caps it.
+pub fn live_default(limit: Option<i32>) -> Sizing {
+    let mut sizing = fleet_defaults::LIVE;
+    if let (Some(max), Some(limit)) = (sizing.max_replicas, limit) {
+        sizing.max_replicas = Some(max.min(limit));
+    }
+    sizing
+}
+
+/// Newest first.
+pub fn sort_releases(releases: &mut [FleetRelease]) {
+    releases.sort_by_key(|r| Reverse(r.metadata.creation_timestamp.as_ref().map(|t| t.0)));
 }
 
 /// Active promotions first, then newest first.
@@ -128,23 +232,46 @@ async fn get_shard<T>(
 where
     T: EngineProvider,
 {
+    require_object_name("shard", &name)?;
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
-    let (config, shard, mut promotions) = futures::try_join!(
+    let (config, shard, mut promotions, mut releases) = futures::try_join!(
         kube_client.get_shard_config(&name),
         kube_client.get_shard(&name),
         kube_client.list_promotions(Some(&name), None),
+        kube_client.list_fleet_releases(Some(&name)),
     )?;
     if config.is_none() && shard.is_none() {
         return Err(CoreError::Input(anyhow!("no shard named {name:?}")));
     }
     sort_promotions(&mut promotions);
+    sort_releases(&mut releases);
     let summary = summarize(config.into_iter().collect(), shard.into_iter().collect())
         .pop()
         .ok_or_else(|| anyhow!("no shard named {name:?}"))?;
     Ok(Json(ShardDetail {
         shard: summary,
         promotions,
+        releases,
     }))
+}
+
+#[instrument(skip(state))]
+async fn get_releases<T>(
+    State(state): State<AppState<T>>,
+    Query(params): Query<GetReleasesParams>,
+) -> Result<Json<Vec<FleetRelease>>, CoreError>
+where
+    T: EngineProvider,
+{
+    if let Some(shard) = &params.shard {
+        require_object_name("shard", shard)?;
+    }
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let mut releases = kube_client
+        .list_fleet_releases(params.shard.as_deref())
+        .await?;
+    sort_releases(&mut releases);
+    Ok(Json(releases))
 }
 
 #[instrument(skip(state))]
@@ -155,6 +282,9 @@ async fn get_promotions<T>(
 where
     T: EngineProvider,
 {
+    if let Some(shard) = &params.shard {
+        require_object_name("shard", shard)?;
+    }
     let channel = params
         .channel
         .as_deref()
@@ -167,6 +297,24 @@ where
         .await?;
     sort_promotions(&mut promotions);
     Ok(Json(promotions))
+}
+
+/// Shard, release and promotion names are Kubernetes object names (DNS-1123 labels). Checked before
+/// they reach a kube path or a label selector, so a stray character can't change what is addressed.
+fn require_object_name(kind: &str, name: &str) -> Result<(), CoreError> {
+    let valid = (1..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !name.starts_with('-')
+        && !name.ends_with('-');
+    if valid {
+        Ok(())
+    } else {
+        Err(CoreError::Input(anyhow!(
+            "{name:?} is not a valid {kind} name"
+        )))
+    }
 }
 
 /// Creating and cancelling promotions need the switch on and Release controls on, as in the UI.
@@ -184,6 +332,16 @@ where
         )));
     }
     Ok(())
+}
+
+/// Writes to shards and releases take the same gate as promotions: the switch, Release controls and
+/// a name to record.
+fn require_fleet_writes<T>(state: &AppState<T>) -> Result<String, CoreError>
+where
+    T: EngineProvider,
+{
+    require_promotion_writes(state)?;
+    require_promoter_name(state)
 }
 
 fn require_promoter_name<T>(state: &AppState<T>) -> Result<String, CoreError>
@@ -215,6 +373,7 @@ async fn create_promotion<T>(
 where
     T: EngineProvider,
 {
+    require_object_name("shard", &request.spec.shard)?;
     require_promotion_writes(&state)?;
     let changed_by = require_promoter_name(&state)?;
 
@@ -234,12 +393,165 @@ async fn cancel_promotion<T>(
 where
     T: EngineProvider,
 {
+    require_object_name("promotion", &name)?;
     require_promotion_writes(&state)?;
     let requested_by = require_promoter_name(&state)?;
 
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
     info!("Requesting cancel of promotion {name} for {requested_by}");
     kube_client.cancel_promotion(&name, &requested_by).await
+}
+
+#[instrument(skip(state, request))]
+async fn set_shard_spec<T>(
+    State(state): State<AppState<T>>,
+    Path(name): Path<String>,
+    Json(request): Json<SetShardSpecRequest>,
+) -> Result<Json<Shard>, CoreError>
+where
+    T: EngineProvider,
+{
+    require_object_name("shard", &name)?;
+    let changed_by = require_fleet_writes(&state)?;
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let shard = kube_client
+        .set_shard_spec(&name, request.generation, request.spec, &changed_by)
+        .await?;
+    Ok(Json(shard))
+}
+
+#[instrument(skip(state))]
+async fn warm_release<T>(
+    State(state): State<AppState<T>>,
+    Json(request): Json<WarmReleaseRequest>,
+) -> Result<Json<FleetRelease>, CoreError>
+where
+    T: EngineProvider,
+{
+    require_object_name("shard", &request.shard)?;
+    let changed_by = require_fleet_writes(&state)?;
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let release = kube_client
+        .create_fleet_release(&request.shard, &request.version, &changed_by)
+        .await?;
+    Ok(Json(release))
+}
+
+#[instrument(skip(state))]
+async fn pin_release<T>(
+    State(state): State<AppState<T>>,
+    Path(name): Path<String>,
+    Json(request): Json<PinReleaseRequest>,
+) -> Result<Json<FleetRelease>, CoreError>
+where
+    T: EngineProvider,
+{
+    require_object_name("release", &name)?;
+    let changed_by = require_fleet_writes(&state)?;
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let release = kube_client
+        .pin_fleet_release(&name, request.pinned, &changed_by)
+        .await?;
+    Ok(Json(release))
+}
+
+#[instrument(skip(state))]
+async fn retire_release<T>(
+    State(state): State<AppState<T>>,
+    Path(name): Path<String>,
+    Json(request): Json<RetireReleaseRequest>,
+) -> Result<Json<FleetRelease>, CoreError>
+where
+    T: EngineProvider,
+{
+    require_object_name("release", &name)?;
+    let changed_by = require_fleet_writes(&state)?;
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let release = kube_client
+        .retire_fleet_release(&name, request.force, &changed_by)
+        .await?;
+    Ok(Json(release))
+}
+
+#[instrument(skip(state, request))]
+async fn set_release_overrides<T>(
+    State(state): State<AppState<T>>,
+    Path(name): Path<String>,
+    Json(request): Json<SetReleaseOverridesRequest>,
+) -> Result<Json<FleetRelease>, CoreError>
+where
+    T: EngineProvider,
+{
+    require_object_name("release", &name)?;
+    let changed_by = require_fleet_writes(&state)?;
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let release = kube_client
+        .set_fleet_release_overrides(&name, request.generation, request.overrides, &changed_by)
+        .await?;
+    Ok(Json(release))
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromotionPlanParams {
+    pub shard: String,
+    pub version: String,
+}
+
+/// What the promote form shows before submitting, from the build's manifest: the backend parts it
+/// carries next to the shard's, as the coordinator compares them at acceptance, and the maps it has
+/// levels for.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromotionPlan {
+    /// `None` when the build has no readable manifest (older builds): the form shows what it can
+    /// without it.
+    pub manifest: Option<BuildManifest>,
+    /// The shard's backend as last observed; `None` before the first observation.
+    pub shard_backend: Option<BackendParts>,
+}
+
+/// A manifest body as the plan uses it: one that won't parse counts as none, and is logged.
+fn plan_manifest(version: &str, body: Option<Vec<u8>>) -> Option<BuildManifest> {
+    let body = body?;
+    match manifest::parse(&body) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            warn!("The build manifest for {version} won't parse: {e}");
+            None
+        }
+    }
+}
+
+#[instrument(skip(state))]
+async fn get_promotion_plan<T>(
+    State(state): State<AppState<T>>,
+    Query(params): Query<PromotionPlanParams>,
+) -> Result<Json<PromotionPlan>, CoreError>
+where
+    T: EngineProvider,
+{
+    require_object_name("shard", &params.shard)?;
+    if !fleet_api::is_full_sha(&params.version) {
+        return Err(CoreError::Input(anyhow!(
+            "{:?} is not a full 40-character lowercase commit SHA",
+            params.version
+        )));
+    }
+    let aws_client = ensure_aws_client(state.aws_client.read().await.clone())?;
+    let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
+    let key = manifest::manifest_key(&params.version);
+    let (body, shard) = futures::try_join!(
+        aws_client.get_artifact_object(&key),
+        kube_client.get_shard(&params.shard),
+    )?;
+    Ok(Json(PromotionPlan {
+        manifest: plan_manifest(&params.version, body),
+        shard_backend: shard
+            .and_then(|s| s.status)
+            .and_then(|s| s.backend)
+            .map(|b| b.parts),
+    }))
 }
 
 #[cfg(test)]
@@ -276,6 +588,8 @@ mod tests {
         Shard {
             metadata: ObjectMeta {
                 name: Some(name.into()),
+                resource_version: Some("5".into()),
+                generation: Some(3),
                 ..Default::default()
             },
             spec: Default::default(),
@@ -300,6 +614,30 @@ mod tests {
         assert!(rows[0].config.is_some() && rows[0].status.is_some());
         assert!(rows[1].config.is_some() && rows[1].status.is_none());
         assert!(rows[2].config.is_none() && rows[2].status.is_some());
+        // Spec and generation come with the Shard; the resource version, which status writes
+        // change, isn't used.
+        assert!(rows[0].spec.is_some() && rows[1].spec.is_none());
+        assert_eq!(rows[0].generation, Some(3));
+    }
+
+    #[test]
+    fn releases_sort_newest_first() {
+        let at = |secs| {
+            let mut r =
+                FleetRelease::request("test", &format!("{secs:08}{}", "0".repeat(32)), "someone")
+                    .unwrap();
+            r.metadata.creation_timestamp = Some(Time(
+                k8s_openapi::jiff::Timestamp::from_second(secs).unwrap(),
+            ));
+            r
+        };
+        let mut list = vec![at(100), at(300), at(200)];
+        sort_releases(&mut list);
+        let names: Vec<_> = list
+            .iter()
+            .map(|r| r.metadata.name.as_deref().unwrap())
+            .collect();
+        assert_eq!(names, ["test-00000300", "test-00000200", "test-00000100"]);
     }
 
     fn promotion(name: &str, created_secs: i64, phase: Option<PromotionPhase>) -> Promotion {
@@ -420,6 +758,56 @@ mod tests {
         cancel_promotion(State(state), Path("p".to_string())).await
     }
 
+    /// Every write besides creating and cancelling promotions, so the gate tests cover them all.
+    async fn fleet_writes(state: AppState<UnrealEngineProvider>) -> Vec<Result<(), CoreError>> {
+        let release = || Path("test-01234567".to_string());
+        vec![
+            set_shard_spec(
+                State(state.clone()),
+                Path("test".to_string()),
+                Json(SetShardSpecRequest {
+                    generation: 1,
+                    spec: ShardSpec::default(),
+                }),
+            )
+            .await
+            .map(|_| ()),
+            warm_release(
+                State(state.clone()),
+                Json(WarmReleaseRequest {
+                    shard: "test".into(),
+                    version: "0123456789abcdef0123456789abcdef01234567".into(),
+                }),
+            )
+            .await
+            .map(|_| ()),
+            pin_release(
+                State(state.clone()),
+                release(),
+                Json(PinReleaseRequest { pinned: true }),
+            )
+            .await
+            .map(|_| ()),
+            retire_release(
+                State(state.clone()),
+                release(),
+                Json(RetireReleaseRequest::default()),
+            )
+            .await
+            .map(|_| ()),
+            set_release_overrides(
+                State(state),
+                release(),
+                Json(SetReleaseOverridesRequest {
+                    generation: 1,
+                    overrides: vec![],
+                }),
+            )
+            .await
+            .map(|_| ()),
+        ]
+    }
+
     fn message(result: Result<(), CoreError>) -> String {
         result.unwrap_err().to_string()
     }
@@ -428,24 +816,148 @@ mod tests {
     async fn writes_need_the_switch() {
         assert!(message(create(state(false, true)).await).contains("promotionViaCoordinator"));
         assert!(message(cancel(state(false, true)).await).contains("promotionViaCoordinator"));
+        for result in fleet_writes(state(false, true)).await {
+            assert!(message(result).contains("promotionViaCoordinator"));
+        }
     }
 
     #[tokio::test]
     async fn writes_need_release_controls() {
         assert!(message(create(state(true, false)).await).contains("Release controls"));
         assert!(message(cancel(state(true, false)).await).contains("Release controls"));
+        for result in fleet_writes(state(true, false)).await {
+            assert!(message(result).contains("Release controls"));
+        }
+    }
+
+    #[tokio::test]
+    async fn fleet_writes_need_a_name() {
+        let nameless = state(true, true);
+        nameless.app_config.write().user_display_name = String::new();
+        for result in fleet_writes(nameless).await {
+            assert!(message(result).contains("display name"));
+        }
+    }
+
+    #[test]
+    fn object_names_are_dns_labels() {
+        for good in ["test", "test-01234567", "a", &"a".repeat(63)] {
+            assert!(require_object_name("shard", good).is_ok(), "{good}");
+        }
+        for bad in [
+            "",
+            "Test",
+            "-test",
+            "test-",
+            "te.st",
+            "../test",
+            "test,other",
+            "a=b",
+            &"a".repeat(64),
+        ] {
+            assert!(require_object_name("shard", bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn routes_refuse_a_bad_name_before_any_lookup() {
+        // Refused at the name, not at the missing kube client behind it.
+        let bad = || "a,b".to_string();
+        let results = vec![
+            get_shard(State(state(true, true)), Path(bad()))
+                .await
+                .map(|_| ()),
+            get_releases(
+                State(state(true, true)),
+                Query(GetReleasesParams { shard: Some(bad()) }),
+            )
+            .await
+            .map(|_| ()),
+            get_promotion_plan(
+                State(state(true, true)),
+                Query(PromotionPlanParams {
+                    shard: bad(),
+                    version: "0123456789abcdef0123456789abcdef01234567".into(),
+                }),
+            )
+            .await
+            .map(|_| ()),
+            cancel_promotion(State(state(true, true)), Path(bad())).await,
+            pin_release(
+                State(state(true, true)),
+                Path(bad()),
+                Json(PinReleaseRequest { pinned: true }),
+            )
+            .await
+            .map(|_| ()),
+        ];
+        for result in results {
+            assert!(message(result).contains("is not a valid"));
+        }
     }
 
     #[tokio::test]
     async fn writes_pass_the_gate_with_both_on() {
         // Past the gate, they stop at the missing kube client rather than at the gate.
-        for result in [
+        let mut results = vec![
             create(state(true, true)).await,
             cancel(state(true, true)).await,
-        ] {
+        ];
+        results.extend(fleet_writes(state(true, true)).await);
+        for result in results {
             let message = message(result);
             assert!(!message.contains("promotionViaCoordinator"), "{message}");
             assert!(!message.contains("Release controls"), "{message}");
         }
+    }
+
+    #[test]
+    fn a_build_without_a_readable_manifest_has_no_plan_manifest() {
+        assert_eq!(plan_manifest("abc", None), None);
+        assert_eq!(plan_manifest("abc", Some(b"{not json".to_vec())), None);
+        let read = plan_manifest(
+            "abc",
+            Some(br#"{"maps": {"levelAssets": {"Arena": "/Game/L_Arena"}}}"#.to_vec()),
+        )
+        .unwrap();
+        assert_eq!(read.map_ids, vec!["Arena"]);
+    }
+
+    #[test]
+    fn summaries_carry_the_fleet_defaults_in_force() {
+        let mut with_fleets = config("test", None);
+        with_fleets.spec.fleets = Some(
+            serde_json::from_value(json!({
+                "clusters": [{"name": "cluster-a", "zone": "zone-a"}],
+                "imageRepository": "registry.example.com/game",
+                "limits": {"maxReplicasPerFleet": 4},
+                "gate": {"timeout": "30m"},
+            }))
+            .unwrap(),
+        );
+        let [summary]: [ShardSummary; 1] = summarize(vec![with_fleets], vec![]).try_into().unwrap();
+        let fleets = summary.config.unwrap().fleets.unwrap();
+        assert_eq!(fleets.gate.min_ready, Some(1));
+        assert_eq!(
+            serde_json::to_value(&fleets).unwrap()["gate"],
+            // kube writes durations as seconds; the UI reads either.
+            json!({"minReady": 1, "stableFor": "120s", "timeout": "1800s"})
+        );
+        assert_eq!(
+            fleets.retire_after_idle(),
+            fleet_defaults::RETIRE_AFTER_IDLE
+        );
+        assert_eq!(fleets.warm_ttl(), fleet_defaults::WARM_TTL);
+        // The live default's max is capped at the shard's limit.
+        assert_eq!(
+            serde_json::to_value(summary.live_default).unwrap(),
+            json!({"bufferSize": "20%", "minReplicas": 1, "maxReplicas": 4})
+        );
+
+        let [plain]: [ShardSummary; 1] = summarize(vec![config("test", None)], vec![])
+            .try_into()
+            .unwrap();
+        assert_eq!(plain.live_default, None);
+        assert_eq!(live_default(None).max_replicas, Some(10));
     }
 }

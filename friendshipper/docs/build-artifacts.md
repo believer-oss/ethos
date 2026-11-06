@@ -318,3 +318,12 @@ v1/
                     ├── version-index
                     └── version-store-index
 ```
+
+## Build Manifests
+
+The build pipeline also writes a JSON manifest per build to the artifact bucket, at `argo-artifacts/manifests/<sha>.json`. Friendshipper reads two fields from it:
+
+- `backend_version`: the backend part versions (`platform`, `portal`, `content`, `config`) the build carries. The promote form compares them with the shard's running backend and marks each part newer, older or the same.
+- `maps.levelAssets`: the map IDs the build has levels for. Fleet settings lists them when no release on the shard lists its maps yet.
+
+A build without a manifest, or one Friendshipper can't read, promotes as usual; the form and Fleet settings just show less.
