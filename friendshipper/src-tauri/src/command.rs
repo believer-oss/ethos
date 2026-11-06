@@ -6,7 +6,7 @@ use ethos_core::artifact_sync::SyncKind;
 
 use ethos_core::storage::{ArtifactEntry, ArtifactList};
 use ethos_core::tauri::command::check_error;
-use ethos_core::tauri::error::TauriError;
+use ethos_core::tauri::error::{json_response, TauriError};
 use ethos_core::tauri::State;
 use ethos_core::types::builds::SyncClientRequest;
 use ethos_core::types::config::{AppConfig, DynamicConfig, UnrealVerSelDiagResponse};
@@ -1296,8 +1296,7 @@ pub async fn get_playtests(state: tauri::State<'_, State>) -> Result<Vec<Playtes
         .send()
         .await?;
 
-    let playtests: Vec<Playtest> = response.json().await?;
-    Ok(playtests)
+    json_response(response).await
 }
 
 #[tauri::command]

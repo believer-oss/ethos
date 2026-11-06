@@ -58,6 +58,27 @@ pub struct KubeConfig {
     last_retry_time: Option<Instant>,
 }
 
+/// "Couldn't reach the Kubernetes cluster: <cause>", the cause being the error's sources.
+fn unreachable_message(e: &kube::Error) -> String {
+    // The variant's own text repeats its first source ("ServiceError: client error (Connect)").
+    let mut causes: Vec<String> = Vec::new();
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        let text = s.to_string();
+        if causes.last() != Some(&text) {
+            causes.push(text);
+        }
+        source = s.source();
+    }
+    if causes.is_empty() {
+        causes.push(e.to_string());
+    }
+    format!(
+        "Couldn't reach the Kubernetes cluster: {}",
+        causes.join(": ")
+    )
+}
+
 impl KubeClient {
     #[instrument(skip(aws_creds, log_tx))]
     pub async fn new(
@@ -235,6 +256,10 @@ impl KubeClient {
                 }
 
                 CoreError::Internal(anyhow::Error::new(ae))
+            }
+            // The cluster wasn't reached at all: say so, with the transport's own cause.
+            kube::Error::HyperError(_) | kube::Error::Service(_) => {
+                CoreError::Internal(anyhow!(unreachable_message(&e)))
             }
             _ => CoreError::Internal(anyhow::Error::new(e)),
         }
@@ -941,5 +966,21 @@ pub fn ensure_kube_client(client: Option<KubeClient>) -> Result<KubeClient> {
             error!("Kubernetes client not initialized. Please check your AWS configuration.");
             Err(anyhow!("Kubernetes client not initialized"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreachable_cluster_is_named_with_its_cause() {
+        let refused =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "tcp connect error");
+        let e = kube::Error::Service(Box::new(refused));
+        assert_eq!(
+            unreachable_message(&e),
+            "Couldn't reach the Kubernetes cluster: tcp connect error"
+        );
     }
 }

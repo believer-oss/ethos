@@ -110,7 +110,8 @@
 		getRepoConfig,
 		resetConfig
 	} from '$lib/config';
-	import { handleError, logError, logInfo } from '$lib/utils';
+	import { logError, logInfo } from '$lib/utils';
+	import { withPollError, withoutPollErrors, type ToastError } from '$lib/pollErrors';
 	import { createOktaAuth, setupOktaEventListeners, clearExpiredTokens } from '$lib/okta';
 	import { browser } from '$app/environment';
 
@@ -201,8 +202,16 @@
 	const loadingText = 'Refreshing data...';
 
 	// error states
-	let errors: Array<{ id: number; message: string }> = [];
+	let errors: ToastError[] = [];
 	let nextErrorId = 0;
+	// A background poll's error shows once, with when it started, and goes when the poll recovers.
+	const pollFailed = (source: string, e: unknown) => {
+		errors = withPollError(errors, source, e, new Date(), nextErrorId);
+		nextErrorId += 1;
+	};
+	const pollSucceeded = (source: string) => {
+		errors = withoutPollErrors(errors, source);
+	};
 	const onErrorDismissed = (id: number) => {
 		errors = errors.filter((e) => e.id !== id);
 	};
@@ -825,8 +834,9 @@
 					}
 
 					builds.set(updatedBuilds);
+					pollSucceeded('builds');
 				} catch (e) {
-					await emit('error', e);
+					pollFailed('builds', e);
 				}
 			}
 
@@ -835,8 +845,9 @@
 
 				try {
 					playtests.set(await playtestsPromise);
+					pollSucceeded('playtests');
 				} catch (e) {
-					await handleError(e);
+					pollFailed('playtests', e);
 				}
 			}
 
@@ -849,9 +860,10 @@
 						repoStatus.set(await getRepoStatus());
 
 						lastRefresh = new Date().getTime();
+						pollSucceeded('repo status');
 					}
 				} catch (e) {
-					await emit('error', e);
+					pollFailed('repo status', e);
 				}
 			}
 
@@ -859,8 +871,9 @@
 				const update = await check();
 				latest = update?.version ?? '';
 				updateAvailable = update !== null;
+				pollSucceeded('updates');
 			} catch (e) {
-				await emit('error', e);
+				pollFailed('updates', e);
 			}
 
 			loading = false;

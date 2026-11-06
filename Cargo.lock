@@ -2781,6 +2781,7 @@ name = "ethos-types"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-smithy-runtime-api",
  "axum 0.7.9",
  "chrono",
  "serde",
