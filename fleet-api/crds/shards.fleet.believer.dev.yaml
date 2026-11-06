@@ -14,6 +14,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.fleetsEnabled
+      name: Fleets
+      type: boolean
     - jsonPath: .status.backend.healthy
       name: Healthy
       type: boolean
@@ -32,18 +35,284 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: 'What a shard currently serves: backend parts, channel versions and recent promotions. Status is written only by the coordinator.'
+        description: 'What a shard currently serves: backend parts, channel versions, recent promotions and Fleet releases. The spec holds the shard''s Fleet settings; status is written only by the coordinator.'
         properties:
           spec:
             description: |-
               What a shard serves. The coordinator creates one per `ShardConfig`, with no
               owner reference so that deleting the config keeps the observed history, and is the only writer of
-              its status.
+              its status. Friendshipper edits the spec (the shard's Fleet settings), setting the `changed-by`
+              annotation.
 
               Partial failure never blanks good data: each observed item carries its own `observedAt` and
               `error`, and a failed observation changes only `error`. Readers show an item as stale once
               `observedAt` is older than three poll intervals (`STALE_AFTER_POLL_INTERVALS`).
+            properties:
+              fleetsEnabled:
+                default: false
+                description: |-
+                  The master switch. Off: no new releases, and releases no channel serves retire (unless
+                  pinned); releases serving a channel keep their Fleets until the channel moves on. Requires
+                  `fleets` in the `ShardConfig`.
+                type: boolean
+              live:
+                description: Sizing while a channel serves the release.
+                properties:
+                  default:
+                    description: |-
+                      The sizing of one (map, cluster) Fleet, or a partial one to be filled from a less specific level.
+
+                      The same shape is used everywhere: `Shard.spec.warm` and `live`, `FleetRelease.spec.overrides`
+                      and, resolved, `LocalFleetRelease.spec.maps[].sizing`. An unset field is filled from the next
+                      less specific level ([`Sizing::filled_from`]); which levels apply, and in what order, is the
+                      coordinator's. `parked: true` parks the Fleet (no autoscaler, zero replicas apart from Allocated
+                      servers) and the other fields are then ignored.
+
+                      CEL refuses a sizing object that breaks Agones' Buffer rules on the fields it sets:
+                      - `minReplicas ≤ maxReplicas`;
+                      - absolute `bufferSize` (an integer): `1 ≤ bufferSize ≤ maxReplicas`, and `minReplicas` is `0` or
+                        at least `bufferSize`;
+                      - percentage `bufferSize` (`"1%"`–`"99%"`): `minReplicas ≥ 1`.
+
+                      The shard's `limits.maxReplicasPerFleet` lives in another object, so CEL can't check it;
+                      [`Sizing::validate`] does, on the resolved value.
+                    nullable: true
+                    properties:
+                      bufferSize:
+                        description: |-
+                          Ready servers to keep on top of Allocated ones: an integer, or a percentage of the Fleet
+                          such as `"20%"`.
+                        minimum: 1.0
+                        nullable: true
+                        pattern: ^[1-9][0-9]?%$
+                        x-kubernetes-int-or-string: true
+                      maxReplicas:
+                        format: int32
+                        minimum: 1.0
+                        nullable: true
+                        type: integer
+                      minReplicas:
+                        format: int32
+                        minimum: 0.0
+                        nullable: true
+                        type: integer
+                      parked:
+                        description: 'Parks the Fleet: scaled to zero (Agones spares Allocated servers) with no autoscaler.'
+                        nullable: true
+                        type: boolean
+                    type: object
+                    x-kubernetes-validations:
+                    - message: minReplicas must not exceed maxReplicas
+                      rule: (has(self.parked) && self.parked) || !has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas
+                    - message: an absolute bufferSize must not exceed maxReplicas
+                      rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.maxReplicas) || int(self.bufferSize) <= self.maxReplicas
+                    - message: with an absolute bufferSize, minReplicas must be 0 or at least bufferSize
+                      rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.minReplicas) || self.minReplicas == 0 || self.minReplicas >= int(self.bufferSize)
+                    - message: a percentage bufferSize needs minReplicas of at least 1
+                      rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || !(type(self.bufferSize) == string) || !has(self.minReplicas) || self.minReplicas >= 1
+                  maps:
+                    additionalProperties:
+                      description: |-
+                        The sizing of one (map, cluster) Fleet, or a partial one to be filled from a less specific level.
+
+                        The same shape is used everywhere: `Shard.spec.warm` and `live`, `FleetRelease.spec.overrides`
+                        and, resolved, `LocalFleetRelease.spec.maps[].sizing`. An unset field is filled from the next
+                        less specific level ([`Sizing::filled_from`]); which levels apply, and in what order, is the
+                        coordinator's. `parked: true` parks the Fleet (no autoscaler, zero replicas apart from Allocated
+                        servers) and the other fields are then ignored.
+
+                        CEL refuses a sizing object that breaks Agones' Buffer rules on the fields it sets:
+                        - `minReplicas ≤ maxReplicas`;
+                        - absolute `bufferSize` (an integer): `1 ≤ bufferSize ≤ maxReplicas`, and `minReplicas` is `0` or
+                          at least `bufferSize`;
+                        - percentage `bufferSize` (`"1%"`–`"99%"`): `minReplicas ≥ 1`.
+
+                        The shard's `limits.maxReplicasPerFleet` lives in another object, so CEL can't check it;
+                        [`Sizing::validate`] does, on the resolved value.
+                      properties:
+                        bufferSize:
+                          description: |-
+                            Ready servers to keep on top of Allocated ones: an integer, or a percentage of the Fleet
+                            such as `"20%"`.
+                          minimum: 1.0
+                          nullable: true
+                          pattern: ^[1-9][0-9]?%$
+                          x-kubernetes-int-or-string: true
+                        maxReplicas:
+                          format: int32
+                          minimum: 1.0
+                          nullable: true
+                          type: integer
+                        minReplicas:
+                          format: int32
+                          minimum: 0.0
+                          nullable: true
+                          type: integer
+                        parked:
+                          description: 'Parks the Fleet: scaled to zero (Agones spares Allocated servers) with no autoscaler.'
+                          nullable: true
+                          type: boolean
+                      type: object
+                      x-kubernetes-validations:
+                      - message: minReplicas must not exceed maxReplicas
+                        rule: (has(self.parked) && self.parked) || !has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas
+                      - message: an absolute bufferSize must not exceed maxReplicas
+                        rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.maxReplicas) || int(self.bufferSize) <= self.maxReplicas
+                      - message: with an absolute bufferSize, minReplicas must be 0 or at least bufferSize
+                        rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.minReplicas) || self.minReplicas == 0 || self.minReplicas >= int(self.bufferSize)
+                      - message: a percentage bufferSize needs minReplicas of at least 1
+                        rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || !(type(self.bufferSize) == string) || !has(self.minReplicas) || self.minReplicas >= 1
+                    description: Per map ID.
+                    maxProperties: 32
+                    type: object
+                    x-kubernetes-validations:
+                    - message: live.maps keys must be map IDs
+                      rule: self.all(m, size(m) <= 63 && m.matches('^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$'))
+                  overrides:
+                    description: 'Per (map, cluster), unique by both. `sizing: {parked: true}` parks that one Fleet.'
+                    items:
+                      description: |-
+                        Sizing for one (map, cluster) Fleet, over the less specific levels. Used by `Shard.spec.live`
+                        and `FleetRelease.spec.overrides`.
+                      properties:
+                        cluster:
+                          description: A cluster in the `ShardConfig`'s `fleets.clusters`.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        mapId:
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$
+                          type: string
+                        sizing:
+                          description: |-
+                            The sizing of one (map, cluster) Fleet, or a partial one to be filled from a less specific level.
+
+                            The same shape is used everywhere: `Shard.spec.warm` and `live`, `FleetRelease.spec.overrides`
+                            and, resolved, `LocalFleetRelease.spec.maps[].sizing`. An unset field is filled from the next
+                            less specific level ([`Sizing::filled_from`]); which levels apply, and in what order, is the
+                            coordinator's. `parked: true` parks the Fleet (no autoscaler, zero replicas apart from Allocated
+                            servers) and the other fields are then ignored.
+
+                            CEL refuses a sizing object that breaks Agones' Buffer rules on the fields it sets:
+                            - `minReplicas ≤ maxReplicas`;
+                            - absolute `bufferSize` (an integer): `1 ≤ bufferSize ≤ maxReplicas`, and `minReplicas` is `0` or
+                              at least `bufferSize`;
+                            - percentage `bufferSize` (`"1%"`–`"99%"`): `minReplicas ≥ 1`.
+
+                            The shard's `limits.maxReplicasPerFleet` lives in another object, so CEL can't check it;
+                            [`Sizing::validate`] does, on the resolved value.
+                          properties:
+                            bufferSize:
+                              description: |-
+                                Ready servers to keep on top of Allocated ones: an integer, or a percentage of the Fleet
+                                such as `"20%"`.
+                              minimum: 1.0
+                              nullable: true
+                              pattern: ^[1-9][0-9]?%$
+                              x-kubernetes-int-or-string: true
+                            maxReplicas:
+                              format: int32
+                              minimum: 1.0
+                              nullable: true
+                              type: integer
+                            minReplicas:
+                              format: int32
+                              minimum: 0.0
+                              nullable: true
+                              type: integer
+                            parked:
+                              description: 'Parks the Fleet: scaled to zero (Agones spares Allocated servers) with no autoscaler.'
+                              nullable: true
+                              type: boolean
+                          type: object
+                          x-kubernetes-validations:
+                          - message: minReplicas must not exceed maxReplicas
+                            rule: (has(self.parked) && self.parked) || !has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas
+                          - message: an absolute bufferSize must not exceed maxReplicas
+                            rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.maxReplicas) || int(self.bufferSize) <= self.maxReplicas
+                          - message: with an absolute bufferSize, minReplicas must be 0 or at least bufferSize
+                            rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.minReplicas) || self.minReplicas == 0 || self.minReplicas >= int(self.bufferSize)
+                          - message: a percentage bufferSize needs minReplicas of at least 1
+                            rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || !(type(self.bufferSize) == string) || !has(self.minReplicas) || self.minReplicas >= 1
+                      required:
+                      - cluster
+                      - mapId
+                      - sizing
+                      type: object
+                    maxItems: 2048
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - cluster
+                    - mapId
+                    x-kubernetes-list-type: map
+                type: object
+              maps:
+                description: |-
+                  The map IDs that get Fleets: keys of the build manifest's `maps.levelAssets`. At least one
+                  when `fleetsEnabled`.
+                items:
+                  maxLength: 63
+                  minLength: 1
+                  pattern: ^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
+                x-kubernetes-validations:
+                - message: spec.maps must not hold two map IDs that differ only in case or in '-', '_' and '.', as they would name the same Fleet
+                  rule: self.all(a, self.exists_one(b, b.lowerAscii().replace('_', '-').replace('.', '-') == a.lowerAscii().replace('_', '-').replace('.', '-')))
+              warm:
+                description: |-
+                  The buffer each (map, cluster) Fleet keeps while its release is Warming or Warm, before any
+                  channel serves it: an absolute `bufferSize`, never parked. Required, with `bufferSize`, when
+                  `fleetsEnabled`: there is no default.
+                nullable: true
+                properties:
+                  bufferSize:
+                    description: |-
+                      Ready servers to keep on top of Allocated ones: an integer, or a percentage of the Fleet
+                      such as `"20%"`.
+                    minimum: 1.0
+                    nullable: true
+                    pattern: ^[1-9][0-9]?%$
+                    x-kubernetes-int-or-string: true
+                  maxReplicas:
+                    format: int32
+                    minimum: 1.0
+                    nullable: true
+                    type: integer
+                  minReplicas:
+                    format: int32
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  parked:
+                    description: 'Parks the Fleet: scaled to zero (Agones spares Allocated servers) with no autoscaler.'
+                    nullable: true
+                    type: boolean
+                type: object
+                x-kubernetes-validations:
+                - message: minReplicas must not exceed maxReplicas
+                  rule: (has(self.parked) && self.parked) || !has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas
+                - message: an absolute bufferSize must not exceed maxReplicas
+                  rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.maxReplicas) || int(self.bufferSize) <= self.maxReplicas
+                - message: with an absolute bufferSize, minReplicas must be 0 or at least bufferSize
+                  rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || type(self.bufferSize) == string || !has(self.minReplicas) || self.minReplicas == 0 || self.minReplicas >= int(self.bufferSize)
+                - message: a percentage bufferSize needs minReplicas of at least 1
+                  rule: (has(self.parked) && self.parked) || !has(self.bufferSize) || !(type(self.bufferSize) == string) || !has(self.minReplicas) || self.minReplicas >= 1
+                - message: warm.bufferSize must be absolute, not a percentage
+                  rule: '!has(self.bufferSize) || !(type(self.bufferSize) == string)'
+                - message: warm sizing can't be parked; turn fleetsEnabled off instead
+                  rule: '!has(self.parked) || !self.parked'
             type: object
+            x-kubernetes-validations:
+            - message: spec.maps must name at least one map when spec.fleetsEnabled is true
+              rule: '!has(self.fleetsEnabled) || !self.fleetsEnabled || (has(self.maps) && size(self.maps) > 0)'
+            - message: spec.warm.bufferSize must be set when spec.fleetsEnabled is true
+              rule: '!has(self.fleetsEnabled) || !self.fleetsEnabled || (has(self.warm) && has(self.warm.bufferSize))'
           status:
             nullable: true
             properties:
@@ -270,6 +539,50 @@ spec:
                       type: string
                   required:
                   - channel
+                  - name
+                  - version
+                  type: object
+                type: array
+              releases:
+                default: []
+                description: The shard's `FleetRelease`s, newest first.
+                items:
+                  description: A `FleetRelease` as listed on its shard.
+                  properties:
+                    allocated:
+                      default: 0
+                      description: Allocated servers across every map and cluster.
+                      format: int32
+                      type: integer
+                    name:
+                      description: The `FleetRelease`'s name.
+                      type: string
+                    phase:
+                      description: The phase a release is in, as observed by the coordinator.
+                      enum:
+                      - Warming
+                      - Warm
+                      - Live
+                      - Draining
+                      - Retiring
+                      - Retired
+                      - Failed
+                      nullable: true
+                      type: string
+                    ready:
+                      default: 0
+                      description: Ready servers across every map and cluster.
+                      format: int32
+                      type: integer
+                    servedBy:
+                      default: []
+                      description: Channel keys serving the version now.
+                      items:
+                        type: string
+                      type: array
+                    version:
+                      type: string
+                  required:
                   - name
                   - version
                   type: object

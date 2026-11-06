@@ -100,6 +100,23 @@ spec:
                   Ignored for launcher channels.
                 nullable: true
                 type: boolean
+              skipFleetGate:
+                description: |-
+                  Don't wait for the build's Fleets to pass the warm gate. The release is still created, so
+                  Fleets warm alongside the rest of the promotion.
+                nullable: true
+                properties:
+                  reason:
+                    description: 'Required: shown with the promotion, so others know why the gate was skipped.'
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                required:
+                - reason
+                type: object
+                x-kubernetes-validations:
+                - message: skipFleetGate.reason must not be blank
+                  rule: size(self.reason.trim()) > 0
               version:
                 description: 'The build: a full 40-character lowercase commit SHA.'
                 pattern: ^[0-9a-f]{40}$
@@ -115,6 +132,36 @@ spec:
           status:
             nullable: true
             properties:
+              changes:
+                default: []
+                description: |-
+                  What the promotion changed outside the cluster, in order, as each change happened. Kept for
+                  every outcome, so a cancelled or failed promotion shows what it left behind; empty means
+                  nothing outside the cluster was touched.
+                items:
+                  description: One real-world effect of a promotion.
+                  properties:
+                    at:
+                      description: When the coordinator saw the change happen.
+                      format: date-time
+                      nullable: true
+                      type: string
+                    detail:
+                      default: ''
+                      description: What changed and how it is left, for people, e.g. `content 1111111 → 2222222, platform unchanged`.
+                      type: string
+                    kind:
+                      enum:
+                      - BackendDeployed
+                      - FleetReleaseWarming
+                      - ClientUploaded
+                      - ChannelFlipped
+                      - FleetReleaseLive
+                      type: string
+                  required:
+                  - kind
+                  type: object
+                type: array
               conditions:
                 default: []
                 items:
@@ -151,12 +198,22 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              currentStep:
+                default: ''
+                description: |-
+                  The step running now (one of [`PROMOTION_STEPS`], or [`STEP_MARK_LIVE`]); empty when
+                  nothing is running, including once the promotion has finished.
+                type: string
               finishedAt:
                 description: |-
                   When the Promotion finished. For `Succeeded` and `Failed` it is the workflow's `finishedAt`
                   (the coordinator's clock if the workflow has none); for `Rejected`, `Cancelled` and a missing
                   workflow it is when the coordinator decided.
                 format: date-time
+                nullable: true
+                type: string
+              fleetRelease:
+                description: The `FleetRelease` this promotion created or reused, once `warm-fleets` has started.
                 nullable: true
                 type: string
               gameConfig:
@@ -245,35 +302,52 @@ spec:
                 type: string
               steps:
                 default: []
+                description: |-
+                  Every step, listed from acceptance on so the whole plan shows; a step that won't run has
+                  phase `Skipped`. Find steps by name ([`PromotionStatus::step`]), not position.
                 items:
-                  description: One step of a promotion and the workflow that runs it.
+                  description: One step of a promotion and the workflow, if any, that runs it.
                   properties:
                     finishedAt:
-                      description: The workflow's `finishedAt`.
+                      description: The workflow's `finishedAt`, or when the coordinator finished the step.
                       format: date-time
+                      nullable: true
+                      type: string
+                    fleetRelease:
+                      description: '`warm-fleets` only: the `FleetRelease` it waits on.'
                       nullable: true
                       type: string
                     message:
                       default: ''
-                      description: The workflow's message on failure.
+                      description: |-
+                        Progress or the outcome for people: the workflow's message on failure, why the step was
+                        skipped, or what the step is waiting for.
                       type: string
                     name:
-                      description: The step, e.g. `promote`.
+                      description: |-
+                        The step: one of [`PROMOTION_STEPS`], or [`STEP_PROMOTE`] on a promotion made before steps
+                        were split.
                       type: string
+                    outputs:
+                      additionalProperties:
+                        type: string
+                      description: The step workflow's output parameters, e.g. `build_id` from a Steam `publish-client`.
+                      type: object
                     phase:
                       default: ''
-                      description: Mirrors the workflow's phase.
+                      description: 'A value from [`step_phases`]: the workflow''s phase, or the coordinator''s for a step without one.'
                       type: string
                     startedAt:
-                      description: The workflow's `startedAt`.
+                      description: The workflow's `startedAt`, or when the coordinator started the step.
                       format: date-time
                       nullable: true
                       type: string
                     workflow:
                       default: ''
                       description: |-
-                        The Argo workflow's name: `promote-<promotion name>`, or `promote-<promotion name>-<step>` if a
-                        promotion runs several steps.
+                        The Argo workflow's name, recorded before it is created: `promote-<promotion>-<step>`
+                        ([`step_workflow_name`](crate::step_workflow_name)), or `promote-<promotion>` for
+                        [`STEP_PROMOTE`]. Empty for steps the coordinator runs itself, and for skipped steps.
                       type: string
                   required:
                   - name
