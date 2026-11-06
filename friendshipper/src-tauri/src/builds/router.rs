@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::engine::EngineProvider;
+use crate::fleets::PromotePath;
 use ethos_core::clients::argo::{
     LogChunk, ARGO_WORKFLOW_COMMIT_LABEL_KEY, ARGO_WORKFLOW_COMPARE_ANNOTATION_KEY,
     ARGO_WORKFLOW_MESSAGE_ANNOTATION_KEY, ARGO_WORKFLOW_PUSHER_LABEL_KEY,
@@ -602,7 +603,7 @@ where
                             name: "".to_string(),
                             display_name: "".to_string(),
                             version: "".to_string(),
-                            creation_timestamp: Time(Utc::now()),
+                            creation_timestamp: Time(k8s_openapi::jiff::Timestamp::now()),
 
                             // these fields matter
                             ip: status.ip,
@@ -837,7 +838,14 @@ where
         let commit_info = commit_map
             .entry(commit.clone())
             .or_insert(CommitWorkflowInfo {
-                creation_timestamp: creation_timestamp.unwrap().0.to_rfc3339(),
+                // k8s-openapi's Time is a jiff Timestamp; format through chrono to keep the
+                // "+00:00" RFC 3339 form the UI has always received.
+                creation_timestamp: {
+                    let ts = creation_timestamp.unwrap().0;
+                    DateTime::<Utc>::from_timestamp(ts.as_second(), ts.subsec_nanosecond() as u32)
+                        .unwrap_or_default()
+                        .to_rfc3339()
+                },
                 message,
                 compare_url,
                 commit: commit.clone(),
@@ -945,19 +953,12 @@ where
 {
     let kube_client = ensure_kube_client(state.kube_client.read().clone())?;
 
+    let via_coordinator = state.dynamic_config.read().promotion_via_coordinator;
+    PromotePath::Workflow.require(via_coordinator)?;
+
     // Get pusher from github client or fallback to user display name
     if payload.pusher.is_none() {
-        let pusher = if let Some(github_client) = state.github_client.read().clone() {
-            Some(github_client.username.clone())
-        } else {
-            let app_config = state.app_config.read();
-            if !app_config.user_display_name.is_empty() {
-                Some(app_config.user_display_name.clone())
-            } else {
-                None
-            }
-        };
-        payload.pusher = pusher;
+        payload.pusher = state.promoter_name();
     }
 
     info!(

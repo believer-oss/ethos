@@ -74,6 +74,10 @@ fn find_available_port() -> Result<u16, CoreError> {
 }
 
 fn main() -> Result<(), CoreError> {
+    // Both rustls crypto providers are compiled in (ring via the updater, aws-lc-rs via the AWS SDK
+    // and kube), so rustls can't pick one itself and panics on first use. Choose aws-lc-rs up front.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     #[cfg(not(target_os = "macos"))]
     {
         let arg = std::env::args().nth(1).unwrap_or_default();
@@ -252,6 +256,19 @@ fn main() -> Result<(), CoreError> {
                 load_changeset,
                 stop_workflow,
                 create_promote_build_workflow,
+                get_shards,
+                get_shard,
+                get_promotion_plan,
+                get_promotions,
+                create_promotion,
+                cancel_promotion,
+                get_promoter_name,
+                get_fleet_releases,
+                set_shard_spec,
+                warm_fleet_release,
+                pin_fleet_release,
+                retire_fleet_release,
+                set_fleet_release_overrides,
                 sync_engine_commit_with_uproject,
                 sync_uproject_commit_with_engine,
                 reset_repo,

@@ -23,6 +23,7 @@
 		CodeBranchSolid,
 		ExclamationCircleOutline,
 		FolderOpenSolid,
+		GlobeOutline,
 		UserSolid,
 		TerminalSolid
 	} from 'flowbite-svelte-icons';
@@ -62,6 +63,7 @@
 	import type { AppConfig, Nullable } from '$lib/types';
 	import { goto } from '$app/navigation';
 	import { checkEngineReady } from '$lib/engine';
+	import { fleetsAvailable, promotionViaCoordinator } from '$lib/fleets';
 
 	export let showModal: boolean;
 	export let requestInFlight: boolean;
@@ -78,6 +80,10 @@
 	let repoName: string = '';
 	let configError: string = '';
 	let showMaintenanceConfirm: boolean = false;
+	let showReleaseControlsConfirm: boolean = false;
+	// Bound to the checkbox so a revert reaches Checkbox's own copy of `checked`; setting the DOM
+	// input directly leaves that copy stale and later updates are dropped.
+	let releaseControlsChecked: boolean = false;
 	let maintenanceInFlight: boolean = false;
 
 	$: isEngineTypePrebuilt = localAppConfig.engineType === 'Prebuilt';
@@ -102,6 +108,7 @@
 			uptime = Math.floor((Date.now() - $startTime) / 1000);
 		}, 1000);
 		localAppConfig = structuredClone($appConfig);
+		releaseControlsChecked = localAppConfig.releaseControlsEnabled === true;
 
 		// reset error
 		configError = '';
@@ -114,6 +121,17 @@
 			};
 		}
 		repoName = localAppConfig.repoPath.split('/').pop() || '';
+	};
+
+	// Turning Release controls on asks first; turning them off doesn't. Either way it is saved with
+	// the other preferences on Apply.
+	const onReleaseControlsToggled = () => {
+		if (releaseControlsChecked) {
+			releaseControlsChecked = false;
+			showReleaseControlsConfirm = true;
+		} else {
+			localAppConfig.releaseControlsEnabled = false;
+		}
 	};
 
 	const OnClose = () => {
@@ -977,6 +995,27 @@
 		</div>
 	{/if}
 
+	{#if $promotionViaCoordinator || $fleetsAvailable}
+		<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
+			<GlobeOutline />
+			Release controls
+		</h1>
+		<div class="rounded-lg border border-gray-300 dark:border-gray-300">
+			<div class="flex flex-row gap-2 items-center m-4">
+				<Checkbox
+					bind:checked={releaseControlsChecked}
+					on:change={onReleaseControlsToggled}
+					class="w-8 h-8 bg-secondary-800 dark:bg-space-950 text-4xl"
+				/>
+				<Label class="text-gray-400">Enable shard and promotion changes</Label>
+			</div>
+			<Tooltip class="text-sm" placement="bottom">
+				Turns on the controls that change shared shards, such as promoting a build or cancelling a
+				promotion. Stored on this machine only.
+			</Tooltip>
+		</div>
+	{/if}
+
 	<h1 class="text-primary-600 text-base font-semibold mt-8 mb-4 flex gap-2 items-center">
 		<CloudArrowUpSolid />
 		Server Configuration
@@ -1152,6 +1191,44 @@
 				Cancel
 			</Button>
 			<Button on:click={handleRunMaintenance}>Run Maintenance</Button>
+		</div>
+	</div>
+</Modal>
+
+<Modal
+	open={showReleaseControlsConfirm}
+	size="sm"
+	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
+	bodyClass="!border-t-0"
+	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
+	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
+	on:close={() => {
+		showReleaseControlsConfirm = false;
+	}}
+>
+	<div class="flex flex-col gap-4">
+		<div class="text-white">
+			<h3 class="text-lg font-semibold mb-2">Enable Release controls?</h3>
+			<p class="text-gray-300">
+				Changes affect shared shards and are logged under your Friendshipper name
+			</p>
+		</div>
+		<div class="flex gap-2 justify-end">
+			<Button
+				outline
+				on:click={() => {
+					showReleaseControlsConfirm = false;
+				}}
+			>
+				Cancel
+			</Button>
+			<Button
+				on:click={() => {
+					releaseControlsChecked = true;
+					localAppConfig.releaseControlsEnabled = true;
+					showReleaseControlsConfirm = false;
+				}}>Enable</Button
+			>
 		</div>
 	</div>
 </Modal>

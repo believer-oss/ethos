@@ -19,6 +19,7 @@ opentelemetry = "0.21.0"
 opentelemetry-otlp = { version = "0.14.0", features = ["http-proto", "reqwest-client"] }
 opentelemetry_sdk = { version = "0.21.1", features = ["rt-tokio"] }
 serde = { version = "1.0.197", features = ["derive"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 serde_json = "1.0.113"
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["full"] }

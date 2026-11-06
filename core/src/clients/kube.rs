@@ -58,6 +58,27 @@ pub struct KubeConfig {
     last_retry_time: Option<Instant>,
 }
 
+/// "Couldn't reach the Kubernetes cluster: <cause>", the cause being the error's sources.
+fn unreachable_message(e: &kube::Error) -> String {
+    // The variant's own text repeats its first source ("ServiceError: client error (Connect)").
+    let mut causes: Vec<String> = Vec::new();
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        let text = s.to_string();
+        if causes.last() != Some(&text) {
+            causes.push(text);
+        }
+        source = s.source();
+    }
+    if causes.is_empty() {
+        causes.push(e.to_string());
+    }
+    format!(
+        "Couldn't reach the Kubernetes cluster: {}",
+        causes.join(": ")
+    )
+}
+
 impl KubeClient {
     #[instrument(skip(aws_creds, log_tx))]
     pub async fn new(
@@ -92,21 +113,22 @@ impl KubeClient {
         };
 
         debug!("Creating kubeconfig");
-        let kubeconfig = kube::Config {
-            cluster_url: eks_cluster_url,
-            default_namespace: "game-servers".to_string(),
-            auth_info: kube::config::AuthInfo {
-                token: Some(token.clone().into()),
-                ..Default::default()
-            },
-            root_cert: Some(eks_cluster_cert),
-            accept_invalid_certs: false,
-            connect_timeout: Some(Duration::from_secs(30)),
-            read_timeout: Some(Duration::from_secs(295)),
-            write_timeout: None,
-            proxy_url: None,
-            tls_server_name: None,
+        // kube::Config is non-exhaustive, so start from `new` and set every field we rely on.
+        let mut kubeconfig = kube::Config::new(eks_cluster_url);
+        kubeconfig.default_namespace = "game-servers".to_string();
+        kubeconfig.auth_info = kube::config::AuthInfo {
+            token: Some(token.clone().into()),
+            ..Default::default()
         };
+        kubeconfig.root_cert = Some(eks_cluster_cert);
+        kubeconfig.accept_invalid_certs = false;
+        kubeconfig.connect_timeout = Some(Duration::from_secs(30));
+        kubeconfig.read_timeout = Some(Duration::from_secs(295));
+        kubeconfig.write_timeout = None;
+        kubeconfig.proxy_url = None;
+        kubeconfig.tls_server_name = None;
+        // kube 0.87 never retried; keep it that way rather than silently retrying 429/503/504.
+        kubeconfig.default_retry = false;
 
         let project = initialize_project_config(kubeconfig.clone()).await?;
 
@@ -234,6 +256,10 @@ impl KubeClient {
                 }
 
                 CoreError::Internal(anyhow::Error::new(ae))
+            }
+            // The cluster wasn't reached at all: say so, with the transport's own cause.
+            kube::Error::HyperError(_) | kube::Error::Service(_) => {
+                CoreError::Internal(anyhow!(unreachable_message(&e)))
             }
             _ => CoreError::Internal(anyhow::Error::new(e)),
         }
@@ -940,5 +966,21 @@ pub fn ensure_kube_client(client: Option<KubeClient>) -> Result<KubeClient> {
             error!("Kubernetes client not initialized. Please check your AWS configuration.");
             Err(anyhow!("Kubernetes client not initialized"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreachable_cluster_is_named_with_its_cause() {
+        let refused =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "tcp connect error");
+        let e = kube::Error::Service(Box::new(refused));
+        assert_eq!(
+            unreachable_message(&e),
+            "Couldn't reach the Kubernetes cluster: tcp connect error"
+        );
     }
 }

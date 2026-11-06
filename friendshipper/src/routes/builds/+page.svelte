@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button, Card, Spinner, TabItem, Tabs, Tooltip } from 'flowbite-svelte';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
+	import { emit } from '@tauri-apps/api/event';
 	import { RefreshOutline, RocketOutline } from 'flowbite-svelte-icons';
 	import { getWorkflows, getActiveBuilds } from '$lib/builds';
 	import { handleError, logInfo } from '$lib/utils';
@@ -10,6 +11,10 @@
 	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
 	import ActiveBuildsModal from '$lib/components/ActiveBuildsModal.svelte';
 	import { activeBuilds, appConfig, engineWorkflows, workflows } from '$lib/stores';
+	import { getShards, promotionViaCoordinator } from '$lib/fleets';
+	import { activeBuildsFromShards, shortSha } from '$lib/fleetFormat';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import WorkflowTable from '$lib/components/workflows/WorkflowTable.svelte';
 
 	let loading: boolean = false;
@@ -41,7 +46,10 @@
 	// credentials are not yet available.
 	const refreshActiveBuilds = async () => {
 		try {
-			$activeBuilds = await getActiveBuilds();
+			// With the coordinator switch on, what each channel serves comes from Shard status.
+			$activeBuilds = $promotionViaCoordinator
+				? activeBuildsFromShards(await getShards())
+				: await getActiveBuilds();
 		} catch (e) {
 			await logInfo(`Failed to refresh active build promotion status: ${String(e)}`);
 			$activeBuilds = [];
@@ -68,6 +76,31 @@
 
 		// Independent of the workflow fetch so a failure there does not freeze the arrows.
 		await refreshActiveBuilds();
+	};
+
+	// /builds?commit=<sha> (a SHA link elsewhere): select that build and scroll to it, once it's listed.
+	let linked = '';
+	const showLinked = async (sha: string, listed: { commit: string }[]) => {
+		if (!sha || sha === linked || !listed.some((c) => c.commit === sha)) return;
+		linked = sha;
+		selectedCommit = sha;
+		await tick();
+		document.getElementById(`build-${sha}`)?.scrollIntoView({ block: 'center' });
+	};
+	$: linkedSha = $page.url.searchParams.get('commit') ?? '';
+	$: void showLinked(linkedSha, $workflows);
+	// A linked build older than the listed ones, as serving and rollback builds often are.
+	$: unlisted =
+		linkedSha && $workflows.length && !$workflows.some((c) => c.commit === linkedSha)
+			? linkedSha
+			: '';
+	const copyLinked = async () => {
+		try {
+			await navigator.clipboard.writeText(unlisted);
+			await emit('success', `Copied ${unlisted}`);
+		} catch (e) {
+			await emit('error', e);
+		}
 	};
 
 	onMount(() => {
@@ -99,13 +132,26 @@
 		class="ml-auto"
 		primary
 		on:click={() => {
-			showActiveBuildsModal = true;
+			if ($promotionViaCoordinator) {
+				void goto('/shards');
+			} else {
+				showActiveBuildsModal = true;
+			}
 		}}
 	>
 		<RocketOutline class="w-4 h-4 mr-2" />
 		Active Builds
 	</Button>
 </div>
+{#if unlisted}
+	<div
+		class="mb-2 flex items-center gap-2 flex-wrap rounded-md border border-yellow-600 bg-yellow-900/30 px-3 py-2 text-sm text-yellow-200"
+	>
+		<span>{shortSha(unlisted)} isn't in the last {$workflows.length} builds:</span>
+		<code class="font-mono text-xs text-gray-300 select-all">{unlisted}</code>
+		<Button size="xs" color="alternative" on:click={copyLinked}>Copy</Button>
+	</div>
+{/if}
 <Card
 	class="w-full p-0 sm:p-0 px-2 sm:px-2 max-w-full bg-secondary-700 dark:bg-space-900 h-full overflow-y-hidden border-0 shadow-none flex flex-col gap-0 overflow-auto"
 >

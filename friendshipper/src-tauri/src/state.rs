@@ -228,6 +228,19 @@ where
             .map_or(String::default(), |x| x.username.clone())
     }
 
+    /// Who a promotion is attributed to: the GitHub login, falling back to the display name.
+    pub fn promoter_name(&self) -> Option<String> {
+        if let Some(github_client) = self.github_client.read().clone() {
+            return Some(github_client.username.clone());
+        }
+        let app_config = self.app_config.read();
+        if app_config.user_display_name.is_empty() {
+            None
+        } else {
+            Some(app_config.user_display_name.clone())
+        }
+    }
+
     #[instrument(skip(self, client))]
     pub async fn replace_aws_client(
         &self,

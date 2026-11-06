@@ -15,6 +15,8 @@
 	import { stopWorkflow, getWorkflowNodes, promotedShardsFor } from '$lib/builds';
 	import { activeBuilds, appConfig, repoConfig } from '$lib/stores';
 	import { resolveTrunkBranch } from '$lib/utils';
+	import { fleetShards, promotionViaCoordinator } from '$lib/fleets';
+	import WarmBuildModal from '$lib/components/fleets/WarmBuildModal.svelte';
 
 	export let selectedCommit = '';
 	export let showWorkflowLogsModal = false;
@@ -25,6 +27,14 @@
 	export let onShowCommitInfo: Nullable<(sha: string) => void> = null;
 	// Game-only: promotion has no engine equivalent.
 	export let showPromotionStatus: boolean = false;
+
+	// "Warm on shard…": only with the coordinator on and a shard whose Fleets are on.
+	let showWarmModal = false;
+	let warmCommit = '';
+	$: canWarm =
+		showPromotionStatus &&
+		$promotionViaCoordinator &&
+		$fleetShards.some((s) => s.config?.fleets && s.spec?.fleetsEnabled);
 
 	const setSelectedCommit = (commit: string) => {
 		selectedCommit = commit;
@@ -194,6 +204,7 @@
 
 {#each commits as commit, index}
 	<div
+		id="build-{commit.commit}"
 		class="flex items-center justify-between gap-0 px-2 py-1 {index % 2 === 0
 			? 'bg-secondary-800 dark:bg-space-950'
 			: 'bg-secondary-700 dark:bg-space-900'}"
@@ -398,8 +409,27 @@
 						placement="bottom"
 						>Create a promote build workflow for this successful build
 					</Tooltip>
+					{#if canWarm}
+						<Button
+							size="sm"
+							class="ms-2 bg-gray-700 dark:bg-gray-700 hover:bg-gray-600 dark:hover:bg-gray-600 text-white"
+							on:click={() => {
+								warmCommit = commit.commit;
+								showWarmModal = true;
+							}}
+						>
+							Warm on shard…
+						</Button>
+						<Tooltip
+							class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
+							placement="bottom"
+							>Start this build's Fleets on a shard without promoting it
+						</Tooltip>
+					{/if}
 				</div>
 			{/if}
 		</div>
 	{/if}
 {/each}
+
+<WarmBuildModal bind:showModal={showWarmModal} commit={warmCommit} />
