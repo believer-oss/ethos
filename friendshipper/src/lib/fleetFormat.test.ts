@@ -35,7 +35,7 @@ import {
 	RELEASE_CONTROLS_TOOLTIP,
 	runningPromotionsText,
 	showPromotionTray,
-	steamChannelText,
+	steamBuildText,
 	writeControl
 } from '$lib/fleetFormat';
 import type {
@@ -204,11 +204,8 @@ describe('channels', () => {
 	});
 
 	it('describes Steam channels', () => {
-		expect(steamChannelText(steam({ version: SHA }))).toBe('test: 01234567');
-		expect(steamChannelText(steam({ buildId: 1234, error: 'BuildNotFound' }))).toBe(
-			'test: build 1234'
-		);
-		expect(steamChannelText(steam({}))).toBe('test: no build');
+		expect(steamBuildText(steam({ buildId: 1234, error: 'BuildNotFound' }))).toBe('build 1234');
+		expect(steamBuildText(steam({}))).toBe('no build');
 	});
 });
 

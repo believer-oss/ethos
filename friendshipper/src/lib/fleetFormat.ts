@@ -306,13 +306,9 @@ export const channelName = (channel: ChannelRef): string =>
 export const channelLabel = (channel: ChannelRef): string =>
 	`${channel.kind}: ${channelName(channel)}`;
 
-/** What a Steam channel line shows: "test: abc1234", "build 12345678" or "no build". */
-export const steamChannelText = (channel: ChannelStatus): string => {
-	const name = channel.branch ?? '';
-	if (channel.version) return `${name}: ${shortSha(channel.version)}`;
-	if (channel.buildId) return `${name}: build ${channel.buildId}`;
-	return `${name}: no build`;
-};
+/** What a Steam channel line shows when it has no SHA: "build 12345678" or "no build". */
+export const steamBuildText = (channel: ChannelStatus): string =>
+	channel.buildId ? `build ${channel.buildId}` : 'no build';
 
 export const promotionPhase = (p: Promotion): Nullable<PromotionPhase> => p.status?.phase ?? null;
 

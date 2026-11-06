@@ -1,5 +1,8 @@
 <script lang="ts">
-	// One shard: what it serves, and its promotions (running first, then recent). Reached as
+	// One shard: a header (Fleets on or off, the backend in one line), shard-level problems once,
+	// then a "Now" card per channel (its build, who promoted it, Fleets health, any running
+	// promotion, Roll back…), the promotions (running ones in full, finished ones a line each),
+	// the releases, and the Fleet settings, collapsed to a line. Reached as
 	// /shards/detail?name=<shard>: the app is prerendered with no fallback page, so a dynamic
 	// /shards/[name] route can't be built.
 	import { onDestroy, onMount } from 'svelte';
@@ -22,32 +25,33 @@
 	import {
 		backendParts,
 		backendWarning,
-		channelSinceText,
+		cancelEffect,
 		channelKey,
 		channelLabel,
-		formatAge,
+		channelSinceText,
 		isActivePromotion,
 		observationWarning,
-		promotionChangedBy,
-		promotionNote,
-		isCancelling,
-		promotionPhaseLabel,
-		retryingMessage,
-		promotionSubmittedAt,
-		promotionWorkflow,
-		shortSha
+		promotionSubmittedAt
 	} from '$lib/fleetFormat';
-	import type {
-		ChannelRef,
-		ChannelStatus,
-		GameConfig,
-		Nullable,
-		Promotion,
-		ShardDetail
-	} from '$lib/types';
+	import { isExpandedByDefault, trayDetail } from '$lib/promotionCard';
+	import {
+		backendSummary,
+		channelsNow,
+		fleetSettingsLine,
+		partTimes,
+		settingsStartOpen,
+		shardProblems
+	} from '$lib/shardPage';
+	import type { Nullable, Promotion, ShardDetail } from '$lib/types';
+	import { fleetMaps } from '$lib/fleetSizing';
+	import { releaseSections, type StatusTone } from '$lib/fleetReleases';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
-	import WorkflowLink from '$lib/components/fleets/WorkflowLink.svelte';
+	import PromoteBuildModal from '$lib/components/PromoteBuildModal.svelte';
 	import ReleaseGate from '$lib/components/fleets/ReleaseGate.svelte';
+	import FleetSettings from '$lib/components/fleets/FleetSettings.svelte';
+	import PromotionCard from '$lib/components/fleets/PromotionCard.svelte';
+	import ReleaseCard from '$lib/components/fleets/ReleaseCard.svelte';
+	import ShaLink from '$lib/components/fleets/ShaLink.svelte';
 
 	let detail: Nullable<ShardDetail> = null;
 	let error = '';
@@ -56,12 +60,29 @@
 	let cancelTarget: Nullable<Promotion> = null;
 	let showCancelConfirm = false;
 	let cancelling = '';
+	// Retired releases are kept a while as history; hidden unless asked for.
+	let showRetired = false;
+	let showBackend = false;
+	// Null until the shard loads: then open only when Fleets are off and not set up.
+	let settingsOpen: Nullable<boolean> = null;
+
+	// Roll back…: the promote form, opened on the channel at its previous build.
+	let showPromote = false;
+	let promoteCommit = '';
+	let promoteChannel = '';
 
 	const clock = setInterval(() => {
 		now = Date.now();
 	}, 30_000);
+	const openSettings = () => {
+		settingsOpen = true;
+	};
+	onMount(() => {
+		window.addEventListener('fleet-settings-open', openSettings);
+	});
 	onDestroy(() => {
 		clearInterval(clock);
+		window.removeEventListener('fleet-settings-open', openSettings);
 	});
 
 	// With the switch off, the poller runs only while a Shards page is open.
@@ -82,6 +103,7 @@
 			const fetched = await getShard(shard);
 			if (mine !== request) return;
 			detail = fetched;
+			if (settingsOpen === null) settingsOpen = settingsStartOpen(fetched);
 			error = '';
 		} catch (e) {
 			if (mine !== request) return;
@@ -101,42 +123,9 @@
 	};
 	$: refetch(name, $fleetRevision);
 
-	const phaseClass = (p: Promotion): string => {
-		switch (p.status?.phase) {
-			case 'Succeeded':
-				return 'text-green-400';
-			case 'Failed':
-			case 'Rejected':
-				return 'text-red-400';
-			case 'Cancelled':
-				return 'text-gray-400';
-			default:
-				return 'text-primary-400';
-		}
-	};
-
-	interface ChannelRow {
-		ref: ChannelRef;
-		observed: ChannelStatus | undefined;
-		configuredGameConfig: GameConfig | undefined;
-	}
-
-	// Configured channels first, then any observed channel no longer configured, so a Shard whose
-	// ShardConfig was removed still shows what it serves, as the list page does.
-	const channelRows = (d: ShardDetail): ChannelRow[] => {
-		const observed = d.status?.channels ?? [];
-		const rows: ChannelRow[] = (d.config?.channels ?? []).map((c) => ({
-			ref: c,
-			observed: observed.find((o) => o.key === channelKey(c)),
-			configuredGameConfig: c.gameConfig
-		}));
-		observed
-			.filter((o) => !rows.some((r) => channelKey(r.ref) === o.key))
-			.forEach((o) => {
-				rows.push({ ref: o, observed: o, configuredGameConfig: undefined });
-			});
-		return rows;
-	};
+	const newestFirst = (a: Promotion, b: Promotion) =>
+		(Date.parse(promotionSubmittedAt(b) ?? '') || 0) -
+		(Date.parse(promotionSubmittedAt(a) ?? '') || 0);
 
 	const askCancel = (p: Promotion) => {
 		cancelTarget = p;
@@ -158,15 +147,63 @@
 			cancelling = '';
 		}
 	};
+
+	const rollBack = (channel: string, version: string) => {
+		promoteChannel = channel;
+		promoteCommit = version;
+		showPromote = true;
+	};
+
+	const showPromotion = (p: Promotion) => {
+		document
+			.getElementById(`promotion-${p.metadata.name ?? ''}`)
+			?.scrollIntoView({ behavior: 'smooth' });
+	};
+
+	const TONE_CLASS: Record<StatusTone, string> = {
+		ok: 'text-gray-300',
+		info: 'text-gray-400',
+		warn: 'text-yellow-300',
+		bad: 'text-red-300'
+	};
 </script>
 
-<div class="flex items-center gap-2">
+<div class="flex items-center gap-2 flex-wrap">
 	<a href="/shards" class="text-gray-400 hover:text-white"><ArrowLeftOutline class="w-5 h-5" /></a>
 	<p class="text-2xl my-2 text-primary-400 dark:text-primary-400">
 		{detail?.displayName ?? name}
 	</p>
 	{#if detail && detail.displayName !== detail.name}
 		<code class="text-gray-400">{detail.name}</code>
+	{/if}
+	{#if detail?.config?.fleets}
+		<span
+			class="text-xs rounded px-1.5 py-0.5 {detail.spec?.fleetsEnabled
+				? 'bg-green-900/40 text-green-300'
+				: 'bg-gray-800 text-gray-400'}">Fleets {detail.spec?.fleetsEnabled ? 'on' : 'off'}</span
+		>
+	{/if}
+	{#if detail}
+		{@const parts = backendParts(detail.status?.backend?.parts)}
+		{@const backendIssue = detail.status
+			? backendWarning(detail.status.backend, detail.promotions, detail.name, now)
+			: null}
+		<button
+			class="text-xs text-gray-400 hover:text-white flex items-center gap-1"
+			title="Show the backend parts"
+			on:click={() => {
+				showBackend = !showBackend;
+			}}
+		>
+			{#if detail.status?.backend && !detail.status.backend.healthy}
+				<span class="text-red-400">backend unhealthy ·</span>
+			{/if}
+			{parts.length ? backendSummary(parts) : 'backend not observed yet'}
+			{showBackend ? '▾' : '▸'}
+		</button>
+		{#if backendIssue}
+			<span title={backendIssue}><ExclamationCircleOutline class="w-4 h-4 text-yellow-400" /></span>
+		{/if}
 	{/if}
 	<Button disabled={loading} class="!p-1.5" primary on:click={() => load(name, true)}>
 		{#if loading}
@@ -184,181 +221,216 @@
 		<p class="text-red-400">{error}</p>
 	{/if}
 	{#if detail}
-		{@const backend = detail.status?.backend}
-		{@const backendIssue = detail.status
-			? backendWarning(backend, detail.promotions, detail.name, now)
-			: null}
-		<section class="flex flex-col gap-2">
-			<h2 class="text-lg text-white flex items-center gap-2">
-				Backend
-				{#if backend && !backend.healthy}
-					<span class="text-xs text-red-400">unhealthy</span>
-				{/if}
-				{#if backendIssue}
-					<span title={backendIssue}
-						><ExclamationCircleOutline class="w-4 h-4 text-yellow-400" /></span
-					>
-				{/if}
-			</h2>
-			{#if backendParts(backend?.parts).length === 0}
-				<p class="text-gray-500 text-sm">Not observed yet.</p>
-			{:else}
-				<table class="text-sm text-gray-300 w-fit">
-					{#each backendParts(backend?.parts) as part (part.name)}
-						<tr>
-							<td class="pr-4 text-gray-400">{part.name}</td>
-							{#if part.version}
-								<td class="pr-4"><code>{part.version.sha}</code></td>
-								<td class="pr-4">{part.version.branch}</td>
-								<td class="pr-4 text-gray-400">{part.version.release}</td>
-								<td class="text-gray-400">
-									{#if part.version.builtAt}built {formatAge(part.version.builtAt, now)} ago{/if}
-								</td>
-							{:else}
-								<td colspan="4"><code>{part.raw}</code></td>
-							{/if}
-						</tr>
-					{/each}
-				</table>
-			{/if}
-		</section>
+		{#if showBackend}
+			<table class="text-sm text-gray-300 w-fit">
+				{#each backendParts(detail.status?.backend?.parts) as part (part.name)}
+					<tr>
+						<td class="pr-4 text-gray-400">{part.name}</td>
+						{#if part.version}
+							<td class="pr-4"><code>{part.version.sha}</code></td>
+							<td class="pr-4">{part.version.branch}</td>
+							<td class="pr-4 text-gray-400">{part.version.release}</td>
+							<td
+								class="text-gray-400"
+								title="deploy times are known only where a promotion recorded the deploy"
+							>
+								{partTimes(part, detail.promotions, now)}
+							</td>
+						{:else}
+							<td colspan="4"><code>{part.raw}</code></td>
+						{/if}
+					</tr>
+				{/each}
+			</table>
+		{/if}
+
+		{@const problems = shardProblems(detail, now)}
+		{#if problems.length}
+			<div class="flex flex-col gap-1 text-sm">
+				{#each problems as problem}
+					<div class="{TONE_CLASS[problem.tone]} flex gap-1.5">
+						<span aria-hidden="true">{problem.tone === 'bad' ? '✕' : '⚠'}</span><span
+							>{problem.text}</span
+						>
+					</div>
+				{/each}
+			</div>
+		{/if}
 
 		<section class="flex flex-col gap-2">
-			<h2 class="text-lg text-white">Channels</h2>
-			<table class="text-sm text-gray-300 w-fit">
-				{#each channelRows(detail) as row (channelKey(row.ref))}
-					{@const { observed } = row}
-					{@const warning = observed ? observationWarning(observed, now) : 'Not observed yet'}
-					<tr>
-						<td class="pr-4 text-gray-400">{channelLabel(row.ref)}</td>
-						<td class="pr-4">
-							{#if observed?.version}
-								<code title={observed.version}>{shortSha(observed.version)}</code>
-							{:else if observed?.buildId}
-								build {observed.buildId}
-							{:else}
-								<span class="text-gray-500">no build</span>
-							{/if}
-							{#if observed?.source === 'promotion'}
-								<span
-									class="text-gray-500 text-xs"
-									title="set from the last promotion; not yet confirmed by observing the channel"
-									>◇</span
-								>
-							{/if}
-						</td>
-						<td class="pr-4 text-gray-400">
-							{#if observed}{channelSinceText(observed, now)}{/if}
-						</td>
-						<td class="pr-4 text-gray-400">
-							<!-- Only Steam reports a game config; the configured one is the promotion default. -->
-							{#if observed?.gameConfig}
-								{observed.gameConfig}
-							{:else if row.configuredGameConfig}
-								<span title="the channel's default for promotions, not observed"
-									>default {row.configuredGameConfig}</span
-								>
-							{/if}
-						</td>
-						<td>
+			<h2 class="text-lg text-white">Now</h2>
+			<div class="flex flex-wrap gap-3">
+				{#each channelsNow(detail, now) as channel (channelKey(channel.ref))}
+					{@const warning = channel.observed
+						? observationWarning(channel.observed, now)
+						: 'Not observed yet'}
+					<div
+						class="rounded-md border border-secondary-600 dark:border-space-800 p-3 text-sm text-gray-300 flex flex-col gap-1 min-w-[18rem] flex-1"
+					>
+						<div class="flex items-center gap-2">
+							<span class="text-white">{channelLabel(channel.ref)}</span>
 							{#if warning}
 								<span title={warning}
 									><ExclamationCircleOutline class="w-4 h-4 text-yellow-400" /></span
 								>
 							{/if}
-						</td>
-					</tr>
-				{/each}
-			</table>
-		</section>
-
-		<section class="flex flex-col gap-2">
-			<h2 class="text-lg text-white">Promotions</h2>
-			{#if detail.promotions.length === 0}
-				<p class="text-gray-500 text-sm">No promotions through the coordinator yet.</p>
-			{/if}
-			{#each detail.promotions as promotion (promotion.metadata.name)}
-				{@const plan = promotion.status?.plan?.backend}
-				{@const note = promotionNote(promotion)}
-				<div
-					class="rounded-md border border-secondary-600 dark:border-space-800 p-3 text-sm text-gray-300 flex flex-col gap-1"
-				>
-					<div class="flex items-center gap-3 flex-wrap">
-						<span class="font-semibold {phaseClass(promotion)}"
-							>{promotionPhaseLabel(promotion)}</span
-						>
-						<span>{channelLabel(promotion.spec.channel)}</span>
-						<code title={promotion.spec.version}>{shortSha(promotion.spec.version)}</code>
-						<span class="text-gray-400">
-							{promotionChangedBy(promotion)} · submitted {formatAge(
-								promotionSubmittedAt(promotion),
-								now
-							)} ago
-						</span>
-						<span class="ml-auto flex items-center gap-3">
-							<WorkflowLink workflow={promotionWorkflow(promotion)} label="Argo workflow" />
-							{#if isActivePromotion(promotion) && !isCancelling(promotion) && $promotionViaCoordinator}
+							{#if channel.previous && $promotionViaCoordinator && !channel.running}
 								<ReleaseGate let:disabled>
 									<Button
 										size="xs"
-										color="red"
-										disabled={disabled || cancelling === promotion.metadata.name}
+										color="alternative"
+										class="ml-auto"
+										{disabled}
+										title="Promote the build this channel served before"
 										on:click={() => {
-											askCancel(promotion);
-										}}
+											rollBack(channelKey(channel.ref), channel.previous ?? '');
+										}}>Roll back…</Button
 									>
-										Cancel
-									</Button>
 								</ReleaseGate>
 							{/if}
-						</span>
-					</div>
-					{#if retryingMessage(promotion)}
-						<div class="text-yellow-400">Retrying: {retryingMessage(promotion)}</div>
-					{:else if promotion.status?.reason || promotion.status?.message}
-						<div class="text-gray-400">
-							{#if promotion.status.reason}<code>{promotion.status.reason}</code>{/if}
-							{promotion.status.message}
 						</div>
-					{/if}
-					{#if note}
-						<div class="text-gray-400 italic">“{note}”</div>
-					{/if}
-					{#if plan}
-						<div class="text-gray-400">
-							<!-- Recorded at acceptance: `from` is the shard's backend as read then, not now. -->
-							Backend plan at acceptance ({plan.deploy
-								? 'deploy'
-								: 'no deploy'}{#if plan.observedAt}, backend read {formatAge(plan.observedAt, now)} ago{/if}):
-							{#each plan.parts.filter((p) => p.from !== p.to) as change (change.name)}
-								<span
-									class="mr-3"
-									title={`${change.from || 'unknown'} (shard's backend at acceptance) → ${
-										change.to
-									} (build)`}
-								>
-									{change.name}
-									<code>{change.from.split('_').pop()}</code> →
-									<code>{change.to.split('_').pop()}</code>
-								</span>
+						<div class="flex items-center gap-2 flex-wrap text-xs text-gray-400">
+							{#if channel.observed?.version}
+								<span class="text-gray-200"><ShaLink sha={channel.observed.version} /></span>
+							{:else if channel.observed?.buildId}
+								<span>Steam build {channel.observed.buildId}</span>
 							{:else}
-								<span>no part changes</span>
-							{/each}
+								<span class="text-gray-500">no build</span>
+							{/if}
+							{#if channel.observed}<span>{channelSinceText(channel.observed, now)}</span>{/if}
+							{#if channel.promotedBy}<span>· {channel.promotedBy}</span>{/if}
 						</div>
-					{/if}
-					{#if promotion.status?.gameConfig}
-						<div class="text-gray-500 text-xs">Game config {promotion.status.gameConfig}</div>
-					{/if}
-					{#if promotion.status?.previousVersion}
-						<div class="text-gray-500 text-xs">
-							Channel version at acceptance <code title={promotion.status.previousVersion}
-								>{shortSha(promotion.status.previousVersion)}</code
-							>
-						</div>
-					{/if}
+						{#if channel.fleets}
+							<div class="text-xs whitespace-pre-line {TONE_CLASS[channel.fleets.tone]}">
+								{channel.fleets.text}
+							</div>
+						{/if}
+						{#if channel.running}
+							{@const { running } = channel}
+							<div class="flex items-center gap-2 text-xs text-primary-300">
+								<span class="truncate"
+									>Promoting <ShaLink sha={running.spec.version} /> · {trayDetail(
+										running,
+										now
+									)}</span
+								>
+								<button
+									class="ml-auto text-primary-400 hover:underline flex-none"
+									on:click={() => {
+										showPromotion(running);
+									}}>Details ↓</button
+								>
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		</section>
+
+		{@const promotions = [...detail.promotions].sort(newestFirst)}
+		{@const expanded = promotions.filter(isExpandedByDefault)}
+		{@const finished = promotions.filter((p) => !isExpandedByDefault(p))}
+		<section class="flex flex-col gap-2">
+			<h2 class="text-lg text-white">Promotions</h2>
+			{#if promotions.length === 0}
+				<p class="text-gray-500 text-sm">No promotions through the coordinator yet.</p>
+			{/if}
+			{#each expanded as promotion (promotion.metadata.name)}
+				<div id="promotion-{promotion.metadata.name}">
+					<PromotionCard
+						{promotion}
+						history={detail.promotions}
+						releases={detail.releases}
+						config={detail.config}
+						fleets={detail.config?.fleets ?? null}
+						{now}
+						onCancel={$promotionViaCoordinator && isActivePromotion(promotion) ? askCancel : null}
+						cancelling={cancelling === promotion.metadata.name}
+					/>
 				</div>
 			{/each}
+			{#if finished.length}
+				<h3 class="text-xs uppercase text-gray-500 mt-1">Finished</h3>
+				<div class="flex flex-col gap-1">
+					{#each finished as promotion (promotion.metadata.name)}
+						<div id="promotion-{promotion.metadata.name}">
+							<PromotionCard
+								{promotion}
+								history={detail.promotions}
+								releases={detail.releases}
+								config={detail.config}
+								fleets={detail.config?.fleets ?? null}
+								{now}
+							/>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</section>
+
+		{#if detail.config?.fleets || detail.releases.length}
+			{@const sections = releaseSections(detail.releases)}
+			{@const groups = [
+				{ title: 'Serving', releases: sections.serving },
+				{ title: 'In progress', releases: sections.inProgress },
+				{ title: 'Not serving', releases: sections.notServing },
+				{ title: 'Retired', releases: showRetired ? sections.retired : [] }
+			]}
+			<section id="releases" class="flex flex-col gap-2">
+				<h2 class="text-lg text-white flex items-center gap-3">
+					Releases
+					{#if sections.retired.length}
+						<button
+							class="text-xs text-gray-400 hover:underline"
+							on:click={() => {
+								showRetired = !showRetired;
+							}}>{showRetired ? 'Hide' : 'Show'} {sections.retired.length} retired</button
+						>
+					{/if}
+				</h2>
+				{#each groups.filter((g) => g.releases.length) as group (group.title)}
+					<h3 class="text-xs uppercase text-gray-500">{group.title}</h3>
+					{#each group.releases as release (release.metadata.name)}
+						<ReleaseCard
+							{release}
+							fleets={detail.config?.fleets ?? null}
+							fleetMapIds={fleetMaps(detail.spec)}
+							promotions={detail.promotions}
+							{now}
+							reload={() => load(name)}
+							readOnly={!$promotionViaCoordinator}
+						/>
+					{/each}
+				{:else}
+					<p class="text-gray-500 text-sm">
+						{#if sections.retired.length}
+							No releases in use.
+						{:else}
+							No releases. Promotions create them, or warm a build from the Builds page.
+						{/if}
+					</p>
+				{/each}
+			</section>
+
+			{#if settingsOpen}
+				<FleetSettings
+					{detail}
+					reload={() => load(name)}
+					readOnly={!$promotionViaCoordinator}
+					onCollapse={() => {
+						settingsOpen = false;
+					}}
+				/>
+			{:else}
+				<section id="fleet-settings" class="flex flex-col gap-1">
+					<h2 class="text-lg text-white flex items-center gap-3">
+						Fleet settings
+						<Button size="xs" color="alternative" on:click={openSettings}>Edit</Button>
+					</h2>
+					<p class="text-sm text-gray-400">{fleetSettingsLine(detail)}</p>
+				</section>
+			{/if}
+		{/if}
 	{:else if loading}
 		<p class="text-gray-400">Loading…</p>
 	{/if}
@@ -366,8 +438,15 @@
 
 <ConfirmModal
 	bind:showModal={showCancelConfirm}
-	title={`Cancel promotion ${
-		cancelTarget?.metadata.name ?? ''
-	}? If its workflow is running it will be stopped; if it has already finished, the result stands.`}
+	title={`Cancel promotion ${cancelTarget?.metadata.name ?? ''}? ${
+		cancelTarget ? cancelEffect(cancelTarget) : ''
+	}`}
 	resultCallback={onCancelConfirmed}
+/>
+
+<PromoteBuildModal
+	bind:showModal={showPromote}
+	bind:commit={promoteCommit}
+	presetShard={detail?.name ?? ''}
+	presetChannel={promoteChannel}
 />

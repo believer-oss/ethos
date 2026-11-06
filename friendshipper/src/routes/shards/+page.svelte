@@ -13,15 +13,19 @@
 		backendParts,
 		backendWarning,
 		channelSinceText,
+		promotionProgressText,
 		formatAge,
+		formatAgo,
 		formatBackendPart,
 		isActivePromotion,
 		newestBuiltPart,
 		observationWarning,
-		promotionPhaseLabel,
 		shortSha,
-		steamChannelText
+		steamBuildText
 	} from '$lib/fleetFormat';
+	import { fleetsColumnText } from '$lib/fleetReleases';
+	import { fleetsAttention } from '$lib/shardPage';
+	import ShaLink from '$lib/components/fleets/ShaLink.svelte';
 	import type { ChannelStatus, Promotion, ShardSummary } from '$lib/types';
 
 	let now = Date.now();
@@ -63,7 +67,7 @@
 			part.version
 				? `${part.name}: ${part.version.sha} · ${part.version.branch} · ${
 						part.version.release
-				  } · built ${formatAge(part.version.builtAt, now)} ago`
+				  } · built ${formatAgo(part.version.builtAt, now)}`
 				: `${part.name}: ${part.raw}`
 		);
 		if (backend?.error) lines.push(`Error: ${backend.error}`);
@@ -87,6 +91,8 @@
 		return lines.join('\n');
 	};
 
+	// Only when something needs attention: a release stuck in Failed (Warming and Retiring take
+	// their time, so they don't warn here).
 	const detailHref = (name: string) => `/shards/detail?name=${encodeURIComponent(name)}`;
 </script>
 
@@ -122,6 +128,7 @@
 					<th class="py-2 pr-4">Backend</th>
 					<th class="py-2 pr-4">Launcher</th>
 					<th class="py-2 pr-4">Steam</th>
+					<th class="py-2 pr-4">Fleets</th>
 					<th class="py-2">Next</th>
 				</tr>
 			</thead>
@@ -158,7 +165,7 @@
 								<div class="flex items-center gap-1" title={channelHover(channel)}>
 									<span class="text-gray-400">{channel.metadataPath}:</span>
 									{#if channel.version}
-										<code>{shortSha(channel.version)}</code>
+										<ShaLink sha={channel.version} />
 										<span class="text-gray-400">· {formatAge(channel.since, now)}</span>
 									{:else}
 										<span class="text-gray-500">unknown</span>
@@ -175,7 +182,12 @@
 							{#each channels(shard, 'steam') as channel (channel.key)}
 								{@const warning = observationWarning(channel, now)}
 								<div class="flex items-center gap-1" title={steamHover(channel)}>
-									<code>{steamChannelText(channel)}</code>
+									<span class="text-gray-400">{channel.branch}:</span>
+									{#if channel.version}
+										<ShaLink sha={channel.version} />
+									{:else}
+										<span class="text-gray-500">{steamBuildText(channel)}</span>
+									{/if}
 									{#if channel.since}
 										<span class="text-gray-400">· {formatAge(channel.since, now)}</span>
 									{/if}
@@ -194,11 +206,21 @@
 								</div>
 							{/each}
 						</td>
+						<td class="py-2 pr-4">
+							<span class="flex items-center gap-1">
+								{fleetsColumnText(shard)}
+								{#if fleetsAttention(shard)}
+									<span title={fleetsAttention(shard)}
+										><ExclamationCircleOutline class="w-4 h-4 text-yellow-400" /></span
+									>
+								{/if}
+							</span>
+						</td>
 						<td class="py-2">
 							{#each runningFor(shard.name, $fleetPromotions) as promotion (promotion.metadata.name)}
 								<div>
 									<a class="text-primary-400 hover:underline" href={detailHref(shard.name)}
-										>Promoting {shortSha(promotion.spec.version, 4)}… · {promotionPhaseLabel(
+										>Promoting {shortSha(promotion.spec.version)} · {promotionProgressText(
 											promotion
 										).toLowerCase()}</a
 									>
