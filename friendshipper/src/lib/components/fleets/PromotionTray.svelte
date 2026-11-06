@@ -6,16 +6,12 @@
 	import { activePromotions } from '$lib/fleets';
 	import {
 		channelLabel,
-		formatElapsed,
-		promotionChangedBy,
-		promotionPhaseLabel,
+		isCancelling,
 		retryingMessage,
-		promotionSubmittedAt,
-		promotionWorkflow,
-		runningPromotionsText,
-		shortSha
+		runningPromotionsText
 	} from '$lib/fleetFormat';
-	import WorkflowLink from './WorkflowLink.svelte';
+	import ShaLink from './ShaLink.svelte';
+	import { localizeTimes, trayDetail, waitingForPerson } from '$lib/promotionCard';
 
 	let open = false;
 	let now = Date.now();
@@ -53,7 +49,7 @@
 		</button>
 		{#if open}
 			<div
-				class="absolute bottom-6 right-0 w-[28rem] max-h-80 overflow-y-auto rounded-md border border-secondary-600 dark:border-space-800 bg-secondary-700 dark:bg-space-900 shadow-2xl p-2 flex flex-col gap-2"
+				class="absolute bottom-6 right-0 z-50 w-[28rem] max-h-[50vh] overflow-y-auto rounded-md border border-secondary-600 dark:border-space-800 bg-secondary-700 dark:bg-space-900 shadow-2xl p-2 flex flex-col gap-2"
 			>
 				{#each $activePromotions as promotion (promotion.metadata.name)}
 					<div
@@ -62,30 +58,28 @@
 						<div class="flex items-center gap-2">
 							<span class="text-white font-semibold">{promotion.spec.shard}</span>
 							<span>{channelLabel(promotion.spec.channel)}</span>
-							<code class="text-gray-400">{shortSha(promotion.spec.version)}</code>
-							<span class="ml-auto text-primary-400">{promotionPhaseLabel(promotion)}</span>
+							<span class="text-gray-400"><ShaLink sha={promotion.spec.version} /></span>
 						</div>
-						<div class="flex items-center gap-2 text-gray-400">
-							<span>{promotionChangedBy(promotion)}</span>
-							<span title="since submitted"
-								>· {formatElapsed(promotionSubmittedAt(promotion), now)}</span
-							>
-							<span class="ml-auto flex gap-3">
-								<button
-									class="text-primary-400 hover:underline"
-									on:click={() => {
-										open = false;
-										void goto(`/shards/detail?name=${encodeURIComponent(promotion.spec.shard)}`);
-									}}>Shard</button
-								>
-								<WorkflowLink workflow={promotionWorkflow(promotion)} label="Argo" />
-							</span>
+						<div
+							class="truncate"
+							class:text-yellow-300={waitingForPerson(promotion) || isCancelling(promotion)}
+							class:text-gray-400={!waitingForPerson(promotion) && !isCancelling(promotion)}
+							title={trayDetail(promotion, now)}
+						>
+							{trayDetail(promotion, now)}
 						</div>
 						{#if retryingMessage(promotion)}
 							<div class="text-yellow-400 truncate" title={retryingMessage(promotion)}>
-								Retrying: {retryingMessage(promotion)}
+								Retrying: {localizeTimes(retryingMessage(promotion) ?? '', now)}
 							</div>
 						{/if}
+						<button
+							class="text-primary-400 hover:underline w-fit"
+							on:click={() => {
+								open = false;
+								void goto(`/shards/detail?name=${encodeURIComponent(promotion.spec.shard)}`);
+							}}>Open on the shard page →</button
+						>
 					</div>
 				{/each}
 			</div>
