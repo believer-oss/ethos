@@ -8,6 +8,9 @@
 
 	export let showModal: boolean = false;
 	export let commit: string = '';
+	// With the coordinator: open the form on this shard and channel (key), e.g. for a rollback.
+	export let presetShard = '';
+	export let presetChannel = '';
 
 	let loading: boolean = false;
 	let error: string = '';
@@ -186,6 +189,8 @@
 			{#if showModal}
 				<CoordinatorPromoteForm
 					bind:commit
+					{presetShard}
+					{presetChannel}
 					close={() => {
 						showModal = false;
 					}}
