@@ -270,6 +270,7 @@ mod tests {
             game_config: None,
             deploy_backend: false,
             sign: None,
+            skip_fleet_gate: None,
         }
     }
 

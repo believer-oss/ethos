@@ -1,24 +1,52 @@
 //! `Shard`: what a shard currently serves, as observed by the coordinator.
 
+use std::collections::BTreeMap;
+
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
-use kube::CustomResource;
+use kube::{CustomResource, KubeSchema};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::BackendParts;
 use crate::channel::{ChannelKey, ChannelKind, GameConfig, ParseChannelKeyError};
+use crate::fleet_release::FleetReleasePhase;
+use crate::naming::{MAP_ID_MAX_LEN, MAP_ID_PATTERN};
 use crate::promotion::PromotionPhase;
+use crate::shard_config::{MAX_CLUSTERS, SHARD_NAME_PATTERN};
+use crate::sizing::{Sizing, ABSOLUTE_BUFFER_RULE};
+
+/// Upper bound on a shard's fleet maps, and on per-map sizing entries.
+pub(crate) const MAX_FLEET_MAPS: usize = 32;
+
+/// Upper bound on (map, cluster) sizing overrides.
+pub(crate) const MAX_OVERRIDES: usize = MAX_FLEET_MAPS * MAX_CLUSTERS;
+
+// Both rules are on `spec`, not the object root, so CEL ratcheting keeps an older spec that breaks
+// them writable through status and metadata: a root rule sees every write as a change.
+
+/// Fleets need at least one map: there is no default-map fallback.
+const FLEET_MAPS_RULE: &str =
+    "!has(self.fleetsEnabled) || !self.fleetsEnabled || (has(self.maps) && size(self.maps) > 0)";
+
+/// Fleets need a warm buffer: there is no default, so a shard with Fleets on says how many servers
+/// each Fleet keeps warm.
+const FLEET_WARM_RULE: &str = "!has(self.fleetsEnabled) || !self.fleetsEnabled || (has(self.warm) && has(self.warm.bufferSize))";
+
+/// No two fleet maps may share a slug, since they would name the same Fleet. `MAP_ID_PATTERN`
+/// allows only `-`, `_` and `.` besides alphanumerics, so this is `map_slug` in CEL.
+const UNIQUE_SLUGS_RULE: &str = "self.all(a, self.exists_one(b, b.lowerAscii().replace('_', '-').replace('.', '-') == a.lowerAscii().replace('_', '-').replace('.', '-')))";
 
 /// What a shard serves. The coordinator creates one per `ShardConfig`, with no
 /// owner reference so that deleting the config keeps the observed history, and is the only writer of
-/// its status.
+/// its status. Friendshipper edits the spec (the shard's Fleet settings), setting the `changed-by`
+/// annotation.
 ///
 /// Partial failure never blanks good data: each observed item carries its own `observedAt` and
 /// `error`, and a failed observation changes only `error`. Readers show an item as stale once
 /// `observedAt` is older than three poll intervals (`STALE_AFTER_POLL_INTERVALS`).
 // Each printcolumn repeats `type_`, which clippy mistakes for a duplicated attribute.
 #[allow(clippy::duplicated_attributes)]
-#[derive(CustomResource, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(CustomResource, KubeSchema, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[kube(
     group = "fleet.believer.dev",
     version = "v1alpha1",
@@ -26,7 +54,8 @@ use crate::promotion::PromotionPhase;
     namespaced,
     shortname = "shard",
     status = "ShardStatus",
-    doc = "What a shard currently serves: backend parts, channel versions and recent promotions. Status is written only by the coordinator.",
+    doc = "What a shard currently serves: backend parts, channel versions, recent promotions and Fleet releases. The spec holds the shard's Fleet settings; status is written only by the coordinator.",
+    printcolumn(name = "Fleets", type_ = "boolean", json_path = ".spec.fleetsEnabled"),
     printcolumn(
         name = "Healthy",
         type_ = "boolean",
@@ -53,7 +82,86 @@ use crate::promotion::PromotionPhase;
         json_path = ".metadata.creationTimestamp"
     )
 )]
-pub struct ShardSpec {}
+#[cfg_attr(test, kube(cel))]
+#[x_kube(validation = Rule::new(FLEET_MAPS_RULE).message("spec.maps must name at least one map when spec.fleetsEnabled is true"))]
+#[x_kube(validation = Rule::new(FLEET_WARM_RULE).message("spec.warm.bufferSize must be set when spec.fleetsEnabled is true"))]
+#[serde(rename_all = "camelCase")]
+pub struct ShardSpec {
+    /// The master switch. Off: no new releases, and releases no channel serves retire (unless
+    /// pinned); releases serving a channel keep their Fleets until the channel moves on. Requires
+    /// `fleets` in the `ShardConfig`.
+    #[serde(default)]
+    pub fleets_enabled: bool,
+
+    /// The map IDs that get Fleets: keys of the build manifest's `maps.levelAssets`. At least one
+    /// when `fleetsEnabled`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = MAX_FLEET_MAPS), inner(length(min = 1, max = MAP_ID_MAX_LEN), regex(pattern = MAP_ID_PATTERN)))]
+    #[schemars(extend("x-kubernetes-list-type" = "set"))]
+    #[x_kube(validation = Rule::new(UNIQUE_SLUGS_RULE).message("spec.maps must not hold two map IDs that differ only in case or in '-', '_' and '.', as they would name the same Fleet"))]
+    pub maps: Vec<String>,
+
+    /// The buffer each (map, cluster) Fleet keeps while its release is Warming or Warm, before any
+    /// channel serves it: an absolute `bufferSize`, never parked. Required, with `bufferSize`, when
+    /// `fleetsEnabled`: there is no default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[x_kube(validation = Rule::new(ABSOLUTE_BUFFER_RULE).message("warm.bufferSize must be absolute, not a percentage"))]
+    #[x_kube(validation = Rule::new("!has(self.parked) || !self.parked").message("warm sizing can't be parked; turn fleetsEnabled off instead"))]
+    pub warm: Option<Sizing>,
+
+    /// Sizing while a channel serves the release.
+    #[serde(default, skip_serializing_if = "LiveSizing::is_empty")]
+    pub live: LiveSizing,
+}
+
+/// Live sizing, most specific first: `overrides` (map and cluster) > `maps` (map) > `default`.
+/// Each level may be partial; unset fields come from the next less specific level.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, KubeSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveSizing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Sizing>,
+
+    /// Per map ID.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(extend("maxProperties" = MAX_FLEET_MAPS))]
+    #[x_kube(validation = Rule::new(format!("self.all(m, size(m) <= {MAP_ID_MAX_LEN} && m.matches('{MAP_ID_PATTERN}'))")).message("live.maps keys must be map IDs"))]
+    pub maps: BTreeMap<String, Sizing>,
+
+    /// Per (map, cluster), unique by both. `sizing: {parked: true}` parks that one Fleet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = MAX_OVERRIDES))]
+    #[schemars(extend("x-kubernetes-list-type" = "map", "x-kubernetes-list-map-keys" = ["cluster", "mapId"]))]
+    pub overrides: Vec<SizingOverride>,
+}
+
+impl LiveSizing {
+    pub fn is_empty(&self) -> bool {
+        self.default.is_none() && self.maps.is_empty() && self.overrides.is_empty()
+    }
+
+    /// The override for this (map, cluster), if any.
+    pub fn override_for(&self, map_id: &str, cluster: &str) -> Option<&SizingOverride> {
+        self.overrides
+            .iter()
+            .find(|o| o.map_id == map_id && o.cluster == cluster)
+    }
+}
+
+/// Sizing for one (map, cluster) Fleet, over the less specific levels. Used by `Shard.spec.live`
+/// and `FleetRelease.spec.overrides`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SizingOverride {
+    /// A cluster in the `ShardConfig`'s `fleets.clusters`.
+    #[schemars(length(min = 1, max = 63), regex(pattern = SHARD_NAME_PATTERN))]
+    pub cluster: String,
+
+    #[schemars(length(min = 1, max = MAP_ID_MAX_LEN), regex(pattern = MAP_ID_PATTERN))]
+    pub map_id: String,
+
+    pub sizing: Sizing,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +182,10 @@ pub struct ShardStatus {
     #[serde(default)]
     pub promotions: Vec<PromotionSummary>,
 
+    /// The shard's `FleetRelease`s, newest first.
+    #[serde(default)]
+    pub releases: Vec<ReleaseSummary>,
+
     #[serde(default)]
     #[schemars(extend("x-kubernetes-list-type" = "map", "x-kubernetes-list-map-keys" = ["type"]))]
     pub conditions: Vec<Condition>,
@@ -86,6 +198,31 @@ impl ShardStatus {
             .iter()
             .find(|c| c.channel_key().as_ref() == Ok(key))
     }
+}
+
+/// A `FleetRelease` as listed on its shard.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSummary {
+    /// The `FleetRelease`'s name.
+    pub name: String,
+
+    pub version: String,
+
+    #[serde(default)]
+    pub phase: Option<FleetReleasePhase>,
+
+    /// Channel keys serving the version now.
+    #[serde(default)]
+    pub served_by: Vec<String>,
+
+    /// Ready servers across every map and cluster.
+    #[serde(default)]
+    pub ready: i32,
+
+    /// Allocated servers across every map and cluster.
+    #[serde(default)]
+    pub allocated: i32,
 }
 
 /// The shard's backend, from its healthcheck.
@@ -312,5 +449,62 @@ mod tests {
         assert_eq!(status.key, "launcher/stable-1.0");
         assert_eq!(status.metadata_path.as_deref(), Some("stable-1.0"));
         assert_eq!(status.channel_key().unwrap(), key);
+    }
+
+    #[test]
+    fn fleets_need_a_map_and_a_warm_buffer() {
+        let warm = Sizing {
+            buffer_size: Some(crate::BufferSize::Absolute(2)),
+            ..Sizing::default()
+        };
+        let shard = |fleets_enabled: bool, maps: &[&str], warm: Option<Sizing>| {
+            Shard::new(
+                "test",
+                ShardSpec {
+                    fleets_enabled,
+                    maps: maps.iter().map(|m| m.to_string()).collect(),
+                    warm,
+                    ..ShardSpec::default()
+                },
+            )
+        };
+        assert!(shard(false, &[], None).validate_cel().is_ok());
+        assert!(shard(true, &["Arena"], Some(warm.clone()))
+            .validate_cel()
+            .is_ok());
+        assert!(shard(true, &[], Some(warm.clone())).validate_cel().is_err());
+        assert!(shard(true, &["Arena"], None).validate_cel().is_err());
+        // A warm sizing without bufferSize isn't a buffer.
+        let no_buffer = Sizing {
+            max_replicas: Some(4),
+            ..Sizing::default()
+        };
+        assert!(shard(true, &["Arena"], Some(no_buffer))
+            .validate_cel()
+            .is_err());
+    }
+
+    #[test]
+    fn fleet_maps_must_not_share_a_slug() {
+        let shard = |maps: &[&str]| {
+            Shard::new(
+                "test",
+                ShardSpec {
+                    maps: maps.iter().map(|m| m.to_string()).collect(),
+                    ..ShardSpec::default()
+                },
+            )
+        };
+        shard(&["Arena", "Arena_Tutorial", "QA_BOX_Rotator"])
+            .validate_cel()
+            .unwrap();
+        for colliding in [
+            ["QA_BOX_Rotator", "QA-BOX-Rotator"],
+            ["Arena", "arena"],
+            ["Arena.v2", "Arena_v2"],
+        ] {
+            assert!(shard(&colliding).validate_cel().is_err(), "{colliding:?}");
+            assert!(crate::check_map_slugs(colliding).is_err(), "{colliding:?}");
+        }
     }
 }

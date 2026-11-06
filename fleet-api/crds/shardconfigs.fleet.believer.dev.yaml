@@ -36,6 +36,14 @@ spec:
               the same name for each one, and reports problems it can't express in CEL (a Steam branch claimed
               by two shards) as a `ConfigValid` condition.
             properties:
+              backendAddress:
+                description: |-
+                  The address game servers reach the backend's partner API at (`-PragmaPartnerBackendAddress`).
+                  Needed only once the shard has Fleets, like `shardId`.
+                maxLength: 2048
+                nullable: true
+                pattern: ^https?://
+                type: string
               channels:
                 description: The channels this shard serves clients from. Keys must be unique within the shard.
                 items:
@@ -88,6 +96,106 @@ spec:
                 maxLength: 64
                 nullable: true
                 type: string
+              fleets:
+                description: 'Where and within what bounds the shard may run Fleets. Absent: the shard never has Fleets.'
+                nullable: true
+                properties:
+                  clusters:
+                    description: The clusters this shard may run Fleets in, unique by name.
+                    items:
+                      description: A cluster a shard may run Fleets in.
+                      properties:
+                        name:
+                          description: The cluster's name as the coordinator knows it (its `--cluster` flag).
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        zone:
+                          description: |-
+                            The zone the backend routes this cluster's allocations by: the `believer.dev/zone` label on
+                            its game servers, and the key of the backend's cluster mapping.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$
+                          type: string
+                      required:
+                      - name
+                      - zone
+                      type: object
+                    maxItems: 64
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  gate:
+                    default: {}
+                    description: The warm gate. Unset fields take the defaults in [`fleet_defaults`].
+                    properties:
+                      minReady:
+                        description: Ready servers each non-parked map needs in every cluster. Default 1.
+                        format: int32
+                        minimum: 1.0
+                        nullable: true
+                        type: integer
+                      stableFor:
+                        description: How long `minReady` must hold with no server Unhealthy and no game-server restart. Default 2m.
+                        nullable: true
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                      timeout:
+                        description: |-
+                          How long a promotion waits for the gate before failing with `FleetGateTimeout`. Default 20m.
+                          Only the coordinator applies it: clusters never fail the gate for slowness.
+                        nullable: true
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: fleets.gate.timeout must be at least fleets.gate.stableFor, counting unset fields as their defaults
+                      rule: 'duration(has(self.timeout) ? self.timeout : ''1200s'') >= duration(has(self.stableFor) ? self.stableFor : ''120s'')'
+                  imageRepository:
+                    description: |-
+                      The game server image repository; a release's image is `<imageRepository>:<version>`, e.g.
+                      `123456789012.dkr.ecr.us-west-2.amazonaws.com/game`.
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  limits:
+                    default: {}
+                    description: Bounds on `Shard.spec` sizing. `maxReplicasPerFleet` is required (CEL).
+                    properties:
+                      maxReplicasPerFleet:
+                        description: |-
+                          The most `maxReplicas` any (map, cluster) Fleet may have, and the `maxReplicas` of a warm
+                          sizing that sets none. Required when the shard has `fleets` (CEL). CEL can't
+                          compare it with the Shard, so the coordinator refuses sizing above it (and reports it), and
+                          Friendshipper bounds its inputs by it.
+                        format: int32
+                        minimum: 1.0
+                        nullable: true
+                        type: integer
+                    type: object
+                  retireAfterIdle:
+                    description: How long a Draining release may have no Allocated servers before it retires. Default 30m.
+                    nullable: true
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                  warmTtl:
+                    description: |-
+                      How long a release no channel has served may stay Warming or Warm before it retires.
+                      Default 24h.
+                    nullable: true
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                required:
+                - clusters
+                - imageRepository
+                type: object
+                x-kubernetes-validations:
+                - message: fleets.limits.maxReplicasPerFleet must be set
+                  rule: has(self.limits) && has(self.limits.maxReplicasPerFleet)
               healthcheckUrl:
                 description: The backend healthcheck the coordinator polls for the shard's backend version.
                 maxLength: 2048
@@ -103,6 +211,14 @@ spec:
                     description: Whether a promotion may also deploy the backend. Off unless set.
                     type: boolean
                 type: object
+              shardId:
+                description: |-
+                  The backend's ID for the shard: the `believer.dev/shard-id` label on its game servers.
+                  Needed only once the shard has Fleets; until then a missing value is a `ConfigValid=False`
+                  condition rather than a schema error.
+                nullable: true
+                pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                type: string
               shardName:
                 description: The backend shard name. Also the promote workflow's `shard` parameter.
                 maxLength: 63
@@ -114,6 +230,9 @@ spec:
             - healthcheckUrl
             - shardName
             type: object
+            x-kubernetes-validations:
+            - message: a shard with fleets must have a name of at most 15 characters
+              rule: '!has(self.fleets) || size(self.shardName) <= 15'
           status:
             description: Written by the coordinator; conditions only.
             nullable: true

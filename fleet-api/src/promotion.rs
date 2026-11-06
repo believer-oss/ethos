@@ -15,14 +15,51 @@ use crate::{
     ANNOTATION_NOTE, LABEL_CHANNEL, LABEL_SHARD,
 };
 
-/// A promotion's only step today. A promotion may later run several, each with its own workflow.
+/// The single step of a promotion made before steps were split, run by one workflow named
+/// [`workflow_name`].
 pub const STEP_PROMOTE: &str = "promote";
+
+/// Step: deploy the build's backend to the shard (workflow `promote-deploy-backend`).
+pub const STEP_DEPLOY_BACKEND: &str = "deploy-backend";
+/// Step, run by the coordinator: create or reuse the build's `FleetRelease` and wait for it to be
+/// `Warm`. No workflow.
+pub const STEP_WARM_FLEETS: &str = "warm-fleets";
+/// Step: upload the client (workflow `promote-publish-client`) without changing what any channel serves.
+pub const STEP_PUBLISH_CLIENT: &str = "publish-client";
+/// Step: point the channel at the build (workflow `promote-flip-channel`).
+pub const STEP_FLIP_CHANNEL: &str = "flip-channel";
+/// Internal step, run by the coordinator after the flip: mark the release `Live` and update the
+/// Shard. Not listed in `status.steps`.
+pub const STEP_MARK_LIVE: &str = "mark-live";
+
+/// The steps listed in `status.steps`, in the order they run today. Readers find a step by name, not
+/// position: the order may change (publishing could run alongside warming).
+pub const PROMOTION_STEPS: [&str; 4] = [
+    STEP_DEPLOY_BACKEND,
+    STEP_WARM_FLEETS,
+    STEP_PUBLISH_CLIENT,
+    STEP_FLIP_CHANNEL,
+];
+
+/// Values of `status.steps[].phase`: a step's workflow phase as Argo reports it, or the coordinator's
+/// own for steps with no workflow.
+pub mod step_phases {
+    /// Not started yet.
+    pub const PENDING: &str = "Pending";
+    pub const RUNNING: &str = "Running";
+    pub const SUCCEEDED: &str = "Succeeded";
+    pub const FAILED: &str = "Failed";
+    /// Argo's phase for a workflow that couldn't run; treated as failed.
+    pub const ERROR: &str = "Error";
+    /// Not run, and never will be; `message` says why.
+    pub const SKIPPED: &str = "Skipped";
+}
 
 /// Longest workflow name the coordinator may create: `promote-<promotion name>`, plus `-<step>` if a
 /// promotion runs several steps. Kubernetes names are at most 63 characters.
 const WORKFLOW_NAME_MAX_LEN: usize = 63;
 
-/// Room kept for a step suffix on a workflow name, as long as `-deploy-backend`.
+/// Room kept for a step suffix on a workflow name: `-deploy-backend` and `-publish-client`, the longest.
 const LONGEST_STEP_SUFFIX_LEN: usize = "-deploy-backend".len();
 
 /// Characters the apiserver appends to a `generateName` prefix.
@@ -36,7 +73,7 @@ const GENERATE_NAME_MAX_LEN: usize = WORKFLOW_NAME_MAX_LEN
     - LONGEST_STEP_SUFFIX_LEN;
 
 /// What the coordinator puts before the Promotion's name to name its workflow.
-const WORKFLOW_NAME_PREFIX: &str = "promote-";
+pub(crate) const WORKFLOW_NAME_PREFIX: &str = "promote-";
 
 /// A request to put a build on one channel of a shard.
 ///
@@ -97,6 +134,22 @@ pub struct PromotionSpec {
     /// Ignored for launcher channels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign: Option<bool>,
+
+    /// Don't wait for the build's Fleets to pass the warm gate. The release is still created, so
+    /// Fleets warm alongside the rest of the promotion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_fleet_gate: Option<SkipFleetGate>,
+}
+
+/// Why a promotion skips the warm gate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, KubeSchema)]
+#[serde(rename_all = "camelCase")]
+#[x_kube(validation = Rule::new("size(self.reason.trim()) > 0").message("skipFleetGate.reason must not be blank"))]
+#[cfg_attr(test, x_kube(cel))]
+pub struct SkipFleetGate {
+    /// Required: shown with the promotion, so others know why the gate was skipped.
+    #[schemars(length(min = 1, max = 1024))]
+    pub reason: String,
 }
 
 impl PromotionSpec {
@@ -220,8 +273,8 @@ fn generate_name_prefix(spec: &PromotionSpec) -> String {
     format!("{}-{kind}-", shard.trim_end_matches('-'))
 }
 
-/// The name of a promotion's Argo workflow: `promote-<promotion name>`. One step today; a promotion
-/// may later run several, each named `promote-<promotion name>-<step>`.
+/// The name of the single Argo workflow of a promotion made before steps were split:
+/// `promote-<promotion name>`. A step's workflow is [`step_workflow_name`](crate::step_workflow_name).
 pub fn workflow_name(promotion_name: &str) -> String {
     format!("{WORKFLOW_NAME_PREFIX}{promotion_name}")
 }
@@ -289,9 +342,26 @@ pub struct PromotionStatus {
     #[serde(default)]
     pub plan: Option<PromotionPlan>,
 
+    /// The step running now (one of [`PROMOTION_STEPS`], or [`STEP_MARK_LIVE`]); empty when
+    /// nothing is running, including once the promotion has finished.
+    #[serde(default)]
+    pub current_step: String,
+
+    /// The `FleetRelease` this promotion created or reused, once `warm-fleets` has started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet_release: Option<String>,
+
+    /// Every step, listed from acceptance on so the whole plan shows; a step that won't run has
+    /// phase `Skipped`. Find steps by name ([`PromotionStatus::step`]), not position.
     #[serde(default)]
     #[schemars(extend("x-kubernetes-list-type" = "map", "x-kubernetes-list-map-keys" = ["name"]))]
     pub steps: Vec<PromotionStep>,
+
+    /// What the promotion changed outside the cluster, in order, as each change happened. Kept for
+    /// every outcome, so a cancelled or failed promotion shows what it left behind; empty means
+    /// nothing outside the cluster was touched.
+    #[serde(default)]
+    pub changes: Vec<PromotionChange>,
 
     /// When the coordinator accepted the Promotion (phase `Pending`), not when its workflow started
     /// (that is `steps[].startedAt`). Unset until accepted; `metadata.creationTimestamp` is when it
@@ -308,6 +378,42 @@ pub struct PromotionStatus {
     #[serde(default)]
     #[schemars(extend("x-kubernetes-list-type" = "map", "x-kubernetes-list-map-keys" = ["type"]))]
     pub conditions: Vec<Condition>,
+}
+
+impl PromotionStatus {
+    /// The step with this name, if listed.
+    pub fn step(&self, name: &str) -> Option<&PromotionStep> {
+        self.steps.iter().find(|s| s.name == name)
+    }
+}
+
+/// One real-world effect of a promotion.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PromotionChange {
+    pub kind: PromotionChangeKind,
+
+    /// What changed and how it is left, for people, e.g. `content 1111111 → 2222222, platform unchanged`.
+    #[serde(default)]
+    pub detail: String,
+
+    /// When the coordinator saw the change happen.
+    #[serde(default)]
+    pub at: Option<Time>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum PromotionChangeKind {
+    /// The shard's backend was deployed.
+    BackendDeployed,
+    /// A `FleetRelease` was created or reused and is warming; it retires on its TTL unless used.
+    FleetReleaseWarming,
+    /// The client was uploaded, but no channel serves it yet.
+    ClientUploaded,
+    /// The channel now serves the build.
+    ChannelFlipped,
+    /// The `FleetRelease` was marked live.
+    FleetReleaseLive,
 }
 
 /// What the promotion will change.
@@ -355,33 +461,50 @@ impl BackendPartChange {
     }
 }
 
-/// One step of a promotion and the workflow that runs it.
+/// One step of a promotion and the workflow, if any, that runs it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PromotionStep {
-    /// The step, e.g. `promote`.
+    /// The step: one of [`PROMOTION_STEPS`], or [`STEP_PROMOTE`] on a promotion made before steps
+    /// were split.
     pub name: String,
 
-    /// The Argo workflow's name: `promote-<promotion name>`, or `promote-<promotion name>-<step>` if a
-    /// promotion runs several steps.
+    /// The Argo workflow's name, recorded before it is created: `promote-<promotion>-<step>`
+    /// ([`step_workflow_name`](crate::step_workflow_name)), or `promote-<promotion>` for
+    /// [`STEP_PROMOTE`]. Empty for steps the coordinator runs itself, and for skipped steps.
     #[serde(default)]
     pub workflow: String,
 
-    /// Mirrors the workflow's phase.
+    /// `warm-fleets` only: the `FleetRelease` it waits on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fleet_release: Option<String>,
+
+    /// A value from [`step_phases`]: the workflow's phase, or the coordinator's for a step without one.
     #[serde(default)]
     pub phase: String,
 
-    /// The workflow's `startedAt`.
+    /// The workflow's `startedAt`, or when the coordinator started the step.
     #[serde(default)]
     pub started_at: Option<Time>,
 
-    /// The workflow's `finishedAt`.
+    /// The workflow's `finishedAt`, or when the coordinator finished the step.
     #[serde(default)]
     pub finished_at: Option<Time>,
 
-    /// The workflow's message on failure.
+    /// Progress or the outcome for people: the workflow's message on failure, why the step was
+    /// skipped, or what the step is waiting for.
     #[serde(default)]
     pub message: String,
+
+    /// The step workflow's output parameters, e.g. `build_id` from a Steam `publish-client`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outputs: BTreeMap<String, String>,
+}
+
+impl PromotionStep {
+    pub fn is_skipped(&self) -> bool {
+        self.phase == step_phases::SKIPPED
+    }
 }
 
 #[cfg(test)]
@@ -401,6 +524,7 @@ mod tests {
             game_config: None,
             deploy_backend: true,
             sign: Some(true),
+            skip_fleet_gate: None,
         }
     }
 

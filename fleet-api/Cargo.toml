@@ -1,8 +1,8 @@
 [package]
 name = "fleet-api"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Kubernetes custom resources for fleet management: ShardConfig, Shard and Promotion."
+description = "Kubernetes custom resources for fleet management: ShardConfig, Shard, Promotion, FleetRelease and LocalFleetRelease."
 publish = false
 
 [features]
@@ -22,6 +22,7 @@ schemars = "1.2.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+sha2 = "0.11"
 thiserror = "2"
 
 [dev-dependencies]
