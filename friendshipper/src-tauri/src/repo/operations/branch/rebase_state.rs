@@ -337,7 +337,24 @@ fn read_existing(path: &Path) -> anyhow::Result<Option<String>> {
 /// Whether `ancestor` is reachable from `rev`; a missing object is not an ancestor.
 pub(crate) async fn is_ancestor(git: &git::Git, ancestor: &str, rev: &str) -> anyhow::Result<bool> {
     let output = read_git(git, &["merge-base", "--is-ancestor", ancestor, rev]).await?;
-    Ok(output.exit_code == 0)
+    match output.exit_code {
+        0 => Ok(true),
+        1 => Ok(false),
+        code => {
+            for commit in [ancestor, rev] {
+                if rev_parse(git, &format!("{commit}^{{commit}}"))
+                    .await?
+                    .is_none()
+                {
+                    return Ok(false);
+                }
+            }
+            bail!(
+                "merge-base --is-ancestor {ancestor} {rev} exited with {code}: {}",
+                output.stderr.trim()
+            )
+        }
+    }
 }
 
 fn stale(reason: RebaseStaleReason) -> (RebaseStateKind, Option<RebaseStaleReason>) {
@@ -431,15 +448,18 @@ pub(crate) fn parse_untracked(porcelain_z: &str) -> Vec<String> {
     paths
 }
 
-/// Staged paths that are neither conflicts of the step nor brought by the replayed commit,
-/// renames included. With no commit being replayed, every staged path.
+/// Staged paths that are neither conflicts of the step nor brought by the replayed commit.
+/// With no commit being replayed, every staged path.
 pub(crate) async fn staged_outside_step(
     git: &git::Git,
     conflicts: &[ConflictFile],
     rebase_head: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
     let brought = match rebase_head {
-        Some(rebase_head) => diff_names(git, &["HEAD", rebase_head]).await?,
+        Some(rebase_head) => {
+            let picked = picked_tree(git, rebase_head).await?;
+            diff_names(git, &["HEAD", &picked]).await?
+        }
         None => vec![],
     };
     Ok(diff_names(git, &["--cached", "HEAD"])
@@ -447,6 +467,33 @@ pub(crate) async fn staged_outside_step(
         .into_iter()
         .filter(|path| !conflicts.iter().any(|c| &c.path == path) && !brought.contains(path))
         .collect())
+}
+
+/// The tree git's pick of `commit` onto `HEAD` gives, conflict markers included, so its
+/// difference from `HEAD` is what the step brings, following renames as the pick does.
+async fn picked_tree(git: &git::Git, commit: &str) -> anyhow::Result<String> {
+    let parent = format!("{commit}^");
+    let output = read_git(
+        git,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "--merge-base",
+            &parent,
+            "HEAD",
+            commit,
+        ],
+    )
+    .await?;
+    let tree = output.stdout.lines().next().unwrap_or_default().trim();
+    if !matches!(output.exit_code, 0 | 1) || !is_full_sha(tree) {
+        bail!(
+            "Could not recreate the pick of {commit}: {}",
+            output.stderr.trim()
+        );
+    }
+    Ok(tree.to_string())
 }
 
 async fn diff_names(git: &git::Git, args: &[&str]) -> anyhow::Result<Vec<String>> {
@@ -1100,12 +1147,32 @@ pub(crate) async fn create_backup_ref(
     bail!("Could not create a backup ref for {branch}: {last_error}")
 }
 
+/// Suffix of the backup refs branch cleanup keeps of the branches it deletes.
+pub(crate) const CLEANUP_BACKUP_SUFFIX: &str = "-cleanup";
+
 /// Deletes backup refs older than 14 days except `keep` (the current record's backup, read
 /// by the caller under `REBASE_FILE_LOCK`). A ref that cannot be deleted is skipped.
 pub(crate) async fn prune_backup_refs(
     git: &git::Git,
     now_ts: u64,
     keep: &[String],
+) -> anyhow::Result<()> {
+    prune_matching_backup_refs(git, now_ts, keep, |_| true).await
+}
+
+/// [`prune_backup_refs`] for cleanup backups only, which no rebase record names.
+pub(crate) async fn prune_cleanup_backup_refs(git: &git::Git, now_ts: u64) -> anyhow::Result<()> {
+    prune_matching_backup_refs(git, now_ts, &[], |refname| {
+        refname.ends_with(CLEANUP_BACKUP_SUFFIX)
+    })
+    .await
+}
+
+async fn prune_matching_backup_refs(
+    git: &git::Git,
+    now_ts: u64,
+    keep: &[String],
+    matches: impl Fn(&str) -> bool,
 ) -> anyhow::Result<()> {
     let output = git
         .run_with_status(
@@ -1116,7 +1183,12 @@ pub(crate) async fn prune_backup_refs(
     if output.exit_code != 0 {
         bail!("Could not list backup refs: {}", output.stderr.trim());
     }
-    let refs: Vec<String> = output.stdout.lines().map(str::to_string).collect();
+    let refs: Vec<String> = output
+        .stdout
+        .lines()
+        .filter(|refname| matches(refname))
+        .map(str::to_string)
+        .collect();
     for refname in refs_to_prune(&refs, now_ts, keep) {
         let deleted = git
             .run_with_status(

@@ -43,7 +43,7 @@ const GITHUB_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The first failed PR gate, in the order the page lists its blockers. Behind trunk is not a gate.
 pub(crate) fn pr_gate_error(facts: &BranchFacts, trunk: &str, branch: &str) -> Option<String> {
-    if !facts.git.supported {
+    if !facts.git.supported() {
         return Some(unsupported_git_message(&facts.git.version));
     }
     match facts.upstream {
@@ -747,7 +747,7 @@ mod tests {
         BranchFacts {
             git: GitVersionCheck {
                 version: "2.47.1.windows.1".to_string(),
-                supported: true,
+                parsed: Some((2, 47)),
             },
             upstream: BranchUpstream::Present,
             local_sync: BranchLocalSync::InSync,
@@ -768,7 +768,7 @@ mod tests {
                 BranchFacts {
                     git: GitVersionCheck {
                         version: "2.37.9".to_string(),
-                        supported: false,
+                        parsed: Some((2, 37)),
                     },
                     ..Default::default()
                 },
@@ -852,7 +852,7 @@ mod tests {
         let unsupported_and_gone = BranchFacts {
             git: GitVersionCheck {
                 version: "garbage".to_string(),
-                supported: false,
+                parsed: None,
             },
             upstream: BranchUpstream::Gone,
             ..Default::default()
@@ -1480,13 +1480,13 @@ mod tests {
 
         async fn git_supported(&self) -> bool {
             let check = self.user.check_min_version().await.expect("git version");
-            if !check.supported {
+            if !check.supported() {
                 println!(
                     "skipping: git {} lacks merge-tree --write-tree",
                     check.version
                 );
             }
-            check.supported
+            check.supported()
         }
 
         async fn user_commit(&self, path: &str, contents: &[u8], message: &str) -> String {

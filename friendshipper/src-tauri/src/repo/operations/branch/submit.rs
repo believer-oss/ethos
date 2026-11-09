@@ -6,7 +6,8 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::{instrument, warn};
 
-use super::{guard_state, reject_if_in_merge_queue, run_guarded_sequence};
+use super::rebase_state::{is_ancestor, rev_parse};
+use super::{guard_state, reject_if_pr_blocks_updates, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{
     commit_files, is_branch_mode, reject_files_with_conflict_markers, reject_unsubmittable_files,
@@ -97,6 +98,19 @@ fn stale_files_error(paths: &[&str]) -> CoreError {
 fn gone_error(branch: &str, target: &str) -> CoreError {
     input_error(format!(
         "Branch '{branch}' does not exist on origin (it may have been merged or deleted). Return to '{target}' from Branch Management."
+    ))
+}
+
+fn gone_after_commit_error(branch: &str, target: &str, sha: &str) -> CoreError {
+    input_error(format!(
+        "Branch '{branch}' no longer exists on origin (it may have been merged or deleted), so commit {} was not pushed. It is saved on your local '{branch}'; get help moving it to a new branch before returning to '{target}'.",
+        &sha[..sha.len().min(7)]
+    ))
+}
+
+fn head_rewound_error(branch: &str) -> CoreError {
+    input_error(format!(
+        "'{branch}' was changed outside Friendshipper during the submit and no longer contains origin's commits, so nothing was pushed. Sync, then submit again."
     ))
 }
 
@@ -196,16 +210,29 @@ async fn remote_branch_sha(git: &git::Git, branch: &str) -> anyhow::Result<Optio
     }))
 }
 
-/// Pushes `HEAD` to `origin/<branch>` only if origin still points at `origin_sha`.
+/// Pushes `HEAD` to `origin/<branch>` only if origin still points at `origin_sha`, and only
+/// while `HEAD` is still on `branch` and contains `origin_sha`.
 pub(crate) async fn push_head_to_branch(
     git: &git::Git,
     branch: &str,
     target: &str,
     origin_sha: &str,
 ) -> Result<(), CoreError> {
+    // HEAD can move outside Friendshipper after the up-to-date check, so the sha pushed is
+    // checked here; the lease covers only origin's side.
+    let current = git.current_branch().await?;
+    if current != branch {
+        return Err(branch_changed_error(&current));
+    }
+    let head = rev_parse(git, "HEAD")
+        .await?
+        .ok_or_else(|| CoreError::Internal(anyhow!("HEAD does not resolve")))?;
+    if !is_ancestor(git, origin_sha, &head).await? {
+        return Err(head_rewound_error(branch));
+    }
+
     let lease = format!("--force-with-lease=refs/heads/{branch}:{origin_sha}");
-    let refspec = format!("HEAD:refs/heads/{branch}");
-    // HEAD contains origin_sha, so the lease only ever lets this fast-forward.
+    let refspec = format!("{head}:refs/heads/{branch}");
     let Err(e) = git
         .run(
             &["push", "--porcelain", &lease, "origin", &refspec],
@@ -218,7 +245,7 @@ pub(crate) async fn push_head_to_branch(
 
     let text = e.to_string();
     match remote_branch_sha(git, branch).await {
-        Ok(None) => Err(gone_error(branch, target)),
+        Ok(None) => Err(gone_after_commit_error(branch, target, &head)),
         Ok(Some(sha)) if sha != origin_sha => Err(push_race_error(branch)),
         Ok(Some(_)) => Err(push_failed_error(&text)),
         Err(ls_error) => {
@@ -421,7 +448,7 @@ where
     T: EngineProvider,
 {
     guard_state(&state).await?;
-    reject_if_in_merge_queue(&state).await?;
+    reject_if_pr_blocks_updates(&state).await?;
 
     let op = BranchSubmitOp {
         files: request.files,
@@ -862,10 +889,48 @@ mod tests {
         let result = push_head_to_branch(&fx.user, BRANCH, "main", &verified).await;
         assert_eq!(
             input_message(result),
-            "Branch 'f11r-branch-x' does not exist on origin (it may have been merged or deleted). Return to 'main' from Branch Management."
+            format!(
+                "Branch 'f11r-branch-x' no longer exists on origin (it may have been merged or deleted), so commit {} was not pushed. It is saved on your local 'f11r-branch-x'; get help moving it to a new branch before returning to 'main'.",
+                &local_head[..7]
+            )
         );
         assert!(!fx.origin.has_local_branch(BRANCH).await.unwrap());
         assert_eq!(fx.head().await, local_head);
+    }
+
+    #[tokio::test]
+    async fn push_head_to_branch_refuses_when_head_no_longer_contains_origin() {
+        let fx = Fixture::new().await;
+        fx.collab_push(BRANCH, "collab.txt").await;
+        let verified = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
+            .await
+            .unwrap()
+            .origin_sha;
+        run_git(&fx.user, &["merge", "-q", "--ff-only", &verified]).await;
+        fx.user_commit("local.txt", "local commit").await;
+        run_git(&fx.user, &["reset", "-q", "--hard", "HEAD~2"]).await;
+
+        let result = push_head_to_branch(&fx.user, BRANCH, "main", &verified).await;
+        assert_eq!(
+            input_message(result),
+            "'f11r-branch-x' was changed outside Friendshipper during the submit and no longer contains origin's commits, so nothing was pushed. Sync, then submit again."
+        );
+        assert_eq!(fx.origin_sha(BRANCH).await, verified);
+    }
+
+    #[tokio::test]
+    async fn push_head_to_branch_refuses_after_switching_branch() {
+        let fx = Fixture::new().await;
+        let verified = fx.origin_sha(BRANCH).await;
+        fx.user_commit("local.txt", "local commit").await;
+        run_git(&fx.user, &["checkout", "-q", "main"]).await;
+
+        let result = push_head_to_branch(&fx.user, BRANCH, "main", &verified).await;
+        assert_eq!(
+            input_message(result),
+            "The current branch changed to 'main' since you reviewed this submit. Review it again."
+        );
+        assert_eq!(fx.origin_sha(BRANCH).await, verified);
     }
 
     #[tokio::test]
@@ -1219,9 +1284,14 @@ mod tests {
         let head_before = fx.head().await;
 
         let (op, phases, _status) = fx.op(&["notes.txt"], "orphan commit");
+        let message = input_message(op.execute().await);
+        let commit = fx.head().await;
         assert_eq!(
-            input_message(op.execute().await),
-            "Branch 'f11r-branch-x' does not exist on origin (it may have been merged or deleted). Return to 'main' from Branch Management."
+            message,
+            format!(
+                "Branch 'f11r-branch-x' no longer exists on origin (it may have been merged or deleted), so commit {} was not pushed. It is saved on your local 'f11r-branch-x'; get help moving it to a new branch before returning to 'main'.",
+                &commit[..7]
+            )
         );
 
         assert!(!fx.origin.has_local_branch(BRANCH).await.unwrap());

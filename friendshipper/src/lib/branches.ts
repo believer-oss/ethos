@@ -151,16 +151,26 @@ export const deriveSubmitMode = (
 	cfg: Nullable<RepoConfig>,
 	target: string,
 	displayName: string
-): { mode: SubmitMode; reason: string; targetMismatch: boolean } => {
+): { mode: SubmitMode; reason: string; targetMismatch: boolean; fixInDiagnostics?: boolean } => {
 	if (!status || !cfg) {
 		return { mode: 'unavailable', reason: '', targetMismatch: false };
 	}
-	if (status.detachedHead || status.branch === '' || isGuidedRebaseActive(status)) {
+	if (isGuidedRebaseActive(status)) {
 		return {
 			mode: 'unavailable',
 			reason:
-				'Submitting is unavailable while the repository is in a detached HEAD state or a rebase is in progress. Open Branch Management to resolve it.',
+				'Submitting is unavailable while a rebase is in progress. Open Branch Management to resolve it.',
 			targetMismatch: false
+		};
+	}
+	// Without a guided rebase, Diagnostics resolves a detached HEAD, as the backend's refusals say.
+	if (status.detachedHead || status.branch === '') {
+		return {
+			mode: 'unavailable',
+			reason:
+				'Submitting is unavailable while the repository is in a detached HEAD state, for example during a rebase started outside Friendshipper. Open Diagnostics to resolve it.',
+			targetMismatch: false,
+			fixInDiagnostics: true
 		};
 	}
 	if (isProtectedBranch(status.branch, cfg) || isQuickSubmitBranch(status.branch)) {
@@ -221,6 +231,9 @@ export const defaultPrTitle = (branch: string, trunk: string): string =>
 export const PR_TITLE_MAX = 256;
 
 export const EDITOR_OPEN = 'Unreal Editor is open. Close it to use Branch Management.';
+// Mirrors the Rust `EXTERNAL_REBASE`.
+export const EXTERNAL_REBASE =
+	'A rebase not started by Friendshipper is in progress. Resolve it in Diagnostics.';
 export const EDITOR_OPEN_SWITCH = 'Unreal Editor is open. Close it to switch branches.';
 
 // Mirrors the Rust `validate_pr_title`: trimmed, non-empty, at most 256 code points.
@@ -313,6 +326,12 @@ export const guidedRebaseGitSupported = (version: string): boolean => {
 	);
 };
 
+// Mirrors the backend's merge queue refusal of rebase start, rebase push and editor builds.
+export const prQueuedReason = (a: Nullable<BranchAnalysis>): string | null =>
+	a?.pr?.state === 'OPEN' && a.pr.mergeQueueEntry
+		? `PR #${a.pr.number} is in the merge queue. Remove it from the queue or wait for it to merge.`
+		: null;
+
 // First reason the Rebase button is disabled, in the backend's gate order; the backend re-checks
 // each one.
 export const rebaseBlockReason = (
@@ -332,6 +351,10 @@ export const rebaseBlockReason = (
 	}
 	if (analysis.pr?.state === 'MERGED' || analysis.upstream === 'gone') {
 		return 'This branch was merged or deleted.';
+	}
+	const queued = prQueuedReason(analysis);
+	if (queued !== null) {
+		return queued;
 	}
 	// Null means the state could not be read, which is not the same as idle.
 	if (rebase === null) {
@@ -512,7 +535,7 @@ export const cleanupResultMessages = (
 			deleted.length > 0
 				? `Deleted ${localBranchCount(deleted.length)}: ${deleted
 						.map((r) => `${r.name} (${r.sha})`)
-						.join(', ')}`
+						.join(', ')}. Kept under refs/f11r-backup for 14 days.`
 				: null,
 		failure:
 			failed.length > 0

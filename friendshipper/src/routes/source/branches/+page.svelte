@@ -25,6 +25,7 @@
 	import { emit } from '@tauri-apps/api/event';
 	import { onDestroy, onMount } from 'svelte';
 	import { CommitTable, ProgressModal } from '@ethos/core';
+	import { goto } from '$app/navigation';
 	import { appConfig, repoConfig, repoStatus } from '$lib/stores';
 	import {
 		branchActionsDisabled,
@@ -32,6 +33,8 @@
 		branchManagementVisible,
 		createPrBlockers,
 		EDITOR_OPEN,
+		EXTERNAL_REBASE,
+		prQueuedReason,
 		isFeatureBranch,
 		isProtectedBranch,
 		isQuickSubmitBranch,
@@ -45,6 +48,7 @@
 		shortSha
 	} from '$lib/branches';
 	import {
+		abortGuidedRebase,
 		createBranchPullRequest,
 		enqueueBranchPullRequest,
 		getBranchAnalysis,
@@ -71,6 +75,7 @@
 	import BranchCleanupModal from '$lib/components/BranchCleanupModal.svelte';
 	import BranchPullRequestModal from '$lib/components/BranchPullRequestModal.svelte';
 	import CommitInfoModal from '$lib/components/CommitInfoModal.svelte';
+	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import CreateBranchModal from '$lib/components/CreateBranchModal.svelte';
 	import RebaseConflictResolver from '$lib/components/RebaseConflictResolver.svelte';
 	import RebaseRecoveryView from '$lib/components/RebaseRecoveryView.svelte';
@@ -109,20 +114,25 @@
 
 	$: rebaseView = rebaseViewFor(rebaseState);
 	$: rebaseActive = rebaseView !== 'none';
+	// A rebase Friendshipper didn't start; Diagnostics resolves it.
+	$: externalRebase = rebaseState?.state === 'external';
 	// Not loaded yet, or the last load failed: never treated as idle.
 	$: rebaseUnknown = rebaseState === null || rebaseStateError !== null;
 	// Switching and creating stay allowed in stale; dismissing it is housekeeping.
 	$: editorOpen = !!$repoStatus?.editorRunning;
 	// A rebase or its result stays visible even with Branch Management turned off.
-	// Detached HEAD has no other way back to a branch.
+	// Detached HEAD has no other way back to a branch, except during an outside rebase.
 	$: managementOff =
 		!$branchManagementVisible &&
-		!$repoStatus?.detachedHead &&
+		(!$repoStatus?.detachedHead || externalRebase) &&
 		!rebaseUnknown &&
 		!rebaseActive &&
 		!finishResult;
 	$: branchingBlocked =
-		editorOpen || rebaseUnknown || (rebaseActive && rebaseState?.state !== 'stale');
+		editorOpen ||
+		rebaseUnknown ||
+		externalRebase ||
+		(rebaseActive && rebaseState?.state !== 'stale');
 	let rebaseGateReason: Nullable<string> = null;
 	$: if (editorOpen) {
 		rebaseGateReason = EDITOR_OPEN;
@@ -131,6 +141,8 @@
 			rebaseStateError !== null
 				? "Couldn't read the rebase state. Retry."
 				: 'Loading the rebase state…';
+	} else if (externalRebase) {
+		rebaseGateReason = EXTERNAL_REBASE;
 	} else {
 		rebaseGateReason = rebaseActive ? 'Finish or dismiss the current rebase first.' : null;
 	}
@@ -155,6 +167,29 @@
 			rebaseStateError = errorMessage(e);
 		} finally {
 			rebaseStateLoading = false;
+		}
+	};
+
+	// Abort stays reachable when the rebase state can't be read, since it needs only the record.
+	let abortUnreadOpen = false;
+	const openAbortUnread = () => {
+		abortUnreadOpen = true;
+	};
+	const onAbortUnreadAnswer = async (confirmed: boolean) => {
+		abortUnreadOpen = false;
+		if (!confirmed || busy) return;
+		busy = true;
+		showProgressModal = true;
+		progressModalTitle = 'Aborting rebase';
+		try {
+			await abortGuidedRebase();
+		} catch (e) {
+			await emit('error', e);
+		} finally {
+			showProgressModal = false;
+			busy = false;
+			await refreshAfterBranchChange();
+			void loadRebaseState();
 		}
 	};
 
@@ -527,6 +562,17 @@
 		});
 </script>
 
+{#if externalRebase}
+	<Alert class="{warningAlertClass} mb-2">
+		<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-yellow-300" />
+		<div class="flex flex-row items-center gap-2 flex-wrap">
+			<span>{EXTERNAL_REBASE}</span>
+			<Button size="xs" color="alternative" on:click={() => goto('/source/diagnostics')}>
+				Open Diagnostics
+			</Button>
+		</div>
+	</Alert>
+{/if}
 {#if managementOff}
 	<Card
 		class="w-full p-4 sm:p-4 max-w-full bg-secondary-700 dark:bg-space-900 border-0 shadow-none"
@@ -623,6 +669,16 @@
 				>
 					Retry
 				</Button>
+				{#if $repoStatus?.guidedRebaseActive}
+					<Button
+						size="xs"
+						color="alternative"
+						disabled={busy || rebaseStateLoading}
+						on:click={openAbortUnread}
+					>
+						Abort rebase
+					</Button>
+				{/if}
 			</div>
 		</Alert>
 	{/if}
@@ -631,6 +687,7 @@
 	{#if rebaseState}
 		<RebaseRecoveryView
 			bind:rebaseState
+			pushBlockReason={prQueuedReason(analysis)}
 			on:changed={loadRebaseState}
 			on:finished={handleRebaseFinished}
 			on:progress={handleRebaseProgress}
@@ -666,7 +723,12 @@
 				{/if}
 				{#if finishResult.touchesCpp && !editorBuildTriggered}
 					<div>
-						<Button size="xs" disabled={busy} on:click={handleTriggerEditorBuild}>
+						<Button
+							size="xs"
+							disabled={busy || prQueuedReason(analysis) !== null}
+							title={prQueuedReason(analysis) ?? undefined}
+							on:click={handleTriggerEditorBuild}
+						>
 							Trigger editor build
 						</Button>
 					</div>
@@ -930,6 +992,12 @@
 		{/if}
 	{/if}
 </fieldset>
+
+<ConfirmModal
+	bind:showModal={abortUnreadOpen}
+	title="Abort the rebase? The branch returns to where it started. The rebase state couldn't be read, so edits made during the rebase can't be listed here; they will be discarded."
+	resultCallback={onAbortUnreadAnswer}
+/>
 
 <CreateBranchModal bind:open={createOpen} on:created={loadRebaseState} />
 

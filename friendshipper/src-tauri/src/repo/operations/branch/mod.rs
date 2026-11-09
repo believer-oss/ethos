@@ -2,6 +2,7 @@ use anyhow::anyhow;
 
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::is_branch_mode;
+use crate::repo::operations::is_valid_sha;
 use crate::state::AppState;
 use ethos_core::clients::aws::ensure_aws_client;
 use ethos_core::clients::git;
@@ -58,9 +59,9 @@ const MAX_SLUG_LEN: usize = 48;
 pub(crate) const GITHUB_PAT_MISSING: &str =
     "GitHub PAT is not configured. Please configure it in the settings.";
 
-/// GitHub rejects pushes to a branch whose PR is queued, so refuse before changing anything.
-/// A failed lookup does not block; the push would still be rejected.
-pub(crate) async fn reject_if_in_merge_queue<T>(state: &AppState<T>) -> Result<(), CoreError>
+/// Refuses updates to a branch whose PR is queued, which GitHub rejects, or already merged into a
+/// merge target, where they would never reach it. A failed lookup does not block.
+pub(crate) async fn reject_if_pr_blocks_updates<T>(state: &AppState<T>) -> Result<(), CoreError>
 where
     T: EngineProvider,
 {
@@ -91,12 +92,33 @@ where
                 pr.number
             )))
         }
+        Ok(Some(pr))
+            if pr.state == "MERGED"
+                && merge_targets(&state.repo_config.read()).contains(&pr.base_ref_name)
+                && merged_pr_covers_branch(&state.git(), &branch, &pr.head_ref_oid).await =>
+        {
+            Err(CoreError::Input(anyhow!(
+                "PR #{} for '{branch}' was already merged into '{}', so new changes on '{branch}' won't reach it. Your local commits are kept; start a new branch for further work.",
+                pr.number,
+                pr.base_ref_name
+            )))
+        }
         Ok(_) => Ok(()),
         Err(e) => {
-            tracing::warn!("Skipping the merge queue check for {branch}: {e}");
+            tracing::warn!("Skipping the pull request check for {branch}: {e}");
             Ok(())
         }
     }
+}
+
+/// Whether the merged PR's head contains `origin/<branch>`, read locally; the branch may have
+/// moved on since the merge. Any failure means "not covered".
+async fn merged_pr_covers_branch(git: &git::Git, branch: &str, head_ref_oid: &str) -> bool {
+    let tracking_ref = format!("refs/remotes/origin/{branch}");
+    is_valid_sha(head_ref_oid)
+        && rebase_state::is_ancestor(git, &tracking_ref, head_ref_oid)
+            .await
+            .unwrap_or(false)
 }
 
 /// The branches a merge into counts as the branch being done: the trunk and the target branches.

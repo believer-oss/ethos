@@ -22,6 +22,8 @@
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 
 	export let rebaseState: RebaseState;
+	// Why Push rebased branch is refused, such as a queued PR; null when it isn't.
+	export let pushBlockReason: Nullable<string> = null;
 
 	const dispatch = createEventDispatcher<{
 		changed: null;
@@ -143,7 +145,19 @@
 				</div>
 			{/if}
 			<div class="flex flex-row gap-2 items-center flex-wrap">
-				<Button size="sm" disabled={inFlight} on:click={push}>Push rebased branch</Button>
+				<Button
+					id="rebase-push"
+					size="sm"
+					disabled={inFlight || pushBlockReason !== null}
+					on:click={push}>Push rebased branch</Button
+				>
+				{#if pushBlockReason !== null}
+					<Tooltip
+						triggeredBy="#rebase-push"
+						class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
+						placement="bottom">{pushBlockReason}</Tooltip
+					>
+				{/if}
 				<Button
 					id="rebase-reset-remote"
 					size="sm"

@@ -318,7 +318,15 @@
 	// On a branch with branches turned off: nothing submits until the user switches back.
 	$: branchesOffOnBranch = modeInfo.mode === 'branch' && !$branchesEnabled;
 	$: editorOpen = !!$repoStatus?.editorRunning;
-	$: switchDisabled = loading || quickSubmitting || syncing || editorOpen;
+	$: switchDisabled = loading || quickSubmitting || syncing || editorOpen || guidedRebaseActive;
+	let switchBlockReason: string | undefined;
+	$: if (editorOpen) {
+		switchBlockReason = EDITOR_OPEN_SWITCH;
+	} else if (guidedRebaseActive) {
+		switchBlockReason = 'Finish the rebase in Branch Management first';
+	} else {
+		switchBlockReason = undefined;
+	}
 
 	// The current branch's open PR, checked on each branch change and every 30 seconds.
 	let branchPr: Nullable<BranchPullRequest> = null;
@@ -1605,11 +1613,11 @@
 								on:select={(e) => handleBranchSelected(e.detail)}
 							/>
 						</div>
-						{#if editorOpen}
+						{#if switchBlockReason}
 							<Tooltip
 								triggeredBy="#submit-branch-select"
 								class="z-50 w-[22rem] text-xs text-primary-400 bg-secondary-600 dark:bg-space-800 shadow-2xl"
-								placement="bottom">{EDITOR_OPEN_SWITCH}</Tooltip
+								placement="bottom">{switchBlockReason}</Tooltip
 							>
 						{/if}
 					{:else}
@@ -1671,7 +1679,7 @@
 								size="xs"
 								color="red"
 								disabled={switchDisabled}
-								title={editorOpen ? EDITOR_OPEN_SWITCH : undefined}
+								title={switchBlockReason}
 								on:click={async () => handleBranchSelected(quickTarget)}
 								>Switch to {quickTarget}</Button
 							>
@@ -1711,7 +1719,7 @@
 								size="xs"
 								color="red"
 								disabled={switchDisabled}
-								title={editorOpen ? EDITOR_OPEN_SWITCH : undefined}
+								title={switchBlockReason}
 								on:click={async () => handleBranchSelected(quickTarget)}
 								>Switch to {quickTarget}</Button
 							>
@@ -1848,9 +1856,15 @@
 					{:else if modeInfo.reason !== ''}
 						<div class="flex flex-col w-full items-end gap-2">
 							<p class="text-sm text-yellow-300">{modeInfo.reason}</p>
-							<Button size="sm" on:click={() => goto('/source/branches')}
-								>Open Branch Management</Button
-							>
+							{#if modeInfo.fixInDiagnostics}
+								<Button size="sm" on:click={() => goto('/source/diagnostics')}
+									>Open Diagnostics</Button
+								>
+							{:else}
+								<Button size="sm" on:click={() => goto('/source/branches')}
+									>Open Branch Management</Button
+								>
+							{/if}
 						</div>
 					{/if}
 				</div>

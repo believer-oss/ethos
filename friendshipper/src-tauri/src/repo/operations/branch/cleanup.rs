@@ -10,7 +10,10 @@ use futures::stream::{self, StreamExt};
 use tracing::{info, instrument, warn};
 
 use super::analyze::{merged_pr_covers_commit, quiet};
-use super::rebase_state::{is_full_sha, read_rebase_file, RebaseFileRead};
+use super::rebase_state::{
+    create_backup_ref, is_full_sha, prune_cleanup_backup_refs, read_rebase_file, RebaseFileRead,
+    CLEANUP_BACKUP_SUFFIX,
+};
 use super::{
     guard_state, is_valid_branch_name, merge_targets, run_guarded_sequence, run_sequence,
     GITHUB_PAT_MISSING,
@@ -636,16 +639,31 @@ async fn checked_out_now(git: &git::Git, name: &str) -> Option<String> {
     }
 }
 
-/// Deletes `refs/heads/<name>` itself (never a symref's target) only if it still points at
-/// `sha`, then drops its config section.
-async fn delete_local_branch(git: &git::Git, name: &str, sha: &str) -> Result<(), String> {
+/// Keeps `sha` under a backup ref for 14 days, then deletes `refs/heads/<name>` itself (never a
+/// symref's target) only if it still points at `sha`, and drops its config section. Deleting
+/// the branch drops its reflog, so the backup is what keeps its commits from gc.
+async fn delete_local_branch(
+    git: &git::Git,
+    name: &str,
+    sha: &str,
+    now_ts: u64,
+) -> Result<(), String> {
+    let backup = create_backup_ref(git, name, sha, CLEANUP_BACKUP_SUFFIX, now_ts)
+        .await
+        .map_err(|e| format!("The branch was not deleted: {e}"))?;
     let refname = format!("refs/heads/{name}");
-    git.run(
-        &["update-ref", "--no-deref", "-d", &refname, sha],
-        quiet().with_complete_error(),
-    )
-    .await
-    .map_err(|e| format!("The branch was not deleted: {e}"))?;
+    if let Err(e) = git
+        .run(
+            &["update-ref", "--no-deref", "-d", &refname, sha],
+            quiet().with_complete_error(),
+        )
+        .await
+    {
+        if let Err(e) = git.run(&["update-ref", "-d", &backup, sha], quiet()).await {
+            warn!("Could not remove the unused backup {backup}: {e}");
+        }
+        return Err(format!("The branch was not deleted: {e}"));
+    }
     info!("Deleted local branch {name} at {sha}");
 
     let section = format!("branch.{name}");
@@ -674,6 +692,13 @@ impl Task for BranchCleanupOp {
     #[instrument(name = "BranchCleanupOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         let git = &self.git_client;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        if let Err(e) = prune_cleanup_backup_refs(git, now).await {
+            warn!("Could not prune old cleanup backups: {e}");
+        }
         prune_fetch(git).await?;
         let local: HashMap<String, LocalBranch> = local_branches(git)
             .await?
@@ -703,7 +728,7 @@ impl Task for BranchCleanupOp {
             };
             let outcome = match refusal {
                 Some(reason) => Err(reason),
-                None => delete_local_branch(git, &target.name, &target.sha).await,
+                None => delete_local_branch(git, &target.name, &target.sha, now).await,
             };
             if let Err(e) = &outcome {
                 warn!("Did not delete {}: {e}", target.name);
@@ -770,6 +795,7 @@ mod tests {
     use ethos_core::types::repo::{RebaseStaleReason, RebaseStateKind};
 
     const GONE: &str = "f11r-branch-gone";
+    const NOW: u64 = 1_700_000_000;
 
     fn new_git(path: &Path) -> git::Git {
         let (tx, _rx) = mpsc::channel::<String>();
@@ -1420,12 +1446,30 @@ mod tests {
         let tip = fx.gone_branch(GONE, &["g1"]).await;
         let other = fx.sha("main").await;
 
-        assert!(delete_local_branch(&fx.user, GONE, &other).await.is_err());
+        assert!(delete_local_branch(&fx.user, GONE, &other, NOW)
+            .await
+            .is_err());
         assert_eq!(fx.local_tip(GONE).await, Some(tip.clone()));
         assert!(fx.has_upstream_config(GONE).await);
+        assert_eq!(
+            git_output(&fx.user, &["for-each-ref", "refs/f11r-backup/"]).await,
+            ""
+        );
 
-        assert!(delete_local_branch(&fx.user, GONE, &tip).await.is_ok());
+        assert!(delete_local_branch(&fx.user, GONE, &tip, NOW).await.is_ok());
         assert_eq!(fx.local_tip(GONE).await, None);
+        assert_eq!(
+            git_output(
+                &fx.user,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/f11r-backup/"
+                ]
+            )
+            .await,
+            format!("refs/f11r-backup/{GONE}/{NOW}-cleanup {tip}")
+        );
     }
 
     #[tokio::test]
@@ -1668,7 +1712,7 @@ mod tests {
         assert_eq!(fx.local_tip("main").await, Some(main.clone()));
 
         // Deleting the symref itself never deletes its target.
-        assert!(delete_local_branch(&fx.user, sym, &main).await.is_ok());
+        assert!(delete_local_branch(&fx.user, sym, &main, NOW).await.is_ok());
         assert_eq!(fx.local_tip(sym).await, None);
         assert_eq!(fx.local_tip("main").await, Some(main));
     }

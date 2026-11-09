@@ -21,8 +21,8 @@ use super::rebase_state::{
     REBASE_FILE_VERSION, REBASE_OP_LOCK, REBASE_START_LOCK,
 };
 use super::{
-    git_too_old_message, is_valid_branch_name, reject_if_in_merge_queue, require_aws_and_storage,
-    run_sequence,
+    git_too_old_message, is_valid_branch_name, reject_if_pr_blocks_updates,
+    require_aws_and_storage, run_sequence,
 };
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{find_files_with_conflict_markers, is_branch_mode};
@@ -117,8 +117,7 @@ fn index_lock_check(git_dir: &Path) -> Result<(), CoreError> {
 
 /// Refuses a git older than [`MIN_GUIDED_REBASE_GIT`].
 fn git_version_gate(check: &GitVersionCheck) -> Result<(), CoreError> {
-    let parsed = git::parse_git_version(&format!("git version {}", check.version));
-    if !check.supported || parsed.is_none_or(|version| version < MIN_GUIDED_REBASE_GIT) {
+    if !check.at_least(MIN_GUIDED_REBASE_GIT) {
         return Err(input(git_too_old_message(
             &check.version,
             MIN_GUIDED_REBASE_GIT,
@@ -2217,7 +2216,7 @@ pub async fn guided_rebase_start_handler<T>(
 where
     T: EngineProvider,
 {
-    reject_if_in_merge_queue(&state).await?;
+    reject_if_pr_blocks_updates(&state).await?;
     let op = RebaseStartOp {
         git_client: state.git(),
         engine: state.engine.clone(),
@@ -2391,7 +2390,7 @@ pub async fn guided_rebase_finish_handler<T>(
 where
     T: EngineProvider,
 {
-    reject_if_in_merge_queue(&state).await?;
+    reject_if_pr_blocks_updates(&state).await?;
     let aws = require_aws_and_storage(&state).await;
     let result = Arc::new(parking_lot::Mutex::new(None));
     let op = RebaseFinishOp {
@@ -2463,7 +2462,7 @@ pub async fn editor_rebuild_handler<T>(
 where
     T: EngineProvider,
 {
-    reject_if_in_merge_queue(&state).await?;
+    reject_if_pr_blocks_updates(&state).await?;
     let result = Arc::new(parking_lot::Mutex::new(None));
     let op = EditorRebuildOp {
         git_client: state.git(),
@@ -2850,11 +2849,10 @@ mod tests {
     #[test]
     fn git_version_gate_text() {
         // Branch Management's own minimum is 2.38; guided rebase needs 2.43.
-        for (version, supported) in [("2.37.9", false), ("2.38.0", true), ("2.42.4", true)] {
-            let result = git_version_gate(&GitVersionCheck {
-                version: version.into(),
-                supported,
-            });
+        for version in ["2.37.9", "2.38.0", "2.42.4"] {
+            let result = git_version_gate(&git::version_check_from_output(&format!(
+                "git version {version}"
+            )));
             assert_eq!(
                 input_message(result),
                 format!(
@@ -2863,10 +2861,9 @@ mod tests {
             );
         }
         for version in ["2.43.0", "2.47.1.windows.1", "2.55.0.windows.3", "3.0.0"] {
-            git_version_gate(&GitVersionCheck {
-                version: version.into(),
-                supported: true,
-            })
+            git_version_gate(&git::version_check_from_output(&format!(
+                "git version {version}"
+            )))
             .expect(version);
         }
     }
@@ -4575,6 +4572,51 @@ mod tests {
         let state = state(&fx).await;
         assert!(state.unstaged_edits.is_empty());
         assert_eq!(state.staged_outside_step, ["new.txt", "seed.txt"]);
+    }
+
+    #[tokio::test]
+    async fn continue_refused_with_a_staged_file_only_main_changed() {
+        let fx = Fixture::new().await;
+        fx.diverge(
+            &[
+                Change::Write(
+                    "a.txt", b"base
+",
+                ),
+                Change::Write(
+                    "m.txt", b"base m
+",
+                ),
+            ],
+            &[
+                Change::Write(
+                    "a.txt", b"main
+",
+                ),
+                Change::Write(
+                    "m.txt", b"main m
+",
+                ),
+            ],
+            &[Change::Write(
+                "a.txt", b"branch
+",
+            )],
+        )
+        .await;
+        start(&fx).await.expect("start");
+        resolve(&fx, "a.txt", RebaseKeep::Main).await.unwrap();
+        fx.write(
+            "m.txt", b"staged
+",
+        );
+        fx.run(&["add", "--", "m.txt"]).await;
+        assert_eq!(state(&fx).await.staged_outside_step, ["m.txt"]);
+        assert_continue_refused(
+            &fx,
+            "These files are staged but not part of this commit; unstage them outside Friendshipper before continuing: m.txt.",
+        )
+        .await;
     }
 
     #[tokio::test]
