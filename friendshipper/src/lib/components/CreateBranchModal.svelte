@@ -120,8 +120,10 @@
 		<p class="text-sm text-red-500">{validationError}</p>
 	{/if}
 	<div class="flex flex-row-reverse gap-2">
-		<Button class="bg-lime-700 dark:bg-lime-700" disabled={!canCreate} on:click={handleCreate}
-			>Create</Button
+		<Button
+			class="bg-lime-700 dark:bg-lime-700 text-neutral-800 dark:text-neutral-800"
+			disabled={!canCreate}
+			on:click={handleCreate}>Create</Button
 		>
 		<Button color="alternative" on:click={handleCancel}>Cancel</Button>
 	</div>

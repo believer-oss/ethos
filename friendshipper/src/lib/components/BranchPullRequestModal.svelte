@@ -99,7 +99,11 @@
 		</p>
 	{/if}
 	<div class="flex flex-row-reverse gap-2">
-		<Button class="bg-lime-700 dark:bg-lime-700" disabled={!canConfirm} on:click={handleConfirm}>
+		<Button
+			class="bg-lime-700 dark:bg-lime-700 text-neutral-800 dark:text-neutral-800"
+			disabled={!canConfirm}
+			on:click={handleConfirm}
+		>
 			{mode === 'create' ? 'Create PR' : 'Add to merge queue'}
 		</Button>
 		<Button color="alternative" on:click={handleCancel}>Cancel</Button>

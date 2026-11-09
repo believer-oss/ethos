@@ -321,8 +321,12 @@
 				Continue
 			</Button>
 		{/if}
-		<Button size="sm" color="red" disabled={inFlight || editorOpen} on:click={askAbort}
-			>Abort</Button
+		<Button
+			size="sm"
+			color="red"
+			class="text-neutral-200 dark:text-neutral-200"
+			disabled={inFlight || editorOpen}
+			on:click={askAbort}>Abort</Button
 		>
 	</div>
 </Modal>
@@ -371,9 +375,12 @@
 		</div>
 	{/if}
 	<div class="flex flex-row-reverse gap-2">
-		<Button class="bg-red-700 dark:bg-red-700" on:click={onAbortConfirmed}>Yes</Button>
 		<Button
-			class="bg-lime-700 dark:bg-lime-700"
+			class="bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200"
+			on:click={onAbortConfirmed}>Yes</Button
+		>
+		<Button
+			class="bg-lime-700 dark:bg-lime-700 text-neutral-800 dark:text-neutral-800"
 			on:click={() => {
 				abortOpen = false;
 			}}>No</Button
