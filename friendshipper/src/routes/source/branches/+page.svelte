@@ -614,7 +614,13 @@
 			<ExclamationCircleSolid slot="icon" class="w-5 h-5 shrink-0 text-red-300" />
 			<div class="flex flex-row items-center gap-2 flex-wrap">
 				<span class="break-words">Couldn't read the rebase state: {rebaseStateError}</span>
-				<Button size="xs" color="red" disabled={rebaseStateLoading} on:click={loadRebaseState}>
+				<Button
+					size="xs"
+					color="red"
+					class="text-neutral-200 dark:text-neutral-200"
+					disabled={rebaseStateLoading}
+					on:click={loadRebaseState}
+				>
 					Retry
 				</Button>
 			</div>
