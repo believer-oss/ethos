@@ -431,6 +431,40 @@ pub(crate) fn parse_untracked(porcelain_z: &str) -> Vec<String> {
     paths
 }
 
+/// Staged paths that are neither conflicts of the step nor brought by the replayed commit,
+/// renames included. With no commit being replayed, every staged path.
+pub(crate) async fn staged_outside_step(
+    git: &git::Git,
+    conflicts: &[ConflictFile],
+    rebase_head: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let brought = match rebase_head {
+        Some(rebase_head) => diff_names(git, &["HEAD", rebase_head]).await?,
+        None => vec![],
+    };
+    Ok(diff_names(git, &["--cached", "HEAD"])
+        .await?
+        .into_iter()
+        .filter(|path| !conflicts.iter().any(|c| &c.path == path) && !brought.contains(path))
+        .collect())
+}
+
+async fn diff_names(git: &git::Git, args: &[&str]) -> anyhow::Result<Vec<String>> {
+    let mut full_args = vec!["diff", "--name-only", "-z", "--no-renames"];
+    full_args.extend_from_slice(args);
+    full_args.push("--");
+    let output = read_git(git, &full_args).await?;
+    if output.exit_code != 0 {
+        bail!("git diff failed: {}", output.stderr.trim());
+    }
+    Ok(output
+        .stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 /// Tracked paths of `git status --porcelain=v2 -z` whose working-tree file differs from the
 /// index.
 pub(crate) fn parse_unstaged(porcelain_z: &str) -> Vec<String> {
@@ -998,9 +1032,18 @@ pub(crate) async fn build_rebase_state<T: EngineProvider>(
                     }
                 }
                 state.step_incomplete = unmerged.is_empty() && cached.is_none();
+                state.staged_outside_step =
+                    staged_outside_step(git, &state.conflicts, Some(&rebase_head)).await?;
             }
             // Stopped with no commit being replayed: nothing Friendshipper can resolve.
-            None => state.step_incomplete = true,
+            None => {
+                state.step_incomplete = true;
+                state.staged_outside_step = staged_outside_step(git, &[], None)
+                    .await?
+                    .into_iter()
+                    .filter(|path| !unmerged.iter().any(|entry| &entry.path == path))
+                    .collect();
+            }
         }
     }
 
@@ -2366,6 +2409,7 @@ pub(crate) mod tests {
                 conflicts: vec![first_step_conflict(&first, &main)],
                 step_incomplete: false,
                 unstaged_edits: vec![],
+                staged_outside_step: vec![],
                 dropped_commits: vec![],
                 stale_reason: None,
                 touches_cpp: false,

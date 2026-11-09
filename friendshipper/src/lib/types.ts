@@ -1268,6 +1268,8 @@ export interface RebaseState {
 	stepIncomplete: boolean;
 	// Tracked files edited but not staged during the step; aborting discards the edits.
 	unstagedEdits: string[];
+	// Staged files outside the step's conflicts and replayed commit; aborting discards them.
+	stagedOutsideStep: string[];
 	droppedCommits: DroppedCommit[];
 	staleReason: Nullable<RebaseStaleReason>;
 	touchesCpp: boolean;

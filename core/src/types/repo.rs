@@ -859,6 +859,8 @@ pub struct RebaseState {
     pub step_incomplete: bool,
     /// Tracked files edited but not staged during the step; aborting discards the edits.
     pub unstaged_edits: Vec<String>,
+    /// Staged files outside the step's conflicts and replayed commit; aborting discards them.
+    pub staged_outside_step: Vec<String>,
     pub dropped_commits: Vec<DroppedCommit>,
     pub stale_reason: Option<RebaseStaleReason>,
     /// The branch's commits touch C++ source or build files.

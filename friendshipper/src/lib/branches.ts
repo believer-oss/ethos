@@ -206,7 +206,7 @@ export const branchSubmitBlockReason = (
 		return 'This branch has no upstream on origin. Create feature branches with New branch in Branch Management.';
 	}
 	if (status.remoteBranch !== `origin/${status.branch}`) {
-		return `This branch tracks ${status.remoteBranch}, not origin/${status.branch}. Switch to it from the branch selector.`;
+		return `This branch tracks ${status.remoteBranch}, not origin/${status.branch}. Set its upstream to origin/${status.branch} in a git client.`;
 	}
 	if (status.commitsBehind > 0) {
 		return 'Your branch is behind origin — Sync first';

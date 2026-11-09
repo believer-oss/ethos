@@ -57,13 +57,13 @@ it essentially replaces workflows that UGS and P4V support.
   under `refs/f11r-backup` and pruned after 14 days. After you review the result, **Push rebased branch** force-pushes
   it as a separate step; collaborators must Sync afterwards. The same push saves the branch's previous version on
   origin as `f11r-backup-<slug>` (`f11r-backup--<name>` for other branches), replaced by the next rebase push. Its
-  tip is an empty commit on top of the previous version with no CI tags, so it starts no builds. You can check out a
-  backup to recover files from it, but not submit to it. If that backup
+  tip is an empty commit on top of the previous version with no CI tags, so it starts no builds. Backups are hidden
+  from the branch selector; recover files from one in a git client. If that backup
   cannot be saved, nothing is pushed. **Reset to remote version** instead discards the rebase and puts the branch
   back the way it was on origin when the rebase started; unstage your changes first.
 - Branch Management is disabled while Unreal Editor has the project open.
 - Conflicts are resolved one commit at a time by keeping main's or the branch's version of each file; text files can
-  also be merged in an editor, except files Windows would run. A choice can be undone until you confirm the commit.
+  also be merged in an editor, except files Windows would run or open as a project. A choice can be undone until you confirm the commit.
   Continue is refused while edits are unsaved, files you staged yourself are present or conflict markers remain. Abort
   returns the branch to where it started.
 - While a rebase is in progress or waiting to be pushed, Sync, submit and other changes are blocked; locking still works.

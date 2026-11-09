@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,9 +16,9 @@ use super::rebase_state::{
     ensure_current_step, is_ancestor, is_full_sha, parse_push_porcelain, parse_untracked,
     prune_backup_refs, push_ref_status, read_git, read_rebase_file, rebase_dir_exists, rebase_head,
     refresh_resolved, replace_current_step, resolve_git_dir, rev_parse, set_resolution,
-    write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase, OriginalCommit,
-    PushOutcome, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK, REBASE_FILE_VERSION,
-    REBASE_OP_LOCK, REBASE_START_LOCK,
+    staged_outside_step, write_rebase_file, DerivedState, GuidedRebaseFile, GuidedRebasePhase,
+    OriginalCommit, PushOutcome, RebaseFileRead, CPP_PATHSPECS, REBASE_FILE_LOCK,
+    REBASE_FILE_VERSION, REBASE_OP_LOCK, REBASE_START_LOCK,
 };
 use super::{
     git_too_old_message, is_valid_branch_name, reject_if_in_merge_queue, require_aws_and_storage,
@@ -264,10 +264,133 @@ async fn merge_has_own_changes(
             diff.stderr.trim()
         )));
     }
-    Ok(diff
+    let mut conflicted_changes = Vec::new();
+    for path in diff.stdout.split('\0').filter(|path| !path.is_empty()) {
+        if !conflicted.contains(path) {
+            return Ok(true);
+        }
+        conflicted_changes.push(path);
+    }
+    if conflicted_changes.is_empty() {
+        return Ok(false);
+    }
+
+    // At rebase a conflicted file is resolved again by taking one side whole or, for text,
+    // by editing inside the conflict markers. Anything else the merge changed is lost.
+    let merged = tree_entries(git, merge, &conflicted_changes).await?;
+    let ours = tree_entries(git, first, &conflicted_changes).await?;
+    let theirs = tree_entries(git, second, &conflicted_changes).await?;
+    let remerged = tree_entries(git, tree, &conflicted_changes).await?;
+    for path in conflicted_changes {
+        let entry = merged.get(path);
+        if entry == ours.get(path) || entry == theirs.get(path) {
+            continue;
+        }
+        let (Some(entry), Some(remerged)) = (entry, remerged.get(path)) else {
+            return Ok(true);
+        };
+        let remerged_text = read_blob(git, remerged).await?;
+        let Some(chunks) = text_outside_conflicts(&remerged_text) else {
+            return Ok(true);
+        };
+        if !matches_outside_conflicts(&chunks, &read_blob(git, entry).await?) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Text of a regular file blob from a `tree_entries` value, or `None` for binary content.
+async fn read_blob(git: &git::Git, entry: &str) -> Result<Option<String>, CoreError> {
+    let Some(("100644" | "100755", oid)) = entry.split_once(' ') else {
+        return Ok(None);
+    };
+    let output = read_git(git, &["cat-file", "blob", oid]).await?;
+    if output.exit_code != 0 {
+        return Err(internal(format!(
+            "Could not read blob {oid}: {}",
+            output.stderr.trim()
+        )));
+    }
+    let text = output.stdout;
+    Ok((!text.contains(['\0', char::REPLACEMENT_CHARACTER])).then_some(text))
+}
+
+/// The text between conflict regions of a file git merged with conflict markers, or `None`
+/// when it has no complete conflict region.
+fn text_outside_conflicts(text: &Option<String>) -> Option<Vec<&str>> {
+    let text = text.as_deref()?;
+    let mut chunks = Vec::new();
+    let (mut chunk_start, mut depth, mut offset) = (0, 0usize, 0);
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("<<<<<<< ") {
+            if depth == 0 {
+                chunks.push(&text[chunk_start..offset]);
+            }
+            depth += 1;
+        } else if depth > 0 && line.starts_with(">>>>>>> ") {
+            depth -= 1;
+            if depth == 0 {
+                chunk_start = offset + line.len();
+            }
+        }
+        offset += line.len();
+    }
+    if depth != 0 || chunks.is_empty() {
+        return None;
+    }
+    chunks.push(&text[chunk_start..]);
+    Some(chunks)
+}
+
+/// Whether `text` is `chunks` in order with whole lines of anything between them.
+fn matches_outside_conflicts(chunks: &[&str], text: &Option<String>) -> bool {
+    let Some(text) = text.as_deref() else {
+        return false;
+    };
+    let line_start = |rest: &str, at: usize| at == 0 || rest[..at].ends_with('\n');
+    let (first, last) = (chunks[0], chunks[chunks.len() - 1]);
+    let Some(mut rest) = text.strip_prefix(first) else {
+        return false;
+    };
+    for chunk in &chunks[1..chunks.len() - 1] {
+        match rest
+            .match_indices(chunk)
+            .find(|(at, _)| line_start(rest, *at))
+        {
+            Some((at, _)) => rest = &rest[at + chunk.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last) && line_start(rest, rest.len() - last.len())
+}
+
+/// Mode and object id of each of `paths` that exists in `commit`.
+async fn tree_entries(
+    git: &git::Git,
+    commit: &str,
+    paths: &[&str],
+) -> Result<HashMap<String, String>, CoreError> {
+    let pathspecs: Vec<String> = paths.iter().map(|p| format!(":(literal){p}")).collect();
+    let mut args = vec!["ls-tree", "-r", "-z", "--full-tree", commit, "--"];
+    args.extend(pathspecs.iter().map(String::as_str));
+    let output = read_git(git, &args).await?;
+    if output.exit_code != 0 {
+        return Err(internal(format!(
+            "Could not read files of {commit}: {}",
+            output.stderr.trim()
+        )));
+    }
+    Ok(output
         .stdout
         .split('\0')
-        .any(|path| !path.is_empty() && !conflicted.contains(path)))
+        .filter_map(|record| {
+            let (meta, path) = record.split_once('\t')?;
+            let mut fields = meta.split(' ');
+            let (mode, oid) = (fields.next()?, fields.nth(1)?);
+            Some((path.to_string(), format!("{mode} {oid}")))
+        })
+        .collect())
 }
 
 async fn merge_base(git: &git::Git, a: &str, b: &str) -> Result<String, CoreError> {
@@ -794,25 +917,6 @@ async fn tree_matches_head(git: &git::Git) -> Result<bool, CoreError> {
 }
 
 /// The paths a `git diff --name-only -z` lists.
-async fn diff_paths(git: &git::Git, args: &[&str]) -> Result<Vec<String>, CoreError> {
-    let mut full_args = vec!["diff", "--name-only", "-z", "--no-renames"];
-    full_args.extend_from_slice(args);
-    full_args.push("--");
-    let output = read_git(git, &full_args).await?;
-    if output.exit_code != 0 {
-        return Err(internal(format!(
-            "git diff failed: {}",
-            output.stderr.trim()
-        )));
-    }
-    Ok(output
-        .stdout
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .map(str::to_string)
-        .collect())
-}
-
 /// Refuses a step whose resolved files are not exactly what Continue would commit: edits left
 /// unstaged, staged files that are neither conflicts nor part of the replayed commit, or
 /// leftover conflict markers.
@@ -843,13 +947,7 @@ async fn check_resolutions(
         return Err(input(refusals.join(" ")));
     }
 
-    // Anything the commit brings differs between HEAD and REBASE_HEAD, renames included.
-    let brought = diff_paths(git, &["HEAD", rebase_head]).await?;
-    let foreign: Vec<String> = diff_paths(git, &["--cached", "HEAD"])
-        .await?
-        .into_iter()
-        .filter(|path| !in_step(path) && !brought.contains(path))
-        .collect();
+    let foreign = staged_outside_step(git, &state.conflicts, Some(rebase_head)).await?;
     if !foreign.is_empty() {
         return Err(input(format!(
             "These files are staged but not part of this commit; unstage them outside Friendshipper before continuing: {}.",
@@ -912,7 +1010,7 @@ pub(crate) fn conflict_abs_path(repo_path: &Path, rel: &str) -> Option<PathBuf> 
 /// Windows' default `PATHEXT`.
 const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC";
 
-/// Extensions Windows runs or follows rather than opens, besides `PATHEXT`.
+/// Extensions Windows runs, follows or opens as a project rather than as text, besides `PATHEXT`.
 const RUNNABLE_EXTENSIONS: &[&str] = &[
     "bat",
     "cmd",
@@ -950,6 +1048,10 @@ const RUNNABLE_EXTENSIONS: &[&str] = &[
     // Git for Windows opens these with Git Bash.
     "sh",
     "bash",
+    // Unreal and Visual Studio open these as projects.
+    "uproject",
+    "uplugin",
+    "sln",
 ];
 
 /// Whether opening `path` with its default handler would run it instead of showing it.
@@ -2207,7 +2309,7 @@ where
         .ok_or_else(|| input(format!("{path} is not a valid repo path.")))?;
     if windows_would_run(path, std::env::var("PATHEXT").ok().as_deref()) {
         return Err(input(format!(
-            "Open {path} in your text editor yourself; Friendshipper won't open files that Windows would run."
+            "Open {path} in your text editor yourself; Windows would run it or open it in another app."
         )));
     }
     open::that(&abs).map_err(|e| internal(format!("Could not open {path}: {e}")))
@@ -3128,6 +3230,76 @@ mod tests {
             expected
         );
         assert_start_refused_after_fetch(&fx, &expected).await;
+    }
+
+    #[tokio::test]
+    async fn start_refuses_a_merge_that_edits_a_conflicted_file_outside_the_conflict() {
+        let fx = Fixture::new().await;
+        fx.branch(BRANCH).await;
+        fx.commit_file("a.txt", b"one\ntwo\nthree\n", "a").await;
+        fx.branch("side").await;
+        fx.commit_file("a.txt", b"side\ntwo\nthree\n", "side a")
+            .await;
+        fx.checkout(BRANCH).await;
+        fx.commit_file("a.txt", b"branch\ntwo\nthree\n", "branch a")
+            .await;
+        let merged = fx
+            .git
+            .run_with_status(
+                &["merge", "-q", "--no-ff", "side"],
+                git::Opts::new_without_logs(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(merged.exit_code, 1, "{}", merged.stderr);
+        fx.write("a.txt", b"resolved\ntwo\nfixed\n");
+        fx.run(&["add", "a.txt"]).await;
+        fx.run(&["commit", "-q", "--no-edit"]).await;
+        let merge = fx.head().await;
+        fx.push(BRANCH).await;
+        fx.checkout("main").await;
+        fx.commit_file("m.txt", b"main\n", "main change").await;
+        fx.push("main").await;
+        fx.checkout(BRANCH).await;
+
+        let expected = format!(
+            "Merge commit {} contains changes of its own, which a rebase would drop. Rebase this branch in a git client instead.",
+            &merge[..7]
+        );
+        assert_eq!(
+            input_message(preflight(&fx.git, fx.path(), "main").await),
+            expected
+        );
+    }
+
+    #[test]
+    fn merge_text_must_match_outside_conflict_regions() {
+        let remerged = Some(
+            "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\nc\n"
+                .to_string(),
+        );
+        let chunks = text_outside_conflicts(&remerged).unwrap();
+        assert_eq!(chunks, ["a\n", "b\n", "c\n"]);
+        let matches = |text: &str| matches_outside_conflicts(&chunks, &Some(text.to_string()));
+        assert!(matches("a\nxy\nb\nc\n"));
+        assert!(matches("a\nb\nc\n"));
+        assert!(matches("a\nanything\nmore\nb\npq\nc\n"));
+        assert!(!matches("a\nx\nB\nq\nc\n"));
+        assert!(!matches("A\nx\nb\nq\nc\n"));
+        assert!(!matches("a\nx\nb\nq\nc\nextra"));
+        assert!(!matches("a\nxb\nq\nc\n"));
+        assert!(!matches("a\nx\nb\nqc\n"));
+        assert!(!matches_outside_conflicts(&chunks, &None));
+
+        assert_eq!(
+            text_outside_conflicts(&Some("no markers\n".to_string())),
+            None
+        );
+        assert_eq!(
+            text_outside_conflicts(&Some("<<<<<<< ours\nunclosed\n".to_string())),
+            None
+        );
+        assert_eq!(text_outside_conflicts(&None), None);
     }
 
     #[tokio::test]
@@ -4393,6 +4565,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn state_lists_staged_files_outside_the_step() {
+        let fx = Fixture::new().await;
+        stop_content(&fx).await;
+        resolve_both(&fx).await;
+        fx.write("seed.txt", b"staged\n");
+        fx.write("new.txt", b"new\n");
+        fx.run(&["add", "--", "seed.txt", "new.txt"]).await;
+        let state = state(&fx).await;
+        assert!(state.unstaged_edits.is_empty());
+        assert_eq!(state.staged_outside_step, ["new.txt", "seed.txt"]);
+    }
+
+    #[tokio::test]
     async fn continue_refused_with_a_staged_file_outside_the_commit() {
         let fx = Fixture::new().await;
         stop_content(&fx).await;
@@ -4955,6 +5140,9 @@ mod tests {
             "x.appref-ms",
             "x.jnlp",
             "x.SettingContent-ms",
+            "Fellowship.uproject",
+            "Plugins/X/X.uplugin",
+            "Fellowship.sln",
         ] {
             assert!(windows_would_run(path, None), "{path}");
         }
