@@ -251,7 +251,7 @@
 	{#if numOthersSelected > 0}
 		<Tooltip
 			triggeredBy="#release-selected"
-			class="w-auto text-xs text-white bg-red-700 dark:bg-red-700"
+			class="w-auto text-xs text-neutral-200 bg-red-700 dark:bg-red-700"
 			placement="right"
 			>Warning: This will release other users' locks!
 		</Tooltip>

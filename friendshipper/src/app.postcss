@@ -2,3 +2,488 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Theme palettes as RGB channels so Tailwind opacity modifiers keep working. See tailwind.config.cjs. */
+@layer base {
+	:root {
+		--color-primary-100: 254 249 236;
+		--color-primary-200: 252 238 201;
+		--color-primary-300: 249 218 142;
+		--color-primary-400: 246 197 92;
+		--color-primary-500: 243 170 44;
+		--color-primary-600: 236 138 20;
+		--color-primary-700: 209 102 14;
+		--color-primary-800: 174 71 15;
+		--color-primary-900: 141 55 19;
+		--color-primary-950: 116 46 19;
+
+		--color-secondary-50: 233 184 185;
+		--color-secondary-100: 221 143 147;
+		--color-secondary-200: 204 103 109;
+		--color-secondary-300: 182 72 85;
+		--color-secondary-400: 158 58 72;
+		--color-secondary-500: 128 49 63;
+		--color-secondary-600: 110 45 58;
+		--color-secondary-700: 85 33 43;
+		--color-secondary-800: 60 21 28;
+
+		--color-space-50: 244 247 247;
+		--color-space-100: 228 233 233;
+		--color-space-200: 203 213 214;
+		--color-space-300: 167 183 185;
+		--color-space-400: 123 146 149;
+		--color-space-500: 96 119 122;
+		--color-space-600: 83 99 103;
+		--color-space-700: 71 84 87;
+		--color-space-800: 63 72 75;
+		--color-space-900: 47 53 55;
+		--color-space-950: 34 40 42;
+
+		--color-gray-50: 249 250 251;
+		--color-gray-100: 243 244 246;
+		--color-gray-200: 229 231 235;
+		--color-gray-300: 209 213 219;
+		--color-gray-400: 156 163 175;
+		--color-gray-500: 107 114 128;
+		--color-gray-600: 75 85 99;
+		--color-gray-700: 55 65 81;
+		--color-gray-800: 31 41 55;
+		--color-gray-900: 17 24 39;
+		--color-gray-950: 3 7 18;
+
+		--color-white: 255 255 255;
+	}
+
+	html.gruvbox {
+		--color-primary-100: 251 241 199;
+		--color-primary-200: 249 226 163;
+		--color-primary-300: 250 210 112;
+		--color-primary-400: 250 189 47;
+		--color-primary-500: 215 153 33;
+		--color-primary-600: 254 128 25;
+		--color-primary-700: 214 93 14;
+		--color-primary-800: 175 58 3;
+		--color-primary-900: 143 49 18;
+		--color-primary-950: 121 41 15;
+
+		--color-secondary-50: 251 201 190;
+		--color-secondary-100: 251 158 140;
+		--color-secondary-200: 251 73 52;
+		--color-secondary-300: 204 36 29;
+		--color-secondary-400: 168 35 27;
+		--color-secondary-500: 138 34 25;
+		--color-secondary-600: 110 42 36;
+		--color-secondary-700: 78 43 39;
+		--color-secondary-800: 56 33 30;
+
+		--color-space-50: 235 219 178;
+		--color-space-100: 213 196 161;
+		--color-space-200: 189 174 147;
+		--color-space-300: 168 153 132;
+		--color-space-400: 146 131 116;
+		--color-space-500: 124 111 100;
+		--color-space-600: 102 92 84;
+		--color-space-700: 80 73 69;
+		--color-space-800: 60 56 54;
+		--color-space-900: 40 40 40;
+		--color-space-950: 29 32 33;
+
+		--color-gray-50: 251 241 199;
+		--color-gray-100: 235 219 178;
+		--color-gray-200: 213 196 161;
+		--color-gray-300: 189 174 147;
+		--color-gray-400: 168 153 132;
+		--color-gray-500: 146 131 116;
+		--color-gray-600: 124 111 100;
+		--color-gray-700: 102 92 84;
+		--color-gray-800: 80 73 69;
+		--color-gray-900: 60 56 54;
+		--color-gray-950: 40 40 40;
+
+		--color-white: 235 219 178;
+	}
+
+	/* Gruvbox aqua instead of orange for buttons and checked inputs (toggles style the span after their input). */
+	html.gruvbox
+		:is(
+			button,
+			[role='button'],
+			input[type='checkbox'],
+			input[type='radio'],
+			input[type='checkbox'] + span
+		) {
+		--color-primary-600: 66 123 88;
+		--color-primary-700: 53 99 71;
+		--color-primary-800: 42 79 59;
+	}
+
+	html.solarized {
+		--color-primary-100: 253 246 227;
+		--color-primary-200: 243 226 169;
+		--color-primary-300: 214 173 42;
+		--color-primary-400: 181 137 0;
+		--color-primary-500: 166 124 0;
+		--color-primary-600: 203 75 22;
+		--color-primary-700: 177 63 18;
+		--color-primary-800: 147 52 15;
+		--color-primary-900: 117 42 13;
+		--color-primary-950: 92 33 10;
+
+		--color-secondary-50: 197 225 245;
+		--color-secondary-100: 148 199 236;
+		--color-secondary-200: 90 168 224;
+		--color-secondary-300: 38 139 210;
+		--color-secondary-400: 33 118 178;
+		--color-secondary-500: 27 97 145;
+		--color-secondary-600: 22 79 118;
+		--color-secondary-700: 15 61 92;
+		--color-secondary-800: 10 46 69;
+
+		--color-space-50: 253 246 227;
+		--color-space-100: 238 232 213;
+		--color-space-200: 147 161 161;
+		--color-space-300: 131 148 150;
+		--color-space-400: 101 123 131;
+		--color-space-500: 88 110 117;
+		--color-space-600: 60 93 100;
+		--color-space-700: 35 78 87;
+		--color-space-800: 7 54 66;
+		--color-space-900: 0 43 54;
+		--color-space-950: 0 33 43;
+
+		--color-gray-50: 253 246 227;
+		--color-gray-100: 238 232 213;
+		--color-gray-200: 181 189 183;
+		--color-gray-300: 147 161 161;
+		--color-gray-400: 131 148 150;
+		--color-gray-500: 101 123 131;
+		--color-gray-600: 88 110 117;
+		--color-gray-700: 47 83 92;
+		--color-gray-800: 15 62 74;
+		--color-gray-900: 7 54 66;
+		--color-gray-950: 0 43 54;
+
+		--color-white: 238 232 213;
+	}
+
+	html.hacker {
+		--color-primary-100: 224 255 230;
+		--color-primary-200: 179 255 194;
+		--color-primary-300: 102 255 133;
+		--color-primary-400: 51 255 102;
+		--color-primary-500: 0 255 65;
+		--color-primary-600: 0 204 51;
+		--color-primary-700: 0 163 41;
+		--color-primary-800: 0 122 31;
+		--color-primary-900: 0 92 23;
+		--color-primary-950: 0 61 15;
+
+		--color-secondary-50: 179 255 194;
+		--color-secondary-100: 128 255 153;
+		--color-secondary-200: 51 204 85;
+		--color-secondary-300: 31 153 57;
+		--color-secondary-400: 24 128 46;
+		--color-secondary-500: 17 102 35;
+		--color-secondary-600: 13 77 26;
+		--color-secondary-700: 10 51 20;
+		--color-secondary-800: 6 32 13;
+
+		--color-space-50: 232 255 232;
+		--color-space-100: 200 245 200;
+		--color-space-200: 143 201 143;
+		--color-space-300: 90 143 90;
+		--color-space-400: 61 102 61;
+		--color-space-500: 42 71 42;
+		--color-space-600: 30 51 30;
+		--color-space-700: 31 63 31;
+		--color-space-800: 22 44 22;
+		--color-space-900: 13 26 13;
+		--color-space-950: 0 0 0;
+
+		--color-gray-50: 232 255 232;
+		--color-gray-100: 200 245 200;
+		--color-gray-200: 159 224 159;
+		--color-gray-300: 122 204 122;
+		--color-gray-400: 79 168 79;
+		--color-gray-500: 74 158 74;
+		--color-gray-600: 58 138 58;
+		--color-gray-700: 46 112 46;
+		--color-gray-800: 31 79 31;
+		--color-gray-900: 15 36 15;
+		--color-gray-950: 5 16 5;
+
+		--color-white: 140 255 163;
+	}
+
+	html.hacker body {
+		font-family: ui-monospace, Consolas, monospace;
+	}
+
+	/* Light text vanishes on bright green fills, so text-white goes black inside them. */
+	html.hacker
+		:is(
+			[class~='bg-primary-500'],
+			[class~='bg-primary-600'],
+			[class~='bg-primary-700'],
+			[class~='dark:bg-primary-500'],
+			[class~='dark:bg-primary-600'],
+			[class~='dark:bg-primary-700'],
+			[class~='bg-green-500'],
+			[class~='dark:bg-green-500'],
+			[class~='dark:bg-green-600']
+		),
+	html.hacker
+		:is(
+			[class~='hover:bg-primary-600'],
+			[class~='dark:hover:bg-primary-600'],
+			[class~='dark:hover:bg-primary-700'],
+			[class~='dark:hover:bg-green-600']
+		):hover {
+		--color-white: 0 0 0;
+	}
+
+	html.ayu {
+		--color-primary-100: 249 241 224;
+		--color-primary-200: 240 222 180;
+		--color-primary-300: 230 200 139;
+		--color-primary-400: 216 176 100;
+		--color-primary-500: 221 167 94;
+		--color-primary-600: 47 111 153;
+		--color-primary-700: 39 92 128;
+		--color-primary-800: 31 74 103;
+		--color-primary-900: 24 58 82;
+		--color-primary-950: 18 44 62;
+
+		--color-secondary-50: 246 213 215;
+		--color-secondary-100: 244 176 180;
+		--color-secondary-200: 242 141 147;
+		--color-secondary-300: 240 113 120;
+		--color-secondary-400: 217 87 87;
+		--color-secondary-500: 180 74 79;
+		--color-secondary-600: 143 60 65;
+		--color-secondary-700: 106 46 51;
+		--color-secondary-800: 70 32 37;
+
+		--color-space-50: 230 225 207;
+		--color-space-100: 191 189 182;
+		--color-space-200: 138 143 152;
+		--color-space-300: 108 115 128;
+		--color-space-400: 92 103 115;
+		--color-space-500: 70 78 91;
+		--color-space-600: 51 58 71;
+		--color-space-700: 38 44 56;
+		--color-space-800: 28 33 43;
+		--color-space-900: 20 24 33;
+		--color-space-950: 11 14 20;
+
+		--color-gray-50: 230 225 207;
+		--color-gray-100: 191 189 182;
+		--color-gray-200: 166 164 157;
+		--color-gray-300: 138 143 152;
+		--color-gray-400: 108 115 128;
+		--color-gray-500: 86 91 102;
+		--color-gray-600: 71 79 91;
+		--color-gray-700: 74 82 96;
+		--color-gray-800: 42 48 58;
+		--color-gray-900: 28 33 43;
+		--color-gray-950: 11 14 20;
+
+		--color-white: 230 225 207;
+	}
+
+	html.catppuccin {
+		--color-primary-100: 241 230 253;
+		--color-primary-200: 228 208 251;
+		--color-primary-300: 216 187 249;
+		--color-primary-400: 203 166 247;
+		--color-primary-500: 167 127 240;
+		--color-primary-600: 108 69 179;
+		--color-primary-700: 93 58 156;
+		--color-primary-800: 87 55 145;
+		--color-primary-900: 69 44 116;
+		--color-primary-950: 53 34 90;
+
+		--color-secondary-50: 251 227 243;
+		--color-secondary-100: 245 194 231;
+		--color-secondary-200: 235 160 172;
+		--color-secondary-300: 243 139 168;
+		--color-secondary-400: 217 115 143;
+		--color-secondary-500: 184 94 119;
+		--color-secondary-600: 146 75 96;
+		--color-secondary-700: 110 58 75;
+		--color-secondary-800: 77 42 55;
+
+		--color-space-50: 205 214 244;
+		--color-space-100: 186 194 222;
+		--color-space-200: 166 173 200;
+		--color-space-300: 147 153 178;
+		--color-space-400: 127 132 156;
+		--color-space-500: 108 112 134;
+		--color-space-600: 88 91 112;
+		--color-space-700: 69 71 90;
+		--color-space-800: 49 50 68;
+		--color-space-900: 30 30 46;
+		--color-space-950: 17 17 27;
+
+		--color-gray-50: 205 214 244;
+		--color-gray-100: 186 194 222;
+		--color-gray-200: 166 173 200;
+		--color-gray-300: 147 153 178;
+		--color-gray-400: 127 132 156;
+		--color-gray-500: 108 112 134;
+		--color-gray-600: 88 91 112;
+		--color-gray-700: 85 88 110;
+		--color-gray-800: 49 50 68;
+		--color-gray-900: 30 30 46;
+		--color-gray-950: 24 24 37;
+
+		--color-white: 205 214 244;
+	}
+
+	html.nord {
+		--color-primary-100: 236 239 244;
+		--color-primary-200: 214 236 236;
+		--color-primary-300: 177 214 213;
+		--color-primary-400: 136 192 208;
+		--color-primary-500: 129 161 193;
+		--color-primary-600: 82 115 156;
+		--color-primary-700: 69 98 136;
+		--color-primary-800: 62 90 125;
+		--color-primary-900: 50 74 102;
+		--color-primary-950: 40 59 82;
+
+		--color-secondary-50: 230 213 226;
+		--color-secondary-100: 211 185 205;
+		--color-secondary-200: 196 163 189;
+		--color-secondary-300: 180 142 173;
+		--color-secondary-400: 156 120 150;
+		--color-secondary-500: 132 101 127;
+		--color-secondary-600: 109 83 105;
+		--color-secondary-700: 87 66 84;
+		--color-secondary-800: 66 50 64;
+
+		--color-space-50: 236 239 244;
+		--color-space-100: 229 233 240;
+		--color-space-200: 216 222 233;
+		--color-space-300: 163 173 191;
+		--color-space-400: 123 136 161;
+		--color-space-500: 97 110 136;
+		--color-space-600: 76 86 106;
+		--color-space-700: 67 76 94;
+		--color-space-800: 59 66 82;
+		--color-space-900: 46 52 64;
+		--color-space-950: 36 41 51;
+
+		--color-gray-50: 236 239 244;
+		--color-gray-100: 229 233 240;
+		--color-gray-200: 216 222 233;
+		--color-gray-300: 184 193 209;
+		--color-gray-400: 138 150 171;
+		--color-gray-500: 109 122 146;
+		--color-gray-600: 93 104 128;
+		--color-gray-700: 90 100 124;
+		--color-gray-800: 67 76 94;
+		--color-gray-900: 59 66 82;
+		--color-gray-950: 46 52 64;
+
+		--color-white: 236 239 244;
+	}
+
+	html.synthwave {
+		--color-primary-100: 250 230 244;
+		--color-primary-200: 245 200 232;
+		--color-primary-300: 238 168 218;
+		--color-primary-400: 230 136 204;
+		--color-primary-500: 216 81 170;
+		--color-primary-600: 168 52 129;
+		--color-primary-700: 140 43 106;
+		--color-primary-800: 112 35 85;
+		--color-primary-900: 84 27 64;
+		--color-primary-950: 60 20 46;
+
+		--color-secondary-50: 201 253 252;
+		--color-secondary-100: 156 251 250;
+		--color-secondary-200: 54 249 246;
+		--color-secondary-300: 42 209 207;
+		--color-secondary-400: 32 169 167;
+		--color-secondary-500: 26 133 131;
+		--color-secondary-600: 20 101 99;
+		--color-secondary-700: 15 72 71;
+		--color-secondary-800: 10 47 46;
+
+		--color-space-50: 244 242 251;
+		--color-space-100: 221 216 238;
+		--color-space-200: 182 177 208;
+		--color-space-300: 132 139 189;
+		--color-space-400: 109 95 143;
+		--color-space-500: 90 74 120;
+		--color-space-600: 70 52 101;
+		--color-space-700: 52 41 79;
+		--color-space-800: 42 33 57;
+		--color-space-900: 38 35 53;
+		--color-space-950: 23 21 32;
+
+		--color-gray-50: 244 242 251;
+		--color-gray-100: 221 216 238;
+		--color-gray-200: 195 189 217;
+		--color-gray-300: 169 162 198;
+		--color-gray-400: 132 139 189;
+		--color-gray-500: 109 101 150;
+		--color-gray-600: 87 78 124;
+		--color-gray-700: 95 80 136;
+		--color-gray-800: 52 41 79;
+		--color-gray-900: 42 33 57;
+		--color-gray-950: 30 26 43;
+
+		--color-white: 255 255 255;
+	}
+
+	html.tokyonight {
+		--color-primary-100: 227 235 253;
+		--color-primary-200: 195 212 251;
+		--color-primary-300: 159 186 249;
+		--color-primary-400: 122 162 247;
+		--color-primary-500: 108 143 240;
+		--color-primary-600: 61 89 161;
+		--color-primary-700: 52 80 143;
+		--color-primary-800: 57 75 112;
+		--color-primary-900: 42 54 87;
+		--color-primary-950: 31 40 64;
+
+		--color-secondary-50: 236 223 253;
+		--color-secondary-100: 218 196 251;
+		--color-secondary-200: 187 154 247;
+		--color-secondary-300: 157 124 216;
+		--color-secondary-400: 133 102 189;
+		--color-secondary-500: 110 82 160;
+		--color-secondary-600: 87 65 130;
+		--color-secondary-700: 67 50 100;
+		--color-secondary-800: 48 36 71;
+
+		--color-space-50: 224 230 255;
+		--color-space-100: 192 202 245;
+		--color-space-200: 169 177 214;
+		--color-space-300: 115 122 162;
+		--color-space-400: 86 95 137;
+		--color-space-500: 84 92 126;
+		--color-space-600: 65 72 104;
+		--color-space-700: 41 46 66;
+		--color-space-800: 36 40 59;
+		--color-space-900: 26 27 38;
+		--color-space-950: 17 17 24;
+
+		--color-gray-50: 224 230 255;
+		--color-gray-100: 192 202 245;
+		--color-gray-200: 169 177 214;
+		--color-gray-300: 154 165 206;
+		--color-gray-400: 115 122 162;
+		--color-gray-500: 86 95 137;
+		--color-gray-600: 84 92 126;
+		--color-gray-700: 74 83 120;
+		--color-gray-800: 41 46 66;
+		--color-gray-900: 31 35 53;
+		--color-gray-950: 22 22 30;
+
+		--color-white: 192 202 245;
+	}
+}

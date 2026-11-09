@@ -200,13 +200,13 @@
 	const getNodeColor = (node: WorkflowNode): string => {
 		switch (node.phase) {
 			case 'Failed':
-				return 'bg-red-700 dark:bg-red-700';
+				return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 			case 'Running':
 				return 'bg-blue-600 dark:bg-blue-600';
 			case 'Pending':
 				return 'bg-primary-500 dark:bg-primary-500';
 			case 'Succeeded':
-				return 'bg-lime-600 dark:bg-lime-600';
+				return 'bg-lime-600 dark:bg-lime-600 text-neutral-800 dark:text-neutral-800';
 			default:
 				return '';
 		}

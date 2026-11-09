@@ -393,7 +393,7 @@
 			{mode === ModalState.Creating ? 'Create Playtest' : 'Edit Playtest'}
 			{#if mode === ModalState.Editing}
 				<Button
-					class="p-2"
+					class="p-2 text-neutral-200 dark:text-neutral-200"
 					size="sm"
 					color="red"
 					on:click={() => {
@@ -481,7 +481,7 @@
 			</div>
 		</div>
 		{#if commitSelectMode === CommitSelectMode.Custom}
-			<span class="text-xs bg-red-700 text-white p-2 rounded-md">
+			<span class="text-xs bg-red-700 text-neutral-200 p-2 rounded-md">
 				Warning: The map list for manually entered commits may not be up to date.
 			</span>
 		{/if}
@@ -620,7 +620,7 @@
 			</Label>
 		</div>
 		{#if playtestError}
-			<span class="text-xs bg-red-700 text-white p-2 rounded-md">
+			<span class="text-xs bg-red-700 text-neutral-200 p-2 rounded-md">
 				{playtestError}
 			</span>
 		{/if}

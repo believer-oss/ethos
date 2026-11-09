@@ -21,19 +21,19 @@
 	<div class="w-full flex flex-col items-center pointer-events-none gap-2">
 		{#each visibleErrors as error (error.id)}
 			<div
-				class="pointer-events-auto flex items-center gap-3 w-auto min-w-[20rem] max-w-[90vw] p-4 rounded-lg shadow text-white bg-red-700"
+				class="pointer-events-auto flex items-center gap-3 w-auto min-w-[20rem] max-w-[90vw] p-4 rounded-lg shadow text-neutral-200 bg-red-700"
 				role="alert"
 				transition:fly={{ y: -50, duration: 200 }}
 			>
 				<div
-					class="inline-flex items-center justify-center shrink-0 w-8 h-8 rounded-lg bg-red-700 text-white"
+					class="inline-flex items-center justify-center shrink-0 w-8 h-8 rounded-lg bg-red-700 text-neutral-200"
 				>
 					<ExclamationCircleSolid class="w-5 h-5" />
 				</div>
 				<div class="text-sm font-normal flex-1 min-w-0 break-words">{error.message}</div>
 				<button
 					type="button"
-					class="ml-auto rounded-lg p-1.5 inline-flex items-center justify-center shrink-0 h-10 w-10 text-white border border-white hover:text-gray-200 hover:bg-red-800 focus:ring-2 focus:ring-red-300"
+					class="ml-auto rounded-lg p-1.5 inline-flex items-center justify-center shrink-0 h-10 w-10 text-neutral-200 border border-neutral-200 hover:text-neutral-300 hover:bg-red-800 focus:ring-2 focus:ring-red-300"
 					aria-label="Close"
 					on:click={() => {
 						onDismiss(error.id);
@@ -50,7 +50,7 @@
 		{/if}
 		{#if errors.length >= 2}
 			<button
-				class="pointer-events-auto text-sm text-white bg-red-800 hover:bg-red-900 rounded px-3 py-1 mt-1 flex items-center gap-1"
+				class="pointer-events-auto text-sm text-neutral-200 bg-red-800 hover:bg-red-900 rounded px-3 py-1 mt-1 flex items-center gap-1"
 				on:click={onDismissAll}
 			>
 				<CloseOutline class="w-3 h-3" />

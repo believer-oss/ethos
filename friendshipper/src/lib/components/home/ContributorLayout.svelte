@@ -209,7 +209,7 @@
 		}
 
 		if (node.state === 'UNMERGEABLE') {
-			return 'bg-red-700 dark:bg-red-700';
+			return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 		}
 
 		return 'bg-secondary-500 dark:bg-secondary-500';

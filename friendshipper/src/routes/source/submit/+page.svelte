@@ -1107,7 +1107,7 @@
 	const getStatusBadgeClass = (pull: GitHubPullRequest): string => {
 		if (pull.state === 'OPEN') {
 			if (pull.mergeable === 'CONFLICTING') {
-				return 'bg-red-700 dark:bg-red-700';
+				return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 			}
 
 			if (pull.mergeQueueEntry !== null) {
@@ -1119,15 +1119,15 @@
 				}
 
 				if (pull.mergeQueueEntry.state === 'UNMERGEABLE') {
-					return 'bg-red-700 dark:bg-red-700';
+					return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 				}
 			}
 		}
 		if (pull.state === 'MERGED') {
-			return 'bg-lime-600 dark:bg-lime-600';
+			return 'bg-lime-600 dark:bg-lime-600 text-neutral-800 dark:text-neutral-800';
 		}
 		if (pull.state === 'CLOSED') {
-			return 'bg-red-800 dark:bg-red-800';
+			return 'bg-red-800 dark:bg-red-800 text-neutral-200 dark:text-neutral-200';
 		}
 
 		return 'bg-primary-500 dark:bg-primary-500';
@@ -1650,6 +1650,7 @@
 									<Button
 										size="xs"
 										color="red"
+										class="text-neutral-200 dark:text-neutral-200"
 										on:click={() => handleDeleteSnapshot(snapshot.commit)}
 									>
 										Delete
@@ -1744,8 +1745,18 @@
 			>You have modifications to the uproject. It is STRONGLY recommended to revert this file to
 			remain on a correct engine version.</span
 		>
-		<Button size="xs" color="green" on:click={handleRevertUproject}>Revert</Button>
-		<Button size="xs" color="red" on:click={handleCloseRevertUproject}>Keep Changes</Button>
+		<Button
+			size="xs"
+			color="green"
+			class="text-neutral-800 dark:text-neutral-800"
+			on:click={handleRevertUproject}>Revert</Button
+		>
+		<Button
+			size="xs"
+			color="red"
+			class="text-neutral-200 dark:text-neutral-200"
+			on:click={handleCloseRevertUproject}>Keep Changes</Button
+		>
 	</div>
 </Modal>
 

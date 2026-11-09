@@ -684,7 +684,7 @@
 										changeSets = changeSets.filter((_, i) => i !== index);
 										await onChangesetsSaved(changeSets);
 									}}
-									class="p-1 px-2 w-auto h-auto"
+									class="p-1 px-2 w-auto h-auto text-neutral-200 dark:text-neutral-200"
 								>
 									<TrashBinSolid class="w-4 h-4" />
 								</Button>
@@ -841,7 +841,7 @@
 											{#if file.submitStatus === SubmitStatus.Conflicted}
 												<ExclamationCircleSolid class="w-5 h-5 text-red-500 animate-pulse" />
 												<Tooltip
-													class="w-auto bg-red-900 dark:bg-red-900 text-white font-semibold shadow-2xl"
+													class="w-auto bg-red-900 dark:bg-red-900 text-neutral-200 font-semibold shadow-2xl"
 												>
 													{getFileTooltip(file)}
 												</Tooltip>

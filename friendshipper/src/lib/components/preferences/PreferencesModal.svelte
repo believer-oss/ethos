@@ -6,7 +6,6 @@
 		ButtonGroup,
 		Card,
 		Checkbox,
-		DarkMode,
 		Helper,
 		Input,
 		Label,
@@ -30,6 +29,7 @@
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { onDestroy } from 'svelte';
 	import { ProgressModal } from '@ethos/core';
+	import { theme, themes } from '$lib/theme';
 	import {
 		appConfig,
 		repoConfig,
@@ -452,9 +452,13 @@
 	<div class="flex items-center justify-between gap-2">
 		<div class="flex items-center gap-2">
 			<p class="text-2xl text-primary-400 dark:text-primary-400 mb-2">Preferences</p>
-			<DarkMode
+			<Select
 				size="sm"
-				btnClass="text-gray-300 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-100 hover:text-gray-800 dark:hover:text-gray-800 focus:outline-none rounded-lg text-sm p-2.5"
+				items={themes}
+				aria-label="Theme"
+				bind:value={$theme}
+				placeholder=""
+				class="w-32 mb-2 text-white bg-secondary-800 dark:bg-space-950 border-gray-400"
 			/>
 		</div>
 		<Button
@@ -653,7 +657,7 @@
 						{#if configuringNewRepo}
 							<Button
 								color="red"
-								class="h-9 mb-0.5"
+								class="h-9 mb-0.5 text-neutral-200 dark:text-neutral-200"
 								on:click={() => {
 									// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
 									delete localAppConfig.projects[localAppConfig.selectedArtifactProject];
@@ -994,12 +998,12 @@
 	</div>
 
 	<Card
-		class="w-full p-2 sm:p-2 max-w-full bg-red-800 dark:bg-red-800 max-h-screen overflow-auto border-0 shadow-none"
+		class="w-full p-2 sm:p-2 max-w-full bg-red-900/40 dark:bg-red-900/40 max-h-screen overflow-auto border-0 shadow-none"
 	>
 		<Accordion
 			border={false}
-			activeClass="hover:bg-red-900 focus:ring-0 text-white overflow-auto py-2 border-0 rounded-xl"
-			inactiveClass="hover:bg-red-900 text-white py-2 border-0 border-t-0 rounded-xl"
+			activeClass="hover:bg-red-900/40 focus:ring-0 text-white overflow-auto py-2 border-0 rounded-xl"
+			inactiveClass="hover:bg-red-900/40 text-white py-2 border-0 border-t-0 rounded-xl"
 			class="w-full"
 		>
 			<AccordionItem
@@ -1017,7 +1021,7 @@
 						<div class="flex gap-2 items-center">
 							<Button
 								outline
-								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900/40 dark:hover:bg-red-900/40"
 								on:click={handleResetRepo}
 								>Reset Repo to {$appConfig ? $appConfig.targetBranch : 'main'}
 							</Button>
@@ -1028,7 +1032,7 @@
 						<div class="flex gap-2 items-center">
 							<Button
 								outline
-								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900/40 dark:hover:bg-red-900/40"
 								on:click={handleRefetchRepo}
 								>Refresh Repo and Commit Graph
 							</Button>
@@ -1038,7 +1042,7 @@
 					<div class="flex gap-2 items-center">
 						<Button
 							outline
-							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900/40 dark:hover:bg-red-900/40"
 							on:click={handleResetConfig}
 							>Reset Config
 						</Button>
@@ -1049,7 +1053,7 @@
 					<div class="flex gap-2 items-center">
 						<Button
 							outline
-							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900/40 dark:hover:bg-red-900/40"
 							on:click={handleWipeClientData}
 							>Wipe Data Directory
 						</Button>
@@ -1059,7 +1063,7 @@
 						<div class="flex gap-2 items-center">
 							<Button
 								outline
-								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+								class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900/40 dark:hover:bg-red-900/40"
 								on:click={handleResetEngine}
 								>Reset Engine
 							</Button>
@@ -1069,7 +1073,7 @@
 					<div class="flex gap-2 items-center">
 						<Button
 							outline
-							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900 dark:hover:bg-red-900"
+							class="w-1/2 border-white dark:border-white text-white dark:text-white hover:bg-red-900/40 dark:hover:bg-red-900/40"
 							on:click={restart}
 							>Restart
 						</Button>
@@ -1085,7 +1089,7 @@
 	>
 		{#if configError !== ''}
 			<Helper class="p-2 rounded-md bg-red-800 dark:bg-red-800">
-				<code class="text-white text-md">Error: {configError}</code>
+				<code class="text-neutral-200 text-md">Error: {configError}</code>
 			</Helper>
 		{/if}
 		<div class="flex flex-row-reverse justify-between gap-2 h-full">
@@ -1095,7 +1099,11 @@
 			</div>
 			<div class="flex gap-2 justify-center h-full">
 				<div class="flex items-center h-full">
-					<Button color="red" on:click={onLogoutClicked}>Logout</Button>
+					<Button
+						color="red"
+						class="bg-red-900/60 hover:bg-red-900/80 dark:bg-red-900/60 dark:hover:bg-red-900/80 text-neutral-200 dark:text-neutral-200"
+						on:click={onLogoutClicked}>Logout</Button
+					>
 					<code class="ml-2 text-sm">Uptime: {formatUptime(uptime)}</code>
 				</div>
 			</div>

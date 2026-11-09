@@ -256,7 +256,7 @@
 				Welcome to Friendshipper!
 			</p>
 			{#if errorMessage}
-				<Alert class="text-gray-300 dark:text-gray-300 bg-red-800 dark:bg-red-800">
+				<Alert class="text-neutral-200 dark:text-neutral-200 bg-red-800 dark:bg-red-800">
 					<span class="font-medium">Error!</span>
 					{errorMessage}
 					{#if currentPage === Page.CloneStatus}

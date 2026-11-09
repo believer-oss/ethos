@@ -1,4 +1,26 @@
 const plugin = require('tailwindcss/plugin');
+const colors = require('tailwindcss/colors');
+const flowbite = require('flowbite/plugin')();
+
+const themeColor = (name, shades) =>
+	Object.fromEntries(
+		shades.map((shade) => [shade, `rgb(var(--color-${name}-${shade}) / <alpha-value>)`])
+	);
+
+// flowbite's base styles read gray from the theme, including into a data-URI SVG where CSS variables
+// can't resolve, so give it the static default palette.
+const flowbitePlugin = plugin(
+	(api) =>
+		flowbite.handler({
+			...api,
+			theme: (path, defaultValue) =>
+				path.startsWith('colors.gray.')
+					? colors.gray[path.slice('colors.gray.'.length)]
+					: api.theme(path, defaultValue)
+		}),
+	flowbite.config
+);
+
 /** @type {import('tailwindcss').Config}*/
 const config = {
 	content: [
@@ -13,53 +35,21 @@ const config = {
 				html: { fontSize: '14px' }
 			});
 		}),
-		require('flowbite/plugin')
+		flowbitePlugin
 	],
 
 	darkMode: 'class',
 
 	theme: {
 		extend: {
+			// Values live in app.postcss as CSS variables so themes can swap them.
 			colors: {
+				white: 'rgb(var(--color-white) / <alpha-value>)',
+				gray: themeColor('gray', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]),
 				// flowbite-svelte
-				secondary: {
-					50: '#e9b8b9',
-					100: '#dd8f93',
-					200: '#cc676d',
-					300: '#b64855',
-					400: '#9e3a48',
-					500: '#80313f',
-					600: '#6e2d3a',
-					700: '#55212B',
-					800: '#3c151c'
-				},
-
-				primary: {
-					100: '#fef9ec',
-					200: '#fceec9',
-					300: '#f9da8e',
-					400: '#f6c55c',
-					500: '#f3aa2c',
-					600: '#ec8a14',
-					700: '#d1660e',
-					800: '#ae470f',
-					900: '#8d3713',
-					950: '#742e13'
-				},
-
-				space: {
-					50: '#f4f7f7',
-					100: '#e4e9e9',
-					200: '#cbd5d6',
-					300: '#a7b7b9',
-					400: '#7b9295',
-					500: '#60777a',
-					600: '#536367',
-					700: '#475457',
-					800: '#3f484b',
-					900: '#2f3537',
-					950: '#22282a'
-				}
+				secondary: themeColor('secondary', [50, 100, 200, 300, 400, 500, 600, 700, 800]),
+				primary: themeColor('primary', [100, 200, 300, 400, 500, 600, 700, 800, 900, 950]),
+				space: themeColor('space', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950])
 			}
 		}
 	}

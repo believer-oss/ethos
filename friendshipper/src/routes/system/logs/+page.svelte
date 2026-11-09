@@ -56,7 +56,7 @@
 			case 'WARN':
 				return 'bg-yellow-500 dark:bg-yellow-500';
 			case 'ERROR':
-				return 'bg-red-700 dark:bg-red-700';
+				return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 			default:
 				return 'bg-gray-500 dark:bg-gray-500';
 		}
