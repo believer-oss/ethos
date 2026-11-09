@@ -122,13 +122,13 @@
 	const getBadgeColor = (phase: string): string => {
 		switch (phase) {
 			case 'Failed':
-				return 'bg-red-700 dark:bg-red-700';
+				return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 			case 'Running':
 				return 'bg-blue-600 dark:bg-blue-600';
 			case 'Pending':
 				return 'bg-primary-500 dark:bg-primary-500';
 			case 'Succeeded':
-				return 'bg-lime-600 dark:bg-lime-600';
+				return 'bg-lime-600 dark:bg-lime-600 text-neutral-800 dark:text-neutral-800';
 			default:
 				return '';
 		}
@@ -384,7 +384,7 @@
 				<div class="flex justify-center pt-2">
 					<Button
 						size="sm"
-						class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600 text-white"
+						class="bg-lime-700 dark:bg-lime-700 hover:bg-lime-600 dark:hover:bg-lime-600 text-neutral-800 dark:text-neutral-800"
 						on:click={() => {
 							promoteBuildCommit = commit.commit;
 							showPromoteBuildModal = true;

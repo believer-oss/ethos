@@ -12,9 +12,9 @@
 	<Toast
 		transition={fly}
 		params={{ y: -200 }}
-		class="my-4 p-2 left-1/2 w-auto max-w-[90vw] text-white dark:text-white bg-red-700 dark:bg-red-700"
+		class="my-4 p-2 left-1/2 w-auto max-w-[90vw] text-neutral-200 dark:text-neutral-200 bg-red-700 dark:bg-red-700"
 		contentClass="w-full text-sm font-normal break-words"
-		defaultIconClass="bg-red-700 dark:bg-red-700 text-white dark:text-white"
+		defaultIconClass="bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200"
 		on:close={onClose}
 		bind:open={show}
 	>
@@ -24,7 +24,7 @@
 			slot="close-button"
 			let:close
 			type="button"
-			class="ms-auto rounded-lg p-1.5 inline-flex items-center justify-center shrink-0 h-10 w-10 text-white border border-white hover:text-gray-200 hover:bg-red-800 focus:ring-2 focus:ring-red-300"
+			class="ms-auto rounded-lg p-1.5 inline-flex items-center justify-center shrink-0 h-10 w-10 text-neutral-200 border border-neutral-200 hover:text-neutral-300 hover:bg-red-800 focus:ring-2 focus:ring-red-300"
 			aria-label="Close"
 			on:click={close}
 		>

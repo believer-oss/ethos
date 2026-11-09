@@ -20,9 +20,9 @@
 	<Toast
 		transition={fly}
 		params={{ y: fixed ? -200 : -50, duration: fixed ? 400 : 200 }}
-		class="my-4 p-2 left-1/2 w-auto max-w-[90vw] dark:text-white text-white bg-lime-700 dark:bg-lime-700"
+		class="my-4 p-2 left-1/2 w-auto max-w-[90vw] text-neutral-800 dark:text-neutral-800 bg-lime-700 dark:bg-lime-700"
 		contentClass="w-full text-sm font-normal break-words"
-		defaultIconClass="bg-lime-700 dark:bg-lime-700 dark:text-white text-white"
+		defaultIconClass="bg-lime-700 dark:bg-lime-700 text-neutral-800 dark:text-neutral-800"
 		dismissable={false}
 		bind:open={show}
 	>

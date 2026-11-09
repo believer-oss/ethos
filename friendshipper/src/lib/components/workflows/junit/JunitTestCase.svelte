@@ -6,10 +6,10 @@
 
 	const getBadgeColor = (): string => {
 		if (testcase.failure) {
-			return 'bg-red-700 dark:bg-red-700';
+			return 'bg-red-700 dark:bg-red-700 text-neutral-200 dark:text-neutral-200';
 		}
 
-		return 'bg-lime-600 dark:bg-lime-600';
+		return 'bg-lime-600 dark:bg-lime-600 text-neutral-800 dark:text-neutral-800';
 	};
 
 	const getBadgeText = (): string => {

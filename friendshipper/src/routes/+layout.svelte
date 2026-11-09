@@ -3,7 +3,6 @@
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		Button,
-		DarkMode,
 		Img,
 		Modal,
 		Progressbar,
@@ -1178,7 +1177,11 @@
 				</div>
 				<div class="flex gap-2">
 					<Button on:click={openSystemLogsFolder}>Open Logs Folder</Button>
-					<Button color="red" on:click={handleResetConfigRequest}>Reset Config & Restart</Button>
+					<Button
+						color="red"
+						class="text-neutral-200 dark:text-neutral-200"
+						on:click={handleResetConfigRequest}>Reset Config & Restart</Button
+					>
 					<Tooltip
 						class="w-auto text-xs text-primary-400 bg-secondary-700 dark:bg-space-900"
 						placement="bottom"
@@ -1333,10 +1336,10 @@
 											</span>
 											{#if conflictsDetected}
 												<span
-													class="items-center px-2 text-sm font-medium text-white rounded-full {$allModifiedFiles.length >
+													class="items-center px-2 text-sm font-medium rounded-full {$allModifiedFiles.length >
 													0
-														? 'bg-red-700 dark:bg-red-700'
-														: 'bg-gray-500 dark:bg-gray-500'}"
+														? 'bg-red-700 dark:bg-red-700 text-neutral-200'
+														: 'bg-gray-500 dark:bg-gray-500 text-white'}"
 												>
 													{$repoStatus?.conflicts.length}
 												</span>
@@ -1495,8 +1498,6 @@
 	/>
 </div>
 <ProgressModal bind:showModal={showProgressModal} title={progressModalTitle} />
-<!-- Hidden dark mode toggle allows us to load the theme immediately, even though the actual toggle is in the preferences modal -->
-<DarkMode class="hidden" />
 
 <!-- Update modal, not quite worthy of a component yet -->
 <Modal
@@ -1515,7 +1516,11 @@
 			<div class="text-white">
 				Friendshipper <span class="font-mono text-primary-400">v{latest}</span> is available!
 			</div>
-			<Button disabled={updating} color="green" class="flex gap-2" on:click={handleUpdateClicked}
+			<Button
+				disabled={updating}
+				color="green"
+				class="flex gap-2 text-neutral-800 dark:text-neutral-800"
+				on:click={handleUpdateClicked}
 				>Upgrade
 				{#if updating}
 					<Spinner color="white" class="h-4 w-4 border-none" />
@@ -1559,7 +1564,11 @@
 			>
 				Cancel
 			</Button>
-			<Button color="red" on:click={confirmResetConfig}>Reset & Restart</Button>
+			<Button
+				color="red"
+				class="text-neutral-200 dark:text-neutral-200"
+				on:click={confirmResetConfig}>Reset & Restart</Button
+			>
 		</div>
 	</div>
 </Modal>

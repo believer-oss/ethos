@@ -50,7 +50,9 @@
 
 		<div class="flex items-center justify-end gap-2">
 			{#if cancellable}
-				<Button color="red" on:click={onCancel}>Cancel</Button>
+				<Button color="red" class="text-neutral-200 dark:text-neutral-200" on:click={onCancel}
+					>Cancel</Button
+				>
 			{/if}
 		</div>
 	</div>
