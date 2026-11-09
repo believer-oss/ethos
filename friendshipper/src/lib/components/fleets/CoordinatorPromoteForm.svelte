@@ -160,6 +160,13 @@
 		: [];
 	$: parts = backendDiff(promotionPlan, promotions, snapshotAt);
 	$: older = olderParts(parts);
+	// A different build has its own default: an older one starts with Deploy backend off again,
+	// whatever the user picked for the previous build.
+	let defaultsFor = '';
+	$: if (version !== defaultsFor) {
+		defaultsFor = version;
+		deployTouched = false;
+	}
 	$: if (!deployTouched) deployBackend = deployBackendDefault(promotionPlan, !!rollback, older);
 	$: noManifest = !planLoading && FULL_SHA.test(version) && !promotionPlan?.manifest;
 	$: built = buildLine(
