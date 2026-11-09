@@ -49,7 +49,8 @@ it essentially replaces workflows that UGS and P4V support.
 - Branches are deleted on GitHub, not in Friendshipper. **Clean up deleted branches** on Branch Management then removes
   your local copies of `f11r-branch-*` branches deleted on origin, after a preview that shows each branch's SHA and
   flags commits that are not on the trunk. **Clean up all merged** removes only merged branches; a branch with commits
-  not on the trunk is removed only when you pick it and confirm.
+  not on the trunk is removed only when you pick it and confirm. Each deleted branch's tip is kept under
+  `refs/f11r-backup/<branch>/<ts>-cleanup` for 14 days.
 - **Rebase onto latest main** on Branch Management (Git 2.43 or newer) replays the branch's pushed commits on top of
   the latest trunk. It needs a clean branch that is in sync with origin, and Unreal Editor closed. Starting or pushing
   a rebase is blocked while the branch's pull request is in the merge queue. Merge commits are flattened, so a branch

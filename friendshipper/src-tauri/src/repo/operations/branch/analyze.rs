@@ -159,7 +159,7 @@ pub(crate) async fn collect_branch_facts(
     opts: git::Opts<'_>,
 ) -> Result<BranchFacts, CoreError> {
     let check = git.check_min_version().await?;
-    if !check.supported {
+    if !check.supported() {
         return Ok(BranchFacts {
             git: check,
             ..Default::default()
@@ -392,7 +392,7 @@ where
         let uses_merge_queue = trunk_uses_merge_queue(&self.repo_config.read(), &self.trunk_branch);
 
         let mut analysis = BranchAnalysis {
-            git_supported: facts.git.supported,
+            git_supported: facts.git.supported(),
             git_version: facts.git.version.clone(),
             branch: self.branch.clone(),
             trunk_branch: self.trunk_branch.clone(),
@@ -408,7 +408,7 @@ where
             ..Default::default()
         };
 
-        if facts.git.supported
+        if facts.git.supported()
             && facts.upstream == BranchUpstream::Present
             && facts.commits_ahead > 0
         {
@@ -729,13 +729,13 @@ mod tests {
         /// Whether the local git supports `merge-tree --write-tree`; tests return early if not.
         async fn git_supported(&self) -> bool {
             let check = self.git_check().await;
-            if !check.supported {
+            if !check.supported() {
                 println!(
                     "skipping: git {} lacks merge-tree --write-tree",
                     check.version
                 );
             }
-            check.supported
+            check.supported()
         }
 
         async fn git_check(&self) -> GitVersionCheck {

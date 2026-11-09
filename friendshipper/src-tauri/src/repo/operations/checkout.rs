@@ -57,7 +57,9 @@ where
     sequence.push(Box::new(op));
 
     let _ = state.operation_tx.send(sequence).await;
-    let _ = rx.await;
+    if let Ok(Some(e)) = rx.await {
+        return Err(e);
+    }
 
     Ok(Json(String::from("OK")))
 }
@@ -88,7 +90,9 @@ where
     sequence.push(Box::new(op));
 
     let _ = state.operation_tx.send(sequence).await;
-    let _ = rx.await;
+    if let Ok(Some(e)) = rx.await {
+        return Err(e);
+    }
 
     Ok(Json(String::from("OK")))
 }

@@ -296,8 +296,9 @@
 	{:else}
 		<p class="text-xl text-primary-400">Delete {localBranchCount(confirming.length)}?</p>
 		<p class="text-sm text-gray-300">
-			These local branches will be deleted. Remote branches are not affected. Note the SHAs: a
-			deleted branch can be recreated from its SHA.
+			These local branches will be deleted. Remote branches are not affected. Each branch's last
+			commit is kept under <code>refs/f11r-backup/&lt;branch&gt;</code> for 14 days, so it can be recovered
+			in a git client.
 		</p>
 		<div
 			class="flex flex-col gap-1 max-h-[40vh] overflow-y-auto bg-secondary-800 dark:bg-space-950 p-2 rounded text-sm"
@@ -320,12 +321,12 @@
 					<ExclamationCircleSolid class="w-5 h-5 shrink-0 text-yellow-400" />
 					<p class="text-sm text-yellow-300">
 						{confirming.filter((c) => !c.safe).length} of these branches may hold commits that are not
-						on {trunk}. After deletion they can only be recovered by SHA.
+						on {trunk}. After deletion they can be recovered for 14 days, in a git client only.
 					</p>
 				</div>
 				<Label class="flex flex-row items-center gap-2 text-sm text-white dark:text-white">
 					<Checkbox bind:checked={acknowledged} disabled={deleting} />
-					I understand these commits will only be recoverable by SHA
+					I understand these commits can only be recovered for 14 days, in a git client
 				</Label>
 			</div>
 		{/if}

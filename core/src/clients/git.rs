@@ -76,13 +76,26 @@ pub enum CreateRemoteBranchOutcome {
 /// Oldest git with `merge-tree --write-tree`.
 pub const MIN_BRANCH_GIT: (u32, u32) = (2, 38);
 
-/// Version string of a git already found to be supported; unsupported results are never cached.
-static SUPPORTED_GIT: OnceLock<String> = OnceLock::new();
+/// A git already found to be supported; unsupported results are never cached.
+static SUPPORTED_GIT: OnceLock<GitVersionCheck> = OnceLock::new();
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GitVersionCheck {
     pub version: String,
-    pub supported: bool,
+    /// `(major, minor)`, or `None` when the version could not be parsed.
+    pub parsed: Option<(u32, u32)>,
+}
+
+impl GitVersionCheck {
+    /// Whether this git is at least `min`; an unparseable version never is.
+    pub fn at_least(&self, min: (u32, u32)) -> bool {
+        self.parsed.is_some_and(|version| version >= min)
+    }
+
+    /// Whether this git meets [`MIN_BRANCH_GIT`].
+    pub fn supported(&self) -> bool {
+        self.at_least(MIN_BRANCH_GIT)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,12 +114,12 @@ pub fn parse_git_version(output: &str) -> Option<(u32, u32)> {
 }
 
 /// `version` is the token after `git version `, or the trimmed raw output when unparseable.
-fn version_check_from_output(raw: &str) -> GitVersionCheck {
+pub fn version_check_from_output(raw: &str) -> GitVersionCheck {
     let trimmed = raw.trim();
     let Some(parsed) = parse_git_version(trimmed) else {
         return GitVersionCheck {
             version: trimmed.to_string(),
-            supported: false,
+            parsed: None,
         };
     };
     let version = trimmed
@@ -118,7 +131,7 @@ fn version_check_from_output(raw: &str) -> GitVersionCheck {
         .to_string();
     GitVersionCheck {
         version,
-        supported: parsed >= MIN_BRANCH_GIT,
+        parsed: Some(parsed),
     }
 }
 
@@ -1302,7 +1315,14 @@ impl Git {
     /// version and stage 3 the stashed local one. Where git could not merge textually, the
     /// local version or deletion is put back: binary files and modify/delete conflicts hold
     /// the pulled version, and LFS pointers hold a pointer with conflict markers.
-    async fn settle_unmerged_entry(&self, entry: &UnmergedEntry) -> UnmergedOutcome {
+    ///
+    /// A local deletion is put back only when the path existed before the pull, in `autostash`'s
+    /// base: otherwise git paired the deletion with a file the pull renamed or added.
+    async fn settle_unmerged_entry(
+        &self,
+        entry: &UnmergedEntry,
+        autostash: Option<&str>,
+    ) -> UnmergedOutcome {
         let path = entry.path.as_str();
         let ours = entry.stages[1].as_deref();
         let theirs = entry.stages[2].as_deref();
@@ -1329,6 +1349,9 @@ impl Git {
             (Some(_), Some(_)) if self.has_conflict_markers(path) => UnmergedOutcome::Markers,
             (None, None) => UnmergedOutcome::KeptDeletion,
             (None, Some(w)) if Some(w) == ours => {
+                if !self.existed_before_pull(path, autostash).await {
+                    return UnmergedOutcome::Unresolved;
+                }
                 match std::fs::remove_file(self.repo_path.join(path)) {
                     Ok(()) => UnmergedOutcome::KeptDeletion,
                     Err(e) => {
@@ -1339,6 +1362,19 @@ impl Git {
             }
             _ => UnmergedOutcome::Unresolved,
         }
+    }
+
+    /// Whether `path` is in the base of the `autostash` entry, i.e. `HEAD` before the pull.
+    async fn existed_before_pull(&self, path: &str, autostash: Option<&str>) -> bool {
+        let Some(autostash) = autostash else {
+            return false;
+        };
+        let spec = format!("{autostash}^1:{path}");
+        matches!(
+            self.run_with_status(&["cat-file", "-e", &spec], Opts::new_without_logs())
+                .await,
+            Ok(output) if output.exit_code == 0
+        )
     }
 
     /// Settles the conflicts git's autostash apply left after a pull, or returns `None` if
@@ -1365,8 +1401,18 @@ impl Git {
             snapshot_saved: snapshot_commit.is_some(),
             ..Default::default()
         };
+        let autostash = match self.autostash_entry(stash_before).await {
+            Ok(autostash) => autostash,
+            Err(e) => {
+                warn!("Could not read the autostash entry: {e}");
+                None
+            }
+        };
         for entry in &entries {
-            let list = match self.settle_unmerged_entry(entry).await {
+            let list = match self
+                .settle_unmerged_entry(entry, autostash.as_deref())
+                .await
+            {
                 UnmergedOutcome::Markers => &mut conflict.marker_files,
                 UnmergedOutcome::KeptLocal => &mut conflict.kept_local_files,
                 UnmergedOutcome::KeptDeletion => &mut conflict.kept_deleted_files,
@@ -1471,12 +1517,8 @@ impl Git {
         }
     }
 
-    /// The autostash commit when `drop_autostash_covered_by` may drop it.
-    async fn autostash_covered_by(
-        &self,
-        snapshot_commit: &str,
-        stash_before: Option<&str>,
-    ) -> anyhow::Result<Option<String>> {
+    /// `stash@{0}` if it is the `autostash` entry pushed directly on top of `stash_before`.
+    async fn autostash_entry(&self, stash_before: Option<&str>) -> anyhow::Result<Option<String>> {
         let output = self
             .run_and_collect_output(
                 &["stash", "list", "-n2", "--format=%H%x1f%gs"],
@@ -1492,9 +1534,19 @@ impl Git {
             return Ok(None);
         };
         let below = entries.get(1).map(|(sha, _)| *sha);
-        if subject.trim() != "autostash" || below != stash_before {
+        Ok((subject.trim() == "autostash" && below == stash_before).then(|| autostash.to_string()))
+    }
+
+    /// The autostash commit when `drop_autostash_covered_by` may drop it.
+    async fn autostash_covered_by(
+        &self,
+        snapshot_commit: &str,
+        stash_before: Option<&str>,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(autostash) = self.autostash_entry(stash_before).await? else {
             return Ok(None);
-        }
+        };
+        let autostash = autostash.as_str();
 
         for tree in [autostash.to_string(), format!("{autostash}^2")] {
             let base = format!("{autostash}^1");
@@ -2081,17 +2133,14 @@ impl Git {
     /// Checks git against `MIN_BRANCH_GIT`. Only a supported result is cached, so an upgrade
     /// is picked up on the next check.
     pub async fn check_min_version(&self) -> anyhow::Result<GitVersionCheck> {
-        if let Some(version) = SUPPORTED_GIT.get() {
-            return Ok(GitVersionCheck {
-                version: version.clone(),
-                supported: true,
-            });
+        if let Some(check) = SUPPORTED_GIT.get() {
+            return Ok(check.clone());
         }
 
         let raw = self.version().await?;
         let check = version_check_from_output(&raw);
-        if check.supported {
-            let _ = SUPPORTED_GIT.set(check.version.clone());
+        if check.supported() {
+            let _ = SUPPORTED_GIT.set(check.clone());
         }
         Ok(check)
     }
@@ -4410,6 +4459,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_finish_autostash_pull_keeps_a_file_renamed_onto_a_local_deletion() {
+        let content = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+        let (git, _dir, _origin, _collab) =
+            setup_feat_with_collab(&[("ren.txt", content.as_bytes())], |c| {
+                git_ok(c, &["mv", "ren.txt", "moved.txt"]);
+                std::fs::write(c.join("moved.txt"), format!("{content}nine\n")).unwrap();
+            });
+        let repo = git.repo_path.clone();
+        std::fs::remove_file(repo.join("ren.txt")).unwrap();
+
+        let (_snapshot, result) = snapshot_pull_finish(&git, &["ren.txt"], &[]).await;
+
+        let conflict = result.expect("finish").expect("autostash conflict");
+        assert!(conflict.kept_deleted_files.is_empty(), "{conflict:?}");
+        assert_eq!(conflict.unresolved_files, vec!["moved.txt".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("moved.txt")).unwrap(),
+            format!("{content}nine\n")
+        );
+    }
+
+    #[tokio::test]
     async fn test_finish_autostash_pull_mixed_conflicts() {
         let (git, _dir, _origin, _collab) = setup_feat_with_mixed_collab(true);
         let repo = git.repo_path.clone();
@@ -4705,21 +4776,21 @@ mod tests {
 
     #[test]
     fn test_git_version_check_from_output() {
-        assert!(version_check_from_output("git version 2.38.0").supported);
-        assert!(!version_check_from_output("git version 2.37.9").supported);
-        assert!(version_check_from_output("git version 2.100.0").supported);
-        assert!(version_check_from_output("git version 3.0.0").supported);
+        assert!(version_check_from_output("git version 2.38.0").supported());
+        assert!(!version_check_from_output("git version 2.37.9").supported());
+        assert!(version_check_from_output("git version 2.100.0").supported());
+        assert!(version_check_from_output("git version 3.0.0").supported());
 
         let check = version_check_from_output("git version 2.47.1.windows.1\n");
         assert_eq!(check.version, "2.47.1.windows.1");
-        assert!(check.supported);
+        assert!(check.supported());
 
         let check = version_check_from_output("  git version abc \n");
-        assert!(!check.supported);
+        assert!(!check.supported());
         assert_eq!(check.version, "git version abc");
 
         let check = version_check_from_output("garbage\n");
-        assert!(!check.supported);
+        assert!(!check.supported());
         assert_eq!(check.version, "garbage");
     }
 
@@ -4790,10 +4861,10 @@ mod tests {
 
     async fn git_supported(git: &Git) -> bool {
         let check = git.check_min_version().await.expect("git version");
-        if !check.supported {
+        if !check.supported() {
             println!("skipped: git {} is older than 2.38", check.version);
         }
-        check.supported
+        check.supported()
     }
 
     #[tokio::test]
@@ -4912,7 +4983,7 @@ mod tests {
         let (git, _dir) = setup_repo();
         let check = git.check_min_version().await.unwrap();
         assert!(!check.version.is_empty());
-        assert!(check.supported, "git {} is unsupported", check.version);
+        assert!(check.supported(), "git {} is unsupported", check.version);
         // cached
         assert_eq!(git.check_min_version().await.unwrap(), check);
     }
