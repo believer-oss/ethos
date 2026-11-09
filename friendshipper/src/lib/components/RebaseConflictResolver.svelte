@@ -360,6 +360,16 @@
 			</ul>
 		</div>
 	{/if}
+	{#if rebaseState.stagedOutsideStep.length > 0}
+		<div class="flex flex-col gap-1 text-sm text-yellow-300">
+			<p>These staged changes from outside Friendshipper will be discarded:</p>
+			<ul class="font-mono text-xs pl-4 max-h-40 overflow-y-auto">
+				{#each rebaseState.stagedOutsideStep as path}
+					<li class="break-all">{path}</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
 	<div class="flex flex-row-reverse gap-2">
 		<Button class="bg-red-700 dark:bg-red-700" on:click={onAbortConfirmed}>Yes</Button>
 		<Button
