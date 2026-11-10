@@ -150,7 +150,8 @@ export const deriveSubmitMode = (
 	status: Nullable<RepoStatus>,
 	cfg: Nullable<RepoConfig>,
 	target: string,
-	displayName: string
+	displayName: string,
+	outsideRebase = false
 ): { mode: SubmitMode; reason: string; targetMismatch: boolean; fixInDiagnostics?: boolean } => {
 	if (!status || !cfg) {
 		return { mode: 'unavailable', reason: '', targetMismatch: false };
@@ -163,14 +164,22 @@ export const deriveSubmitMode = (
 			targetMismatch: false
 		};
 	}
-	// Without a guided rebase, Diagnostics resolves a detached HEAD, as the backend's refusals say.
 	if (status.detachedHead || status.branch === '') {
+		// Diagnostics resolves a rebase started outside Friendshipper; Branch Management leaves a clean detached HEAD.
+		if (outsideRebase) {
+			return {
+				mode: 'unavailable',
+				reason:
+					'Submitting is unavailable while a rebase started outside Friendshipper is in progress. Open Diagnostics to resolve it.',
+				targetMismatch: false,
+				fixInDiagnostics: true
+			};
+		}
 		return {
 			mode: 'unavailable',
 			reason:
-				'Submitting is unavailable while the repository is in a detached HEAD state, for example during a rebase started outside Friendshipper. Open Diagnostics to resolve it.',
-			targetMismatch: false,
-			fixInDiagnostics: true
+				'Submitting is unavailable while the repository is in a detached HEAD state. Open Branch Management to check out a branch.',
+			targetMismatch: false
 		};
 	}
 	if (isProtectedBranch(status.branch, cfg) || isQuickSubmitBranch(status.branch)) {

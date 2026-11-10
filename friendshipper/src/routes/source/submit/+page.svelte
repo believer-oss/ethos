@@ -77,6 +77,7 @@
 		getCommitFileTextClass,
 		getPullRequests,
 		getBranchOpenPr,
+		getRebaseStatus,
 		getRepoStatus,
 		importZippedChanges,
 		listSnapshots,
@@ -313,7 +314,30 @@
 		(file) => file.submitStatus !== SubmitStatus.Ok && file.submitStatus !== SubmitStatus.Unknown
 	);
 	$: quickTarget = $appConfig.targetBranch;
-	$: modeInfo = deriveSubmitMode($repoStatus, $repoConfig, quickTarget, $appConfig.userDisplayName);
+	// Only a detached HEAD without a guided rebase needs to know about an outside rebase.
+	let outsideRebase = false;
+	const loadOutsideRebase = async (check: boolean) => {
+		if (!check) {
+			outsideRebase = false;
+			return;
+		}
+		try {
+			const s = await getRebaseStatus();
+			outsideRebase = s.rebaseMergeExists || s.headNameExists;
+		} catch (_) {
+			outsideRebase = false;
+		}
+	};
+	$: void loadOutsideRebase(
+		($repoStatus?.detachedHead || $repoStatus?.branch === '') && !guidedRebaseActive
+	);
+	$: modeInfo = deriveSubmitMode(
+		$repoStatus,
+		$repoConfig,
+		quickTarget,
+		$appConfig.userDisplayName,
+		outsideRebase
+	);
 	$: branchMode = modeInfo.mode === 'branch' && $branchesEnabled;
 	// On a branch with branches turned off: nothing submits until the user switches back.
 	$: branchesOffOnBranch = modeInfo.mode === 'branch' && !$branchesEnabled;
