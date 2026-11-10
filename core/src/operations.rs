@@ -1002,11 +1002,6 @@ mod tests {
         .await
         .expect("rebase");
 
-        assert_eq!(
-            run_git(&path, &["log", "--format=%s"]),
-            "L
-seed
-"
-        );
+        assert_eq!(run_git(&path, &["log", "--format=%s"]), "L\nseed\n");
     }
 }

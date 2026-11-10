@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::{instrument, warn};
@@ -24,6 +24,7 @@ use ethos_core::types::repo::PushRequest;
 use ethos_core::worker::Task;
 
 const MAX_STALE_PATHS: usize = 10;
+const MAX_REMOVED_COMMITS: usize = 5;
 
 #[derive(Clone)]
 pub struct BranchSubmitOp<T> {
@@ -114,9 +115,20 @@ fn head_rewound_error(branch: &str) -> CoreError {
     ))
 }
 
-fn rewritten_error(branch: &str) -> CoreError {
+fn rewritten_error(branch: &str, removed: &[String]) -> CoreError {
+    let count = match removed.len() {
+        1 => "1 commit".to_string(),
+        n => format!("{n} commits"),
+    };
+    let mut list = removed[..removed.len().min(MAX_REMOVED_COMMITS)].join(", ");
+    if removed.len() > MAX_REMOVED_COMMITS {
+        list.push_str(&format!(
+            ", and {} more",
+            removed.len() - MAX_REMOVED_COMMITS
+        ));
+    }
     input_error(format!(
-        "'{branch}' was rewritten on origin, and your branch still has commits origin removed — Sync before submitting."
+        "'{branch}' was rewritten on origin, which no longer has {count} your branch has: {list}. Sync removes them from your branch too, so check with whoever rewrote it before syncing."
     ))
 }
 
@@ -158,8 +170,9 @@ pub(crate) fn is_push_race(git_output: &str) -> bool {
 pub(crate) struct OriginComparison {
     pub ahead: u32,
     pub behind: u32,
-    /// `HEAD` contains a commit that `origin/<branch>` once had and no longer has.
-    pub rewritten: bool,
+    /// Commits in `HEAD` that `origin/<branch>` once had and no longer has, as
+    /// `<short sha> <subject>`, newest first. Empty unless origin was rewritten.
+    pub removed: Vec<String>,
     /// The `origin/<branch>` SHA the comparison was made against.
     pub origin_sha: String,
 }
@@ -198,32 +211,47 @@ pub(crate) async fn fetch_and_compare_to_origin(
         .trim()
         .to_string();
     let (ahead, behind) = git.get_ahead_behind(&origin_sha, "HEAD").await?;
-    let rewritten = rewritten_on_origin(git, &tracking_ref, &origin_sha).await?;
+    // A rewrite leaves HEAD with commits origin lacks, so it needs `ahead > 0`.
+    let removed = if ahead > 0 {
+        removed_on_origin(git, &tracking_ref, &origin_sha).await?
+    } else {
+        Vec::new()
+    };
     Ok(OriginComparison {
         ahead,
         behind,
-        rewritten,
+        removed,
         origin_sha,
     })
 }
 
-/// Whether `origin/<branch>` was force-pushed past a commit `HEAD` still contains, read from
+/// The commits `HEAD` still has that a force-push removed from `origin/<branch>`, read from
 /// the tracking ref's reflog, so an earlier fetch that already moved the ref is no hindrance.
-/// Without a fork point, such as after the reflog expired, it reports no rewrite.
-async fn rewritten_on_origin(
+/// Without a fork point, such as after the reflog expired, it reports none.
+async fn removed_on_origin(
     git: &git::Git,
     tracking_ref: &str,
     origin_sha: &str,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Vec<String>> {
     let output = read_git(git, &["merge-base", "--fork-point", tracking_ref, "HEAD"]).await?;
-    match output.exit_code {
-        0 => Ok(!is_ancestor(git, output.stdout.trim(), origin_sha).await?),
-        1 => Ok(false),
-        code => Err(anyhow!(
+    let fork_point = match output.exit_code {
+        0 => output.stdout.trim().to_string(),
+        1 => return Ok(Vec::new()),
+        code => bail!(
             "merge-base --fork-point {tracking_ref} HEAD exited with {code}: {}",
             output.stderr.trim()
-        )),
+        ),
+    };
+    let range = format!("{origin_sha}..{fork_point}");
+    let output = read_git(git, &["log", "--format=%h %s", &range]).await?;
+    if output.exit_code != 0 {
+        bail!(
+            "log {range} exited with {}: {}",
+            output.exit_code,
+            output.stderr.trim()
+        );
     }
+    Ok(output.stdout.lines().map(str::to_string).collect())
 }
 
 /// The SHA of `refs/heads/<branch>` on origin, or `None` if the branch does not exist.
@@ -384,8 +412,8 @@ where
         // 3. Authoritative up-to-date check, before the status read and the snapshot.
         self.emit_phase("Checking branch is up to date with origin");
         let origin = fetch_and_compare_to_origin(&self.git_client, &branch, &target).await?;
-        if origin.rewritten {
-            return Err(rewritten_error(&branch));
+        if !origin.removed.is_empty() {
+            return Err(rewritten_error(&branch, &origin.removed));
         }
         if origin.behind > 0 {
             return Err(behind_error());
@@ -713,6 +741,10 @@ mod tests {
             run_git(&self.user, &["commit", "-qm", message]).await;
         }
 
+        async fn short_head(&self) -> String {
+            git_output(&self.user, &["log", "-1", "--format=%h"]).await
+        }
+
         async fn head(&self) -> String {
             git_output(&self.user, &["rev-parse", "HEAD"]).await
         }
@@ -850,6 +882,19 @@ mod tests {
     }
 
     #[test]
+    fn rewritten_message_counts_and_truncates_commits() {
+        let removed: Vec<String> = (1..=7).map(|i| format!("abc000{i} c{i}")).collect();
+        assert_eq!(
+            input_message(Err(rewritten_error("b", &removed[..2]))),
+            "'b' was rewritten on origin, which no longer has 2 commits your branch has: abc0001 c1, abc0002 c2. Sync removes them from your branch too, so check with whoever rewrote it before syncing."
+        );
+        assert_eq!(
+            input_message(Err(rewritten_error("b", &removed))),
+            "'b' was rewritten on origin, which no longer has 7 commits your branch has: abc0001 c1, abc0002 c2, abc0003 c3, abc0004 c4, abc0005 c5, and 2 more. Sync removes them from your branch too, so check with whoever rewrote it before syncing."
+        );
+    }
+
+    #[test]
     fn stale_files_message_truncates_after_ten() {
         let paths: Vec<String> = (0..12).map(|i| format!("missing-{i:02}.txt")).collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
@@ -872,7 +917,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((result.ahead, result.behind), (0, 1));
-        assert!(!result.rewritten);
+        assert!(result.removed.is_empty());
         assert_eq!(result.origin_sha, fx.origin_sha(BRANCH).await);
     }
 
@@ -880,6 +925,7 @@ mod tests {
     async fn fetch_and_compare_reports_rewritten_after_tip_dropped() {
         let fx = Fixture::new().await;
         fx.user_push("pushed.txt", "pushed").await;
+        let pushed = fx.short_head().await;
         fx.collab_drop_tip(BRANCH).await;
 
         let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
@@ -887,19 +933,21 @@ mod tests {
             .unwrap();
         // Origin is an ancestor of HEAD, so only the rewrite check catches it.
         assert_eq!((result.ahead, result.behind), (1, 0));
-        assert!(result.rewritten);
+        assert_eq!(result.removed, [format!("{pushed} pushed")]);
     }
 
     #[tokio::test]
     async fn fetch_and_compare_reports_rewritten_after_tip_amended() {
         let fx = Fixture::new().await;
         fx.user_push("pushed.txt", "pushed").await;
+        let pushed = fx.short_head().await;
         fx.collab_amend_tip(BRANCH).await;
 
         let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
             .await
             .unwrap();
-        assert!(result.rewritten);
+        assert_eq!((result.ahead, result.behind), (1, 1));
+        assert_eq!(result.removed, [format!("{pushed} pushed")]);
     }
 
     #[tokio::test]
@@ -912,7 +960,7 @@ mod tests {
         let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
             .await
             .unwrap();
-        assert!(result.rewritten);
+        assert_eq!(result.removed.len(), 1);
     }
 
     #[tokio::test]
@@ -925,7 +973,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((result.ahead, result.behind), (1, 0));
-        assert!(!result.rewritten);
+        assert!(result.removed.is_empty());
     }
 
     #[tokio::test]
@@ -1260,28 +1308,19 @@ mod tests {
     async fn branch_submit_op_refuses_when_branch_rewritten() {
         let fx = Fixture::new().await;
         fx.user_push("pushed.txt", "pushed").await;
+        let pushed = fx.short_head().await;
         let dropped_to = fx.collab_drop_tip(BRANCH).await;
-        fx.edit(
-            "seed.txt",
-            "seed
-edited
-",
-        );
+        fx.edit("seed.txt", "seed\nedited\n");
         let before = Unchanged::capture(&fx, BRANCH).await;
 
         let (op, phases, _status) = fx.op(&["seed.txt"], "msg");
         assert_eq!(
             input_message(op.execute().await),
-            "'f11r-branch-x' was rewritten on origin, and your branch still has commits origin removed — Sync before submitting."
+            format!("'f11r-branch-x' was rewritten on origin, which no longer has 1 commit your branch has: {pushed} pushed. Sync removes them from your branch too, so check with whoever rewrote it before syncing.")
         );
         before.assert(&fx, BRANCH).await;
         assert_eq!(fx.origin_sha(BRANCH).await, dropped_to);
-        assert_eq!(
-            fx.read("seed.txt"),
-            b"seed
-edited
-"
-        );
+        assert_eq!(fx.read("seed.txt"), b"seed\nedited\n");
         assert_eq!(drain(&phases), PHASES_WITH_FILES[..1]);
     }
 
@@ -1290,24 +1329,14 @@ edited
         let fx = Fixture::new().await;
         fx.user_push("pushed.txt", "pushed").await;
         let dropped_to = fx.collab_drop_tip(BRANCH).await;
-        fx.edit(
-            "seed.txt",
-            "seed
-edited
-",
-        );
+        fx.edit("seed.txt", "seed\nedited\n");
 
         fx.user
             .pull(git::PullStrategy::Rebase, git::PullStashStrategy::Autostash)
             .await
             .expect("sync");
         assert_eq!(fx.head().await, dropped_to);
-        assert_eq!(
-            fx.read("seed.txt"),
-            b"seed
-edited
-"
-        );
+        assert_eq!(fx.read("seed.txt"), b"seed\nedited\n");
 
         let (op, _phases, _status) = fx.op(&["seed.txt"], "msg");
         op.execute().await.expect("submit after sync");
@@ -1317,8 +1346,7 @@ edited
                 &["log", "--format=%s", &format!("refs/heads/{BRANCH}")]
             )
             .await,
-            "msg
-seed"
+            "msg\nseed"
         );
     }
 
