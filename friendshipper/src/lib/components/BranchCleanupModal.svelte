@@ -178,9 +178,10 @@
 	};
 </script>
 
+<!-- The body scrolls, not the frame: flowbite's Modal lets the mouse wheel through only there. -->
 <Modal
-	defaultClass="bg-secondary-700 dark:bg-space-900 overflow-y-auto"
-	bodyClass="!border-t-0"
+	defaultClass="bg-secondary-700 dark:bg-space-900 relative flex flex-col mx-auto max-h-full"
+	bodyClass="!border-t-0 min-h-0"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
 	dialogClass="fixed mt-8 top-0 start-0 end-0 h-modal md:inset-0 md:h-full z-50 w-full p-4 pb-12 flex"
 	size="lg"
