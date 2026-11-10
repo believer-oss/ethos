@@ -46,6 +46,15 @@ static TEST_BUCKET: &str = match option_env!("TEST_BUCKET") {
     None => "",
 };
 
+/// The handlers need AWS, so the integration tests skip without `ACCESS_KEY`.
+pub fn skip_without_aws() -> bool {
+    if ACCESS_KEY.is_empty() {
+        eprintln!("skipping: ACCESS_KEY is not set, and the handlers need AWS");
+        return true;
+    }
+    false
+}
+
 #[allow(dead_code)]
 fn get_test_bucket() -> String {
     TEST_BUCKET.to_string()
