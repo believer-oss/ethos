@@ -216,7 +216,9 @@ impl Task for RebaseOp {
     #[instrument(name = "RebaseOp::execute", skip(self))]
     async fn execute(&self) -> Result<(), CoreError> {
         let remote_branch = self.repo_status.read().remote_branch.clone();
-        let args: Vec<&str> = vec!["rebase", "--autostash", &remote_branch];
+        // A named upstream disables the fork point by default, which replays commits a
+        // force-push on origin rewrote; `git pull --rebase` uses it.
+        let args: Vec<&str> = vec!["rebase", "--fork-point", "--autostash", &remote_branch];
 
         self.git_client.run(&args, Opts::default()).await?;
 
@@ -964,5 +966,47 @@ mod tests {
         assert_eq!(commits[1].sha, "bbbb");
         assert!(commits[1].timestamp.is_none());
         assert!(parse_log_output("").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_rebase_op_drops_commits_rewritten_on_origin() {
+        let (git_client, _dir) = setup_repo();
+        let path = git_client.repo_path.clone();
+        let origin = tempfile::tempdir().expect("create origin tempdir");
+        run_git(origin.path(), &["init", "--bare"]);
+        let origin_path = origin.path().to_string_lossy().to_string();
+        run_git(&path, &["remote", "add", "origin", &origin_path]);
+        run_git(&path, &["switch", "-c", "feat"]);
+        std::fs::write(path.join("feat.txt"), "feat").unwrap();
+        run_git(&path, &["add", "feat.txt"]);
+        run_git(&path, &["commit", "-m", "F"]);
+        run_git(&path, &["push", "-u", "origin", "feat"]);
+
+        // A collaborator drops F with a force-push; the user then commits L on top of F.
+        run_git(
+            &path,
+            &["push", "--force", "origin", "feat~1:refs/heads/feat"],
+        );
+        std::fs::write(path.join("local.txt"), "local").unwrap();
+        run_git(&path, &["add", "local.txt"]);
+        run_git(&path, &["commit", "-m", "L"]);
+        run_git(&path, &["fetch", "origin"]);
+
+        let mut status = crate::types::repo::RepoStatus::new();
+        status.remote_branch = "origin/feat".to_string();
+        RebaseOp {
+            git_client: git_client.clone(),
+            repo_status: std::sync::Arc::new(parking_lot::RwLock::new(status)),
+        }
+        .execute()
+        .await
+        .expect("rebase");
+
+        assert_eq!(
+            run_git(&path, &["log", "--format=%s"]),
+            "L
+seed
+"
+        );
     }
 }

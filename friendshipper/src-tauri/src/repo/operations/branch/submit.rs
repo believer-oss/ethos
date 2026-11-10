@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::{async_trait, Json};
 use tracing::{instrument, warn};
 
-use super::rebase_state::{is_ancestor, rev_parse};
+use super::rebase_state::{is_ancestor, read_git, rev_parse};
 use super::{guard_state, reject_if_pr_blocks_updates, run_guarded_sequence};
 use crate::engine::EngineProvider;
 use crate::repo::operations::gh::submit::{
@@ -114,6 +114,12 @@ fn head_rewound_error(branch: &str) -> CoreError {
     ))
 }
 
+fn rewritten_error(branch: &str) -> CoreError {
+    input_error(format!(
+        "'{branch}' was rewritten on origin, and your branch still has commits origin removed — Sync before submitting."
+    ))
+}
+
 fn behind_error() -> CoreError {
     input_error("Branch has new commits on origin — Sync before submitting.".to_string())
 }
@@ -152,6 +158,8 @@ pub(crate) fn is_push_race(git_output: &str) -> bool {
 pub(crate) struct OriginComparison {
     pub ahead: u32,
     pub behind: u32,
+    /// `HEAD` contains a commit that `origin/<branch>` once had and no longer has.
+    pub rewritten: bool,
     /// The `origin/<branch>` SHA the comparison was made against.
     pub origin_sha: String,
 }
@@ -190,11 +198,32 @@ pub(crate) async fn fetch_and_compare_to_origin(
         .trim()
         .to_string();
     let (ahead, behind) = git.get_ahead_behind(&origin_sha, "HEAD").await?;
+    let rewritten = rewritten_on_origin(git, &tracking_ref, &origin_sha).await?;
     Ok(OriginComparison {
         ahead,
         behind,
+        rewritten,
         origin_sha,
     })
+}
+
+/// Whether `origin/<branch>` was force-pushed past a commit `HEAD` still contains, read from
+/// the tracking ref's reflog, so an earlier fetch that already moved the ref is no hindrance.
+/// Without a fork point, such as after the reflog expired, it reports no rewrite.
+async fn rewritten_on_origin(
+    git: &git::Git,
+    tracking_ref: &str,
+    origin_sha: &str,
+) -> anyhow::Result<bool> {
+    let output = read_git(git, &["merge-base", "--fork-point", tracking_ref, "HEAD"]).await?;
+    match output.exit_code {
+        0 => Ok(!is_ancestor(git, output.stdout.trim(), origin_sha).await?),
+        1 => Ok(false),
+        code => Err(anyhow!(
+            "merge-base --fork-point {tracking_ref} HEAD exited with {code}: {}",
+            output.stderr.trim()
+        )),
+    }
 }
 
 /// The SHA of `refs/heads/<branch>` on origin, or `None` if the branch does not exist.
@@ -355,6 +384,9 @@ where
         // 3. Authoritative up-to-date check, before the status read and the snapshot.
         self.emit_phase("Checking branch is up to date with origin");
         let origin = fetch_and_compare_to_origin(&self.git_client, &branch, &target).await?;
+        if origin.rewritten {
+            return Err(rewritten_error(&branch));
+        }
         if origin.behind > 0 {
             return Err(behind_error());
         }
@@ -648,6 +680,33 @@ mod tests {
             sha
         }
 
+        /// Collaborator force-pushes `branch` back to its parent, dropping its tip commit.
+        async fn collab_drop_tip(&self, branch: &str) -> String {
+            run_git(&self.collab, &["fetch", "-q", "origin"]).await;
+            let parent =
+                git_output(&self.collab, &["rev-parse", &format!("origin/{branch}~1")]).await;
+            let refspec = format!("+{parent}:refs/heads/{branch}");
+            run_git(&self.collab, &["push", "-q", "origin", &refspec]).await;
+            parent
+        }
+
+        /// Collaborator amends the tip of `branch` and force-pushes it.
+        async fn collab_amend_tip(&self, branch: &str) -> String {
+            run_git(&self.collab, &["fetch", "-q", "origin"]).await;
+            let tracking = format!("origin/{branch}");
+            run_git(&self.collab, &["checkout", "-q", "-B", branch, &tracking]).await;
+            run_git(&self.collab, &["commit", "-q", "--amend", "-m", "amended"]).await;
+            let refspec = format!("+HEAD:refs/heads/{branch}");
+            run_git(&self.collab, &["push", "-q", "origin", &refspec]).await;
+            git_output(&self.collab, &["rev-parse", "HEAD"]).await
+        }
+
+        /// The user commits `path` and pushes it to `BRANCH`.
+        async fn user_push(&self, path: &str, message: &str) {
+            self.user_commit(path, message).await;
+            run_git(&self.user, &["push", "-q", "origin", BRANCH]).await;
+        }
+
         async fn user_commit(&self, path: &str, message: &str) {
             self.edit(path, "committed\n");
             run_git(&self.user, &["add", path]).await;
@@ -813,7 +872,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((result.ahead, result.behind), (0, 1));
+        assert!(!result.rewritten);
         assert_eq!(result.origin_sha, fx.origin_sha(BRANCH).await);
+    }
+
+    #[tokio::test]
+    async fn fetch_and_compare_reports_rewritten_after_tip_dropped() {
+        let fx = Fixture::new().await;
+        fx.user_push("pushed.txt", "pushed").await;
+        fx.collab_drop_tip(BRANCH).await;
+
+        let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
+            .await
+            .unwrap();
+        // Origin is an ancestor of HEAD, so only the rewrite check catches it.
+        assert_eq!((result.ahead, result.behind), (1, 0));
+        assert!(result.rewritten);
+    }
+
+    #[tokio::test]
+    async fn fetch_and_compare_reports_rewritten_after_tip_amended() {
+        let fx = Fixture::new().await;
+        fx.user_push("pushed.txt", "pushed").await;
+        fx.collab_amend_tip(BRANCH).await;
+
+        let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
+            .await
+            .unwrap();
+        assert!(result.rewritten);
+    }
+
+    #[tokio::test]
+    async fn fetch_and_compare_reports_rewritten_after_an_earlier_fetch() {
+        let fx = Fixture::new().await;
+        fx.user_push("pushed.txt", "pushed").await;
+        fx.collab_drop_tip(BRANCH).await;
+        run_git(&fx.user, &["fetch", "-q", "origin"]).await;
+
+        let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
+            .await
+            .unwrap();
+        assert!(result.rewritten);
+    }
+
+    #[tokio::test]
+    async fn fetch_and_compare_not_rewritten_after_own_push() {
+        let fx = Fixture::new().await;
+        fx.user_push("pushed.txt", "pushed").await;
+        fx.user_commit("local.txt", "local commit").await;
+
+        let result = fetch_and_compare_to_origin(&fx.user, BRANCH, "main")
+            .await
+            .unwrap();
+        assert_eq!((result.ahead, result.behind), (1, 0));
+        assert!(!result.rewritten);
     }
 
     #[tokio::test]
@@ -1142,6 +1254,72 @@ mod tests {
         );
         assert!(message.contains("conflicted.txt"), "{message}");
         before.assert(&fx, BRANCH).await;
+    }
+
+    #[tokio::test]
+    async fn branch_submit_op_refuses_when_branch_rewritten() {
+        let fx = Fixture::new().await;
+        fx.user_push("pushed.txt", "pushed").await;
+        let dropped_to = fx.collab_drop_tip(BRANCH).await;
+        fx.edit(
+            "seed.txt",
+            "seed
+edited
+",
+        );
+        let before = Unchanged::capture(&fx, BRANCH).await;
+
+        let (op, phases, _status) = fx.op(&["seed.txt"], "msg");
+        assert_eq!(
+            input_message(op.execute().await),
+            "'f11r-branch-x' was rewritten on origin, and your branch still has commits origin removed — Sync before submitting."
+        );
+        before.assert(&fx, BRANCH).await;
+        assert_eq!(fx.origin_sha(BRANCH).await, dropped_to);
+        assert_eq!(
+            fx.read("seed.txt"),
+            b"seed
+edited
+"
+        );
+        assert_eq!(drain(&phases), PHASES_WITH_FILES[..1]);
+    }
+
+    #[tokio::test]
+    async fn branch_submit_op_succeeds_after_sync_drops_rewritten_commit() {
+        let fx = Fixture::new().await;
+        fx.user_push("pushed.txt", "pushed").await;
+        let dropped_to = fx.collab_drop_tip(BRANCH).await;
+        fx.edit(
+            "seed.txt",
+            "seed
+edited
+",
+        );
+
+        fx.user
+            .pull(git::PullStrategy::Rebase, git::PullStashStrategy::Autostash)
+            .await
+            .expect("sync");
+        assert_eq!(fx.head().await, dropped_to);
+        assert_eq!(
+            fx.read("seed.txt"),
+            b"seed
+edited
+"
+        );
+
+        let (op, _phases, _status) = fx.op(&["seed.txt"], "msg");
+        op.execute().await.expect("submit after sync");
+        assert_eq!(
+            git_output(
+                &fx.origin,
+                &["log", "--format=%s", &format!("refs/heads/{BRANCH}")]
+            )
+            .await,
+            "msg
+seed"
+        );
     }
 
     #[tokio::test]
