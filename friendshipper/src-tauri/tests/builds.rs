@@ -7,6 +7,10 @@ mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_v1_builds() -> Result<(), Box<dyn std::error::Error>> {
+    if common::skip_without_aws() {
+        return Ok(());
+    }
+
     let mut server = common::setup("v1".parse().unwrap()).await?;
 
     let client = reqwest::Client::new();

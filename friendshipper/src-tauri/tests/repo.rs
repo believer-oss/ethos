@@ -12,6 +12,10 @@ mod common;
 
 #[test(tokio::test(flavor = "multi_thread"))]
 async fn test_status_endpoint() -> Result<(), Box<dyn std::error::Error>> {
+    if common::skip_without_aws() {
+        return Ok(());
+    }
+
     info!("Starting test_status_endpoint");
     let mut server = common::setup("v1".parse().unwrap()).await?;
 
@@ -38,6 +42,10 @@ async fn test_status_endpoint() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test(tokio::test(flavor = "multi_thread"))]
 async fn test_new_file_workflow() -> Result<(), Box<dyn std::error::Error>> {
+    if common::skip_without_aws() {
+        return Ok(());
+    }
+
     info!("Starting test_new_file_workflow");
     let mut server = common::setup("v1".parse().unwrap()).await?;
 
@@ -155,6 +163,10 @@ async fn test_new_file_workflow() -> Result<(), Box<dyn std::error::Error>> {
 // `src/repo/operations/status.rs`.
 #[test(tokio::test(flavor = "multi_thread"))]
 async fn test_status_endpoint_reports_blocked_files() -> Result<(), Box<dyn std::error::Error>> {
+    if common::skip_without_aws() {
+        return Ok(());
+    }
+
     info!("Starting test_status_endpoint_reports_blocked_files");
     let repo_config = RepoConfig {
         trunk_branch: "main".to_string(),
@@ -202,6 +214,10 @@ async fn test_status_endpoint_reports_blocked_files() -> Result<(), Box<dyn std:
 
 #[test(tokio::test(flavor = "multi_thread"))]
 async fn test_unreal_workflow() -> Result<(), Box<dyn std::error::Error>> {
+    if common::skip_without_aws() {
+        return Ok(());
+    }
+
     info!("Starting test_unreal_workflow");
     let mut server = common::setup("v1".parse().unwrap()).await?;
 
