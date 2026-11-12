@@ -1162,8 +1162,10 @@
 		</Accordion>
 	</Card>
 
+	<!-- Sticks to the bottom of the scrolling body. The negative margins cancel the body's padding
+	     so the bar meets the modal's edges. -->
 	<div
-		class="flex flex-col gap-2 w-full p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900 shrink-0"
+		class="sticky bottom-0 z-10 -mx-4 -mb-4 md:-mx-5 md:-mb-5 flex flex-col gap-2 p-4 rounded-b-lg border-t bg-secondary-700 dark:bg-space-900 shrink-0"
 	>
 		{#if configError !== ''}
 			<Helper class="p-2 rounded-md bg-red-800 dark:bg-red-800">
