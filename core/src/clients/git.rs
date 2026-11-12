@@ -2522,8 +2522,22 @@ impl Git {
     #[instrument]
     pub async fn configure_untracked_cache(&self) -> anyhow::Result<()> {
         // `status` passes -uall, and the untracked cache only serves the mode it was built in.
-        // Make -uall the default so other git clients build and share the same cache.
-        self.set_config("status.showUntrackedFiles", "all").await?;
+        // Make -uall the default so other git clients build and share the same cache, unless
+        // the user chose a mode.
+        match self
+            .run_and_collect_output(
+                &["config", "--get", "status.showUntrackedFiles"],
+                Opts::new_without_logs(),
+            )
+            .await
+        {
+            Ok(mode) if mode.trim() == "all" => {}
+            Ok(mode) if !mode.trim().is_empty() => warn!(
+                "status.showUntrackedFiles is '{}', so status skips the untracked cache",
+                mode.trim()
+            ),
+            _ => self.set_config("status.showUntrackedFiles", "all").await?,
+        }
 
         // get current setting for core.untrackedCache
         let current_setting = match self
@@ -5080,6 +5094,27 @@ mod tests {
             .get_shared_changed_files("local", "local-missing")
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_configure_untracked_cache_keeps_a_chosen_mode() {
+        let (git, dir) = setup_repo();
+        git.configure_untracked_cache().await.unwrap();
+        assert_eq!(
+            git_ok(dir.path(), &["config", "status.showUntrackedFiles"]),
+            "all"
+        );
+
+        let (git, dir) = setup_repo();
+        git_ok(
+            dir.path(),
+            &["config", "status.showUntrackedFiles", "normal"],
+        );
+        git.configure_untracked_cache().await.unwrap();
+        assert_eq!(
+            git_ok(dir.path(), &["config", "status.showUntrackedFiles"]),
+            "normal"
+        );
     }
 
     #[tokio::test]
