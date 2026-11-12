@@ -254,6 +254,9 @@
 
 		showProgressModal = hasRepoUrlChanged || hasTargetBranchChanged;
 
+		// The engine provider reads these at startup, so a branch that changes them needs a restart.
+		let engineConfigChanged = false;
+
 		const internal = async () => {
 			requestInFlight = true;
 			try {
@@ -290,8 +293,12 @@
 				}
 
 				if (hasTargetBranchChanged) {
+					const previousRepoConfig = $repoConfig;
 					await checkoutTargetBranch();
 					repoConfig.set(await getRepoConfig());
+					engineConfigChanged =
+						previousRepoConfig?.uprojectPath !== $repoConfig?.uprojectPath ||
+						previousRepoConfig?.editorUrlScheme !== $repoConfig?.editorUrlScheme;
 					statusPromise = getRepoStatus();
 					commitsPromise = getAllCommits();
 				}
@@ -305,7 +312,7 @@
 					}
 				}
 
-				const { playtestResponse, statusResponse, commitsResponse, workflowsResponse } =
+				const [playtestResponse, statusResponse, commitsResponse, workflowsResponse] =
 					await Promise.all([playtestPromise, statusPromise, commitsPromise, workflowsPromise]);
 
 				if (playtestResponse) {
@@ -335,7 +342,7 @@
 
 		try {
 			await internal();
-			if (hasRepoUrlChanged) {
+			if (hasRepoUrlChanged || engineConfigChanged) {
 				await restart();
 
 				// wait 5 seconds before closing the modal

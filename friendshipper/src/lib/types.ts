@@ -215,6 +215,7 @@ export interface RepoConfig {
 	playtestProfiles: PlaytestProfile[];
 	buildsEnabled: boolean;
 	serversEnabled: boolean;
+	editorUrlScheme?: string;
 }
 
 // Kubernetes API types
