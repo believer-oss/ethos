@@ -721,7 +721,7 @@ mod tests {
             repo_status: Default::default(),
             artifact_sync: ArtifactSync::new(crate::APP_NAME),
             sync_event_tx,
-            operation_tx,
+            operation_tx: operation_tx.into(),
             notification_tx,
             frontend_op_tx,
             aws_client: Default::default(),

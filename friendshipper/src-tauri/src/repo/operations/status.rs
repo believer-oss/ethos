@@ -739,10 +739,9 @@ where
             return false;
         }
 
-        // The background fetch prunes every few seconds, so the tracking ref is current. Without
-        // it, ask origin.
-        let background_disabled = self.app_config.read().disable_background_git_operations;
-        !background_disabled
+        // The background fetch prunes every few seconds, so after a recent fetch the tracking
+        // ref is current. Otherwise (fetch off or failing), ask origin.
+        recently_fetched(&self.git_client.repo_path)
             || self
                 .git_client
                 .has_remote_branch_exact(branch)
@@ -935,6 +934,9 @@ impl StatusParams {
 pub struct PendingStatus {
     params: StatusParams,
     id: u64,
+    /// The operation queue's count once this run is queued. Anything queued after it would run
+    /// before a later request's own status, so the run only serves requests until then.
+    queued_at: u64,
     /// Sends whether the run succeeded.
     done: broadcast::Sender<bool>,
 }
@@ -965,6 +967,28 @@ fn release_pending_status(pending: &PendingStatusRef, id: u64) {
     let mut pending = pending.lock();
     if pending.as_ref().is_some_and(|p| p.id == id) {
         *pending = None;
+    }
+}
+
+/// Whether a fetch completed within the last minute.
+fn recently_fetched(repo_path: &std::path::Path) -> bool {
+    std::fs::metadata(resolve_git_dir(repo_path).join("FETCH_HEAD"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(60))
+}
+
+/// Releases the pending run however the request ends, including when it is dropped before
+/// queueing it, so no request waits on a run that will never start.
+struct PendingStatusGuard<'a> {
+    pending: &'a PendingStatusRef,
+    id: u64,
+}
+
+impl Drop for PendingStatusGuard<'_> {
+    fn drop(&mut self) {
+        release_pending_status(self.pending, self.id);
     }
 }
 
@@ -1005,10 +1029,10 @@ where
         let mut joined = {
             let background_disabled = state.app_config.read().disable_background_git_operations;
             let mut pending = state.pending_status.lock();
-            match pending
-                .as_ref()
-                .filter(|p| may_join && p.params.serves(&params, background_disabled))
-            {
+            let queued = state.operation_tx.queued();
+            match pending.as_ref().filter(|p| {
+                may_join && p.queued_at == queued && p.params.serves(&params, background_disabled)
+            }) {
                 Some(p) => p.done.subscribe(),
                 None => {
                     let id = NEXT_STATUS_ID.fetch_add(1, Ordering::Relaxed);
@@ -1016,6 +1040,7 @@ where
                     *pending = Some(PendingStatus {
                         params: params.0.clone(),
                         id,
+                        queued_at: queued + 1,
                         done: done.clone(),
                     });
                     break (id, done);
@@ -1026,6 +1051,10 @@ where
             return Ok(Json(state.repo_status.read().clone()));
         }
         may_join = false;
+    };
+    let guard = PendingStatusGuard {
+        pending: &state.pending_status,
+        id,
     };
 
     let status_op = StatusOp {
@@ -1053,13 +1082,10 @@ where
     }));
     sequence.push(Box::new(status_op));
 
-    if let Err(e) = state.operation_tx.send(sequence).await {
-        release_pending_status(&state.pending_status, id);
-        return Err(e.into());
-    }
+    state.operation_tx.send(sequence).await?;
 
     let result = rx.await;
-    release_pending_status(&state.pending_status, id);
+    drop(guard);
     let _ = done.send(matches!(result, Ok(None)));
 
     match result {
@@ -2032,7 +2058,7 @@ mod tests {
             repo_status: Default::default(),
             artifact_sync: ethos_core::artifact_sync::ArtifactSync::new(crate::APP_NAME),
             sync_event_tx,
-            operation_tx,
+            operation_tx: operation_tx.into(),
             notification_tx,
             frontend_op_tx,
             aws_client: Default::default(),
@@ -2054,30 +2080,111 @@ mod tests {
         (state, sequences)
     }
 
-    #[tokio::test]
-    async fn queued_status_requests_share_one_run() {
-        let (dir, _remote, _git) = make_test_repo_with_remote().await;
-        let (state, sequences) = handler_state(dir.path());
-
-        let (release, gate) = tokio::sync::oneshot::channel();
-        let mut sequence = TaskSequence::new();
-        sequence.push(Box::new(Gate(parking_lot::Mutex::new(Some(gate)))));
-        state.operation_tx.send(sequence).await.unwrap();
-
-        let params = StatusParams {
+    fn handler_params() -> StatusParams {
+        StatusParams {
             skip_fetch: false,
             skip_dll_check: true,
             allow_offline_communication: false,
             skip_display_names: true,
             skip_engine_update: true,
             fetch_first: false,
-        };
+        }
+    }
+
+    /// Waits until the pending run has `joiners` requests waiting on it.
+    async fn wait_for_joiners(
+        state: &AppState<crate::engine::UnrealEngineProvider>,
+        joiners: usize,
+    ) {
+        for _ in 0..1000 {
+            let ready = state
+                .pending_status
+                .lock()
+                .as_ref()
+                .is_some_and(|p| p.done.receiver_count() == joiners);
+            if ready {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("pending status never had {joiners} joiners");
+    }
+
+    fn gate(release: tokio::sync::oneshot::Receiver<()>) -> TaskSequence {
+        let mut sequence = TaskSequence::new();
+        sequence.push(Box::new(Gate(parking_lot::Mutex::new(Some(release)))));
+        sequence
+    }
+
+    #[tokio::test]
+    async fn status_request_does_not_share_a_run_queued_before_another_operation() {
+        let (dir, _remote, _git) = make_test_repo_with_remote().await;
+        let (state, sequences) = handler_state(dir.path());
+
+        let (release, gate_rx) = tokio::sync::oneshot::channel();
+        state.operation_tx.send(gate(gate_rx)).await.unwrap();
+
+        let first = tokio::spawn(status_handler(
+            State(state.clone()),
+            Query(handler_params()),
+        ));
+        wait_for_joiners(&state, 0).await;
+
+        // an operation queued between the pending run and the next request
+        let (_never, other_rx) = tokio::sync::oneshot::channel();
+        drop(_never);
+        state.operation_tx.send(gate(other_rx)).await.unwrap();
+
+        let second = tokio::spawn(status_handler(
+            State(state.clone()),
+            Query(handler_params()),
+        ));
+        release.send(()).unwrap();
+        let _ = first.await.unwrap().expect("status");
+        let _ = second.await.unwrap().expect("status");
+        assert_eq!(
+            sequences.load(Ordering::SeqCst),
+            4,
+            "gate, first status, other operation, and the second request's own status"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_status_request_releases_its_pending_run() {
+        let (dir, _remote, _git) = make_test_repo_with_remote().await;
+        let (mut state, _sequences) = handler_state(dir.path());
+
+        // a full queue nobody drains, so the request waits to queue its run
+        let (tx, _rx) = tokio::sync::mpsc::channel::<TaskSequence>(1);
+        tx.send(TaskSequence::new()).await.unwrap();
+        state.operation_tx = tx.into();
+
+        let request = tokio::spawn(status_handler(
+            State(state.clone()),
+            Query(handler_params()),
+        ));
+        wait_for_joiners(&state, 0).await;
+        request.abort();
+        let _ = request.await;
+
+        assert!(state.pending_status.lock().is_none());
+    }
+
+    #[tokio::test]
+    async fn queued_status_requests_share_one_run() {
+        let (dir, _remote, _git) = make_test_repo_with_remote().await;
+        let (state, sequences) = handler_state(dir.path());
+
+        let (release, gate_rx) = tokio::sync::oneshot::channel();
+        state.operation_tx.send(gate(gate_rx)).await.unwrap();
+
+        let params = handler_params();
         let requests: Vec<_> = (0..3)
             .map(|_| tokio::spawn(status_handler(State(state.clone()), Query(params.clone()))))
             .collect();
 
         // all three queue behind the gate before it opens
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        wait_for_joiners(&state, 2).await;
         release.send(()).unwrap();
         for request in requests {
             let _ = request.await.unwrap().expect("status");
@@ -2096,28 +2203,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_tracking_ref_of_gone_upstream_checks_origin_without_background_fetch() {
+    async fn stale_tracking_ref_of_gone_upstream_checks_origin_without_a_recent_fetch() {
         let fx = BranchFixture::new().await;
         fx.push_feature_branch().await;
-        fx.collab_push(FEATURE, "Content/A.uasset", "collab\n", "collab edit a")
-            .await;
+        fx.collab_push(
+            FEATURE,
+            "Content/A.uasset",
+            "collab
+",
+            "collab edit a",
+        )
+        .await;
         fx.fetch().await;
         run_git(&fx.collab, &["push", "-q", "origin", "--delete", FEATURE]).await;
-        fx.edit("Content/A.uasset", "local\n");
+        fx.edit(
+            "Content/A.uasset",
+            "local
+",
+        );
 
-        // origin/<feature> is still fetched, but gone on origin
-        let op = fx.status_op("main");
-        op.app_config.write().disable_background_git_operations = true;
-        let status = op.run().await.expect("status run");
-        assert!(status.modified_upstream.is_empty(), "{status:?}");
-
-        let op = fx.status_op("main");
-        let status = op.run().await.expect("status run");
+        // origin/<feature> is still fetched, but gone on origin. Right after a fetch the ref is
+        // trusted, since the background fetch would have pruned it.
+        let status = fx.status_op("main").run().await.expect("status run");
         assert_eq!(
             status.modified_upstream,
-            vec!["Content/A.uasset".to_string()],
-            "the background fetch would have pruned the ref; trusted as fetched"
+            vec!["Content/A.uasset".to_string()]
         );
+
+        std::fs::remove_file(fx.git_dir().join("FETCH_HEAD")).unwrap();
+        let status = fx.status_op("main").run().await.expect("status run");
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
     }
 
     #[tokio::test]
