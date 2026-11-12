@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender as STDSender, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -49,7 +50,7 @@ pub struct AppState<T> {
     pub artifact_sync: ArtifactSync,
     pub sync_event_tx: STDSender<SyncEvent>,
 
-    pub operation_tx: MPSCSender<TaskSequence>,
+    pub operation_tx: OperationQueue,
     pub notification_tx: STDSender<Notification>,
     pub frontend_op_tx: STDSender<FrontendOp>,
 
@@ -82,6 +83,37 @@ pub struct AppState<T> {
 
     /// The queued status run that new status requests can share.
     pub pending_status: PendingStatusRef,
+}
+
+/// The repo operation queue. It counts the sequences queued, so a status request can tell
+/// whether anything was queued after a pending status run.
+#[derive(Clone)]
+pub struct OperationQueue {
+    tx: MPSCSender<TaskSequence>,
+    queued: Arc<AtomicU64>,
+}
+
+impl OperationQueue {
+    pub async fn send(
+        &self,
+        sequence: TaskSequence,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<TaskSequence>> {
+        self.queued.fetch_add(1, Ordering::SeqCst);
+        self.tx.send(sequence).await
+    }
+
+    pub fn queued(&self) -> u64 {
+        self.queued.load(Ordering::SeqCst)
+    }
+}
+
+impl From<MPSCSender<TaskSequence>> for OperationQueue {
+    fn from(tx: MPSCSender<TaskSequence>) -> Self {
+        Self {
+            tx,
+            queued: Default::default(),
+        }
+    }
 }
 
 impl<T> AppState<T>
@@ -187,7 +219,7 @@ where
             repo_status,
             artifact_sync,
             sync_event_tx,
-            operation_tx,
+            operation_tx: operation_tx.into(),
             notification_tx,
             frontend_op_tx,
             aws_client: Arc::new(TokioRwLock::new(aws_client)),
