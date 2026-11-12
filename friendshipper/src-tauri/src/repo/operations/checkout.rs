@@ -115,12 +115,11 @@ pub struct ReloadRepoConfigOp {
 #[async_trait]
 impl Task for ReloadRepoConfigOp {
     async fn execute(&self) -> Result<(), CoreError> {
-        let (repo_path, repo_config) = {
+        let (repo_path, repo_config, valid) = {
             let app_config = self.app_config.read();
-            (
-                app_config.repo_path.clone(),
-                app_config.initialize_repo_config()?,
-            )
+            let repo_config = app_config.initialize_repo_config()?;
+            let valid = app_config.validate_configured_branches(&repo_config);
+            (app_config.repo_path.clone(), repo_config, valid)
         };
 
         if let Some(git_hooks_path) = repo_config.git_hooks_path.clone() {
@@ -134,7 +133,13 @@ impl Task for ReloadRepoConfigOp {
         }
 
         *self.repo_config.write() = repo_config;
-        Ok(())
+
+        // As at startup: the branch is checked out and its config loaded, but report a mismatch.
+        valid.map_err(|e| {
+            CoreError::Input(anyhow::anyhow!(
+                "App configuration error: {e}. Please check your friendshipper.yaml target branches or update your branch configuration."
+            ))
+        })
     }
 
     fn get_name(&self) -> String {
