@@ -152,91 +152,11 @@ where
                 .await?;
         }
 
-        let locks_future = self.git_client.verify_locks();
-        let status_future = self.git_client.status(vec![]);
-
-        let (locks, status_output) = futures::join!(locks_future, status_future);
+        // Locks are the slowest call and only feed display names and submit statuses, so they
+        // run alongside everything else.
+        let (locks, status) = futures::join!(self.git_client.verify_locks(), self.local_status());
         let locks = locks?;
-        let status_output = status_output?;
-
-        let status_lines = status_output.lines().collect::<Vec<_>>();
-
-        let mut status = RepoStatus::new();
-        let pull_dlls = self.app_config.read().pull_dlls;
-
-        // make sure we always copy over the last push/sync status
-        {
-            let current_status = self.repo_status.read();
-
-            // Preserve the Unix epoch marker for first sync detection if it's still set
-            if current_status.last_updated == chrono::DateTime::UNIX_EPOCH {
-                status.last_updated = chrono::DateTime::UNIX_EPOCH;
-            }
-
-            // because dll checking can be skipped, default to current values
-            status.origin_has_new_dlls = current_status.origin_has_new_dlls;
-            status.pull_dlls = pull_dlls;
-            status
-                .dll_commit_local
-                .clone_from(&current_status.dll_commit_local);
-            status
-                .dll_commit_remote
-                .clone_from(&current_status.dll_commit_remote);
-        }
-
-        for line in status_lines {
-            status.parse_file_line(line);
-        }
-
-        if status.detached_head {
-            warn!(
-                "Detached head state detected for {:?}",
-                self.git_client.repo_path
-            );
-        }
-
-        // Status never fails over the guided rebase state; an unknown one is treated as a rebase
-        // below, and the guard refuses other operations.
-        let repo_path = &self.git_client.repo_path;
-        let mut rebasing = rebase_dir_exists(&resolve_git_dir(repo_path));
-        match recorded_rebase_kind(&self.git_client, repo_path).await {
-            Ok(kind) => status.guided_rebase_active = kind.is_some_and(is_active),
-            Err(e) => {
-                warn!("Could not determine the guided rebase state: {e:#}");
-                rebasing = true;
-            }
-        }
-        rebasing |= status.guided_rebase_active;
-
-        // if we're not on the main branch, we need to get the ahead/behind counts
-        let target_branch = self.app_config.read().target_branch.clone();
-        let remote_target_branch = format!("origin/{target_branch}");
-        if status.branch != target_branch {
-            let (commits_ahead, commits_behind) = self
-                .git_client
-                .get_ahead_behind(&remote_target_branch, &status.branch)
-                .await?;
-            status.commits_ahead_of_trunk = commits_ahead;
-            status.commits_behind_trunk = commits_behind;
-        } else {
-            status.commits_ahead_of_trunk = status.commits_ahead;
-            status.commits_behind_trunk = status.commits_behind;
-        }
-
-        status.commit_head = self
-            .git_client
-            .head_commit(git::CommitFormat::Long, git::CommitHead::Local)
-            .await?;
-
-        info!(
-                %status.branch,
-                %status.remote_branch,
-                %status.commit_head,
-                %status.detached_head,
-                %status.commits_ahead_of_trunk,
-                ?status.commits_behind_trunk,
-                "local state"
-        );
+        let (mut status, target_branch) = status?;
 
         {
             status.lock_user.clone_from(&self.github_username);
@@ -318,110 +238,6 @@ where
         }
 
         {
-            status.commit_head_origin = self
-                .git_client
-                .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
-                .await?;
-
-            let remote_url = match self
-                .git_client
-                .run_and_collect_output(
-                    &["config", "--get", "remote.origin.url"],
-                    git::Opts::default(),
-                )
-                .await
-            {
-                Ok(url) => url,
-                Err(_) => {
-                    return Err(CoreError::Internal(anyhow!(
-                        "Failed to get remote URL for repo"
-                    )));
-                }
-            };
-
-            // https://github.com/owner/repository.git
-            // Other shapes, such as a local path with exactly four parts, leave both empty.
-            let mut parts = remote_url.split('/');
-            match (parts.nth(3), parts.next()) {
-                (Some(owner), Some(name)) => {
-                    status.repo_owner = owner.to_string();
-                    status.repo_name = name.trim_end().trim_end_matches(".git").to_string();
-                }
-                _ => {
-                    status.repo_owner = "".to_string();
-                    status.repo_name = "".to_string();
-                }
-            }
-
-            info!(
-                status.remote_url = ?remote_url,
-                ?status.repo_owner,
-                ?status.repo_name,
-                ?status.commit_head_origin,
-                "remote info");
-
-            // Since we aren't likely to have much contention on this lock, it's likely
-            // cheaper to write than to read and then sometimes write.
-            let new_selected_artifact_project = format!(
-                "{}-{}",
-                status.repo_owner.to_lowercase(),
-                status.repo_name.to_lowercase()
-            );
-            {
-                let mut app_config = self.app_config.write();
-                app_config.selected_artifact_project = Some(new_selected_artifact_project);
-            }
-        }
-
-        if let Some(aws_client) = &self.aws_client {
-            let storage = self
-                .storage
-                .as_ref()
-                .expect("ArtifactStorage was None, but AWSClient was valid");
-
-            // if there's an aws client, we should always have a valid artifact storage
-            self.find_dll_archive_url_info(&mut status, aws_client, storage)
-                .await?;
-            status.pull_dlls = pull_dlls;
-
-            info!(
-                %status.dll_commit_local,
-                %status.dll_commit_remote,
-                %status.origin_has_new_dlls,
-                "editor binary archives");
-        }
-
-        // While rebasing, HEAD is built on the new trunk, so diffing it against the old
-        // upstream would report main-side files as upstream changes.
-        if rebasing {
-            info!("Rebase in progress, skipping upstream changes");
-        } else {
-            let upstream = self.get_modified_upstream(&status).await?;
-            status.modified_upstream = upstream.modified_upstream;
-            status.will_conflict_on_rebase = upstream.will_conflict_on_rebase;
-            status.will_conflict_on_sync = upstream.will_conflict_on_sync;
-
-            // remove duplicates
-            status.modified_upstream.sort_unstable();
-            status.modified_upstream.dedup();
-            status.will_conflict_on_rebase.sort_unstable();
-            status.will_conflict_on_rebase.dedup();
-            status.will_conflict_on_sync.sort_unstable();
-            status.will_conflict_on_sync.dedup();
-
-            status.conflicts = self.get_upstream_conflicts(&status.modified_files, &status);
-            if !status.conflicts.is_empty() {
-                status.conflict_upstream = true;
-            }
-
-            info!(?status.modified_upstream,
-                ?status.conflicts,
-                ?status.will_conflict_on_rebase,
-                ?status.will_conflict_on_sync,
-                "upstream");
-        }
-
-        {
             // Compiled once, outside the closure below, since that closure is
             // invoked twice (once for untracked files, once for modified
             // files). Warnings and invalid-pattern diagnostics are handled
@@ -499,6 +315,220 @@ where
         *repo_status = status.clone();
 
         Ok(status)
+    }
+
+    /// Everything in the status but locks, display names and submit statuses.
+    async fn local_status(&self) -> Result<(RepoStatus, String), CoreError> {
+        let status_output = self.git_client.status(vec![]).await?;
+
+        let status_lines = status_output.lines().collect::<Vec<_>>();
+
+        let mut status = RepoStatus::new();
+        let pull_dlls = self.app_config.read().pull_dlls;
+
+        // make sure we always copy over the last push/sync status
+        {
+            let current_status = self.repo_status.read();
+
+            // Preserve the Unix epoch marker for first sync detection if it's still set
+            if current_status.last_updated == chrono::DateTime::UNIX_EPOCH {
+                status.last_updated = chrono::DateTime::UNIX_EPOCH;
+            }
+
+            // because dll checking can be skipped, default to current values
+            status.origin_has_new_dlls = current_status.origin_has_new_dlls;
+            status.pull_dlls = pull_dlls;
+            status
+                .dll_commit_local
+                .clone_from(&current_status.dll_commit_local);
+            status
+                .dll_commit_remote
+                .clone_from(&current_status.dll_commit_remote);
+        }
+
+        for line in status_lines {
+            status.parse_file_line(line);
+        }
+
+        if status.detached_head {
+            warn!(
+                "Detached head state detected for {:?}",
+                self.git_client.repo_path
+            );
+        }
+
+        // Status never fails over the guided rebase state; an unknown one is treated as a rebase
+        // below, and the guard refuses other operations.
+        let repo_path = &self.git_client.repo_path;
+        let mut rebasing = rebase_dir_exists(&resolve_git_dir(repo_path));
+        match recorded_rebase_kind(&self.git_client, repo_path).await {
+            Ok(kind) => status.guided_rebase_active = kind.is_some_and(is_active),
+            Err(e) => {
+                warn!("Could not determine the guided rebase state: {e:#}");
+                rebasing = true;
+            }
+        }
+        rebasing |= status.guided_rebase_active;
+
+        // if we're not on the main branch, we need to get the ahead/behind counts
+        let target_branch = self.app_config.read().target_branch.clone();
+        let remote_target_branch = format!("origin/{target_branch}");
+        if status.branch != target_branch {
+            let (commits_ahead, commits_behind) = self
+                .git_client
+                .get_ahead_behind(&remote_target_branch, &status.branch)
+                .await?;
+            status.commits_ahead_of_trunk = commits_ahead;
+            status.commits_behind_trunk = commits_behind;
+        } else {
+            status.commits_ahead_of_trunk = status.commits_ahead;
+            status.commits_behind_trunk = status.commits_behind;
+        }
+
+        status.commit_head = self
+            .git_client
+            .head_commit(git::CommitFormat::Long, git::CommitHead::Local)
+            .await?;
+
+        info!(
+                %status.branch,
+                %status.remote_branch,
+                %status.commit_head,
+                %status.detached_head,
+                %status.commits_ahead_of_trunk,
+                ?status.commits_behind_trunk,
+                "local state"
+        );
+
+        {
+            status.commit_head_origin = self
+                .git_client
+                .head_commit(git::CommitFormat::Long, git::CommitHead::Remote)
+                .await?;
+
+            let remote_url = match self
+                .git_client
+                .run_and_collect_output(
+                    &["config", "--get", "remote.origin.url"],
+                    git::Opts::default(),
+                )
+                .await
+            {
+                Ok(url) => url,
+                Err(_) => {
+                    return Err(CoreError::Internal(anyhow!(
+                        "Failed to get remote URL for repo"
+                    )));
+                }
+            };
+
+            // https://github.com/owner/repository.git
+            // Other shapes, such as a local path with exactly four parts, leave both empty.
+            let mut parts = remote_url.split('/');
+            match (parts.nth(3), parts.next()) {
+                (Some(owner), Some(name)) => {
+                    status.repo_owner = owner.to_string();
+                    status.repo_name = name.trim_end().trim_end_matches(".git").to_string();
+                }
+                _ => {
+                    status.repo_owner = "".to_string();
+                    status.repo_name = "".to_string();
+                }
+            }
+
+            info!(
+                status.remote_url = ?remote_url,
+                ?status.repo_owner,
+                ?status.repo_name,
+                ?status.commit_head_origin,
+                "remote info");
+
+            // Since we aren't likely to have much contention on this lock, it's likely
+            // cheaper to write than to read and then sometimes write.
+            let new_selected_artifact_project = format!(
+                "{}-{}",
+                status.repo_owner.to_lowercase(),
+                status.repo_name.to_lowercase()
+            );
+            {
+                let mut app_config = self.app_config.write();
+                app_config.selected_artifact_project = Some(new_selected_artifact_project);
+            }
+        }
+
+        // While rebasing, HEAD is built on the new trunk, so diffing it against the old
+        // upstream would report main-side files as upstream changes.
+        if rebasing {
+            info!("Rebase in progress, skipping upstream changes");
+        }
+
+        // The DLL lookup and the upstream diffs are independent network and git calls.
+        let dll_future = async {
+            match &self.aws_client {
+                Some(aws_client) => {
+                    let storage = self
+                        .storage
+                        .as_ref()
+                        .expect("ArtifactStorage was None, but AWSClient was valid");
+
+                    // if there's an aws client, we should always have a valid artifact storage
+                    Some(
+                        self.find_dll_archive_url_info(&status, aws_client, storage)
+                            .await,
+                    )
+                }
+                None => None,
+            }
+        };
+        let upstream_future = async {
+            match rebasing {
+                true => None,
+                false => Some(self.get_modified_upstream(&status).await),
+            }
+        };
+        let (dll, upstream) = futures::join!(dll_future, upstream_future);
+
+        if let Some(dll) = dll {
+            let (dll_commit_local, dll_commit_remote) = dll?;
+            status.origin_has_new_dlls = dll_commit_local != dll_commit_remote;
+            status.dll_commit_local = dll_commit_local;
+            status.dll_commit_remote = dll_commit_remote;
+            status.pull_dlls = pull_dlls;
+
+            info!(
+                %status.dll_commit_local,
+                %status.dll_commit_remote,
+                %status.origin_has_new_dlls,
+                "editor binary archives");
+        }
+
+        if let Some(upstream) = upstream {
+            let upstream = upstream?;
+            status.modified_upstream = upstream.modified_upstream;
+            status.will_conflict_on_rebase = upstream.will_conflict_on_rebase;
+            status.will_conflict_on_sync = upstream.will_conflict_on_sync;
+
+            // remove duplicates
+            status.modified_upstream.sort_unstable();
+            status.modified_upstream.dedup();
+            status.will_conflict_on_rebase.sort_unstable();
+            status.will_conflict_on_rebase.dedup();
+            status.will_conflict_on_sync.sort_unstable();
+            status.will_conflict_on_sync.dedup();
+
+            status.conflicts = self.get_upstream_conflicts(&status.modified_files, &status);
+            if !status.conflicts.is_empty() {
+                status.conflict_upstream = true;
+            }
+
+            info!(?status.modified_upstream,
+                ?status.conflicts,
+                ?status.will_conflict_on_rebase,
+                ?status.will_conflict_on_sync,
+                "upstream");
+        }
+
+        Ok((status, target_branch))
     }
 
     async fn get_modified_upstream(
@@ -729,12 +759,13 @@ where
     }
 
     #[instrument(skip_all)]
+    /// Returns the newest commits with editor binaries on the local and remote branch.
     async fn find_dll_archive_url_info(
         &self,
-        status: &mut RepoStatus,
+        status: &RepoStatus,
         aws_client: &AWSClient,
         storage: &ArtifactStorage,
-    ) -> Result<(), CoreError> {
+    ) -> Result<(String, String), CoreError> {
         debug!("parsing remote URL for repo id");
 
         let repo_id = if status.repo_owner.is_empty() || status.repo_name.is_empty() {
@@ -805,11 +836,7 @@ where
         let dll_commit_local = find_dll_commit(builds, &local_commit_shas, "local");
         let dll_commit_remote = find_dll_commit(builds, &remote_commit_shas, "remote");
 
-        status.origin_has_new_dlls = dll_commit_local != dll_commit_remote;
-        status.dll_commit_local = dll_commit_local;
-        status.dll_commit_remote = dll_commit_remote;
-
-        Ok(())
+        Ok((dll_commit_local, dll_commit_remote))
     }
 
     #[instrument(skip(self))]
