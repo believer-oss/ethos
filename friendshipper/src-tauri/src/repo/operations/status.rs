@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::str;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -11,6 +12,7 @@ use ethos_core::storage::{
 };
 use parking_lot::RwLock;
 use serde::Deserialize;
+use tokio::sync::broadcast;
 use tracing::{debug, info, instrument, warn};
 
 use crate::engine;
@@ -898,7 +900,7 @@ fn find_dll_commit(files: &ArtifactList, long_shas: &str, context: &str) -> Stri
     String::new()
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusParams {
     #[serde(default)]
@@ -913,6 +915,57 @@ pub struct StatusParams {
     pub skip_engine_update: bool,
     #[serde(default)]
     pub fetch_first: bool,
+}
+
+impl StatusParams {
+    /// Whether a run with these params answers a request for `other`. The fetch only runs while
+    /// background git operations are disabled, and a fetching run also answers one that doesn't.
+    fn serves(&self, other: &StatusParams, background_disabled: bool) -> bool {
+        let fetch_ok = self.fetch_first || !other.fetch_first || !background_disabled;
+        fetch_ok
+            && StatusParams {
+                fetch_first: other.fetch_first,
+                ..self.clone()
+            } == *other
+    }
+}
+
+/// A status run that is queued but not started. It starts after any request that joins it, so
+/// its result is as fresh as a run of the request's own.
+pub struct PendingStatus {
+    params: StatusParams,
+    id: u64,
+    /// Sends whether the run succeeded.
+    done: broadcast::Sender<bool>,
+}
+
+pub type PendingStatusRef = Arc<parking_lot::Mutex<Option<PendingStatus>>>;
+
+static NEXT_STATUS_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Closes the pending run to new requests once it starts.
+struct ClaimPendingStatus {
+    pending: PendingStatusRef,
+    id: u64,
+}
+
+#[async_trait]
+impl Task for ClaimPendingStatus {
+    async fn execute(&self) -> Result<(), CoreError> {
+        release_pending_status(&self.pending, self.id);
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        String::from("ClaimPendingStatus")
+    }
+}
+
+fn release_pending_status(pending: &PendingStatusRef, id: u64) {
+    let mut pending = pending.lock();
+    if pending.as_ref().is_some_and(|p| p.id == id) {
+        *pending = None;
+    }
 }
 
 pub async fn status_handler<T>(
@@ -945,6 +998,36 @@ where
         }
     };
 
+    // Share a queued run that hasn't started, or queue one others can share. If a shared run
+    // fails, run our own for its error.
+    let mut may_join = true;
+    let (id, done) = loop {
+        let mut joined = {
+            let background_disabled = state.app_config.read().disable_background_git_operations;
+            let mut pending = state.pending_status.lock();
+            match pending
+                .as_ref()
+                .filter(|p| may_join && p.params.serves(&params, background_disabled))
+            {
+                Some(p) => p.done.subscribe(),
+                None => {
+                    let id = NEXT_STATUS_ID.fetch_add(1, Ordering::Relaxed);
+                    let (done, _) = broadcast::channel(1);
+                    *pending = Some(PendingStatus {
+                        params: params.0.clone(),
+                        id,
+                        done: done.clone(),
+                    });
+                    break (id, done);
+                }
+            }
+        };
+        if let Ok(true) = joined.recv().await {
+            return Ok(Json(state.repo_status.read().clone()));
+        }
+        may_join = false;
+    };
+
     let status_op = StatusOp {
         repo_status: state.repo_status.clone(),
         app_config: state.app_config.clone(),
@@ -964,11 +1047,22 @@ where
     let (tx, rx) = tokio::sync::oneshot::channel::<Option<CoreError>>();
 
     let mut sequence = TaskSequence::new().with_completion_tx(tx);
+    sequence.push(Box::new(ClaimPendingStatus {
+        pending: state.pending_status.clone(),
+        id,
+    }));
     sequence.push(Box::new(status_op));
 
-    state.operation_tx.send(sequence).await?;
+    if let Err(e) = state.operation_tx.send(sequence).await {
+        release_pending_status(&state.pending_status, id);
+        return Err(e.into());
+    }
 
-    match rx.await {
+    let result = rx.await;
+    release_pending_status(&state.pending_status, id);
+    let _ = done.send(matches!(result, Ok(None)));
+
+    match result {
         Ok(e) => {
             if let Some(e) = e {
                 return Err(e);
@@ -1839,6 +1933,166 @@ mod tests {
             status.will_conflict_on_rebase,
             vec!["Content/A.uasset".to_string()]
         );
+    }
+
+    #[test]
+    fn status_params_serves() {
+        let plain = StatusParams {
+            skip_fetch: false,
+            skip_dll_check: false,
+            allow_offline_communication: false,
+            skip_display_names: false,
+            skip_engine_update: false,
+            fetch_first: false,
+        };
+        let fetching = StatusParams {
+            fetch_first: true,
+            ..plain.clone()
+        };
+        let no_engine = StatusParams {
+            skip_engine_update: true,
+            ..plain.clone()
+        };
+
+        assert!(plain.serves(&plain, true));
+        assert!(fetching.serves(&plain, true));
+        assert!(!plain.serves(&fetching, true));
+        assert!(plain.serves(&fetching, false));
+        assert!(!plain.serves(&no_engine, false));
+        assert!(!no_engine.serves(&plain, false));
+    }
+
+    /// Holds the operation worker until released.
+    struct Gate(parking_lot::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>);
+
+    #[async_trait]
+    impl Task for Gate {
+        async fn execute(&self) -> Result<(), CoreError> {
+            let rx = self.0.lock().take();
+            if let Some(rx) = rx {
+                let _ = rx.await;
+            }
+            Ok(())
+        }
+
+        fn get_name(&self) -> String {
+            String::from("Gate")
+        }
+    }
+
+    /// State for `status_handler` on `repo`, with a worker that counts the sequences it runs.
+    fn handler_state(
+        repo: &std::path::Path,
+    ) -> (
+        AppState<crate::engine::UnrealEngineProvider>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let mut app_config = AppConfig::new(crate::APP_NAME);
+        app_config.repo_path = repo.to_str().expect("utf8 repo path").to_string();
+        app_config.target_branch = "main".to_string();
+        let repo_config = RepoConfig {
+            target_branches: vec![TargetBranchConfig {
+                name: "main".to_string(),
+                uses_merge_queue: false,
+                blocked_file_globs: vec![],
+            }],
+            ..Default::default()
+        };
+
+        let (operation_tx, mut operation_rx) = tokio::sync::mpsc::channel::<TaskSequence>(32);
+        let (worker_tx, worker_rx) = tokio::sync::mpsc::channel(32);
+        let sequences = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = sequences.clone();
+        tokio::spawn(async move {
+            while let Some(sequence) = operation_rx.recv().await {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let _ = worker_tx.send(sequence).await;
+            }
+        });
+        let mut worker = ethos_core::worker::RepoWorker::new(
+            worker_rx,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        tokio::spawn(async move { worker.run().await });
+
+        let (sync_event_tx, _) = mpsc::channel();
+        let (notification_tx, _) = mpsc::channel();
+        let (frontend_op_tx, _) = mpsc::channel();
+        let (log_tx, _) = mpsc::channel();
+        let state = AppState {
+            engine: crate::engine::UnrealEngineProvider::new_from_config(
+                app_config.clone(),
+                repo_config.clone(),
+            ),
+            app_config: Arc::new(RwLock::new(app_config)),
+            repo_config: Arc::new(RwLock::new(repo_config)),
+            dynamic_config: Default::default(),
+            config_file: Default::default(),
+            storage: Default::default(),
+            repo_status: Default::default(),
+            artifact_sync: ethos_core::artifact_sync::ArtifactSync::new(crate::APP_NAME),
+            sync_event_tx,
+            operation_tx,
+            notification_tx,
+            frontend_op_tx,
+            aws_client: Default::default(),
+            kube_client: Default::default(),
+            additional_kube_clients: Default::default(),
+            github_client: Default::default(),
+            version: String::new(),
+            log_path: Default::default(),
+            otel_reload_handle: None,
+            gameserver_log_tx: log_tx.clone(),
+            workflow_log_tx: log_tx.clone(),
+            git_tx: log_tx.clone(),
+            sync_phase_tx: log_tx.clone(),
+            build_tools_tx: log_tx,
+            downloads: Default::default(),
+            workflow_log_cancel_tx: Default::default(),
+            pending_status: Default::default(),
+        };
+        (state, sequences)
+    }
+
+    #[tokio::test]
+    async fn queued_status_requests_share_one_run() {
+        let (dir, _remote, _git) = make_test_repo_with_remote().await;
+        let (state, sequences) = handler_state(dir.path());
+
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let mut sequence = TaskSequence::new();
+        sequence.push(Box::new(Gate(parking_lot::Mutex::new(Some(gate)))));
+        state.operation_tx.send(sequence).await.unwrap();
+
+        let params = StatusParams {
+            skip_fetch: false,
+            skip_dll_check: true,
+            allow_offline_communication: false,
+            skip_display_names: true,
+            skip_engine_update: true,
+            fetch_first: false,
+        };
+        let requests: Vec<_> = (0..3)
+            .map(|_| tokio::spawn(status_handler(State(state.clone()), Query(params.clone()))))
+            .collect();
+
+        // all three queue behind the gate before it opens
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        release.send(()).unwrap();
+        for request in requests {
+            let _ = request.await.unwrap().expect("status");
+        }
+        assert_eq!(
+            sequences.load(Ordering::SeqCst),
+            2,
+            "the gate and one status run"
+        );
+
+        // a request after the shared run started queues its own
+        let _ = status_handler(State(state.clone()), Query(params))
+            .await
+            .expect("status");
+        assert_eq!(sequences.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]

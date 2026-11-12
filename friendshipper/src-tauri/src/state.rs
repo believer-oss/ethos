@@ -11,6 +11,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::config::{DynamicConfigRef, RepoConfigRef};
 use crate::engine::EngineProvider;
+use crate::repo::operations::PendingStatusRef;
 use crate::repo::RepoStatusRef;
 use ethos_core::artifact_sync::SyncEvent;
 use ethos_core::artifact_sync::{ArtifactSync, DownloadCancellation};
@@ -78,6 +79,9 @@ pub struct AppState<T> {
     /// independently of each other.
     pub downloads: DownloadCancellation,
     pub workflow_log_cancel_tx: Arc<TokioRwLock<Option<oneshot::Sender<()>>>>,
+
+    /// The queued status run that new status requests can share.
+    pub pending_status: PendingStatusRef,
 }
 
 impl<T> AppState<T>
@@ -201,6 +205,7 @@ where
             engine,
             downloads: DownloadCancellation::default(),
             workflow_log_cancel_tx: Arc::new(TokioRwLock::new(None)),
+            pending_status: Default::default(),
         })
     }
 

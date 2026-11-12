@@ -738,6 +738,7 @@ mod tests {
             build_tools_tx: log_tx,
             downloads: DownloadCancellation::default(),
             workflow_log_cancel_tx: Default::default(),
+            pending_status: Default::default(),
         }
     }
 

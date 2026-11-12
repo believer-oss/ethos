@@ -39,7 +39,7 @@ pub use snapshot::{
     delete_snapshot, list_snapshots, preview_snapshot, restore_snapshot, save_snapshot,
     PreviewSnapshotParams, PreviewSnapshotResponse, RestoreSnapshotRequest, SaveSnapshotRequest,
 };
-pub use status::{status_handler, RepoStatusRef, StatusOp};
+pub use status::{status_handler, PendingStatusRef, RepoStatusRef, StatusOp};
 pub use update_engine::{
     reset_engine_handler, update_engine_handler, UpdateEngineOp, WipeEngineOp,
 };
