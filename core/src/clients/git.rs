@@ -2252,50 +2252,40 @@ impl Git {
         to_ref: &str,
     ) -> anyhow::Result<Vec<String>> {
         let range = format!("{from_ref}...origin/{to_ref}");
+        // One log for every commit's subject and files. --cc lists a merge's files the way
+        // `git show` does.
         let output = self
-            .run_and_collect_output(&["log", "--pretty=format:%H|%s", &range], Opts::default())
+            .run_and_collect_output(
+                &[
+                    "log",
+                    "--cc",
+                    "--name-only",
+                    "--pretty=format:%x1e%H|%s",
+                    &range,
+                ],
+                Opts::new_without_logs(),
+            )
             .await?;
 
         // commit messages that are both local and upstream will appear twice
         // we can confirm they have the same changed files
         // if they have the same message and modified files, add those files to the list
-        let mut shared_files = vec![];
-        let mut commit_map: HashMap<String, String> = HashMap::new();
-        for line in output.lines() {
-            let parts = line.split('|').collect::<Vec<_>>();
+        let mut shared_files: Vec<String> = vec![];
+        let mut commit_map: HashMap<&str, Vec<&str>> = HashMap::new();
+        for record in output.split('\x1e') {
+            let mut lines = record.lines();
+            let header = lines.next().unwrap_or_default();
+            let parts = header.split('|').collect::<Vec<_>>();
             if parts.len() < 2 {
                 continue;
             }
-            let commit = parts[0].to_string();
-            let message = parts[1].to_string();
+            let message = parts[1];
+            let files = lines.filter(|l| !l.is_empty()).collect::<Vec<_>>();
 
-            if commit_map.contains_key(&message) {
-                // get the files for the stored commit and the current commit and compare
-                let stored_commit = commit_map.get(&message).unwrap();
-
-                let output = self
-                    .run_and_collect_output(
-                        &["show", "--name-only", "--oneline", stored_commit],
-                        Opts::default(),
-                    )
-                    .await?;
-
-                // drop the first line, which is the commit message
-                let changed_files = output.lines().skip(1).collect::<Vec<_>>();
-
-                let output = self
-                    .run_and_collect_output(
-                        &["show", "--name-only", "--oneline", &commit],
-                        Opts::default(),
-                    )
-                    .await?;
-
-                // drop the first line, which is the commit message
-                let changed_files2 = output.lines().skip(1).collect::<Vec<_>>();
-
+            if let Some(stored_files) = commit_map.get(message) {
                 // if the commits share files, add them to the list
-                for file in changed_files {
-                    if changed_files2.contains(&file) && !shared_files.contains(&file.to_string()) {
+                for file in stored_files {
+                    if files.contains(file) && !shared_files.iter().any(|f| f == file) {
                         shared_files.push(file.to_string());
                     }
                 }
@@ -2303,7 +2293,7 @@ impl Git {
                 continue;
             }
 
-            commit_map.insert(message.clone(), commit.clone());
+            commit_map.insert(message, files);
         }
 
         Ok(shared_files)
@@ -4980,6 +4970,88 @@ mod tests {
         assert_eq!(newest_only.keys().collect::<Vec<_>>(), vec!["a.txt"]);
 
         assert!(git.last_touch_by_path("--all", 10).await.is_err());
+    }
+
+    fn commit_files_at(dir: &std::path::Path, files: &[(&str, &str)], msg: &str, epoch: u32) {
+        for (path, contents) in files {
+            std::fs::write(dir.join(path), contents).unwrap();
+            git_ok(dir, &["add", "--", path]);
+        }
+        let date = format!("{epoch} +0000");
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", msg])
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_shared_changed_files_real() {
+        let (git, dir) = setup_repo();
+        let path = dir.path();
+        let base = git_ok(path, &["rev-parse", "HEAD"]);
+
+        // local side
+        git_ok(path, &["switch", "-c", "local"]);
+        commit_files_at(
+            path,
+            &[("a.txt", "l1"), ("b.txt", "l1")],
+            "feat: x",
+            1_000_000_001,
+        );
+        commit_files_at(path, &[("c.txt", "l2")], "unique", 1_000_000_002);
+        commit_files_at(path, &[("e.txt", "l3")], "fix|pipe", 1_000_000_003);
+        commit_files_at(path, &[("s.txt", "l4")], "merge side", 1_000_000_004);
+
+        // a side branch merged into upstream with an extra change in the merge itself
+        git_ok(path, &["switch", "-c", "side", &base]);
+        commit_files_at(path, &[("s.txt", "side")], "side", 1_000_000_005);
+
+        // upstream side
+        git_ok(path, &["switch", "-c", "up", &base]);
+        commit_files_at(
+            path,
+            &[("b.txt", "u1"), ("d.txt", "u1")],
+            "feat: x",
+            1_000_000_006,
+        );
+        commit_files_at(path, &[("a.txt", "u2")], "feat: x", 1_000_000_007);
+        commit_files_at(path, &[("e.txt", "u3")], "fix|other", 1_000_000_008);
+        git_ok(path, &["merge", "--no-ff", "--no-commit", "side"]);
+        std::fs::write(path.join("s.txt"), "evil").unwrap();
+        git_ok(path, &["add", "s.txt"]);
+        let out = StdCommand::new("git")
+            .args(["commit", "-m", "merge side"])
+            .env("GIT_AUTHOR_DATE", "1000000009 +0000")
+            .env("GIT_COMMITTER_DATE", "1000000009 +0000")
+            .current_dir(path)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        git_ok(path, &["update-ref", "refs/remotes/origin/up", "HEAD"]);
+        git_ok(path, &["switch", "local"]);
+
+        // Each commit is compared with the first one seen with the same subject, up to the
+        // first '|'. Merges contribute their combined-diff files.
+        let mut shared = git.get_shared_changed_files("local", "up").await.unwrap();
+        shared.sort();
+        assert_eq!(shared, vec!["a.txt", "e.txt", "s.txt"]);
+
+        assert!(git
+            .get_shared_changed_files("local", "local-missing")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
