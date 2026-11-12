@@ -2252,41 +2252,69 @@ impl Git {
         to_ref: &str,
     ) -> anyhow::Result<Vec<String>> {
         let range = format!("{from_ref}...origin/{to_ref}");
-        // One log for every commit's subject and files. --cc lists a merge's files the way
-        // `git show` does.
         let output = self
             .run_and_collect_output(
-                &[
-                    "log",
-                    "--cc",
-                    "--name-only",
-                    "--pretty=format:%x1e%H|%s",
-                    &range,
-                ],
+                &["log", "--pretty=format:%H|%s", &range],
                 Opts::new_without_logs(),
             )
             .await?;
 
+        let commits = output
+            .lines()
+            .filter_map(|line| {
+                let parts = line.split('|').collect::<Vec<_>>();
+                (parts.len() >= 2).then(|| (parts[0], parts[1]))
+            })
+            .collect::<Vec<_>>();
+        let mut subject_counts: HashMap<&str, usize> = HashMap::new();
+        for (_, message) in &commits {
+            *subject_counts.entry(message).or_default() += 1;
+        }
+        let repeated = commits
+            .iter()
+            .filter(|(_, message)| subject_counts[message] > 1)
+            .map(|(commit, _)| *commit)
+            .collect::<Vec<_>>();
+
+        // Files of only the commits whose subject repeats, a batch per log. --cc lists a
+        // merge's files the way `git show` does.
+        let mut commit_files: HashMap<String, Vec<String>> = HashMap::new();
+        for batch in repeated.chunks(200) {
+            let mut args = vec![
+                "log",
+                "--no-walk=unsorted",
+                "--cc",
+                "--name-only",
+                "--pretty=format:%x1e%H",
+            ];
+            args.extend(batch);
+            let output = self
+                .run_and_collect_output(&args, Opts::new_without_logs())
+                .await?;
+            for record in output.split('') {
+                let mut lines = record.lines();
+                let Some(commit) = lines.next().filter(|c| !c.is_empty()) else {
+                    continue;
+                };
+                let files = lines.filter(|l| !l.is_empty()).map(String::from).collect();
+                commit_files.insert(commit.to_string(), files);
+            }
+        }
+
         // commit messages that are both local and upstream will appear twice
         // we can confirm they have the same changed files
         // if they have the same message and modified files, add those files to the list
+        let no_files = vec![];
         let mut shared_files: Vec<String> = vec![];
-        let mut commit_map: HashMap<&str, Vec<&str>> = HashMap::new();
-        for record in output.split('\x1e') {
-            let mut lines = record.lines();
-            let header = lines.next().unwrap_or_default();
-            let parts = header.split('|').collect::<Vec<_>>();
-            if parts.len() < 2 {
-                continue;
-            }
-            let message = parts[1];
-            let files = lines.filter(|l| !l.is_empty()).collect::<Vec<_>>();
+        let mut commit_map: HashMap<&str, &Vec<String>> = HashMap::new();
+        for (commit, message) in commits {
+            let files = commit_files.get(commit).unwrap_or(&no_files);
 
             if let Some(stored_files) = commit_map.get(message) {
                 // if the commits share files, add them to the list
-                for file in stored_files {
-                    if files.contains(file) && !shared_files.iter().any(|f| f == file) {
-                        shared_files.push(file.to_string());
+                for file in stored_files.iter() {
+                    if files.contains(file) && !shared_files.contains(file) {
+                        shared_files.push(file.clone());
                     }
                 }
 
