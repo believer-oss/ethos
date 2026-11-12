@@ -465,6 +465,7 @@
 </script>
 
 <Modal
+	class="preferences-modal"
 	defaultClass="relative flex flex-col bg-secondary-700 dark:bg-space-900 h-[calc(100vh-6rem)]"
 	bodyClass="!border-t-0 flex-1 overflow-y-auto"
 	backdropClass="fixed mt-8 inset-0 z-40 bg-gray-900 bg-opacity-50 dark:bg-opacity-80"
@@ -1288,3 +1289,20 @@
 		</div>
 	</div>
 </Modal>
+
+<style>
+	/* The close button floats over the scrolling settings; give it a background to read against. */
+	:global(.preferences-modal button[aria-label='Close modal']) {
+		z-index: 20;
+		background-color: rgb(var(--color-secondary-800));
+	}
+	:global(.preferences-modal button[aria-label='Close modal']:hover) {
+		background-color: rgb(var(--color-secondary-600));
+	}
+	:global(.dark .preferences-modal button[aria-label='Close modal']) {
+		background-color: rgb(var(--color-space-800));
+	}
+	:global(.dark .preferences-modal button[aria-label='Close modal']:hover) {
+		background-color: rgb(var(--color-space-700));
+	}
+</style>
