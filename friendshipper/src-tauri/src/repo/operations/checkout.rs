@@ -1,12 +1,15 @@
 use axum::extract::State;
 use axum::{async_trait, Json};
+use tracing::error;
 
+use crate::config::RepoConfigRef;
 use crate::engine::EngineProvider;
 use ethos_core::clients::git;
+use ethos_core::types::config::AppConfigRef;
 use ethos_core::types::errors::CoreError;
 use ethos_core::worker::{Task, TaskSequence};
 
-use super::{guard_op, guard_state};
+use super::{guard_op, guard_state, InstallGitHooksOp};
 use crate::state::AppState;
 
 #[derive(Clone)]
@@ -88,6 +91,10 @@ where
     };
 
     sequence.push(Box::new(op));
+    sequence.push(Box::new(ReloadRepoConfigOp {
+        app_config: state.app_config.clone(),
+        repo_config: state.repo_config.clone(),
+    }));
 
     let _ = state.operation_tx.send(sequence).await;
     if let Ok(Some(e)) = rx.await {
@@ -95,4 +102,42 @@ where
     }
 
     Ok(Json(String::from("OK")))
+}
+
+/// Reloads friendshipper.yaml and the git hooks from the working tree, so a
+/// new target branch takes effect without restarting the app.
+#[derive(Clone)]
+pub struct ReloadRepoConfigOp {
+    pub app_config: AppConfigRef,
+    pub repo_config: RepoConfigRef,
+}
+
+#[async_trait]
+impl Task for ReloadRepoConfigOp {
+    async fn execute(&self) -> Result<(), CoreError> {
+        let (repo_path, repo_config) = {
+            let app_config = self.app_config.read();
+            (
+                app_config.repo_path.clone(),
+                app_config.initialize_repo_config()?,
+            )
+        };
+
+        if let Some(git_hooks_path) = repo_config.git_hooks_path.clone() {
+            let op = InstallGitHooksOp {
+                repo_path,
+                git_hooks_path,
+            };
+            if let Err(e) = op.execute().await {
+                error!("Failed to install git hooks: {}", e);
+            }
+        }
+
+        *self.repo_config.write() = repo_config;
+        Ok(())
+    }
+
+    fn get_name(&self) -> String {
+        String::from("ReloadRepoConfig")
+    }
 }

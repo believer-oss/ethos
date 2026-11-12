@@ -44,7 +44,7 @@
 		engineWorkflows,
 		allModifiedFiles
 	} from '$lib/stores';
-	import { getAppConfig, resetConfig, updateAppConfig } from '$lib/config';
+	import { getAppConfig, getRepoConfig, resetConfig, updateAppConfig } from '$lib/config';
 	import { wipeClientData, getWorkflows } from '$lib/builds';
 	import { openTerminalToPath, restart } from '$lib/system';
 	import {
@@ -291,6 +291,7 @@
 
 				if (hasTargetBranchChanged) {
 					await checkoutTargetBranch();
+					repoConfig.set(await getRepoConfig());
 					statusPromise = getRepoStatus();
 					commitsPromise = getAllCommits();
 				}
@@ -334,7 +335,7 @@
 
 		try {
 			await internal();
-			if (hasRepoUrlChanged || hasTargetBranchChanged) {
+			if (hasRepoUrlChanged) {
 				await restart();
 
 				// wait 5 seconds before closing the modal
@@ -752,11 +753,6 @@
 										<option value={branch.name}>{branch.name}</option>
 									{/each}
 								</Select>
-								{#if localAppConfig.targetBranch !== $appConfig.targetBranch}
-									<Helper class="text-sm" placement="bottom" color="red">
-										This will restart the app.
-									</Helper>
-								{/if}
 								{#if $allModifiedFiles.length > 0}
 									<Tooltip class="text-sm" placement="bottom">
 										Cannot change target branch with pending changes. Submit or revert your changes
