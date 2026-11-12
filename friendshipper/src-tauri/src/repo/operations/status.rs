@@ -728,15 +728,22 @@ where
         if branch.is_empty() {
             return false;
         }
-        let on_remote = self
+        let fetched = self
             .git_client
-            .has_remote_branch_exact(branch)
+            .has_local_remote_tracking_branch(branch)
             .await
             .unwrap_or(false);
-        on_remote
-            && self
+        if !fetched {
+            return false;
+        }
+
+        // The background fetch prunes every few seconds, so the tracking ref is current. Without
+        // it, ask origin.
+        let background_disabled = self.app_config.read().disable_background_git_operations;
+        !background_disabled
+            || self
                 .git_client
-                .has_local_remote_tracking_branch(branch)
+                .has_remote_branch_exact(branch)
                 .await
                 .unwrap_or(false)
     }
@@ -1831,6 +1838,31 @@ mod tests {
         assert_eq!(
             status.will_conflict_on_rebase,
             vec!["Content/A.uasset".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_tracking_ref_of_gone_upstream_checks_origin_without_background_fetch() {
+        let fx = BranchFixture::new().await;
+        fx.push_feature_branch().await;
+        fx.collab_push(FEATURE, "Content/A.uasset", "collab\n", "collab edit a")
+            .await;
+        fx.fetch().await;
+        run_git(&fx.collab, &["push", "-q", "origin", "--delete", FEATURE]).await;
+        fx.edit("Content/A.uasset", "local\n");
+
+        // origin/<feature> is still fetched, but gone on origin
+        let op = fx.status_op("main");
+        op.app_config.write().disable_background_git_operations = true;
+        let status = op.run().await.expect("status run");
+        assert!(status.modified_upstream.is_empty(), "{status:?}");
+
+        let op = fx.status_op("main");
+        let status = op.run().await.expect("status run");
+        assert_eq!(
+            status.modified_upstream,
+            vec!["Content/A.uasset".to_string()],
+            "the background fetch would have pruned the ref; trusted as fetched"
         );
     }
 
