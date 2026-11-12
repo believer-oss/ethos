@@ -2503,6 +2503,10 @@ impl Git {
 
     #[instrument]
     pub async fn configure_untracked_cache(&self) -> anyhow::Result<()> {
+        // `status` passes -uall, and the untracked cache only serves the mode it was built in.
+        // Make -uall the default so other git clients build and share the same cache.
+        self.set_config("status.showUntrackedFiles", "all").await?;
+
         // get current setting for core.untrackedCache
         let current_setting = match self
             .run_and_collect_output(&["config", "core.untrackedCache"], Opts::default())
